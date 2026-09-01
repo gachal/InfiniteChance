@@ -19,6 +19,9 @@ Label: wayfinder:map
 
 ## Decisions so far
 
+- [01 厂商 API 适配矩阵](issues/01-vendor-api-matrix.md) — 聊天侧 8 家中 7 家 OpenAI 兼容(仅 Anthropic 完全自有格式,但也有可对齐的兼容面);生图分「OpenAI images 同步派」与「异步任务派」;生视频 7 家全部异步,共性收敛为「排队→运行→成功/失败(+可选 canceled)」四段状态机、轮询为可靠基线、成功才计费;网关宜对外收敛 `POST /v1/videos/generations → GET /v1/videos/tasks/{id}` 五态契约,计费需同时建模 token/张/秒/条四种单位。
+- [02 开源网关参考调研](issues/02-oss-gateway-reference.md) — one-api 系核心抽象是窄 Adaptor 接口 + 渠道双编号(ChannelType→APIType),所有 OpenAI 兼容上游共用一个 adaptor;计费照 new-api 的 PriceData 双轨(USD 单价 vs token 倍率)+ 原子预扣(Redis Lua 或 DB 条件更新 `WHERE quota>=?`)防超扣(one-api 旧版「先查后扣」是社区超卖根源);按次业务(生图/生视频)用 Estimate→AdjustOnSubmit→AdjustOnComplete 三钩子;渠道健康管理应从第一天做「连续 N 次失败才禁用 + 半开探测恢复」熔断。
+
 ## Not yet specified
 
 - 流式转发细节(SSE 透传、超时、重试与渠道降级)——等网关 API 契约定了再切票。
