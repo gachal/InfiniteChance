@@ -16,6 +16,7 @@ Label: wayfinder:map
 - 技术栈:Go+Gin、Vue3、vue-flow、MySQL、Redis。
 - 每个会话应咨询的技能:/grilling、/domain-modeling(术语表落 `CONTEXT.md`)、/prototype、/research。
 - Tracker:local-markdown——地图为本文件,ticket 在 `issues/`。
+- 规格已发布:[spec.md](spec.md)(Status: ready-for-agent,由 to-spec 综合本图已定决策与调研产出)——本图 03–09 号票继续细化各项决策,结论回写该规格;冲突时以较新者为准并同步另一方。
 
 ## Decisions so far
 
