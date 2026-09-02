@@ -1,0 +1,21 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(1200px 800px at 80% -10%, #14284b 0%, #0d1524 55%, #090c14 100%);
+  color: #e8eaf2;
+}

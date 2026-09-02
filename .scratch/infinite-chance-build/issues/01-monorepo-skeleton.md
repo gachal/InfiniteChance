@@ -4,9 +4,9 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] docker compose up 后 MySQL、Redis 与两个 Go 服务全部就绪
-- [ ] 健康检查端点返回 DB 与 Redis 的连通状态
-- [ ] 两个前端 dev 服务器可启动,页面展示后端健康真实状态
-- [ ] Go 与前端的 lint/测试基线命令可用(空测试通过)
+- [x] docker compose up 后 MySQL、Redis 与两个 Go 服务全部就绪
+- [x] 健康检查端点返回 DB 与 Redis 的连通状态
+- [x] 两个前端 dev 服务器可启动,页面展示后端健康真实状态
+- [x] Go 与前端的 lint/测试基线命令可用(空测试通过)

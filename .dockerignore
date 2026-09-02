@@ -1,0 +1,14 @@
+.git
+.scratch
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+admin-web
+canvas/web
+packages
+*.log
+.DS_Store
+.env
+.env.local

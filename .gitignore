@@ -1,0 +1,16 @@
+# Go
+*.test
+*.out
+
+# Node / pnpm
+node_modules/
+dist/
+coverage/
+
+# Env & logs
+.env
+.env.local
+*.log
+
+# OS
+.DS_Store
