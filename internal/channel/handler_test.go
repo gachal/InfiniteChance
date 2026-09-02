@@ -313,11 +313,18 @@ func TestListMapsStoreFailureTo500(t *testing.T) {
 // upstreams: a decidable verdict on every failure mode.
 func TestChannelConnectivityProbe(t *testing.T) {
 	var gotPath, gotAuth string
+	// 回包带 >512B 的填充:真实厂商的 /models 响应远超错误摘录的读取上限,
+	// 成功路径必须读全量体才能数出模型。
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
 		if r.Header.Get("Authorization") == "Bearer "+vendorSecret {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"}]}`)
+			models := make([]string, 61)
+			for i := range models {
+				models[i] = `{"id":"m","object":"model"}`
+			}
+			fmt.Fprintf(w, `{"object":"list","padding":"%s","data":[%s]}`,
+				strings.Repeat("x", 1024), strings.Join(models, ","))
 			return
 		}
 		w.WriteHeader(http.StatusUnauthorized)
@@ -351,8 +358,8 @@ func TestChannelConnectivityProbe(t *testing.T) {
 		if !result.OK {
 			t.Errorf("ok = false, want true (error: %s)", result.Error)
 		}
-		if !strings.Contains(result.Detail, "2") {
-			t.Errorf("detail = %q, want the model count 2", result.Detail)
+		if !strings.Contains(result.Detail, "61") {
+			t.Errorf("detail = %q, want the model count 61 (listing padded past 512B)", result.Detail)
 		}
 		if gotPath != "/models" || gotAuth != "Bearer "+vendorSecret {
 			t.Errorf("upstream saw %s %q, want GET /models with the stored bearer", gotPath, gotAuth)

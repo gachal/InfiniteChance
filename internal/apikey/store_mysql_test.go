@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -261,6 +262,133 @@ func TestMySQLKeyRevokeIdempotent(t *testing.T) {
 
 	if _, err := store.Revoke(ctx, 999999, at); !errors.Is(err, apikey.ErrKeyNotFound) {
 		t.Errorf("Revoke missing err = %v, want ErrKeyNotFound", err)
+	}
+}
+
+func TestMySQLKeyTopUpRejectsInactiveKeys(t *testing.T) {
+	store, _ := openKeyTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+	past := now.Add(-time.Hour)
+
+	revoked, err := store.Create(ctx, apikey.Key{
+		Name: "revoked", Prefix: "sk-revoked00", KeyHash: apikey.Hash("sk-revoked-full"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := store.Revoke(ctx, revoked.ID, now); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	expired, err := store.Create(ctx, apikey.Key{
+		Name: "expired", Prefix: "sk-expired00", KeyHash: apikey.Hash("sk-expired-full"),
+		ExpiresAt: &past,
+	})
+	if err != nil {
+		t.Fatalf("Create expired: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   int64
+		hash string
+	}{
+		{"revoked", revoked.ID, "sk-revoked-full"},
+		{"expired", expired.ID, "sk-expired-full"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.TopUp(ctx, tc.id, 100, apikey.ReasonManualTopUp); !errors.Is(err, apikey.ErrKeyNotActive) {
+				t.Fatalf("TopUp on %s key err = %v, want ErrKeyNotActive", tc.name, err)
+			}
+			// 余额与流水都不动。
+			k, err := store.ByHash(ctx, apikey.Hash(tc.hash))
+			if err != nil || k.QuotaMicros != 0 {
+				t.Errorf("balance = %d (err %v), want untouched 0", k.QuotaMicros, err)
+			}
+			entries, err := store.QuotaLog(ctx, tc.id, 10)
+			if err != nil || len(entries) != 0 {
+				t.Errorf("ledger = %v (err %v), want empty", entries, err)
+			}
+		})
+	}
+}
+
+func TestMySQLKeyExpiryBeyond2038RoundTrips(t *testing.T) {
+	store, _ := openKeyTestDB(t)
+	ctx := context.Background()
+	// DATETIME(6) 才装得下 2038 之后的过期时间(TIMESTAMP 上限 2038-01-19)。
+	far := time.Date(2050, 1, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := store.Create(ctx, apikey.Key{
+		Name: "far-future", Prefix: "sk-farfuture", KeyHash: apikey.Hash("sk-far-full"),
+		ExpiresAt: &far,
+	}); err != nil {
+		t.Fatalf("Create with 2050 expiry: %v", err)
+	}
+	got, err := store.ByHash(ctx, apikey.Hash("sk-far-full"))
+	if err != nil {
+		t.Fatalf("ByHash: %v", err)
+	}
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(far) {
+		t.Errorf("expires_at = %v, want %v preserved across DATETIME round trip", got.ExpiresAt, far)
+	}
+	if got.Status(time.Now()) != apikey.StatusActive {
+		t.Errorf("status = %q, want active", got.Status(time.Now()))
+	}
+}
+
+func TestMySQLKeyMigratesTimestampExpiryToDateTime(t *testing.T) {
+	store, db := openKeyTestDB(t)
+	ctx := context.Background()
+
+	// 还原上一构建的表:expires_at 是 TIMESTAMP(6),并留下一行数据。
+	if _, err := db.ExecContext(ctx, `DROP TABLE api_keys`); err != nil {
+		t.Fatalf("drop legacy table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE api_keys (
+		id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		name         VARCHAR(64) NOT NULL,
+		prefix       VARCHAR(16) NOT NULL,
+		key_hash     CHAR(64)    NOT NULL,
+		quota_micros BIGINT      NOT NULL DEFAULT 0,
+		expires_at   TIMESTAMP(6) NULL,
+		revoked_at   TIMESTAMP(6) NULL,
+		created_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		updated_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+		UNIQUE KEY uniq_api_key_hash (key_hash)
+	) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO api_keys (name, prefix, key_hash) VALUES ('legacy', 'sk-legacy000', 'legacy-hash')`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema with legacy table: %v", err)
+	}
+
+	var dataType string
+	if err := db.QueryRowContext(ctx,
+		`SELECT DATA_TYPE FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'api_keys' AND COLUMN_NAME = 'expires_at'`,
+	).Scan(&dataType); err != nil {
+		t.Fatalf("query column type: %v", err)
+	}
+	if !strings.EqualFold(dataType, "datetime") {
+		t.Fatalf("expires_at type = %q, want migrated to datetime", dataType)
+	}
+	var name string
+	if err := db.QueryRowContext(ctx,
+		`SELECT name FROM api_keys WHERE key_hash = 'legacy-hash'`).Scan(&name); err != nil {
+		t.Fatalf("legacy row lost in migration: %v", err)
+	}
+	if name != "legacy" {
+		t.Errorf("row name = %q, want legacy", name)
+	}
+
+	// 幂等:再次 EnsureSchema 不报错。
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("second EnsureSchema: %v", err)
 	}
 }
 

@@ -17,6 +17,11 @@ const probeTimeout = 10 * time.Second
 // the admin — enough to identify an auth failure, not a full dump.
 const maxErrorSnippet = 512
 
+// maxListingBytes caps the success body we read for the model count. Real
+// /models listings run far past the error-snippet size, so the success path
+// needs its own generous budget.
+const maxListingBytes = 4 << 20
+
 // Tester probes a channel by calling GET {base_url}/models with the stored
 // secret — the one free request every OpenAI-compatible vendor answers, so
 // the admin gets a decidable ok/fail right after saving a channel.
@@ -63,14 +68,15 @@ func (t *Tester) Test(ctx context.Context, ch Channel) Result {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorSnippet))
 	if resp.StatusCode/100 == 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxListingBytes))
 		detail := fmt.Sprintf("HTTP %d,连通正常", resp.StatusCode)
 		if n, ok := countModels(body); ok {
 			detail = fmt.Sprintf("HTTP %d,发现 %d 个模型", resp.StatusCode, n)
 		}
 		return Result{OK: true, LatencyMS: latency, Detail: detail}
 	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorSnippet))
 	snippet := strings.TrimSpace(string(body))
 	if snippet == "" {
 		return Result{LatencyMS: latency,

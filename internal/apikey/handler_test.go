@@ -105,6 +105,10 @@ func (f *fakeStore) TopUp(_ context.Context, id, delta int64, reason string) (ap
 	if !ok {
 		return apikey.Key{}, apikey.ErrKeyNotFound
 	}
+	// 与 MySQL 实现同语义:活跃守卫与加钱一体,拒绝死 key。
+	if k.Status(time.Now()) != apikey.StatusActive {
+		return apikey.Key{}, apikey.ErrKeyNotActive
+	}
 	k.QuotaMicros += delta
 	f.keys[id] = k
 	f.appendLog(id, delta, k.QuotaMicros, reason)

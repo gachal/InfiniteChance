@@ -22,16 +22,31 @@ const formError = ref('')
 const testingId = ref<number | null>(null)
 const testResults = reactive<Record<number, ChannelTestResult>>({})
 
-const form = reactive({
-  name: '',
-  type: 'openai',
-  baseUrl: '',
-  apiKey: '',
-  mappings: [{ from: '', to: '' }] as { from: string; to: string }[],
-  priority: 0,
-  weight: 1,
-  enabled: true,
-})
+interface ChannelForm {
+  name: string
+  type: string
+  baseUrl: string
+  apiKey: string
+  mappings: { from: string; to: string }[]
+  priority: number
+  weight: number
+  enabled: boolean
+}
+
+function blankForm(): ChannelForm {
+  return {
+    name: '',
+    type: 'openai',
+    baseUrl: '',
+    apiKey: '',
+    mappings: [{ from: '', to: '' }],
+    priority: 0,
+    weight: 1,
+    enabled: true,
+  }
+}
+
+const form = reactive<ChannelForm>(blankForm())
 
 const formTitle = computed(() => (editingId.value === null ? '新建渠道' : '编辑渠道'))
 
@@ -51,16 +66,7 @@ onMounted(() => void refresh())
 
 function openCreate(): void {
   editingId.value = null
-  Object.assign(form, {
-    name: '',
-    type: 'openai',
-    baseUrl: '',
-    apiKey: '',
-    mappings: [{ from: '', to: '' }],
-    priority: 0,
-    weight: 1,
-    enabled: true,
-  })
+  Object.assign(form, blankForm())
   formError.value = ''
   showForm.value = true
 }
@@ -77,7 +83,7 @@ function openEdit(ch: Channel): void {
     priority: ch.priority,
     weight: ch.weight,
     enabled: ch.enabled,
-  })
+  } satisfies ChannelForm)
   formError.value = ''
   showForm.value = true
 }

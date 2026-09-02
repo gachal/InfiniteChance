@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -21,12 +22,32 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	prefix       VARCHAR(16) NOT NULL,
 	key_hash     CHAR(64)    NOT NULL,
 	quota_micros BIGINT      NOT NULL DEFAULT 0,
-	expires_at   TIMESTAMP(6) NULL,
+	expires_at   DATETIME(6) NULL,
 	revoked_at   TIMESTAMP(6) NULL,
 	created_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	updated_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
 	UNIQUE KEY uniq_api_key_hash (key_hash)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
+
+// migrateExpiryToDateTime rewrites expires_at from the earlier TIMESTAMP(6)
+// build (max 2038-01-19, so a 2039 expiry failed the INSERT with a 500) to
+// DATETIME(6). Idempotent: no-op once the column is already DATETIME.
+func (s *MySQLStore) migrateExpiryToDateTime(ctx context.Context) error {
+	var dataType string
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT DATA_TYPE FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'api_keys' AND COLUMN_NAME = 'expires_at'`,
+	).Scan(&dataType)
+	if err != nil {
+		return err
+	}
+	if strings.ToLower(dataType) == "datetime" {
+		return nil
+	}
+	_, err = s.DB.ExecContext(ctx,
+		`ALTER TABLE api_keys MODIFY expires_at DATETIME(6) NULL`)
+	return err
+}
 
 const quotaLogSchema = `
 CREATE TABLE IF NOT EXISTS api_key_quota_log (
@@ -39,14 +60,16 @@ CREATE TABLE IF NOT EXISTS api_key_quota_log (
 	KEY idx_api_key_quota_log_key (key_id, id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
-// EnsureSchema creates both tables when missing. It runs at gateway startup
-// and is idempotent.
+// EnsureSchema creates both tables when missing and migrates tables created
+// by earlier builds. It runs at gateway startup and is idempotent.
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	if _, err := s.DB.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, quotaLogSchema)
-	return err
+	if _, err := s.DB.ExecContext(ctx, quotaLogSchema); err != nil {
+		return err
+	}
+	return s.migrateExpiryToDateTime(ctx)
 }
 
 const keyColumns = `id, name, prefix, key_hash, quota_micros, expires_at, revoked_at, created_at, updated_at`
@@ -157,8 +180,12 @@ func (s *MySQLStore) TopUp(ctx context.Context, id int64, deltaMicros int64, rea
 	}
 	defer tx.Rollback()
 
+	// 活跃守卫与加钱在同一条 UPDATE 里:并发的吊销/到期不可能抢在
+	// 检查与入账之间,不存在 check-then-act 窗口。
 	res, err := tx.ExecContext(ctx,
-		`UPDATE api_keys SET quota_micros = quota_micros + ? WHERE id = ?`, deltaMicros, id)
+		`UPDATE api_keys SET quota_micros = quota_micros + ?
+		 WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+		deltaMicros, id)
 	if err != nil {
 		return Key{}, err
 	}
@@ -167,7 +194,14 @@ func (s *MySQLStore) TopUp(ctx context.Context, id int64, deltaMicros int64, rea
 		return Key{}, err
 	}
 	if affected == 0 {
-		return Key{}, ErrKeyNotFound
+		// 行不存在与 key 已死是两种错误;查一次区分。
+		if _, err := scanKey(tx.QueryRowContext(ctx,
+			`SELECT `+keyColumns+` FROM api_keys WHERE id = ?`, id)); errors.Is(err, ErrKeyNotFound) {
+			return Key{}, ErrKeyNotFound
+		} else if err != nil {
+			return Key{}, err
+		}
+		return Key{}, ErrKeyNotActive
 	}
 
 	var balance int64

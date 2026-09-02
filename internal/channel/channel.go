@@ -69,7 +69,7 @@ const (
 	maxNameRunes      = 64
 	maxBaseURLRunes   = 512
 	maxAPIKeyRunes    = 4096
-	maxModelMapEntry  = 100
+	maxModelMapEntries  = 100
 	maxModelNameRunes = 200
 	maxPriority       = 1_000_000
 	maxWeight         = 1_000_000
@@ -123,8 +123,8 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 		normalized[public] = upstream
 	}
 	in.ModelMap = normalized
-	if len(normalized) > maxModelMapEntry {
-		return in, fmt.Errorf("模型映射最多 %d 条", maxModelMapEntry)
+	if len(normalized) > maxModelMapEntries {
+		return in, fmt.Errorf("模型映射最多 %d 条", maxModelMapEntries)
 	}
 
 	if in.Priority < 0 || in.Priority > maxPriority {

@@ -152,12 +152,7 @@ func (h *Handlers) Revoke(c *gin.Context) {
 		return
 	}
 	k, err := h.Store.Revoke(c.Request.Context(), id, time.Now())
-	if errors.Is(err, ErrKeyNotFound) {
-		apierr.NotFound(c, "key 不存在")
-		return
-	}
-	if err != nil {
-		h.failInternal(c, err)
+	if h.storeError(c, err) {
 		return
 	}
 	c.JSON(http.StatusOK, toKeyJSON(k, time.Now()))
@@ -187,39 +182,36 @@ func (h *Handlers) TopUp(c *gin.Context) {
 		return
 	}
 
-	// 只给还活着的 key 充值:给已吊销/已过期 key 加余额会误导管理员,
-	// 让其看起来可用(实际上一律 401)。
-	target, err := h.Store.ByID(c.Request.Context(), id)
-	if errors.Is(err, ErrKeyNotFound) {
-		apierr.NotFound(c, "key 不存在")
-		return
-	}
-	if err != nil {
-		h.failInternal(c, err)
-		return
-	}
-	if target.Status(time.Now()) != StatusActive {
-		apierr.Conflict(c, "key_not_active", "key 已吊销或已过期,不能充值")
-		return
-	}
-
 	k, err := h.Store.TopUp(c.Request.Context(), id, micros, ReasonManualTopUp)
-	if errors.Is(err, ErrKeyNotFound) {
-		apierr.NotFound(c, "key 不存在")
-		return
-	}
-	if err != nil {
-		h.failInternal(c, err)
+	// 活跃守卫在 store 的同一条 UPDATE 里,这里只需映射错误。
+	if h.storeError(c, err) {
 		return
 	}
 	c.JSON(http.StatusOK, toKeyJSON(k, time.Now()))
 }
 
+// storeError answers for a Store error: 404 for a missing key, 409 for a
+// dead one, 500 for anything else. It reports whether the response was
+// already written.
+func (h *Handlers) storeError(c *gin.Context, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, ErrKeyNotFound):
+		apierr.NotFound(c, "key 不存在")
+	case errors.Is(err, ErrKeyNotActive):
+		apierr.Conflict(c, "key_not_active", "key 已吊销或已过期,不能充值")
+	default:
+		h.failInternal(c, err)
+	}
+	return true
+}
+
 // amountToMicros validates a human USD amount and converts it to quota
 // micros — the single gate shared by initial quota and top-up.
 func amountToMicros(usd float64) (int64, error) {
-	if usd <= 0 || usd > MaxTopUpUSD {
-		return 0, fmt.Errorf("需大于 0 且不超过 %.0f 美元", float64(MaxTopUpUSD))
+	if usd <= 0 || usd > MaxAmountUSD {
+		return 0, fmt.Errorf("需大于 0 且不超过 %.0f 美元", float64(MaxAmountUSD))
 	}
 	micros := USDToMicros(usd)
 	if micros <= 0 {
@@ -246,11 +238,7 @@ func (h *Handlers) QuotaLog(c *gin.Context) {
 		return
 	}
 	// 与吊销/充值一致:不存在的 key 报 404,而不是空流水。
-	if _, err := h.Store.ByID(c.Request.Context(), id); errors.Is(err, ErrKeyNotFound) {
-		apierr.NotFound(c, "key 不存在")
-		return
-	} else if err != nil {
-		h.failInternal(c, err)
+	if _, err := h.Store.ByID(c.Request.Context(), id); h.storeError(c, err) {
 		return
 	}
 	entries, err := h.Store.QuotaLog(c.Request.Context(), id, quotaLogLimit)

@@ -18,6 +18,11 @@ import (
 // ErrKeyNotFound reports a key that does not exist (unknown hash or id).
 var ErrKeyNotFound = errors.New("apikey: not found")
 
+// ErrKeyNotActive reports a credit attempt on a revoked or expired key. The
+// guard is part of the same UPDATE that applies the credit, so a concurrent
+// revoke can never race a top-up into the balance.
+var ErrKeyNotActive = errors.New("apikey: key not active")
+
 const (
 	// keyPrefix starts every issued key, matching OpenAI convention.
 	keyPrefix = "sk-"
@@ -34,9 +39,9 @@ const (
 // relies on it — while the admin API converts to/from human USD at the edge.
 const MicrosPerUSD = 1_000_000
 
-// MaxTopUpUSD caps a single manual credit so a typo cannot mint unlimited
-// balance; call it again to add more.
-const MaxTopUpUSD = 1_000_000
+// MaxAmountUSD caps a single manual credit (initial quota and top-up alike)
+// so a typo cannot mint unlimited balance; call it again to add more.
+const MaxAmountUSD = 1_000_000
 
 // Ledger reasons recorded in the quota log. Ticket 04's billing appends
 // pre-deduction/refund entries with its own reasons.
@@ -142,8 +147,10 @@ type Store interface {
 	// Revoke stamps revoked_at (idempotent for already-revoked keys) and
 	// returns the updated row, or ErrKeyNotFound.
 	Revoke(ctx context.Context, id int64, at time.Time) (Key, error)
-	// TopUp adds deltaMicros (> 0) and appends a ledger row with the new
-	// balance, atomically. Returns the updated row or ErrKeyNotFound.
+	// TopUp adds deltaMicros (> 0) to a still-active key and appends a ledger
+	// row with the new balance, atomically: the active check is part of the
+	// same UPDATE, so no revoke can slip in between. Returns the updated row,
+	// ErrKeyNotFound, or ErrKeyNotActive for a revoked/expired key.
 	TopUp(ctx context.Context, id int64, deltaMicros int64, reason string) (Key, error)
 	// QuotaLog returns the key's ledger, newest first, at most limit rows.
 	QuotaLog(ctx context.Context, keyID int64, limit int) ([]QuotaEntry, error)
