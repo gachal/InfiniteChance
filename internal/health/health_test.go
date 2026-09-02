@@ -46,8 +46,8 @@ func TestHandlerAllDepsUp(t *testing.T) {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
 	report := decode(t, w)
-	if report.Status != "ok" {
-		t.Errorf("status = %q, want %q", report.Status, "ok")
+	if report.Status != health.StatusOK {
+		t.Errorf("status = %q, want %q", report.Status, health.StatusOK)
 	}
 	if report.Service != "test-service" {
 		t.Errorf("service = %q, want %q", report.Service, "test-service")
@@ -57,8 +57,8 @@ func TestHandlerAllDepsUp(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing check for %q in %+v", dep, report.Checks)
 		}
-		if check.Status != "up" {
-			t.Errorf("%s status = %q, want %q", dep, check.Status, "up")
+		if check.Status != health.StatusUp {
+			t.Errorf("%s status = %q, want %q", dep, check.Status, health.StatusUp)
 		}
 		if check.Error != "" {
 			t.Errorf("%s error = %q, want empty", dep, check.Error)
@@ -76,17 +76,17 @@ func TestHandlerOneDepDown(t *testing.T) {
 		t.Errorf("status = %d, want 503", w.Code)
 	}
 	report := decode(t, w)
-	if report.Status != "degraded" {
-		t.Errorf("status = %q, want %q", report.Status, "degraded")
+	if report.Status != health.StatusDegraded {
+		t.Errorf("status = %q, want %q", report.Status, health.StatusDegraded)
 	}
 	mysql := report.Checks["mysql"]
 	if mysql.Status != "down" {
-		t.Errorf("mysql status = %q, want %q", mysql.Status, "down")
+		t.Errorf("mysql status = %q, want %q", mysql.Status, health.StatusDown)
 	}
 	if mysql.Error != "connection refused" {
 		t.Errorf("mysql error = %q, want the pinger error", mysql.Error)
 	}
 	if redis := report.Checks["redis"]; redis.Status != "up" {
-		t.Errorf("redis status = %q, want %q", redis.Status, "up")
+		t.Errorf("redis status = %q, want %q", redis.Status, health.StatusUp)
 	}
 }

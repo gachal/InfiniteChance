@@ -19,16 +19,25 @@ type Pinger interface {
 
 const pingTimeout = 2 * time.Second
 
+// Wire values of the /healthz contract. The TypeScript mirror lives in
+// packages/api (DepStatus / HealthReport); keep both sides in sync.
+const (
+	StatusUp       = "up"
+	StatusDown     = "down"
+	StatusOK       = "ok"
+	StatusDegraded = "degraded"
+)
+
 // DepCheck is the connectivity result for a single dependency.
 type DepCheck struct {
-	Status string `json:"status"` // "up" | "down"
+	Status string `json:"status"` // StatusUp | StatusDown
 	Error  string `json:"error,omitempty"`
 }
 
 // Report is the JSON body of GET /healthz.
 type Report struct {
 	Service string              `json:"service"`
-	Status  string              `json:"status"` // "ok" | "degraded"
+	Status  string              `json:"status"` // StatusOK | StatusDegraded
 	Checks  map[string]DepCheck `json:"checks"`
 }
 
@@ -48,9 +57,9 @@ func Handler(service string, deps map[string]Pinger) gin.HandlerFunc {
 				ctx, cancel := context.WithTimeout(c.Request.Context(), pingTimeout)
 				defer cancel()
 
-				check := DepCheck{Status: "up"}
+				check := DepCheck{Status: StatusUp}
 				if err := pinger.Ping(ctx); err != nil {
-					check = DepCheck{Status: "down", Error: err.Error()}
+					check = DepCheck{Status: StatusDown, Error: err.Error()}
 				}
 				mu.Lock()
 				checks[name] = check
@@ -59,11 +68,11 @@ func Handler(service string, deps map[string]Pinger) gin.HandlerFunc {
 		}
 		wg.Wait()
 
-		status := "ok"
+		status := StatusOK
 		code := http.StatusOK
 		for _, check := range checks {
-			if check.Status != "up" {
-				status = "degraded"
+			if check.Status != StatusUp {
+				status = StatusDegraded
 				code = http.StatusServiceUnavailable
 			}
 		}
