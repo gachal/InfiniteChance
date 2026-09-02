@@ -28,7 +28,8 @@ export class ApiClient {
 
   constructor({ base = '/api', fetch: fetchImpl = globalThis.fetch }: ApiClientOptions = {}) {
     this.base = base.replace(/\/+$/, '')
-    this.fetchImpl = fetchImpl
+    // 绑定到全局再调用:浏览器原生 fetch 脱离 window 作为 this 会抛 Illegal invocation。
+    this.fetchImpl = fetchImpl.bind(globalThis)
   }
 
   /**

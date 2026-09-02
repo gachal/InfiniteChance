@@ -52,4 +52,17 @@ describe('ApiClient.health', () => {
 
     await expect(client.health()).rejects.toThrow('HTTP 404')
   })
+
+  it('calls the injected fetch in a way that satisfies native binding requirements', async () => {
+    // 浏览器的原生 window.fetch 脱离 window 作为 this 调用时会抛 Illegal invocation。
+    const nativeLikeFetch = vi.fn(function (this: unknown) {
+      if (this === undefined) {
+        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation")
+      }
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(healthy) })
+    })
+    const client = new ApiClient({ fetch: nativeLikeFetch as unknown as typeof fetch })
+
+    await expect(client.health()).resolves.toEqual(healthy)
+  })
 })
