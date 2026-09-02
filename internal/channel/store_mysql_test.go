@@ -27,7 +27,9 @@ func openTestDB(t *testing.T) (*channel.MySQLStore, *sql.DB) {
 	if err != nil {
 		t.Fatalf("parse MYSQL_TEST_DSN: %v", err)
 	}
-	dbName := cfg.DBName
+	// 每个测试包独占一个库:go test 会并行跑不同包的二进制,
+	// 共库会让彼此的清理 DELETE 互删数据。
+	dbName := cfg.DBName + "_channel"
 	cfg.DBName = ""
 
 	server, err := sql.Open("mysql", cfg.FormatDSN())

@@ -11,6 +11,9 @@ import (
 	"github.com/gachal/InfiniteChance/internal/app"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/relay"
+	"github.com/gachal/InfiniteChance/internal/usage"
 )
 
 func main() {
@@ -27,16 +30,34 @@ func main() {
 		if err := keys.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure api key schema: %v", err)
 		}
+		prices := pricing.NewMySQLStore(d.DB)
+		if err := prices.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure model price schema: %v", err)
+		}
+		usageLogs := usage.NewMySQLStore(d.DB)
+		if err := usageLogs.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure usage log schema: %v", err)
+		}
 
 		issuer := auth.NewIssuerFromConfig(d.Config)
 		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
 
-		// 管理面:统一走 JWT 会话;中转面(/v1)由 04 号票挂 apikey.RequireKey。
+		// 管理面:统一走 JWT 会话;中转面(/v1)统一走 apikey.RequireKey,
+		// 两者互不混用。
 		admin := r.Group("/admin", auth.RequireAuth(issuer))
 		channel.RegisterAdminRoutes(admin, &channel.Handlers{
 			Store:  channels,
 			Tester: &channel.Tester{},
 		})
 		apikey.RegisterAdminRoutes(admin, &apikey.Handlers{Store: keys})
+		pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: prices})
+
+		v1 := r.Group("/v1", apikey.RequireKey(keys))
+		relay.RegisterRoutes(v1, &relay.Handlers{
+			Channels: channels,
+			Keys:     keys,
+			Prices:   prices,
+			Usage:    usageLogs,
+		})
 	})
 }

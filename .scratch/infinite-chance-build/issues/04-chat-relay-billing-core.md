@@ -4,9 +4,11 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] OpenAI SDK 改 base_url 与 key 即可非流式聊天拿到厂商回答(测试用内存 fake 上游验证)
-- [ ] 用量日志逐请求落库且含倍率快照
-- [ ] 并发请求下额度不超扣(真实 MySQL 条件更新验证)
-- [ ] 额度不足返回 OpenAI error object 形状的明确错误;上游失败时已预扣额度退回
+> 备注:`/v1` 路由挂在 `apikey.RequireKey` 之后;模型选择为本票的简化版(启用渠道中按优先级取首个命中者),多渠道加权调度/换道重试/熔断归 06 号票;`stream:true` 本票明确拒绝(`stream_unsupported`),流式归 05 号票。计价落 `model_prices` 表(token 轨,JSON config 列),管理 API `GET/PUT/DELETE /admin/prices`;未配价模型拒绝服务。测试按规格测试决策走 HTTP 缝:内存 fake 上游 + 真实 MySQL(每测试包独占一个库,避免并行包互删数据)。
+
+- [x] OpenAI SDK 改 base_url 与 key 即可非流式聊天拿到厂商回答(测试用内存 fake 上游验证)
+- [x] 用量日志逐请求落库且含倍率快照
+- [x] 并发请求下额度不超扣(真实 MySQL 条件更新验证)
+- [x] 额度不足返回 OpenAI error object 形状的明确错误;上游失败时已预扣额度退回

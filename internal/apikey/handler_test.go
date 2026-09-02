@@ -115,6 +115,37 @@ func (f *fakeStore) TopUp(_ context.Context, id, delta int64, reason string) (ap
 	return k, nil
 }
 
+func (f *fakeStore) Reserve(_ context.Context, id, amount int64, reason string) (int64, error) {
+	k, ok := f.keys[id]
+	if !ok {
+		return 0, apikey.ErrKeyNotFound
+	}
+	if k.Status(time.Now()) != apikey.StatusActive {
+		return 0, apikey.ErrKeyNotActive
+	}
+	if k.QuotaMicros < amount {
+		return 0, apikey.ErrInsufficientQuota
+	}
+	k.QuotaMicros -= amount
+	f.keys[id] = k
+	f.appendLog(id, -amount, k.QuotaMicros, reason)
+	return k.QuotaMicros, nil
+}
+
+func (f *fakeStore) Adjust(_ context.Context, id, delta int64, reason string) (int64, error) {
+	k, ok := f.keys[id]
+	if !ok {
+		return 0, apikey.ErrKeyNotFound
+	}
+	if delta == 0 {
+		return k.QuotaMicros, nil
+	}
+	k.QuotaMicros += delta
+	f.keys[id] = k
+	f.appendLog(id, delta, k.QuotaMicros, reason)
+	return k.QuotaMicros, nil
+}
+
 func (f *fakeStore) QuotaLog(_ context.Context, keyID int64, limit int) ([]apikey.QuotaEntry, error) {
 	entries := append([]apikey.QuotaEntry(nil), f.ledger[keyID]...)
 	// newest first

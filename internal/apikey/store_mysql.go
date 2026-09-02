@@ -224,6 +224,115 @@ func (s *MySQLStore) TopUp(ctx context.Context, id int64, deltaMicros int64, rea
 	return stored, nil
 }
 
+// Reserve conditionally deducts the billing pre-deduction. The balance
+// guard lives in the UPDATE's WHERE clause, so check and deduct are one
+// atomic row operation: when two requests race for the last affordable
+// reserve, exactly one wins and the loser sees ErrInsufficientQuota — there
+// is no check-then-act window to exploit.
+func (s *MySQLStore) Reserve(ctx context.Context, id int64, amountMicros int64, reason string) (int64, error) {
+	if amountMicros <= 0 {
+		return 0, errors.New("apikey: reserve amount must be positive")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE api_keys SET quota_micros = quota_micros - ?
+		 WHERE id = ? AND quota_micros >= ?
+		   AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+		amountMicros, id, amountMicros)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected == 0 {
+		// 行不存在 / key 已死 / 余额不足是三种错误;查一次区分。
+		k, err := scanKey(tx.QueryRowContext(ctx,
+			`SELECT `+keyColumns+` FROM api_keys WHERE id = ?`, id))
+		if errors.Is(err, ErrKeyNotFound) {
+			return 0, ErrKeyNotFound
+		}
+		if err != nil {
+			return 0, err
+		}
+		switch k.Status(time.Now()) {
+		case StatusRevoked, StatusExpired:
+			return 0, ErrKeyNotActive
+		default:
+			return 0, ErrInsufficientQuota
+		}
+	}
+
+	var balance int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT quota_micros FROM api_keys WHERE id = ?`, id).Scan(&balance); err != nil {
+		return 0, err
+	}
+	if err := insertQuotaLog(ctx, tx, id, -amountMicros, balance, reason); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return balance, nil
+}
+
+// Adjust applies the signed settlement delta unconditionally. There is no
+// balance guard on purpose: a shortfall charge may push the balance negative
+// (the response was already served; the ledger keeps the honest record), and
+// a refund must land even if the key was revoked while the request ran.
+func (s *MySQLStore) Adjust(ctx context.Context, id int64, deltaMicros int64, reason string) (int64, error) {
+	if deltaMicros == 0 {
+		var balance int64
+		if err := s.DB.QueryRowContext(ctx,
+			`SELECT quota_micros FROM api_keys WHERE id = ?`, id).Scan(&balance); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, ErrKeyNotFound
+			}
+			return 0, err
+		}
+		return balance, nil
+	}
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE api_keys SET quota_micros = quota_micros + ? WHERE id = ?`, deltaMicros, id)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected == 0 {
+		return 0, ErrKeyNotFound
+	}
+
+	var balance int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT quota_micros FROM api_keys WHERE id = ?`, id).Scan(&balance); err != nil {
+		return 0, err
+	}
+	if err := insertQuotaLog(ctx, tx, id, deltaMicros, balance, reason); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return balance, nil
+}
+
 func (s *MySQLStore) QuotaLog(ctx context.Context, keyID int64, limit int) ([]QuotaEntry, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT id, delta_micros, balance_micros, reason, created_at

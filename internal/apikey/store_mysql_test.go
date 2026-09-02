@@ -29,7 +29,9 @@ func openKeyTestDB(t *testing.T) (*apikey.MySQLStore, *sql.DB) {
 	if err != nil {
 		t.Fatalf("parse MYSQL_TEST_DSN: %v", err)
 	}
-	dbName := cfg.DBName
+	// 每个测试包独占一个库:go test 会并行跑不同包的二进制,
+	// 共库会让彼此的清理 DELETE 互删数据。
+	dbName := cfg.DBName + "_apikey"
 	cfg.DBName = ""
 
 	server, err := sql.Open("mysql", cfg.FormatDSN())
@@ -443,5 +445,216 @@ func TestMySQLKeyStatusesFromRealRows(t *testing.T) {
 	}
 	if got.Status(now) != apikey.StatusActive || got.ExpiresAt == nil {
 		t.Errorf("status = %q (expires %v), want active with expiry", got.Status(now), got.ExpiresAt)
+	}
+}
+
+func TestMySQLKeyReserveSettleRefundLedger(t *testing.T) {
+	store, _ := openKeyTestDB(t)
+	ctx := context.Background()
+	created, err := store.Create(ctx, apikey.Key{
+		Name: "billing", Prefix: "sk-billing00", KeyHash: apikey.Hash("sk-billing-full"),
+		QuotaMicros: apikey.USDToMicros(1),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// 结算差额符号约定:delta = 预扣 − 实际。正数退回多扣(多退),
+	// 负数补扣低估的差额(少补)。
+	type step struct {
+		op             string // reserve | settle | refund
+		amount         int64
+		wantBalance    int64
+		wantLedgerRows int
+	}
+	steps := []step{
+		// 预扣 0.4,实际 0.5:少补,再扣 0.1。
+		{"reserve", apikey.USDToMicros(0.4), apikey.USDToMicros(0.6), 2},
+		{"settle", -apikey.USDToMicros(0.1), apikey.USDToMicros(0.5), 3},
+		// 预扣 0.3,实际 0.1:多退,退回 0.2。
+		{"reserve", apikey.USDToMicros(0.3), apikey.USDToMicros(0.2), 4},
+		{"settle", apikey.USDToMicros(0.2), apikey.USDToMicros(0.4), 5},
+		// 预扣 0.4 后上游失败:全额退款。
+		{"reserve", apikey.USDToMicros(0.4), 0, 6},
+		{"refund", apikey.USDToMicros(0.4), apikey.USDToMicros(0.4), 7},
+	}
+	for i, s := range steps {
+		var balance int64
+		var err error
+		switch s.op {
+		case "reserve":
+			balance, err = store.Reserve(ctx, created.ID, s.amount, apikey.ReasonEstimate)
+		case "settle":
+			balance, err = store.Adjust(ctx, created.ID, s.amount, apikey.ReasonSettle)
+		case "refund":
+			balance, err = store.Adjust(ctx, created.ID, s.amount, apikey.ReasonRefund)
+		}
+		if err != nil {
+			t.Fatalf("step %d %+v: %v", i, s, err)
+		}
+		if balance != s.wantBalance {
+			t.Errorf("step %d %s: balance = %d, want %d", i, s.op, balance, s.wantBalance)
+		}
+	}
+
+	entries, err := store.QuotaLog(ctx, created.ID, 10)
+	if err != nil {
+		t.Fatalf("QuotaLog: %v", err)
+	}
+	// newest first,每条带变动量与变动后余额。
+	want := []struct {
+		delta   int64
+		balance int64
+		reason  string
+	}{
+		{apikey.USDToMicros(0.4), apikey.USDToMicros(0.4), apikey.ReasonRefund},
+		{-apikey.USDToMicros(0.4), 0, apikey.ReasonEstimate},
+		{apikey.USDToMicros(0.2), apikey.USDToMicros(0.4), apikey.ReasonSettle},
+		{-apikey.USDToMicros(0.3), apikey.USDToMicros(0.2), apikey.ReasonEstimate},
+		{-apikey.USDToMicros(0.1), apikey.USDToMicros(0.5), apikey.ReasonSettle},
+		{-apikey.USDToMicros(0.4), apikey.USDToMicros(0.6), apikey.ReasonEstimate},
+		{apikey.USDToMicros(1), apikey.USDToMicros(1), apikey.ReasonInitial},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("ledger = %d entries, want %d", len(entries), len(want))
+	}
+	for i, w := range want {
+		if entries[i].DeltaMicros != w.delta || entries[i].BalanceMicros != w.balance || entries[i].Reason != w.reason {
+			t.Errorf("entry %d = {%d, %d, %s}, want {%d, %d, %s}",
+				i, entries[i].DeltaMicros, entries[i].BalanceMicros, entries[i].Reason,
+				w.delta, w.balance, w.reason)
+		}
+	}
+
+	// 零差额结算不改余额、不落流水。
+	entriesBefore, _ := store.QuotaLog(ctx, created.ID, 100)
+	balance, err := store.Adjust(ctx, created.ID, 0, apikey.ReasonSettle)
+	if err != nil || balance != apikey.USDToMicros(0.4) {
+		t.Fatalf("Adjust zero = %d (err %v), want unchanged", balance, err)
+	}
+	entriesAfter, _ := store.QuotaLog(ctx, created.ID, 100)
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Errorf("zero-delta settle wrote a ledger row")
+	}
+}
+
+func TestMySQLKeyReserveRejectsInsufficientAndDead(t *testing.T) {
+	store, _ := openKeyTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	poor, err := store.Create(ctx, apikey.Key{
+		Name: "poor", Prefix: "sk-poor00000", KeyHash: apikey.Hash("sk-poor-full"),
+		QuotaMicros: 100,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	revoked, err := store.Create(ctx, apikey.Key{
+		Name: "revoked", Prefix: "sk-rsvoked0", KeyHash: apikey.Hash("sk-reserve-revoked"),
+		QuotaMicros: apikey.USDToMicros(5),
+	})
+	if err != nil {
+		t.Fatalf("Create revoked: %v", err)
+	}
+	if _, err := store.Revoke(ctx, revoked.ID, now); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	past := now.Add(-time.Hour)
+	expired, err := store.Create(ctx, apikey.Key{
+		Name: "expired", Prefix: "sk-rsxpired", KeyHash: apikey.Hash("sk-reserve-expired"),
+		QuotaMicros: apikey.USDToMicros(5),
+		ExpiresAt:   &past,
+	})
+	if err != nil {
+		t.Fatalf("Create expired: %v", err)
+	}
+
+	if _, err := store.Reserve(ctx, poor.ID, 101, apikey.ReasonEstimate); !errors.Is(err, apikey.ErrInsufficientQuota) {
+		t.Errorf("over-balance Reserve err = %v, want ErrInsufficientQuota", err)
+	}
+	// 恰好等于余额可以扣到 0。
+	if balance, err := store.Reserve(ctx, poor.ID, 100, apikey.ReasonEstimate); err != nil || balance != 0 {
+		t.Errorf("exact Reserve = %d (err %v), want success draining to 0", balance, err)
+	}
+	if _, err := store.Reserve(ctx, poor.ID, 1, apikey.ReasonEstimate); !errors.Is(err, apikey.ErrInsufficientQuota) {
+		t.Errorf("empty-balance Reserve err = %v, want ErrInsufficientQuota", err)
+	}
+	if _, err := store.Reserve(ctx, revoked.ID, 1, apikey.ReasonEstimate); !errors.Is(err, apikey.ErrKeyNotActive) {
+		t.Errorf("revoked Reserve err = %v, want ErrKeyNotActive", err)
+	}
+	if _, err := store.Reserve(ctx, expired.ID, 1, apikey.ReasonEstimate); !errors.Is(err, apikey.ErrKeyNotActive) {
+		t.Errorf("expired Reserve err = %v, want ErrKeyNotActive", err)
+	}
+	if _, err := store.Reserve(ctx, 999999, 1, apikey.ReasonEstimate); !errors.Is(err, apikey.ErrKeyNotFound) {
+		t.Errorf("missing Reserve err = %v, want ErrKeyNotFound", err)
+	}
+
+	// 余额被恰好扣到 0 之后,任何再预扣都被拒。
+	k, err := store.ByHash(ctx, apikey.Hash("sk-poor-full"))
+	if err != nil {
+		t.Fatalf("ByHash: %v", err)
+	}
+	if k.QuotaMicros != 0 {
+		t.Errorf("balance = %d, want 0", k.QuotaMicros)
+	}
+}
+
+func TestMySQLKeyConcurrentReserveNeverOverDeducts(t *testing.T) {
+	store, _ := openKeyTestDB(t)
+	ctx := context.Background()
+	// 余额只够 5 笔预扣;8 笔并发必须恰好 5 成 3 败,余额始终 ≥ 0。
+	const perReserve = int64(100_000)
+	created, err := store.Create(ctx, apikey.Key{
+		Name: "race", Prefix: "sk-race0000", KeyHash: apikey.Hash("sk-race-full"),
+		QuotaMicros: perReserve * 5,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const goroutines = 8
+	errs := make([]error, goroutines)
+	var wg sync.WaitGroup
+	for i := range goroutines {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = store.Reserve(ctx, created.ID, perReserve, apikey.ReasonEstimate)
+		}(i)
+	}
+	wg.Wait()
+
+	var succeeded int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, apikey.ErrInsufficientQuota):
+		default:
+			t.Fatalf("concurrent Reserve: %v", err)
+		}
+	}
+	if succeeded != 5 {
+		t.Errorf("succeeded = %d reserves, want exactly 5", succeeded)
+	}
+	k, err := store.ByHash(ctx, apikey.Hash("sk-race-full"))
+	if err != nil {
+		t.Fatalf("ByHash: %v", err)
+	}
+	if k.QuotaMicros != 0 {
+		t.Errorf("balance = %d, want 0 (no over-deduction, no leftover)", k.QuotaMicros)
+	}
+	entries, err := store.QuotaLog(ctx, created.ID, 100)
+	if err != nil {
+		t.Fatalf("QuotaLog: %v", err)
+	}
+	if len(entries) != 6 { // initial + 5 successful reserves
+		t.Errorf("ledger = %d entries, want 6", len(entries))
+	}
+	for _, e := range entries {
+		if e.BalanceMicros < 0 {
+			t.Errorf("ledger balance went negative: %+v", e)
+		}
 	}
 }

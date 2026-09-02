@@ -23,6 +23,11 @@ var ErrKeyNotFound = errors.New("apikey: not found")
 // revoke can never race a top-up into the balance.
 var ErrKeyNotActive = errors.New("apikey: key not active")
 
+// ErrInsufficientQuota reports a Reserve whose amount exceeds the current
+// balance. The guard is part of the same UPDATE that deducts, so concurrent
+// requests can never both pass the check and over-deduct.
+var ErrInsufficientQuota = errors.New("apikey: insufficient quota")
+
 const (
 	// keyPrefix starts every issued key, matching OpenAI convention.
 	keyPrefix = "sk-"
@@ -44,10 +49,13 @@ const MicrosPerUSD = 1_000_000
 const MaxAmountUSD = 1_000_000
 
 // Ledger reasons recorded in the quota log. Ticket 04's billing appends
-// pre-deduction/refund entries with its own reasons.
+// pre-deduction/settlement/refund entries with the relay reasons.
 const (
 	ReasonInitial     = "initial"
 	ReasonManualTopUp = "manual_topup"
+	ReasonEstimate    = "estimate" // 按估算预扣
+	ReasonSettle      = "settle"   // 完成后多退少补(带符号差额)
+	ReasonRefund      = "refund"   // 失败退回预扣
 )
 
 // Key statuses as reported to the admin.
@@ -152,6 +160,21 @@ type Store interface {
 	// same UPDATE, so no revoke can slip in between. Returns the updated row,
 	// ErrKeyNotFound, or ErrKeyNotActive for a revoked/expired key.
 	TopUp(ctx context.Context, id int64, deltaMicros int64, reason string) (Key, error)
+	// Reserve conditionally deducts amountMicros (> 0) from a still-active
+	// key — the billing pre-deduction. The balance check is part of the same
+	// UPDATE (`WHERE quota_micros >= ?`), so concurrent requests can never
+	// over-deduct: when the balance runs out, further reserves fail wholesale
+	// with ErrInsufficientQuota. Appends a ledger row with the new balance.
+	// Returns ErrKeyNotFound, ErrKeyNotActive, or ErrInsufficientQuota.
+	Reserve(ctx context.Context, id int64, amountMicros int64, reason string) (balanceMicros int64, err error)
+	// Adjust applies a signed delta to the balance and appends a ledger row:
+	// delta < 0 refunds part of a reserve (多退), delta > 0 charges a
+	// settlement shortfall (少补). Deliberately unconditional on both the
+	// balance and the key's active state — money already taken must come
+	// back, and a settled true-up may push the balance negative, which is
+	// the honest record; the next Reserve is what gets rejected. A zero
+	// delta changes nothing and writes no row. Returns ErrKeyNotFound.
+	Adjust(ctx context.Context, id int64, deltaMicros int64, reason string) (balanceMicros int64, err error)
 	// QuotaLog returns the key's ledger, newest first, at most limit rows.
 	QuotaLog(ctx context.Context, keyID int64, limit int) ([]QuotaEntry, error)
 }
