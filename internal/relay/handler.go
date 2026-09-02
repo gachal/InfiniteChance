@@ -72,14 +72,35 @@ type prepared struct {
 	snapshot      []byte
 }
 
-// failure gathers the failure-path bundle with everything known before the
-// upstream was contacted.
-func (p *prepared) failure() upstreamFail {
-	return upstreamFail{
-		key: p.key, ch: p.ch, publicModel: p.req.Model,
-		upstreamModel: p.upstreamModel, unit: string(p.price.Unit),
-		reserved: p.reserved, snapshot: p.snapshot,
+// failure seeds the failure bundle with the pre-deduction the failure path
+// must refund; the request identity stays on prepared.
+func (p *prepared) failure() upstreamFailure {
+	return upstreamFailure{reserved: p.reserved}
+}
+
+// logEntry seeds a usage-log row with the request identity; callers fill in
+// the outcome (duration, status, tokens, charge, error summary).
+func (p *prepared) logEntry() usage.Log {
+	return usage.Log{
+		KeyID: p.key.ID, ChannelID: p.ch.ID, ChannelName: p.ch.Name,
+		PublicModel: p.req.Model, UpstreamModel: p.upstreamModel,
+		Unit: string(p.price.Unit), PriceSnapshot: p.snapshot,
 	}
+}
+
+// settleSuccess fills the success outcome into a seeded entry, settles the
+// ledger to the actual charge (多退少补:delta = 预扣 − 实际,正数退回、
+// 负数补扣;零差额不动账) and records the row.
+func (h *Handlers) settleSuccess(billing context.Context, p *prepared, used Usage, durationMS int64) {
+	actual := p.price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
+	entry := p.logEntry()
+	entry.PromptTokens = used.PromptTokens
+	entry.CompletionTokens = used.CompletionTokens
+	entry.DurationMS = durationMS
+	entry.Status = usage.StatusSuccess
+	entry.ChargeMicros = actual
+	h.adjustBalance(billing, p.key.ID, p.reserved-actual, apikey.ReasonSettle)
+	h.recordUsage(billing, entry)
 }
 
 // ChatCompletions relays one chat request — buffered or streamed — through
@@ -109,7 +130,7 @@ func (h *Handlers) ChatCompletions(c *gin.Context) {
 
 	if err != nil || !upstream.OK {
 		f.upstream, f.transportErr = upstream, err
-		h.failUpstream(c, billing, f)
+		h.failUpstream(c, billing, p, f)
 		return
 	}
 
@@ -117,20 +138,12 @@ func (h *Handlers) ChatCompletions(c *gin.Context) {
 	if err != nil {
 		// 2xx 但响应体不可用:与上游失败同路 —— 退款、留痕、明确报错。
 		f.normalizeErr = err
-		h.failUpstream(c, billing, f)
+		h.failUpstream(c, billing, p, f)
 		return
 	}
 
-	// 结算多退少补:delta = 预扣 − 实际,正数退回、负数补扣;零差额不动账。
-	actual := p.price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
-	h.adjustBalance(billing, key.ID, p.reserved-actual, apikey.ReasonSettle)
-	entry := f.logEntry()
-	entry.PromptTokens = used.PromptTokens
-	entry.CompletionTokens = used.CompletionTokens
-	entry.DurationMS = f.durationMS
-	entry.Status = usage.StatusSuccess
-	entry.ChargeMicros = actual
-	h.recordUsage(billing, entry)
+	// 结算多退少补,按实际用量落成功留痕。
+	h.settleSuccess(billing, p, used, f.durationMS)
 
 	c.Data(http.StatusOK, "application/json; charset=utf-8", clientBody)
 }
@@ -217,7 +230,6 @@ func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
 // failed write means the client is gone) — the books close out either way
 // on a context detached from the request.
 func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
-	key := p.key
 	ctx := c.Request.Context()
 	billing := context.WithoutCancel(ctx)
 
@@ -234,7 +246,7 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 			f.upstream = &UpstreamResponse{Status: stream.Status, Body: stream.Body}
 			stream.Close()
 		}
-		h.failUpstream(c, billing, f)
+		h.failUpstream(c, billing, p, f)
 		return
 	}
 	defer stream.Close()
@@ -274,31 +286,30 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 	}
 	f.durationMS = time.Since(started).Milliseconds()
 
-	entry := f.logEntry()
-	entry.DurationMS = f.durationMS
+	// finishEntry records an unbilled outcome: refund the whole reserve and
+	// trail with the given status and error summary.
+	finishEntry := func(status, summary string) {
+		entry := p.logEntry()
+		entry.DurationMS = f.durationMS
+		entry.Status = status
+		entry.UpstreamError = summary
+		h.adjustBalance(billing, p.key.ID, p.reserved, apikey.ReasonRefund)
+		h.recordUsage(billing, entry)
+	}
 	switch {
 	case reported != nil:
 		// 实际用量已报:照常按实结算。用量块在流尾,拿到它即视同服务已
 		// 交付 —— 之后才发生的断开或上游故障不改账,报了多少结多少。
-		actual := p.price.Token.ChargeMicros(reported.PromptTokens, reported.CompletionTokens)
-		entry.PromptTokens = reported.PromptTokens
-		entry.CompletionTokens = reported.CompletionTokens
-		entry.ChargeMicros = actual
-		entry.Status = usage.StatusSuccess
-		h.adjustBalance(billing, key.ID, p.reserved-actual, apikey.ReasonSettle)
+		h.settleSuccess(billing, p, *reported, f.durationMS)
 	case streamErr == nil && !clientGone:
 		// 流完整走完却没有可计用量(上游不守 include_usage 约定):
 		// 少记不虚记 —— 全额退款,成功流零扣费留痕。
-		entry.Status = usage.StatusSuccess
-		h.adjustBalance(billing, key.ID, p.reserved, apikey.ReasonRefund)
+		finishEntry(usage.StatusSuccess, "")
 	default:
 		// 流被中断:客户端断开(写失败或请求取消)或上游故障。
 		// 用量未知 → 全额退款 + 失败留痕,摘要列区分原因。
-		entry.Status = usage.StatusUpstreamError
-		entry.UpstreamError = streamAbortSummary(clientGone, streamErr)
-		h.adjustBalance(billing, key.ID, p.reserved, apikey.ReasonRefund)
+		finishEntry(usage.StatusUpstreamError, streamAbortSummary(clientGone, streamErr))
 	}
-	h.recordUsage(billing, entry)
 }
 
 // streamAbortSummary explains why a stream ended without a reportable
@@ -326,32 +337,15 @@ func (h *Handlers) adjustBalance(billing context.Context, keyID, delta int64, re
 	}
 }
 
-// upstreamFail collects everything the failure path needs, whichever of the
-// three failure shapes produced it: transport error, non-2xx status, or an
-// unusable 2xx body.
-type upstreamFail struct {
-	key           apikey.Key
-	ch            channel.Channel
-	publicModel   string
-	upstreamModel string
-	unit          string
-	snapshot      []byte
-	reserved      int64
-	durationMS    int64
-	upstream      *UpstreamResponse
-	transportErr  error
-	normalizeErr  error
-}
-
-// logEntry seeds a usage-log row with the request identity both the success
-// and the failure trail carry; callers fill in the outcome (duration,
-// status, tokens, charge, error summary).
-func (f *upstreamFail) logEntry() usage.Log {
-	return usage.Log{
-		KeyID: f.key.ID, ChannelID: f.ch.ID, ChannelName: f.ch.Name,
-		PublicModel: f.publicModel, UpstreamModel: f.upstreamModel,
-		Unit: f.unit, PriceSnapshot: f.snapshot,
-	}
+// upstreamFailure collects the failure details for whichever of the three
+// failure shapes aborted the upstream call: transport error, non-2xx
+// status, or an unusable 2xx body. The request identity stays on prepared.
+type upstreamFailure struct {
+	reserved     int64
+	durationMS   int64
+	upstream     *UpstreamResponse
+	transportErr error
+	normalizeErr error
 }
 
 // failUpstream refunds the whole reserve, leaves the failure trail in the
@@ -359,9 +353,9 @@ func (f *upstreamFail) logEntry() usage.Log {
 // upstream answer passes its status through with the extracted message,
 // everything else becomes 502. billing is a context detached from the
 // request — the caller may already be gone by the time the upstream failed.
-func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, f upstreamFail) {
+func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, p *prepared, f upstreamFailure) {
 	// 钱已预扣必须退回;退不回(行消失)是严重账务事故,记日志报警。
-	h.adjustBalance(billing, f.key.ID, f.reserved, apikey.ReasonRefund)
+	h.adjustBalance(billing, p.key.ID, f.reserved, apikey.ReasonRefund)
 
 	var summary string
 	var status int
@@ -377,7 +371,7 @@ func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, f upstr
 		status = f.upstream.Status
 	}
 
-	entry := f.logEntry()
+	entry := p.logEntry()
 	entry.DurationMS = f.durationMS
 	entry.Status = usage.StatusUpstreamError
 	entry.ChargeMicros = 0

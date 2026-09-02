@@ -107,7 +107,10 @@ func (s *UpstreamStream) Next() (frame []byte, u *Usage, err error) {
 	}
 
 	var data [][]byte // 当前事件已积累的 data 行
-	emit := func() ([]byte, bool) {
+	// takeEvent joins the accumulated data lines into one client-facing
+	// event. ok=false: 没有未发事件。ok=true: 事件已处理(frame 为 nil
+	// 表示计费专用块被吞,用量已入 pendingUsage)。
+	takeEvent := func() (frame []byte, ok bool) {
 		if len(data) == 0 {
 			return nil, false
 		}
@@ -121,13 +124,18 @@ func (s *UpstreamStream) Next() (frame []byte, u *Usage, err error) {
 		}
 		return s.clientFrame(payload), true
 	}
+	// yield hands an event to the caller together with any usage collected
+	// since the last call.
+	yield := func(frame []byte) ([]byte, *Usage, error) {
+		return frame, s.takePendingUsage(), nil
+	}
 
 	for s.scanner.Scan() {
 		line := s.scanner.Bytes()
 		switch {
 		case len(line) == 0: // 空行 = 事件边界
-			if frame, ok := emit(); ok {
-				return frame, s.takePendingUsage(), nil
+			if frame, ok := takeEvent(); ok {
+				return yield(frame)
 			}
 		case bytes.HasPrefix(line, dataPrefix):
 			payload := bytes.TrimPrefix(bytes.TrimPrefix(line, dataPrefix), []byte(" "))
@@ -138,22 +146,22 @@ func (s *UpstreamStream) Next() (frame []byte, u *Usage, err error) {
 		default:
 			// 注释行等非 data 行自成事件,原样转发(OpenAI 用注释保活);
 			// 先冲刷已积累的 data 事件,保住上游的到达顺序。
-			if frame, ok := emit(); ok {
-				return frame, s.takePendingUsage(), nil
+			if frame, ok := takeEvent(); ok {
+				return yield(frame)
 			}
-			return append(append([]byte{}, line...), '\n', '\n'), s.takePendingUsage(), nil
+			return yield(append(append([]byte{}, line...), '\n', '\n'))
 		}
 		if s.done && len(data) > 0 {
 			// [DONE] 之后不再读:发完这一帧就收摊。
-			if frame, ok := emit(); ok {
-				return frame, s.takePendingUsage(), nil
+			if frame, ok := takeEvent(); ok {
+				return yield(frame)
 			}
 		}
 	}
 
 	// 流结束:未终止的尾事件也要发出(上游忘了结尾空行也算它的答案)。
-	if frame, ok := emit(); ok {
-		return frame, s.takePendingUsage(), nil
+	if frame, ok := takeEvent(); ok {
+		return yield(frame)
 	}
 	s.done = true
 	scanErr := s.scanner.Err()
@@ -206,7 +214,8 @@ func (s *UpstreamStream) clientFrame(payload []byte) []byte {
 // inspectChunk extracts what billing needs from one chunk payload: the
 // vendor-reported usage, and whether the chunk is a usage-only chunk
 // (usage set, no choices) — the shape of the trailing chunk OpenAI sends
-// when include_usage is on.
+// when include_usage is on. Choices is decoded as an array so whitespace
+// variants ([ ]) and null all count as "no choices".
 func inspectChunk(payload []byte) (u *Usage, usageOnly bool) {
 	var chunk struct {
 		Choices *json.RawMessage `json:"choices"`
@@ -218,11 +227,15 @@ func inspectChunk(payload []byte) (u *Usage, usageOnly bool) {
 	if chunk.Usage == nil {
 		return nil, false
 	}
+	var choices []json.RawMessage
+	if chunk.Choices != nil {
+		_ = json.Unmarshal(*chunk.Choices, &choices)
+	}
 	u = &Usage{
 		PromptTokens:     max(chunk.Usage.PromptTokens, 0),
 		CompletionTokens: max(chunk.Usage.CompletionTokens, 0),
 	}
-	usageOnly = chunk.Choices == nil || bytes.Equal(*chunk.Choices, []byte("[]"))
+	usageOnly = len(choices) == 0
 	return u, usageOnly
 }
 

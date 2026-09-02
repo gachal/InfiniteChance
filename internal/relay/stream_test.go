@@ -319,6 +319,28 @@ func TestAdaptorStreamMultiLineDataEventJoined(t *testing.T) {
 	}
 }
 
+func TestAdaptorStreamSwallowsUsageChunkWithSpacedChoices(t *testing.T) {
+	// 供应商的用量专用块带空白变体 choices([ ]):仍须按计费专用块吞掉,
+	// 不外发给没点 include_usage 的客户端。
+	body := "data: {\"id\":\"c1\",\"model\":\"upstream-m\",\"choices\":[{\"delta\":{\"content\":\"答案\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"model\":\"upstream-m\",\"choices\":[ ] ,\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4}}\n\n" +
+		"data: [DONE]\n\n"
+	upstream := httptest.NewServer(sseHandler(body))
+	t.Cleanup(upstream.Close)
+
+	frames, got := collectStream(t, openStream(t, upstream.URL, "public-m",
+		`{"model":"upstream-m","stream":true}`))
+	if len(frames) != 2 {
+		t.Fatalf("frames = %q, want content chunk + [DONE] with the usage chunk swallowed", frames)
+	}
+	if frames[1] != "data: [DONE]\n\n" {
+		t.Errorf("last frame = %q, want [DONE]", frames[1])
+	}
+	if got == nil || got.PromptTokens != 3 || got.CompletionTokens != 4 {
+		t.Errorf("usage = %+v, want 3/4 extracted from the swallowed chunk", got)
+	}
+}
+
 // ---- handler 层 ----
 
 // streamEnv is a relay env published on a real HTTP server so a test client
@@ -349,13 +371,12 @@ func (e *streamEnv) postStream(t *testing.T, fullKey, body string) (*http.Respon
 	return e.server.Client().Do(req)
 }
 
-// readFrames reads SSE frames (data/comment lines) until the response body
-// ends, returning them with their trailing newline, one string per frame.
-func readFrames(t *testing.T, resp *http.Response) []string {
-	t.Helper()
+// frameScanner returns a buffered line scanner over the response body,
+// sized for SSE frames.
+func frameScanner(resp *http.Response) *bufio.Scanner {
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	return readScannerFrames(t, sc, "")
+	return sc
 }
 
 // streamBody is the streaming variant of testBody.
@@ -390,6 +411,24 @@ func slowChatUpstream(t *testing.T) (upstream *httptest.Server, firstFlushed, be
 // wantStreamCharge is the expected actual charge for usage 11 prompt / 7
 // completion under the standard test price: ceil((11×1.25 + 7×10)×1.5).
 const wantStreamCharge = int64(126)
+
+// waitForUsageRow polls until exactly one usage row exists — the billing
+// close-out runs off the request context, so after a disconnect or upstream
+// abort it lands only after the response is done — failing the test if it
+// never shows up.
+func (e *relayEnv) waitForUsageRow(t *testing.T) []usage.Log {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var rows []usage.Log
+	for time.Now().Before(deadline) {
+		if rows = e.usageRows(t); len(rows) == 1 {
+			return rows
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("usage rows = %d, want exactly one within 3s", len(rows))
+	return nil
+}
 
 // readScannerFrames scans an in-progress response body into frames, seeding
 // the first frame with the line the caller already consumed ("" = none).
@@ -441,8 +480,7 @@ func TestRelayStreamEndToEndSettlesActualUsage(t *testing.T) {
 	}
 
 	// 第一块必须在上游仍在生成时到达 —— 攒齐再发就不是流式了。
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	sc := frameScanner(resp)
 	if !sc.Scan() {
 		t.Fatalf("no first line: %v", sc.Err())
 	}
@@ -540,7 +578,7 @@ func TestRelayStreamClientDisconnectCleansUpstreamAndRefunds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	sc := bufio.NewScanner(resp.Body)
+	sc := frameScanner(resp)
 	if !sc.Scan() {
 		t.Fatalf("no first chunk: %v", sc.Err())
 	}
@@ -555,17 +593,7 @@ func TestRelayStreamClientDisconnectCleansUpstreamAndRefunds(t *testing.T) {
 	}
 
 	// 账务在脱离请求的 context 上收尾:用量日志最终出现,预扣全额退回。
-	deadline := time.Now().Add(3 * time.Second)
-	var rows []usage.Log
-	for time.Now().Before(deadline) {
-		if rows = env.usageRows(t); len(rows) == 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("usage rows = %d, want the failure trail after the disconnect", len(rows))
-	}
+	rows := env.waitForUsageRow(t)
 	row := rows[0]
 	if row.Status != usage.StatusUpstreamError || row.ChargeMicros != 0 || !strings.Contains(row.UpstreamError, "client disconnected") {
 		t.Errorf("failure trail = %+v, want upstream_error at zero charge with a client-disconnect summary", row)
@@ -629,7 +657,7 @@ func TestRelayStreamWithoutUsageReportSettlesAtZero(t *testing.T) {
 		t.Fatalf("POST: %v", err)
 	}
 	defer resp.Body.Close()
-	frames := readFrames(t, resp)
+	frames := readScannerFrames(t, frameScanner(resp), "")
 	if len(frames) != 2 || frames[len(frames)-1] != "data: [DONE]\n" {
 		t.Fatalf("frames = %q, want the content chunk and [DONE]", frames)
 	}
@@ -666,7 +694,7 @@ func TestRelayStreamDisconnectAfterUsageStillSettles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	sc := bufio.NewScanner(resp.Body)
+	sc := frameScanner(resp)
 	if !sc.Scan() {
 		t.Fatalf("no first chunk: %v", sc.Err())
 	}
@@ -680,17 +708,7 @@ func TestRelayStreamDisconnectAfterUsageStillSettles(t *testing.T) {
 		t.Fatal("upstream connection not cleaned up after disconnect")
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	var rows []usage.Log
-	for time.Now().Before(deadline) {
-		if rows = env.usageRows(t); len(rows) == 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("usage rows = %d, want the settled success trail", len(rows))
-	}
+	rows := env.waitForUsageRow(t)
 	row := rows[0]
 	if row.Status != usage.StatusSuccess || row.PromptTokens != 11 || row.CompletionTokens != 7 ||
 		row.ChargeMicros != wantStreamCharge {
@@ -737,7 +755,7 @@ func TestRelayStreamUpstreamResetMidStreamRefundsAndLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	sc := bufio.NewScanner(resp.Body)
+	sc := frameScanner(resp)
 	if !sc.Scan() {
 		t.Fatalf("no first chunk: %v", sc.Err())
 	}
@@ -745,17 +763,7 @@ func TestRelayStreamUpstreamResetMidStreamRefundsAndLogs(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	deadline := time.Now().Add(3 * time.Second)
-	var rows []usage.Log
-	for time.Now().Before(deadline) {
-		if rows = env.usageRows(t); len(rows) == 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("usage rows = %d, want the failure trail", len(rows))
-	}
+	rows := env.waitForUsageRow(t)
 	row := rows[0]
 	if row.Status != usage.StatusUpstreamError || row.ChargeMicros != 0 ||
 		!strings.Contains(row.UpstreamError, "upstream stream failed") {
