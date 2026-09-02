@@ -34,6 +34,81 @@ export interface AdminIdentity {
   expires_at: string
 }
 
+/** A vendor channel as answered by the admin gateway APIs. The vendor
+ * secret never crosses the wire — only has_key and its last-4 hint. */
+export interface Channel {
+  id: number
+  name: string
+  type: string
+  base_url: string
+  has_key: boolean
+  key_hint?: string
+  model_map: Record<string, string>
+  priority: number
+  weight: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** Channel config sent to create/update. api_key empty on update keeps the
+ * stored secret; on create it is required. */
+export interface ChannelInput {
+  name: string
+  type: string
+  base_url: string
+  api_key?: string
+  model_map: Record<string, string>
+  priority: number
+  weight: number
+  enabled: boolean
+}
+
+/** One-click connectivity probe verdict. */
+export interface ChannelTestResult {
+  ok: boolean
+  latency_ms: number
+  detail?: string
+  error?: string
+}
+
+export type ApiKeyStatus = 'active' | 'revoked' | 'expired'
+
+/** An issued gateway key. The full sk- value exists only on the create
+ * response (CreatedApiKey); every other view shows the prefix. */
+export interface ApiKeyRecord {
+  id: number
+  name: string
+  prefix: string
+  quota_usd: number
+  status: ApiKeyStatus
+  expires_at: string | null
+  revoked_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatedApiKey extends ApiKeyRecord {
+  /** 完整 key 值,仅创建响应返回这一次。 */
+  key: string
+}
+
+export interface ApiKeyInput {
+  name: string
+  /** RFC3339;缺省 = 永不过期。 */
+  expires_at?: string
+  initial_quota_usd?: number
+}
+
+/** One quota ledger row: what changed, the balance right after, and why. */
+export interface QuotaEntry {
+  id: number
+  delta_usd: number
+  balance_usd: number
+  reason: string
+  created_at: string
+}
+
 interface ErrorPayload {
   error?: { code?: string; message?: string }
 }
@@ -115,6 +190,60 @@ export class ApiClient {
     return this.request<AdminIdentity>('/auth/me')
   }
 
+  // ---- 网关管理:渠道(挂 /admin/channels,需 JWT 会话)----
+
+  async listChannels(): Promise<Channel[]> {
+    const body = await this.request<{ channels: Channel[] }>('/admin/channels')
+    return body.channels
+  }
+
+  createChannel(input: ChannelInput): Promise<Channel> {
+    return this.request<Channel>('/admin/channels', { method: 'POST', body: input })
+  }
+
+  /** 更新渠道;input.api_key 留空 = 保留已存密钥。 */
+  updateChannel(id: number, input: ChannelInput): Promise<Channel> {
+    return this.request<Channel>(`/admin/channels/${id}`, { method: 'PUT', body: input })
+  }
+
+  async deleteChannel(id: number): Promise<void> {
+    await this.request<void>(`/admin/channels/${id}`, { method: 'DELETE' })
+  }
+
+  /** 一键连通测试;探测结论(含失败)总是以 200 返回。 */
+  testChannel(id: number): Promise<ChannelTestResult> {
+    return this.request<ChannelTestResult>(`/admin/channels/${id}/test`, { method: 'POST' })
+  }
+
+  // ---- 网关管理:API key(挂 /admin/keys,需 JWT 会话)----
+
+  async listKeys(): Promise<ApiKeyRecord[]> {
+    const body = await this.request<{ keys: ApiKeyRecord[] }>('/admin/keys')
+    return body.keys
+  }
+
+  /** 创建 key;完整值仅在本响应出现一次。 */
+  createKey(input: ApiKeyInput): Promise<CreatedApiKey> {
+    return this.request<CreatedApiKey>('/admin/keys', { method: 'POST', body: input })
+  }
+
+  revokeKey(id: number): Promise<ApiKeyRecord> {
+    return this.request<ApiKeyRecord>(`/admin/keys/${id}/revoke`, { method: 'POST' })
+  }
+
+  /** 手工充值;返回更新后的 key(新余额即时可见)。 */
+  topUpKey(id: number, amountUsd: number): Promise<ApiKeyRecord> {
+    return this.request<ApiKeyRecord>(`/admin/keys/${id}/topup`, {
+      method: 'POST',
+      body: { amount_usd: amountUsd },
+    })
+  }
+
+  async keyQuotaLog(id: number): Promise<QuotaEntry[]> {
+    const body = await this.request<{ entries: QuotaEntry[] }>(`/admin/keys/${id}/quota-log`)
+    return body.entries
+  }
+
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {
     const headers = new Headers()
     if (body !== undefined) {
@@ -130,6 +259,10 @@ export class ApiClient {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     })
+    if (res.status === 204) {
+      // 删除等操作无响应体;json() 会对空体抛错,直接返回。
+      return undefined as T
+    }
     // 与 Response.ok 等价;自建 fetch 替身只需提供 status 与 json。
     const successful = res.status >= 200 && res.status < 300
     if (successful || allow.includes(res.status)) {

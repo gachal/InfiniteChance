@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiClient, ApiError, UnauthorizedError, type HealthReport, type SessionInfo } from './index'
+import {
+  ApiClient,
+  ApiError,
+  UnauthorizedError,
+  type Channel,
+  type ApiKeyRecord,
+  type CreatedApiKey,
+  type HealthReport,
+  type QuotaEntry,
+  type SessionInfo,
+} from './index'
 
 const healthy: HealthReport = {
   service: 'gateway',
@@ -23,6 +33,10 @@ function stubFetch(status: number, body: unknown) {
 
 function clientWith(fetchImpl: ReturnType<typeof stubFetch>): ApiClient {
   return new ApiClient({ fetch: fetchImpl as unknown as typeof fetch })
+}
+
+function clientWithBase(fetchImpl: ReturnType<typeof stubFetch>): ApiClient {
+  return new ApiClient({ base: '/api', fetch: fetchImpl as unknown as typeof fetch })
 }
 
 describe('ApiClient.health', () => {
@@ -165,5 +179,161 @@ describe('ApiClient auth', () => {
     expect((err as ApiError).status).toBe(502)
     expect((err as ApiError).code).toBe('error')
     expect((err as ApiError).message).toBe('请求失败 (HTTP 502)')
+  })
+
+  it('resolves 204 responses to undefined without parsing a body', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 204, json: () => Promise.resolve(null) })
+    const client = clientWithBase(fetchImpl as never)
+
+    await expect(client.deleteChannel(7)).resolves.toBeUndefined()
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/channels/7')
+    expect((init as RequestInit).method).toBe('DELETE')
+  })
+})
+
+describe('ApiClient channels', () => {
+  const channel: Channel = {
+    id: 1,
+    name: 'openai-main',
+    type: 'openai',
+    base_url: 'https://api.openai.com/v1',
+    has_key: true,
+    key_hint: '…9876',
+    model_map: { 'gpt-4o': 'gpt-4o-2024-11-20' },
+    priority: 10,
+    weight: 1,
+    enabled: true,
+    created_at: '2026-09-02T12:00:00Z',
+    updated_at: '2026-09-02T12:00:00Z',
+  }
+
+  it('listChannels unwraps the channels envelope and attaches the token', async () => {
+    const fetchImpl = stubFetch(200, { channels: [channel] })
+    const client = new ApiClient({
+      base: '/api',
+      fetch: fetchImpl as unknown as typeof fetch,
+      getToken: () => session.token,
+    })
+
+    await expect(client.listChannels()).resolves.toEqual([channel])
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/channels')
+    expect(((init as RequestInit).headers as Headers).get('Authorization')).toBe(
+      `Bearer ${session.token}`,
+    )
+  })
+
+  it('createChannel posts the full config including the vendor secret', async () => {
+    const fetchImpl = stubFetch(201, channel)
+    const client = clientWithBase(fetchImpl)
+
+    const input = {
+      name: 'openai-main',
+      type: 'openai',
+      base_url: 'https://api.openai.com/v1',
+      api_key: 'sk-vendor-secret',
+      model_map: { 'gpt-4o': 'gpt-4o' },
+      priority: 10,
+      weight: 1,
+      enabled: true,
+    }
+    await expect(client.createChannel(input)).resolves.toEqual(channel)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/channels')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('updateChannel PUTs to the id path (blank api_key keeps stored secret)', async () => {
+    const fetchImpl = stubFetch(200, channel)
+    const client = clientWithBase(fetchImpl)
+
+    await client.updateChannel(3, { ...channel, api_key: '', id: undefined } as never)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/channels/3')
+    expect((init as RequestInit).method).toBe('PUT')
+  })
+
+  it('testChannel POSTs and returns the probe verdict (200 even on failure)', async () => {
+    const verdict = { ok: false, latency_ms: 87, error: '上游返回 HTTP 401' }
+    const fetchImpl = stubFetch(200, verdict)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.testChannel(3)).resolves.toEqual(verdict)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/channels/3/test')
+    expect((init as RequestInit).method).toBe('POST')
+  })
+})
+
+describe('ApiClient keys', () => {
+  const key: ApiKeyRecord = {
+    id: 5,
+    name: 'canvas-service',
+    prefix: 'sk-abcd1234',
+    quota_usd: 12.5,
+    status: 'active',
+    expires_at: null,
+    revoked_at: null,
+    created_at: '2026-09-02T12:00:00Z',
+    updated_at: '2026-09-02T12:00:00Z',
+  }
+
+  it('createKey returns the full sk- value exactly once', async () => {
+    const created: CreatedApiKey = { ...key, key: 'sk-full-value-only-once' }
+    const fetchImpl = stubFetch(201, created)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(
+      client.createKey({ name: 'canvas-service', initial_quota_usd: 10 }),
+    ).resolves.toEqual(created)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/keys')
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ name: 'canvas-service', initial_quota_usd: 10 }),
+    )
+  })
+
+  it('listKeys unwraps the keys envelope (prefix only, never the full value)', async () => {
+    const fetchImpl = stubFetch(200, { keys: [key] })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listKeys()).resolves.toEqual([key])
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/admin/keys')
+  })
+
+  it('revokeKey POSTs to the revoke path', async () => {
+    const revoked = { ...key, status: 'revoked' as const }
+    const fetchImpl = stubFetch(200, revoked)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.revokeKey(5)).resolves.toEqual(revoked)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/keys/5/revoke')
+    expect((init as RequestInit).method).toBe('POST')
+  })
+
+  it('topUpKey posts amount_usd and returns the refreshed balance', async () => {
+    const topped = { ...key, quota_usd: 15 }
+    const fetchImpl = stubFetch(200, topped)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.topUpKey(5, 2.5)).resolves.toEqual(topped)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/keys/5/topup')
+    expect((init as RequestInit).body).toBe(JSON.stringify({ amount_usd: 2.5 }))
+  })
+
+  it('keyQuotaLog unwraps the ledger entries, newest first', async () => {
+    const entries: QuotaEntry[] = [
+      { id: 2, delta_usd: 2.5, balance_usd: 12.5, reason: 'manual_topup', created_at: '2026-09-02T13:00:00Z' },
+      { id: 1, delta_usd: 10, balance_usd: 10, reason: 'initial', created_at: '2026-09-02T12:00:00Z' },
+    ]
+    const fetchImpl = stubFetch(200, { entries })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.keyQuotaLog(5)).resolves.toEqual(entries)
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/admin/keys/5/quota-log')
   })
 })

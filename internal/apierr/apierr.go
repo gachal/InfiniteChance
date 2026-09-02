@@ -49,3 +49,8 @@ func Conflict(c *gin.Context, code, message string) {
 func Internal(c *gin.Context, message string) {
 	Write(c, http.StatusInternalServerError, "internal_error", message)
 }
+
+// NotFound answers 404 for an id that has no row.
+func NotFound(c *gin.Context, message string) {
+	Write(c, http.StatusNotFound, "not_found", message)
+}

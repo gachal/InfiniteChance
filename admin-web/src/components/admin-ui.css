@@ -1,0 +1,190 @@
+/* 渠道管理 / API Key 管理两个视图共用的面板、表单与按钮样式。
+   以 <style scoped src> 引入;视图私有样式写在各自的 <style scoped> 块。 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 28px;
+}
+
+.toolbar h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.card {
+  margin-top: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 20px 22px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-head h3 {
+  margin: 0;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.badge.ok,
+.badge.active {
+  background: rgba(52, 199, 123, 0.15);
+  color: #4cd787;
+}
+
+.badge.off,
+.badge.expired {
+  background: rgba(255, 159, 10, 0.15);
+  color: #ffb340;
+}
+
+.badge.revoked {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff8f8f;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: inherit;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: #4c6ef5;
+  color: #fff;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #4263eb;
+}
+
+button.ghost {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+button.danger {
+  background: rgba(255, 107, 107, 0.12);
+  color: #ff8f8f;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.grid .wide,
+.error.wide {
+  grid-column: 1 / -1;
+}
+
+.grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.grid label span {
+  font-size: 13px;
+  color: #8b91a7;
+}
+
+.grid input,
+.grid select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: inherit;
+  font-size: 14px;
+}
+
+.grid input:focus,
+.grid select:focus {
+  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 18px;
+  margin: 16px 0 0;
+}
+
+.fields .wide {
+  grid-column: 1 / -1;
+}
+
+.fields dt {
+  font-size: 12px;
+  color: #8b91a7;
+  margin-bottom: 2px;
+}
+
+.fields dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.error {
+  color: #ff8f8f;
+  font-size: 14px;
+  margin: 12px 0 0;
+}
+
+.muted {
+  color: #8b91a7;
+  font-size: 14px;
+  margin-top: 20px;
+}

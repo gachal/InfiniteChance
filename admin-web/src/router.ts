@@ -5,14 +5,18 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useAuth } from './auth'
+import ChannelsView from './views/ChannelsView.vue'
 import DashboardView from './views/DashboardView.vue'
 import InitView from './views/InitView.vue'
+import KeysView from './views/KeysView.vue'
 import LoginView from './views/LoginView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
+    { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
+    { path: '/keys', name: 'keys', component: KeysView, meta: { requiresAuth: true } },
     { path: '/login', name: 'login', component: LoginView },
     { path: '/init', name: 'init', component: InitView },
     { path: '/:pathMatch(.*)*', redirect: { name: 'dashboard' } },
