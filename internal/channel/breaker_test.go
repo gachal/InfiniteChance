@@ -26,7 +26,7 @@ func TestBreakerOpensAfterConsecutiveFailures(t *testing.T) {
 	if !b.TryAcquire(id, t0) {
 		t.Fatalf("channel closed the circuit early: two failures must not open it")
 	}
-	failing(b, id, 1) // 第 3 指连续失败,达到阈值
+	failing(b, id, 1) // 第 3 次连续失败,达到阈值
 	if b.TryAcquire(id, t0) {
 		t.Fatalf("circuit stayed closed after %d consecutive failures", b.Threshold)
 	}
@@ -45,7 +45,7 @@ func TestBreakerSuccessResetsFailureStreak(t *testing.T) {
 	const id = 7
 
 	failing(b, id, 2)
-	b.RecordSuccess(id, t0)
+	b.RecordSuccess(id)
 	failing(b, id, 2)
 	if !b.TryAcquire(id, t0) {
 		t.Fatalf("success must reset the streak: two fresh failures must not open")
@@ -66,7 +66,7 @@ func TestBreakerHalfOpenProbeClosesOnSuccess(t *testing.T) {
 	if !b.TryAcquire(id, t0.Add(31*time.Second)) {
 		t.Fatalf("cooldown elapsed: the next request must pass as the half-open probe")
 	}
-	b.RecordSuccess(id, t0.Add(31*time.Second))
+	b.RecordSuccess(id)
 	// 探测成功即闭环:后续请求恢复正常放行。
 	if !b.TryAcquire(id, t0.Add(32*time.Second)) {
 		t.Fatalf("circuit must close after a successful probe")
@@ -107,7 +107,7 @@ func TestBreakerHalfOpenAdmitsOneProbe(t *testing.T) {
 	if b.TryAcquire(id, t0.Add(32*time.Second)) {
 		t.Fatalf("a second request must not enter while the probe is in flight")
 	}
-	b.RecordSuccess(id, t0.Add(33*time.Second))
+	b.RecordSuccess(id)
 	if !b.TryAcquire(id, t0.Add(34*time.Second)) {
 		t.Fatalf("circuit closed: requests must flow again")
 	}

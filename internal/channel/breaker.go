@@ -81,7 +81,7 @@ func (b *Breaker) TryAcquire(id int64, now time.Time) bool {
 }
 
 // RecordSuccess closes the circuit and clears the failure streak.
-func (b *Breaker) RecordSuccess(id int64, now time.Time) {
+func (b *Breaker) RecordSuccess(id int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.states[id] = &circuit{state: circuitClosed}
