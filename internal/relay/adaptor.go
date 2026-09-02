@@ -1,9 +1,11 @@
 // Package relay is the gateway's core vertical slice: the OpenAI-compatible
-// relay surface (/v1) that authenticates an API key, maps the public model
-// name to a channel, forwards through a narrow vendor adaptor, and bills the
-// key with the estimate → settle-or-refund flow, writing a usage-log row per
-// relayed request. Buffered and SSE-streamed chat completions share that
-// skeleton; multi-channel failover and circuit breaking are ticket 06.
+// relay surface (/v1) that authenticates an API key, schedules the candidate
+// channels serving the public model (weighted tiered order, failover, and
+// the per-channel circuit breaker from internal/channel — 06 号票), forwards
+// through a narrow vendor adaptor, and bills the key with the
+// estimate → settle-or-refund flow, writing a usage-log row per request that
+// reached the upstream. Buffered and SSE-streamed chat completions share
+// that skeleton.
 package relay
 
 import (

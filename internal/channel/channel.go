@@ -1,7 +1,9 @@
 // Package channel implements vendor channel management: one stored route to
 // an upstream AI vendor — type, base URL, secret, model-name mapping,
-// priority/weight, enabled — plus the admin CRUD surface and the one-click
-// connectivity probe. Channel selection/failover itself is ticket 06.
+// priority/weight, enabled — plus the admin CRUD surface, the one-click
+// connectivity probe, and the per-channel circuit breaker (06 号票). The
+// request-time scheduling itself — weighted tiered ordering, failover —
+// lives in internal/relay.
 package channel
 
 import (
@@ -45,8 +47,8 @@ type Channel struct {
 	BaseURL   string
 	APIKey    string
 	ModelMap  map[string]string // 公开模型名 → 上游模型名
-	Priority  int               // 数值越大越优先(调度细则由 06 号票定案)
-	Weight    int               // 同优先级内的加权
+	Priority  int               // 数值越大越优先:调度先试高优先级层(06 号票定案)
+	Weight    int               // 同优先级层内的加权分流份额(0 按 1 计)
 	Enabled   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time

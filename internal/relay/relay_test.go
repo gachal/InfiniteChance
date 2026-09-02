@@ -158,8 +158,9 @@ func okChatHandler(content string, promptTokens, completionTokens int64) http.Ha
 
 // relayEnv is one fully wired relay surface for a test.
 type relayEnv struct {
-	stores *relayStores
-	engine *gin.Engine
+	stores   *relayStores
+	handlers *relay.Handlers
+	engine   *gin.Engine
 }
 
 func newRelayEnv(t *testing.T, adaptor relay.Adaptor) *relayEnv {
@@ -176,17 +177,24 @@ func newRelayEnv(t *testing.T, adaptor relay.Adaptor) *relayEnv {
 	}
 	v1 := r.Group("/v1", apikey.RequireKey(stores.keys))
 	relay.RegisterRoutes(v1, handlers)
-	return &relayEnv{stores: stores, engine: r}
+	return &relayEnv{stores: stores, handlers: handlers, engine: r}
 }
 
 // seedChannel inserts one enabled channel mapping publicModel→upstreamModel
 // pointed at baseURL.
 func (e *relayEnv) seedChannel(t *testing.T, baseURL, publicModel, upstreamModel string) channel.Channel {
 	t.Helper()
+	return e.seedChannelFull(t, "fake-vendor", baseURL, publicModel, upstreamModel, 0, 0)
+}
+
+// seedChannelFull inserts one enabled channel with explicit identity and
+// scheduling knobs (06 号票):name, priority, weight.
+func (e *relayEnv) seedChannelFull(t *testing.T, name, baseURL, publicModel, upstreamModel string, priority, weight int) channel.Channel {
+	t.Helper()
 	ch, err := e.stores.channels.Create(context.Background(), channel.Channel{
-		Name: "fake-vendor", Type: channel.TypeOpenAI, BaseURL: baseURL,
+		Name: name, Type: channel.TypeOpenAI, BaseURL: baseURL,
 		APIKey: "vendor-secret-key", ModelMap: map[string]string{publicModel: upstreamModel},
-		Enabled: true,
+		Priority: priority, Weight: weight, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("seed channel: %v", err)

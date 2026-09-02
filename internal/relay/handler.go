@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ const (
 	CodeMissingMessages     = "missing_messages"
 	CodeModelNotFound       = "model_not_found"
 	CodeModelNotPriced      = "model_not_priced"
+	CodeModelUnavailable    = "model_unavailable"
 	CodeInsufficientQuota   = "insufficient_quota"
 	CodeUpstreamError       = "upstream_error"
 	TypeInvalidRequestError = "invalid_request_error"
@@ -57,19 +59,39 @@ const (
 	bytesPerToken = 3
 )
 
-// prepared is the outcome of the request prefix both the buffered and the
-// streaming path share: body validated, channel picked, price checked,
-// estimate pre-deduction taken. payload is the client body with the
-// upstream model name already swapped in.
+// prepared is the outcome of the request prefix both paths share: body
+// validated, candidates scheduled, price checked, estimate pre-deduction
+// taken. raw is the client body verbatim (public model name) — each channel
+// attempt rewrites the model field to its own upstream name.
 type prepared struct {
-	req           chatRequest
-	key           apikey.Key
+	req      chatRequest
+	key      apikey.Key
+	price    pricing.Price
+	raw      []byte
+	reserved int64
+	snapshot []byte
+	started  time.Time // 第一个上游尝试的起点;成败行的耗时都是请求总耗时
+}
+
+// attempt binds one channel candidacy of a prepared request: the channel
+// plus the upstream request derived from it.
+type attempt struct {
 	ch            channel.Channel
-	price         pricing.Price
 	upstreamModel string
 	payload       []byte
-	reserved      int64
-	snapshot      []byte
+}
+
+// attemptFor derives one channel's upstream request from the prepared body.
+// prepareChat already proved the body rewrites; only the model string
+// differs per channel, so an error here is impossible short of a bug — the
+// caller treats one as an internal failure with the reserve refunded.
+func (p *prepared) attemptFor(ch channel.Channel) (attempt, error) {
+	upstreamModel := ch.ModelMap[p.req.Model]
+	payload, err := rewriteModel(p.raw, upstreamModel)
+	if err != nil {
+		return attempt{}, err
+	}
+	return attempt{ch: ch, upstreamModel: upstreamModel, payload: payload}, nil
 }
 
 // failure seeds the failure bundle with the pre-deduction the failure path
@@ -78,43 +100,53 @@ func (p *prepared) failure() upstreamFailure {
 	return upstreamFailure{reserved: p.reserved}
 }
 
-// logEntry seeds a usage-log row with the request identity; callers fill in
-// the outcome (duration, status, tokens, charge, error summary).
-func (p *prepared) logEntry() usage.Log {
+// logEntry seeds a usage-log row with the request identity and the attempt's
+// channel; callers fill in the outcome (duration, status, tokens, charge,
+// error summary).
+func (p *prepared) logEntry(at attempt) usage.Log {
 	return usage.Log{
-		KeyID: p.key.ID, ChannelID: p.ch.ID, ChannelName: p.ch.Name,
-		PublicModel: p.req.Model, UpstreamModel: p.upstreamModel,
+		KeyID: p.key.ID, ChannelID: at.ch.ID, ChannelName: at.ch.Name,
+		PublicModel: p.req.Model, UpstreamModel: at.upstreamModel,
 		Unit: string(p.price.Unit), PriceSnapshot: p.snapshot,
 	}
 }
 
 // settleSuccess fills the success outcome into a seeded entry, settles the
 // ledger to the actual charge (多退少补:delta = 预扣 − 实际,正数退回、
-// 负数补扣;零差额不动账) and records the row.
-func (h *Handlers) settleSuccess(billing context.Context, p *prepared, used Usage, durationMS int64) {
+// 负数补扣;零差额不动账) and records the row. retried carries the
+// summaries of attempts failover abandoned before this one succeeded — a
+// success row with a non-empty upstream_error column reads as "survived
+// upstream errors", which is exactly what the audit trail wants to show.
+func (h *Handlers) settleSuccess(billing context.Context, p *prepared, at attempt, used Usage, durationMS int64, retried []string) {
 	actual := p.price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
-	entry := p.logEntry()
+	entry := p.logEntry(at)
 	entry.PromptTokens = used.PromptTokens
 	entry.CompletionTokens = used.CompletionTokens
 	entry.DurationMS = durationMS
 	entry.Status = usage.StatusSuccess
 	entry.ChargeMicros = actual
+	if len(retried) > 0 {
+		entry.UpstreamError = strings.Join(retried, "; ")
+	}
 	h.adjustBalance(billing, p.key.ID, p.reserved-actual, apikey.ReasonSettle)
 	h.recordUsage(billing, entry)
 }
 
 // ChatCompletions relays one chat request — buffered or streamed — through
-// validate → select channel → price → reserve → forward → settle-or-refund,
-// with a usage-log row for every request that reached the upstream call.
+// validate → schedule candidates → price → reserve → try channels in order
+// → settle-or-refund, with a usage-log row for every request that reached
+// at least one upstream call. A temporary upstream failure (06 号票) moves
+// the request to the next candidate while the reserve stays put; only the
+// attempt that decides the outcome bills or refunds.
 func (h *Handlers) ChatCompletions(c *gin.Context) {
 	key, _ := apikey.KeyFrom(c)
 
-	p := h.prepareChat(c, key)
+	p, candidates := h.prepareChat(c, key)
 	if p == nil {
 		return
 	}
 	if p.req.Stream {
-		h.streamChat(c, p)
+		h.streamChat(c, p, candidates)
 		return
 	}
 
@@ -122,133 +154,184 @@ func (h *Handlers) ChatCompletions(c *gin.Context) {
 	// 账务与留痕使用脱离请求的 context:客户端在转发中途断开时,请求
 	// context 随之取消,但已预扣的钱必须退、失败 trail 必须落库。
 	billing := context.WithoutCancel(ctx)
+	p.started = time.Now()
+	run := &failoverRunner{h: h, c: c, billing: billing, p: p, breaker: h.Breaker}
 
-	f := p.failure()
-	started := time.Now()
-	upstream, err := h.adaptor().ChatCompletions(ctx, p.ch, p.payload)
-	f.durationMS = time.Since(started).Milliseconds()
+	for i, cand := range candidates {
+		if !run.breaker.TryAcquire(cand.ID, time.Now()) {
+			continue // 熔断中的渠道不占用尝试
+		}
+		at, err := p.attemptFor(cand)
+		if err != nil {
+			run.abortInternal(cand.ID, err)
+			return
+		}
 
-	if err != nil || !upstream.OK {
-		f.upstream, f.transportErr = upstream, err
-		h.failUpstream(c, billing, p, f)
+		upstream, err := h.adaptor().ChatCompletions(ctx, at.ch, at.payload)
+		if err == nil && upstream.OK {
+			clientBody, used, nerr := h.adaptor().Normalize(p.req.Model, upstream.Body)
+			if nerr == nil {
+				// 命中:结算多退少补,按实际用量落成功留痕。
+				run.breaker.RecordSuccess(at.ch.ID, time.Now())
+				h.settleSuccess(billing, p, at, used,
+					time.Since(p.started).Milliseconds(), run.retried)
+				c.Data(http.StatusOK, "application/json; charset=utf-8", clientBody)
+				return
+			}
+			// 2xx 但响应体不可用:与上游失败同路 —— 可换道重试。
+			f := p.failure()
+			f.normalizeErr = nerr
+			if run.failed(at, f, i < len(candidates)-1) {
+				continue
+			}
+			return
+		}
+
+		f := p.failure()
+		if err != nil {
+			f.transportErr = err
+		} else {
+			f.upstream = upstream
+		}
+		if run.failed(at, f, i < len(candidates)-1) {
+			continue
+		}
 		return
 	}
-
-	clientBody, used, err := h.adaptor().Normalize(p.req.Model, upstream.Body)
-	if err != nil {
-		// 2xx 但响应体不可用:与上游失败同路 —— 退款、留痕、明确报错。
-		f.normalizeErr = err
-		h.failUpstream(c, billing, p, f)
-		return
-	}
-
-	// 结算多退少补,按实际用量落成功留痕。
-	h.settleSuccess(billing, p, used, f.durationMS)
-
-	c.Data(http.StatusOK, "application/json; charset=utf-8", clientBody)
+	run.exhausted()
 }
 
-// prepareChat reads and validates the client body, selects a channel,
-// checks the price and takes the estimate pre-deduction — the shared prefix
-// of both paths. On any rejection the client has already been answered an
-// OpenAI error object and the result is nil.
-func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
+// prepareChat reads and validates the client body, schedules the candidate
+// channels, checks the price and takes the estimate pre-deduction — the
+// shared prefix of both paths. On any rejection the client has already been
+// answered an OpenAI error object and the result is nil.
+func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) (*prepared, []channel.Channel) {
 	ctx := c.Request.Context()
 
 	raw, err := c.GetRawData()
 	if err != nil {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body could not be read.")
-		return nil
+		return nil, nil
 	}
 	var req chatRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
-		return nil
+		return nil, nil
 	}
 	if req.Model == "" {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingModel, TypeInvalidRequestError, "You must provide a 'model' parameter.")
-		return nil
+		return nil, nil
 	}
 	if len(req.Messages) == 0 {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingMessages, TypeInvalidRequestError, "'messages' must be a non-empty array.")
-		return nil
+		return nil, nil
 	}
 
-	ch, err := selectChannel(ctx, h.Channels, req.Model)
-	if errors.Is(err, errNoChannel) {
-		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
-			"The model '"+req.Model+"' does not exist or no enabled channel serves it.")
-		return nil
-	}
+	channels, err := h.Channels.List(ctx)
 	if err != nil {
 		h.failInternal(c, err)
-		return nil
+		return nil, nil
+	}
+	candidates := weightedOrder(eligibleChannels(channels, req.Model), h.intn)
+	if len(candidates) == 0 {
+		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
+			"The model '"+req.Model+"' does not exist or no enabled channel serves it.")
+		return nil, nil
 	}
 	price, err := h.Prices.ByModel(ctx, req.Model)
 	if errors.Is(err, pricing.ErrNotFound) {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
 			"The model '"+req.Model+"' has no price configured; ask the administrator to add one.")
-		return nil
+		return nil, nil
 	}
 	if err != nil {
 		h.failInternal(c, err)
-		return nil
+		return nil, nil
 	}
 	if price.Unit != pricing.UnitToken || price.Token == nil {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
 			"The model '"+req.Model+"' is not priced for token billing.")
-		return nil
+		return nil, nil
+	}
+
+	// 先对首个候选重写一次模型名,证明 body 是可重写的 JSON 对象;
+	// 逐渠道的真正重写在 attemptFor 里做(各渠道上游名不同)。
+	if _, err := rewriteModel(raw, candidates[0].ModelMap[req.Model]); err != nil {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
+		return nil, nil
 	}
 
 	// 估算预扣。免费模型(单价 0)估算为 0,跳过预扣与后续账务。
-	upstreamModel := ch.ModelMap[req.Model]
-	payload, err := rewriteModel(raw, upstreamModel)
-	if err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
-		return nil
-	}
 	promptEst, completionEst := estimateTokens(req, len(raw))
 	reserved := price.Token.ChargeMicros(promptEst, completionEst)
 	if reserved > 0 {
 		if _, err := h.Keys.Reserve(ctx, key.ID, reserved, apikey.ReasonEstimate); err != nil {
 			h.reserveFailed(c, key, err)
-			return nil
+			return nil, nil
 		}
 	}
 
 	return &prepared{
-		req: req, key: key, ch: ch, price: price,
-		upstreamModel: upstreamModel, payload: payload,
+		req: req, key: key, price: price, raw: raw,
 		reserved: reserved, snapshot: priceSnapshot(price),
-	}
+	}, candidates
 }
 
 // streamChat relays one streaming chat request: after the shared prepare,
-// the upstream SSE body is pumped to the client frame by frame, no
-// reassembly. The pump loop exits on upstream EOF, upstream failure or a
-// client disconnect (the request context cancels the upstream call, and a
-// failed write means the client is gone) — the books close out either way
-// on a context detached from the request.
-func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
+// candidates are tried in scheduling order — but only failures before a
+// stream opens (transport error, non-2xx rejection) can move to the next
+// channel, because an open stream has already committed the response head.
+// From the open stream on, the upstream SSE body is pumped to the client
+// frame by frame, no reassembly; the pump loop exits on upstream EOF,
+// upstream failure or a client disconnect (the request context cancels the
+// upstream call, and a failed write means the client is gone) — the books
+// close out either way on a context detached from the request.
+func (h *Handlers) streamChat(c *gin.Context, p *prepared, candidates []channel.Channel) {
 	ctx := c.Request.Context()
 	billing := context.WithoutCancel(ctx)
+	p.started = time.Now()
+	run := &failoverRunner{h: h, c: c, billing: billing, p: p, breaker: h.Breaker}
 
-	f := p.failure()
-	started := time.Now()
-	stream, err := h.adaptor().ChatCompletionsStream(ctx, p.ch, p.req.Model, p.payload)
-	f.durationMS = time.Since(started).Milliseconds()
+	for i, cand := range candidates {
+		if !run.breaker.TryAcquire(cand.ID, time.Now()) {
+			continue // 熔断中的渠道不占用尝试
+		}
+		at, err := p.attemptFor(cand)
+		if err != nil {
+			run.abortInternal(cand.ID, err)
+			return
+		}
 
-	if err != nil || !stream.OK {
-		// 上游在流开始前就失败:响应头未动,与非流式失败同路。
+		stream, err := h.adaptor().ChatCompletionsStream(ctx, at.ch, p.req.Model, at.payload)
+		if err == nil && stream.OK {
+			// 流已开:渠道交付开始,记成功;此后不再换道。
+			run.breaker.RecordSuccess(at.ch.ID, time.Now())
+			h.pumpStream(c, billing, p, at, stream, run.retried)
+			return
+		}
+
+		f := p.failure()
 		if err != nil {
 			f.transportErr = err
 		} else {
+			// 上游在流开始前就拒绝:读干错误体,按非流式失败同路处理。
 			f.upstream = &UpstreamResponse{Status: stream.Status, Body: stream.Body}
 			stream.Close()
 		}
-		h.failUpstream(c, billing, p, f)
+		if run.failed(at, f, i < len(candidates)-1) {
+			continue
+		}
 		return
 	}
+	run.exhausted()
+}
+
+// pumpStream relays one open upstream SSE stream to the client frame by
+// frame, no reassembly (05 号票语义原样):每帧 data 负载语义保真,用量
+// 专用块只入账不转发(除非客户端自己点了 include_usage)。账务在脱离
+// 请求的 context 上收尾:拿到用量照常结算;流被中断或上游始终未报用量
+// 则全额退款并留痕。
+func (h *Handlers) pumpStream(c *gin.Context, billing context.Context, p *prepared, at attempt, stream *UpstreamStream, retried []string) {
 	defer stream.Close()
 
 	w := c.Writer
@@ -284,15 +367,15 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 			flusher.Flush()
 		}
 	}
-	f.durationMS = time.Since(started).Milliseconds()
+	durationMS := time.Since(p.started).Milliseconds()
 
 	// finishEntry records an unbilled outcome: refund the whole reserve and
 	// trail with the given status and error summary.
 	finishEntry := func(status, summary string) {
-		entry := p.logEntry()
-		entry.DurationMS = f.durationMS
+		entry := p.logEntry(at)
+		entry.DurationMS = durationMS
 		entry.Status = status
-		entry.UpstreamError = summary
+		entry.UpstreamError = upstreamErrorSummary(retried, summary)
 		h.adjustBalance(billing, p.key.ID, p.reserved, apikey.ReasonRefund)
 		h.recordUsage(billing, entry)
 	}
@@ -300,7 +383,7 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 	case reported != nil:
 		// 实际用量已报:照常按实结算。用量块在流尾,拿到它即视同服务已
 		// 交付 —— 之后才发生的断开或上游故障不改账,报了多少结多少。
-		h.settleSuccess(billing, p, *reported, f.durationMS)
+		h.settleSuccess(billing, p, at, *reported, durationMS, retried)
 	case streamErr == nil && !clientGone:
 		// 流完整走完却没有可计用量(上游不守 include_usage 约定):
 		// 少记不虚记 —— 全额退款,成功流零扣费留痕。
@@ -323,6 +406,59 @@ func streamAbortSummary(clientGone bool, streamErr error) string {
 	default:
 		return "upstream stream failed: " + truncate(streamErr.Error(), 512)
 	}
+}
+
+// failoverRunner carries one request's failover state across channel
+// attempts: the breaker gate, the summaries of attempts abandoned along the
+// way, and the shared failure close-outs.
+type failoverRunner struct {
+	h       *Handlers
+	c       *gin.Context
+	billing context.Context
+	p       *prepared
+	breaker *channel.Breaker
+	retried []string // 已换道放弃的尝试摘要:"'渠道名': 失败摘要"
+}
+
+// failed resolves one failed upstream attempt: it records the breaker
+// outcome and reports whether the request may move on to the next
+// candidate. When it reports false the books are closed and the client has
+// been answered. more tells it whether any candidate is left to try.
+func (r *failoverRunner) failed(at attempt, f upstreamFailure, more bool) bool {
+	f.durationMS = time.Since(r.p.started).Milliseconds()
+	if f.retryable() {
+		r.breaker.RecordFailure(at.ch.ID, time.Now())
+	} else {
+		// 客户端或请求侧的问题(请求体被上游拒绝、厂商密钥失效、客户端
+		// 主动断开):不记渠道的账,放回探测位。
+		r.breaker.Release(at.ch.ID)
+	}
+	if f.retryable() && r.c.Request.Context().Err() == nil && more {
+		r.retried = append(r.retried, "'"+at.ch.Name+"': "+f.summary(r.h.adaptor()))
+		return true
+	}
+	r.h.failUpstream(r.c, r.billing, r.p, at, f, r.retried)
+	return false
+}
+
+// exhausted answers a request whose every candidate was skipped by the
+// circuit breaker: nothing reached any upstream, so the reserve is refunded
+// whole, no usage row is written, and the client learns the model exists
+// but is momentarily unservable.
+func (r *failoverRunner) exhausted() {
+	r.h.adjustBalance(r.billing, r.p.key.ID, r.p.reserved, apikey.ReasonRefund)
+	apierr.OpenAI(r.c, http.StatusServiceUnavailable, CodeModelUnavailable, TypeServerError,
+		"The model '"+r.p.req.Model+"' is temporarily unavailable: every channel serving it is circuit-open. Retry shortly.")
+}
+
+// abortInternal closes out an impossible attempt-derivation failure: the
+// breaker slot goes back untouched, the reserve is refunded so the account
+// cannot leak, and the request answers 500. prepareChat's rewrite proof
+// makes this unreachable in practice.
+func (r *failoverRunner) abortInternal(channelID int64, err error) {
+	r.breaker.Release(channelID)
+	r.h.adjustBalance(r.billing, r.p.key.ID, r.p.reserved, apikey.ReasonRefund)
+	r.h.failInternal(r.c, err)
 }
 
 // adjustBalance applies a signed ledger delta on a context detached from the
@@ -348,37 +484,75 @@ type upstreamFailure struct {
 	normalizeErr error
 }
 
+// retryable reports whether another channel could plausibly answer what
+// this one failed at: transport errors (unless the client itself canceled),
+// rate limits, server-side upstream failures, and an unparseable 2xx body.
+// A client-caused upstream 4xx — a bad request, a dead vendor key, an
+// unknown upstream model — is answered as-is: the request, not the channel,
+// is the problem, and hammering every other channel with it helps nobody.
+func (f upstreamFailure) retryable() bool {
+	switch {
+	case f.transportErr != nil:
+		return !errors.Is(f.transportErr, context.Canceled)
+	case f.normalizeErr != nil:
+		return true
+	default:
+		return f.upstream.Status == http.StatusTooManyRequests || f.upstream.Status >= 500
+	}
+}
+
+// summary renders the failure for the usage log and the client error: the
+// transport message, the normalize message, or the vendor's own error text.
+func (f upstreamFailure) summary(a Adaptor) string {
+	switch {
+	case f.transportErr != nil:
+		return f.transportErr.Error()
+	case f.normalizeErr != nil:
+		return f.normalizeErr.Error()
+	default:
+		return a.ErrorSummary(f.upstream.Body)
+	}
+}
+
+// status maps the failure to the client-facing HTTP status: a non-2xx
+// upstream answer passes its status through, everything else becomes 502.
+func (f upstreamFailure) status() int {
+	if f.upstream != nil && f.transportErr == nil && f.normalizeErr == nil {
+		return f.upstream.Status
+	}
+	return http.StatusBadGateway
+}
+
+// upstreamErrorSummary renders the request's upstream-error history for the
+// usage log: attempts failover abandoned first, then the deciding outcome's
+// own summary. Without retries it is the plain summary, unchanged from the
+// single-channel shape.
+func upstreamErrorSummary(retried []string, final string) string {
+	if len(retried) == 0 {
+		return final
+	}
+	return strings.Join(append(append([]string(nil), retried...), final), "; ")
+}
+
 // failUpstream refunds the whole reserve, leaves the failure trail in the
-// usage log, and answers the client an OpenAI-shaped error: a non-2xx
-// upstream answer passes its status through with the extracted message,
-// everything else becomes 502. billing is a context detached from the
-// request — the caller may already be gone by the time the upstream failed.
-func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, p *prepared, f upstreamFailure) {
+// usage log, and answers the client an OpenAI-shaped error carrying only
+// the deciding attempt's summary — the retried-away attempts belong to the
+// audit trail, not to the client (换道对客户端无感). billing is a context
+// detached from the request — the caller may already be gone by the time
+// the upstream failed.
+func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, p *prepared, at attempt, f upstreamFailure, retried []string) {
 	// 钱已预扣必须退回;退不回(行消失)是严重账务事故,记日志报警。
 	h.adjustBalance(billing, p.key.ID, f.reserved, apikey.ReasonRefund)
 
-	var summary string
-	var status int
-	switch {
-	case f.transportErr != nil:
-		summary = f.transportErr.Error()
-		status = http.StatusBadGateway
-	case f.normalizeErr != nil:
-		summary = f.normalizeErr.Error()
-		status = http.StatusBadGateway
-	default:
-		summary = h.adaptor().ErrorSummary(f.upstream.Body)
-		status = f.upstream.Status
-	}
-
-	entry := p.logEntry()
+	summary := f.summary(h.adaptor())
+	entry := p.logEntry(at)
 	entry.DurationMS = f.durationMS
 	entry.Status = usage.StatusUpstreamError
 	entry.ChargeMicros = 0
-	entry.UpstreamError = summary
+	entry.UpstreamError = upstreamErrorSummary(retried, summary)
 	h.recordUsage(billing, entry)
 
-	apierr.OpenAI(c, status, CodeUpstreamError, CodeUpstreamError, "Upstream request failed: "+summary)
+	apierr.OpenAI(c, f.status(), CodeUpstreamError, CodeUpstreamError, "Upstream request failed: "+summary)
 }
 
 // reserveFailed maps a failed pre-deduction to the relay error surface: the
@@ -400,29 +574,6 @@ func (h *Handlers) reserveFailed(c *gin.Context, key apikey.Key, err error) {
 	default:
 		h.failInternal(c, err)
 	}
-}
-
-// selectChannel picks the channel serving a public model: enabled channels
-// whose model map contains the name, best priority first (Store.List order),
-// ties by lowest id. Ticket 06 replaces this with weighted scheduling and
-// failover. errNoChannel is a clean "nobody serves this model"; any other
-// error is an infrastructure failure the caller reports as 500.
-var errNoChannel = errors.New("relay: no enabled channel serves the model")
-
-func selectChannel(ctx context.Context, store channel.Store, publicModel string) (channel.Channel, error) {
-	channels, err := store.List(ctx)
-	if err != nil {
-		return channel.Channel{}, err
-	}
-	for _, ch := range channels {
-		if !ch.Enabled {
-			continue
-		}
-		if _, ok := ch.ModelMap[publicModel]; ok {
-			return ch, nil
-		}
-	}
-	return channel.Channel{}, errNoChannel
 }
 
 // rewriteModel returns the JSON object body with only the model field

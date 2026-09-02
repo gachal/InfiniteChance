@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"math/rand/v2"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/gachal/InfiniteChance/internal/apikey"
@@ -11,19 +13,29 @@ import (
 
 // Handlers serves the relay (/v1) surface. Every dependency is the store
 // interface the respective package owns; Adaptor is the vendor seam and
-// defaults to the OpenAI-compatible adaptor when nil.
+// defaults to the OpenAI-compatible adaptor when nil. Breaker is the
+// per-channel circuit state shared by every request (06 号票); RegisterRoutes
+// defaults it. Rand is the scheduling randomness source — nil uses the
+// package generator, tests inject a seeded one.
 type Handlers struct {
 	Channels channel.Store
 	Keys     apikey.Store
 	Prices   pricing.Store
 	Usage    usage.Store
 	Adaptor  Adaptor
+	Breaker  *channel.Breaker
+	Rand     *rand.Rand
 }
 
 // RegisterRoutes mounts the relay endpoints on group. The caller owns the
 // group's middleware — the gateway mounts it as r.Group("/v1",
-// apikey.RequireKey(keys)) so no route here can bypass key auth.
+// apikey.RequireKey(keys)) so no route here can bypass key auth. Called
+// once at startup, before serving.
 func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
+	if h.Breaker == nil {
+		h.Breaker = channel.NewBreaker()
+	}
+	group.GET("/models", h.ListModels)
 	group.POST("/chat/completions", h.ChatCompletions)
 }
 
