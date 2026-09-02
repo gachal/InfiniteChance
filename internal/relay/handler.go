@@ -231,7 +231,7 @@ func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
 		h.failInternal(c, err)
 		return nil
 	}
-	candidates := weightedOrder(eligibleChannels(channels, req.Model), h.intn)
+	candidates := weightedOrder(eligibleChannels(channels, req.Model), h.randIntn)
 	if len(candidates) == 0 {
 		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
 			"The model '"+req.Model+"' does not exist or no enabled channel serves it.")
@@ -304,8 +304,8 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 
 		stream, err := h.adaptor().ChatCompletionsStream(ctx, at.ch, p.req.Model, at.payload)
 		if err == nil && stream.OK {
-			// 流已开:渠道交付开始,记成功;此后不再换道。
-			run.breaker.RecordSuccess(at.ch.ID)
+			// 流已开:响应头随之发出,此后不再换道;熔断的成败记账延到
+			// 流收尾(pumpStream)—— 打开流本身不算交付。
 			run.pumpStream(at, stream)
 			return
 		}
@@ -329,8 +329,10 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 // frame, no reassembly (05 号票语义原样):每帧 data 负载语义保真,用量
 // 专用块只入账不转发(除非客户端自己点了 include_usage)。账务在脱离
 // 请求的 context 上收尾:拿到用量照常结算;流被中断或上游始终未报用量
-// 则全额退款并留痕。熔断账:上游流中途失败(非客户端断开)按一次渠道
-// 失败计 —— 否则一个只会开流就断的渠道永远 circuit closed。
+// 则全额退款并留痕。熔断记账同样在流收尾时一次结清 —— 打开流本身不记
+// 成功,否则一个只会开流就断的渠道永远攒不起连续失败:完整交付或已报
+// 用量记成功;上游中途失败且尚无可计用量记一次失败;客户端主动断开不
+// 记渠道的账。
 func (r *failoverRunner) pumpStream(at attempt, stream *UpstreamStream) {
 	h, p := r.h, r.p
 	defer stream.Close()
@@ -384,18 +386,22 @@ func (r *failoverRunner) pumpStream(at attempt, stream *UpstreamStream) {
 	case reported != nil:
 		// 实际用量已报:照常按实结算。用量块在流尾,拿到它即视同服务已
 		// 交付 —— 之后才发生的断开或上游故障不改账,报了多少结多少。
+		r.breaker.RecordSuccess(at.ch.ID)
 		r.settleSuccess(at, *reported, durationMS)
 	case streamErr == nil && !clientGone:
 		// 流完整走完却没有可计用量(上游不守 include_usage 约定):
-		// 少记不虚记 —— 全额退款,成功流零扣费留痕。
+		// 少记不虚记 —— 全额退款,成功流零扣费留痕;渠道交付完整,记成功。
+		r.breaker.RecordSuccess(at.ch.ID)
 		finishEntry(usage.StatusSuccess, "")
 	default:
 		// 流被中断:客户端断开(写失败或请求取消)或上游故障。
-		// 用量未知 → 全额退款 + 失败留痕,摘要列区分原因;上游故障还要
-		// 记渠道的熔断账(客户端主动断开不算上游的错)。
+		// 用量未知 → 全额退款 + 失败留痕,摘要列区分原因。熔断账:上游
+		// 故障记一次失败;客户端主动断开不是渠道的错,放回探测位。
 		finishEntry(usage.StatusUpstreamError, streamAbortSummary(clientGone, streamErr))
 		if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 			r.breaker.RecordFailure(at.ch.ID, time.Now())
+		} else {
+			r.breaker.Release(at.ch.ID)
 		}
 	}
 }
@@ -415,14 +421,17 @@ func streamAbortSummary(clientGone bool, streamErr error) string {
 
 // failoverRunner carries one request's failover state across channel
 // attempts: the breaker gate, the summaries of attempts abandoned along the
-// way, and the shared failure close-outs.
+// way, the last real failure (the close-out when every remaining candidate
+// turns out to be circuit-open), and the shared failure close-outs.
 type failoverRunner struct {
-	h       *Handlers
-	c       *gin.Context
-	billing context.Context
-	p       *prepared
-	breaker *channel.Breaker
-	retried []string // 已换道放弃的尝试摘要:"'渠道名': 失败摘要"
+	h           *Handlers
+	c           *gin.Context
+	billing     context.Context
+	p           *prepared
+	breaker     *channel.Breaker
+	retried     []string         // 已换道放弃的尝试摘要:"'渠道名': 失败摘要"
+	lastAttempt attempt          // 与 lastFailure 同置:最后一次真实失败
+	lastFailure *upstreamFailure // nil = 尚未真正拨过任何上游
 }
 
 // failed resolves one failed upstream attempt: it records the breaker
@@ -441,17 +450,29 @@ func (r *failoverRunner) failed(at attempt, f upstreamFailure, more bool) bool {
 	}
 	if retryable && r.c.Request.Context().Err() == nil && more {
 		r.retried = append(r.retried, "'"+at.ch.Name+"': "+f.summary(r.h.adaptor()))
+		r.lastAttempt, r.lastFailure = at, &f
 		return true
 	}
 	r.failUpstream(at, f)
 	return false
 }
 
-// exhausted answers a request whose every candidate was skipped by the
-// circuit breaker: nothing reached any upstream, so the reserve is refunded
-// whole, no usage row is written, and the client learns the model exists
-// but is momentarily unservable.
+// exhausted closes out a request that ran out of candidates. Two shapes:
+// some upstream was really dialed and only the remaining candidates turned
+// out to be circuit-open — then the last real failure is the deciding
+// outcome and gets the ordinary failure close-out (refund, trail, and the
+// client hears the true cause); nothing was dialed at all (pure all-open) —
+// the reserve is refunded whole, no usage row is written, and the client
+// learns the model exists but is momentarily unservable.
 func (r *failoverRunner) exhausted() {
+	if r.lastFailure != nil {
+		// 被存根的尝试已计入 retried 尾部;它现在就是终局,从换道史里
+		// 取回,免得同一失败在摘要里出现两遍。
+		f := *r.lastFailure
+		r.retried = r.retried[:len(r.retried)-1]
+		r.failUpstream(r.lastAttempt, f)
+		return
+	}
 	r.h.adjustBalance(r.billing, r.p.key.ID, r.p.reserved, apikey.ReasonRefund)
 	apierr.OpenAI(r.c, http.StatusServiceUnavailable, CodeModelUnavailable, TypeServerError,
 		"The model '"+r.p.req.Model+"' is temporarily unavailable: every channel serving it is circuit-open. Retry shortly.")

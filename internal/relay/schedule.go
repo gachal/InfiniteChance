@@ -68,9 +68,10 @@ func weightedOrder(cands []channel.Channel, intn func(int) int) []channel.Channe
 	return out
 }
 
-// intn returns the randomness source of the handler: the injected Rand for
-// deterministic tests, the package-level generator otherwise (goroutine-safe).
-func (h *Handlers) intn(n int) int {
+// randIntn returns the randomness source of the handler: the injected Rand
+// for deterministic tests, the package-level generator otherwise
+// (goroutine-safe).
+func (h *Handlers) randIntn(n int) int {
 	if h.Rand != nil {
 		return h.Rand.IntN(n)
 	}

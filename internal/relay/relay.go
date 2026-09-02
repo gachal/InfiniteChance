@@ -15,8 +15,10 @@ import (
 // interface the respective package owns; Adaptor is the vendor seam and
 // defaults to the OpenAI-compatible adaptor when nil. Breaker is the
 // per-channel circuit state shared by every request (06 号票); RegisterRoutes
-// defaults it. Rand is the scheduling randomness source — nil uses the
-// package generator, tests inject a seeded one.
+// defaults it — a Handlers served without RegisterRoutes must set it itself.
+// Rand is the scheduling randomness source — nil uses the package generator
+// (goroutine-safe); an injected one is test plumbing and must then be safe
+// for concurrent use itself.
 type Handlers struct {
 	Channels channel.Store
 	Keys     apikey.Store

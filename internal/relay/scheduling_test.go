@@ -252,28 +252,9 @@ func TestRelayStreamNoFailoverOnceStreamOpened(t *testing.T) {
 	env := newStreamEnv(t)
 	// 主渠道开了流又中途掐断(05 号票语义:退款 + 留痕);响应头已发,
 	// 换道已不可能 —— 备用渠道必须保持零调用。
-	payload := "data: {\"id\":\"c1\",\"model\":\"upstream-m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"半截\"}}]}\n\n"
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hj, ok := w.(http.Hijacker)
-		if !ok {
-			http.Error(w, "no hijack support", http.StatusInternalServerError)
-			return
-		}
-		conn, buf, err := hj.Hijack()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
-		fmt.Fprintf(buf, "%x\r\n%s\r\n", len(payload), payload)
-		buf.Flush()
-		if tc, ok := conn.(*net.TCPConn); ok {
-			tc.SetLinger(0) // RST 而非体面 FIN:网关必须看到读错误
-		}
-	}))
-	t.Cleanup(primary.Close)
+	primary := newFakeUpstream(t, rstAfterFirstFrame())
 	backup := newFakeUpstream(t, sseHandler(fullStreamBody))
-	env.seedChannelFull(t, "primary", primary.URL, "public-m", "upstream-m", 10, 0)
+	env.seedChannelFull(t, "primary", primary.server.URL, "public-m", "upstream-m", 10, 0)
 	env.seedChannelFull(t, "backup", backup.server.URL, "public-m", "upstream-m", 1, 0)
 	_, full := env.seedKey(t, 1_000_000)
 	env.seedPrice(t, "public-m")
@@ -296,6 +277,126 @@ func TestRelayStreamNoFailoverOnceStreamOpened(t *testing.T) {
 	rows := env.waitForUsageRow(t)
 	if rows[0].ChannelName != "primary" || rows[0].Status != usage.StatusUpstreamError {
 		t.Errorf("usage row = %+v, want the primary's failure trail", rows[0])
+	}
+}
+
+// rstAfterFirstFrame hijacks the connection, sends one SSE frame, then RSTs
+// instead of finishing the body — an upstream that opens streams but never
+// completes them (the gateway must see a read error, not a clean EOF).
+func rstAfterFirstFrame() http.HandlerFunc {
+	payload := "data: {\"id\":\"c1\",\"model\":\"upstream-m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"半截\"}}]}\n\n"
+	return func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "no hijack support", http.StatusInternalServerError)
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+		fmt.Fprintf(buf, "%x\r\n%s\r\n", len(payload), payload)
+		buf.Flush()
+		if tc, ok := conn.(*net.TCPConn); ok {
+			tc.SetLinger(0) // RST 而非体面 FIN:网关必须看到读错误
+		}
+	}
+}
+
+func TestRelayStreamMidStreamFailuresTripBreaker(t *testing.T) {
+	env := newStreamEnv(t)
+	// 上游只会开流就断:每次流中断都记一次熔断失败 —— 达到阈值后渠道
+	// 不再被选中(流式的失败同样积累,打开流本身不算成功)。
+	upstream := newFakeUpstream(t, rstAfterFirstFrame())
+	env.seedChannelFull(t, "solo", upstream.server.URL, "public-m", "upstream-m", 0, 0)
+	key, full := env.seedKey(t, 1_000_000)
+	env.seedPrice(t, "public-m")
+	// 阈值用默认 3;冷却保持默认 30s,测试窗口内不会半开。
+
+	for i := 0; i < 3; i++ {
+		resp, err := env.postStream(t, full, streamBody)
+		if err != nil {
+			t.Fatalf("request %d: POST: %v", i+1, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want the committed 200 stream head", i+1, resp.StatusCode)
+		}
+		sc := frameScanner(resp)
+		for sc.Scan() { // 排干(连接被掐,很快见底)
+		}
+		resp.Body.Close()
+		if got := upstream.callCount(); got != i+1 {
+			t.Fatalf("request %d: upstream calls = %d, want %d", i+1, got, i+1)
+		}
+	}
+
+	// 第四次:渠道已熔断 —— 上游零调用,503 model_unavailable,预扣原退,
+	// 不新增用量行。
+	w := env.post(t, full, streamBody)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("circuit-open status = %d body %s, want 503", w.Code, w.Body.String())
+	}
+	eb := decodeOpenAIError(t, w.Body.Bytes())
+	if eb.Error.Code != "model_unavailable" {
+		t.Errorf("code = %q, want model_unavailable", eb.Error.Code)
+	}
+	if got := upstream.callCount(); got != 3 {
+		t.Errorf("upstream calls = %d, want 3 (circuit-open channel must not be dialed)", got)
+	}
+	if balance := env.balanceOf(t, key.ID); balance != 1_000_000 {
+		t.Errorf("balance = %d, want fully refunded 1_000_000", balance)
+	}
+	if rows := env.usageRows(t); len(rows) != 3 {
+		t.Errorf("usage rows = %d, want one per interrupted stream only", len(rows))
+	}
+}
+
+func TestRelayExhaustedAfterRealAttemptReportsTheFailure(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	// 混合场景:首选渠道真实拨过且临时失败,后备候选全在熔断中 ——
+	// 客户端必须听到真实失败原因(upstream_error),而不是
+	// model_unavailable;失败也要照常留痕。
+	env.handlers.Breaker.Threshold = 1
+
+	// 后备渠道 b 只挂 warmup-m:先打一发把它熔断(阈值 1)。
+	warm := newFakeUpstream(t, unavailableHandler())
+	env.seedChannelFull(t, "b", warm.server.URL, "warmup-m", "up-warm", 5, 0)
+	primary := newFakeUpstream(t, unavailableHandler())
+	env.seedChannelFull(t, "a", primary.server.URL, "public-m", "up-a", 10, 0)
+	key, full := env.seedKey(t, 1_000_000)
+	env.seedPrice(t, "public-m")
+	env.seedPrice(t, "warmup-m")
+
+	w := env.post(t, full, `{"model":"warmup-m","messages":[{"role":"user","content":"hi"}]}`)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("warmup status = %d, want upstream 503 passthrough", w.Code)
+	}
+	if got := warm.callCount(); got != 1 {
+		t.Fatalf("warmup upstream calls = %d, want the channel opened by one real failure", got)
+	}
+
+	w = env.post(t, full, testBody)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body %s, want 503", w.Code, w.Body.String())
+	}
+	eb := decodeOpenAIError(t, w.Body.Bytes())
+	if eb.Error.Code != "upstream_error" || !strings.Contains(eb.Error.Message, "provider overloaded") {
+		t.Errorf("error object = %+v, want upstream_error carrying the real vendor failure", eb.Error)
+	}
+	if got := primary.callCount(); got != 1 {
+		t.Errorf("primary calls = %d, want exactly the one real attempt", got)
+	}
+	if balance := env.balanceOf(t, key.ID); balance != 1_000_000 {
+		t.Errorf("balance = %d, want fully refunded", balance)
+	}
+	rows := env.usageRows(t)
+	if len(rows) != 2 {
+		t.Fatalf("usage rows = %d, want the warmup row plus the public-m failure trail", len(rows))
+	}
+	if rows[1].ChannelName != "a" || rows[1].Status != usage.StatusUpstreamError {
+		t.Errorf("public-m row = %+v, want the primary's failure trail", rows[1])
 	}
 }
 
