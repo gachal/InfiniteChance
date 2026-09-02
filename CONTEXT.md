@@ -22,7 +22,8 @@
 - **管理员账号(admin account)**:全库唯一的登录账号,由首次访问的初始化引导(`POST /auth/init`)创建;密码仅以 bcrypt 哈希存于 `admin_accounts` 表,初始化完成后引导不再出现。
 - **JWT 会话**:管理员登录后由网关签发的 HS256 令牌(7 天有效),承载用户名与签发/过期时间;签名密钥经 `JWT_SECRET` 环境变量在网关与画布间共享,画布据此校验网关签发的令牌。唯一管理员由 `admin_accounts` 固定主键(id=1)保证,不依赖隔离级别。生产环境可设 `JWT_SECRET_REQUIRED=true`,密钥缺失时拒绝启动。无刷新机制,过期即重登;管理端 API 错误统一为 `{"error":{"code","message"}}`。
 - **管理端路由面**:网关把管理 API 挂在 `/admin` 下(`admin/channels`、`admin/keys`),一律先过 JWT 会话中间件;中转面 `/v1`(04 号票起)挂 `apikey.RequireKey`,两者互不混用。
-- **中转面错误(API key 路径)**:被 `/v1` 拒绝的请求(缺 key、未知、已吊销、已过期)统一回答 OpenAI error object `{"error":{"message","type","param":null,"code"}}`,401 + `invalid_request_error`;code 区分原因:`missing_api_key` / `invalid_api_key` / `key_revoked` / `key_expired`,客户端按 code 分支。04 号票起中转面全部错误同形:额度不足 429 + `insufficient_quota`(预扣被拒,余额不动)、模型无渠道 404 + `model_not_found`、未配价/流式/参数缺失 400、上游失败透传上游状态码 + code/type 均 `upstream_error`(连接失败、客户端中途断开、2xx 但响应体不可解析都归并 502)。
+- **中转面错误(API key 路径)**:被 `/v1` 拒绝的请求(缺 key、未知、已吊销、已过期)统一回答 OpenAI error object `{"error":{"message","type","param":null,"code"}}`,401 + `invalid_request_error`;code 区分原因:`missing_api_key` / `invalid_api_key` / `key_revoked` / `key_expired`,客户端按 code 分支。04 号票起中转面全部错误同形:额度不足 429 + `insufficient_quota`(预扣被拒,余额不动)、模型无渠道 404 + `model_not_found`、未配价/参数缺失 400、上游失败透传上游状态码 + code/type 均 `upstream_error`(连接失败、客户端中途断开、2xx 但响应体不可解析都归并 502)。
+- **流式透传(SSE,05 号票定案)**:`stream:true` 的聊天请求逐帧透传,不重组内容;每帧 data 负载语义保真 —— 仅 `model` 字段回写公开名(JSON 重编码不保键序与空白),不可解析的负载原样转发。网关向上游强制注入 `stream_options.include_usage=true`(结算需要真实用量),由此产生的**用量专用块**(choices 为空、带 usage)仅用于记账,**客户端自己没点 include_usage 时被吞掉**,点了则照发。断开语义:客户端中途断开 → 上游连接随请求 context 取消而清理;已收到用量则照常按实结算(成功),未收到则全额退款并落 `upstream_error` 留痕(摘要列写明 client disconnected);流完整走完但上游始终未报用量 → 少记不虚记,退款、成功流零扣费留痕。
 
 ## 待补
 

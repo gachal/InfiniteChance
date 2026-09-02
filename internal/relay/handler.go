@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -24,7 +25,6 @@ const (
 	CodeInvalidRequest      = "invalid_request"
 	CodeMissingModel        = "missing_model"
 	CodeMissingMessages     = "missing_messages"
-	CodeStreamUnsupported   = "stream_unsupported"
 	CodeModelNotFound       = "model_not_found"
 	CodeModelNotPriced      = "model_not_priced"
 	CodeInsufficientQuota   = "insufficient_quota"
@@ -57,89 +57,54 @@ const (
 	bytesPerToken = 3
 )
 
-// ChatCompletions relays one non-streaming chat request:
+// prepared is the outcome of the request prefix both the buffered and the
+// streaming path share: body validated, channel picked, price checked,
+// estimate pre-deduction taken. payload is the client body with the
+// upstream model name already swapped in.
+type prepared struct {
+	req           chatRequest
+	key           apikey.Key
+	ch            channel.Channel
+	price         pricing.Price
+	upstreamModel string
+	payload       []byte
+	reserved      int64
+	snapshot      []byte
+}
+
+// failure gathers the failure-path bundle with everything known before the
+// upstream was contacted.
+func (p *prepared) failure() upstreamFail {
+	return upstreamFail{
+		key: p.key, ch: p.ch, publicModel: p.req.Model,
+		upstreamModel: p.upstreamModel, unit: string(p.price.Unit),
+		reserved: p.reserved, snapshot: p.snapshot,
+	}
+}
+
+// ChatCompletions relays one chat request — buffered or streamed — through
 // validate → select channel → price → reserve → forward → settle-or-refund,
 // with a usage-log row for every request that reached the upstream call.
 func (h *Handlers) ChatCompletions(c *gin.Context) {
 	key, _ := apikey.KeyFrom(c)
+
+	p := h.prepareChat(c, key)
+	if p == nil {
+		return
+	}
+	if p.req.Stream {
+		h.streamChat(c, p)
+		return
+	}
+
 	ctx := c.Request.Context()
-
-	raw, err := c.GetRawData()
-	if err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body could not be read.")
-		return
-	}
-	var req chatRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
-		return
-	}
-	if req.Model == "" {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingModel, TypeInvalidRequestError, "You must provide a 'model' parameter.")
-		return
-	}
-	if len(req.Messages) == 0 {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingMessages, TypeInvalidRequestError, "'messages' must be a non-empty array.")
-		return
-	}
-	if req.Stream {
-		// 流式透传由 05 号票实现;先明确拒绝,不做半吊子转发。
-		apierr.OpenAI(c, http.StatusBadRequest, CodeStreamUnsupported, TypeInvalidRequestError, "Streaming is not supported by this gateway build yet.")
-		return
-	}
-
-	ch, err := selectChannel(ctx, h.Channels, req.Model)
-	if errors.Is(err, errNoChannel) {
-		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
-			"The model '"+req.Model+"' does not exist or no enabled channel serves it.")
-		return
-	}
-	if err != nil {
-		h.failInternal(c, err)
-		return
-	}
-	price, err := h.Prices.ByModel(ctx, req.Model)
-	if errors.Is(err, pricing.ErrNotFound) {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
-			"The model '"+req.Model+"' has no price configured; ask the administrator to add one.")
-		return
-	}
-	if err != nil {
-		h.failInternal(c, err)
-		return
-	}
-	if price.Unit != pricing.UnitToken || price.Token == nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
-			"The model '"+req.Model+"' is not priced for token billing.")
-		return
-	}
-
-	// 估算预扣。免费模型(单价 0)估算为 0,跳过预扣与后续账务。
-	upstreamModel := ch.ModelMap[req.Model]
-	payload, err := rewriteModel(raw, upstreamModel)
-	if err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
-		return
-	}
-	promptEst, completionEst := estimateTokens(req, len(raw))
-	reserved := price.Token.ChargeMicros(promptEst, completionEst)
-	if reserved > 0 {
-		if _, err := h.Keys.Reserve(ctx, key.ID, reserved, apikey.ReasonEstimate); err != nil {
-			h.reserveFailed(c, key, err)
-			return
-		}
-	}
-
 	// 账务与留痕使用脱离请求的 context:客户端在转发中途断开时,请求
 	// context 随之取消,但已预扣的钱必须退、失败 trail 必须落库。
 	billing := context.WithoutCancel(ctx)
 
-	f := upstreamFail{
-		key: key, ch: ch, publicModel: req.Model, upstreamModel: upstreamModel,
-		unit: string(price.Unit), reserved: reserved, snapshot: priceSnapshot(price),
-	}
+	f := p.failure()
 	started := time.Now()
-	upstream, err := h.adaptor().ChatCompletions(ctx, ch, payload)
+	upstream, err := h.adaptor().ChatCompletions(ctx, p.ch, p.payload)
 	f.durationMS = time.Since(started).Milliseconds()
 
 	if err != nil || !upstream.OK {
@@ -148,7 +113,7 @@ func (h *Handlers) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	clientBody, used, err := h.adaptor().Normalize(req.Model, upstream.Body)
+	clientBody, used, err := h.adaptor().Normalize(p.req.Model, upstream.Body)
 	if err != nil {
 		// 2xx 但响应体不可用:与上游失败同路 —— 退款、留痕、明确报错。
 		f.normalizeErr = err
@@ -157,23 +122,208 @@ func (h *Handlers) ChatCompletions(c *gin.Context) {
 	}
 
 	// 结算多退少补:delta = 预扣 − 实际,正数退回、负数补扣;零差额不动账。
-	actual := price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
-	if delta := reserved - actual; delta != 0 {
-		if _, err := h.Keys.Adjust(billing, key.ID, delta, apikey.ReasonSettle); err != nil {
-			// 响应已完成,账务失败只记日志,不影响客户端。
-			log.Printf("relay: settle key %d delta %d: %v", key.ID, delta, err)
-		}
-	}
-	h.recordUsage(billing, usage.Log{
-		KeyID: key.ID, ChannelID: ch.ID, ChannelName: ch.Name,
-		PublicModel: req.Model, UpstreamModel: upstreamModel,
-		Unit: string(price.Unit), PromptTokens: used.PromptTokens,
-		CompletionTokens: used.CompletionTokens, DurationMS: f.durationMS,
-		Status: usage.StatusSuccess, ChargeMicros: actual,
-		PriceSnapshot: f.snapshot,
-	})
+	actual := p.price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
+	h.adjustBalance(billing, key.ID, p.reserved-actual, apikey.ReasonSettle)
+	entry := f.logEntry()
+	entry.PromptTokens = used.PromptTokens
+	entry.CompletionTokens = used.CompletionTokens
+	entry.DurationMS = f.durationMS
+	entry.Status = usage.StatusSuccess
+	entry.ChargeMicros = actual
+	h.recordUsage(billing, entry)
 
 	c.Data(http.StatusOK, "application/json; charset=utf-8", clientBody)
+}
+
+// prepareChat reads and validates the client body, selects a channel,
+// checks the price and takes the estimate pre-deduction — the shared prefix
+// of both paths. On any rejection the client has already been answered an
+// OpenAI error object and the result is nil.
+func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
+	ctx := c.Request.Context()
+
+	raw, err := c.GetRawData()
+	if err != nil {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body could not be read.")
+		return nil
+	}
+	var req chatRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
+		return nil
+	}
+	if req.Model == "" {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingModel, TypeInvalidRequestError, "You must provide a 'model' parameter.")
+		return nil
+	}
+	if len(req.Messages) == 0 {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingMessages, TypeInvalidRequestError, "'messages' must be a non-empty array.")
+		return nil
+	}
+
+	ch, err := selectChannel(ctx, h.Channels, req.Model)
+	if errors.Is(err, errNoChannel) {
+		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
+			"The model '"+req.Model+"' does not exist or no enabled channel serves it.")
+		return nil
+	}
+	if err != nil {
+		h.failInternal(c, err)
+		return nil
+	}
+	price, err := h.Prices.ByModel(ctx, req.Model)
+	if errors.Is(err, pricing.ErrNotFound) {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
+			"The model '"+req.Model+"' has no price configured; ask the administrator to add one.")
+		return nil
+	}
+	if err != nil {
+		h.failInternal(c, err)
+		return nil
+	}
+	if price.Unit != pricing.UnitToken || price.Token == nil {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
+			"The model '"+req.Model+"' is not priced for token billing.")
+		return nil
+	}
+
+	// 估算预扣。免费模型(单价 0)估算为 0,跳过预扣与后续账务。
+	upstreamModel := ch.ModelMap[req.Model]
+	payload, err := rewriteModel(raw, upstreamModel)
+	if err != nil {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
+		return nil
+	}
+	promptEst, completionEst := estimateTokens(req, len(raw))
+	reserved := price.Token.ChargeMicros(promptEst, completionEst)
+	if reserved > 0 {
+		if _, err := h.Keys.Reserve(ctx, key.ID, reserved, apikey.ReasonEstimate); err != nil {
+			h.reserveFailed(c, key, err)
+			return nil
+		}
+	}
+
+	return &prepared{
+		req: req, key: key, ch: ch, price: price,
+		upstreamModel: upstreamModel, payload: payload,
+		reserved: reserved, snapshot: priceSnapshot(price),
+	}
+}
+
+// streamChat relays one streaming chat request: after the shared prepare,
+// the upstream SSE body is pumped to the client frame by frame, no
+// reassembly. The pump loop exits on upstream EOF, upstream failure or a
+// client disconnect (the request context cancels the upstream call, and a
+// failed write means the client is gone) — the books close out either way
+// on a context detached from the request.
+func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
+	key := p.key
+	ctx := c.Request.Context()
+	billing := context.WithoutCancel(ctx)
+
+	f := p.failure()
+	started := time.Now()
+	stream, err := h.adaptor().ChatCompletionsStream(ctx, p.ch, p.req.Model, p.payload)
+	f.durationMS = time.Since(started).Milliseconds()
+
+	if err != nil || !stream.OK {
+		// 上游在流开始前就失败:响应头未动,与非流式失败同路。
+		if err != nil {
+			f.transportErr = err
+		} else {
+			f.upstream = &UpstreamResponse{Status: stream.Status, Body: stream.Body}
+			stream.Close()
+		}
+		h.failUpstream(c, billing, f)
+		return
+	}
+	defer stream.Close()
+
+	w := c.Writer
+	header := w.Header()
+	header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("X-Accel-Buffering", "no") // 提醒反向代理别攒缓冲
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+
+	var reported *Usage
+	var streamErr error
+	clientGone := false
+	for {
+		frame, u, err := stream.Next()
+		if u != nil {
+			reported = u
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				streamErr = err
+			}
+			break
+		}
+		if frame == nil {
+			continue
+		}
+		if _, werr := w.Write(frame); werr != nil {
+			clientGone = true
+			break
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	f.durationMS = time.Since(started).Milliseconds()
+
+	entry := f.logEntry()
+	entry.DurationMS = f.durationMS
+	switch {
+	case reported != nil:
+		// 实际用量已报:照常按实结算。用量块在流尾,拿到它即视同服务已
+		// 交付 —— 之后才发生的断开或上游故障不改账,报了多少结多少。
+		actual := p.price.Token.ChargeMicros(reported.PromptTokens, reported.CompletionTokens)
+		entry.PromptTokens = reported.PromptTokens
+		entry.CompletionTokens = reported.CompletionTokens
+		entry.ChargeMicros = actual
+		entry.Status = usage.StatusSuccess
+		h.adjustBalance(billing, key.ID, p.reserved-actual, apikey.ReasonSettle)
+	case streamErr == nil && !clientGone:
+		// 流完整走完却没有可计用量(上游不守 include_usage 约定):
+		// 少记不虚记 —— 全额退款,成功流零扣费留痕。
+		entry.Status = usage.StatusSuccess
+		h.adjustBalance(billing, key.ID, p.reserved, apikey.ReasonRefund)
+	default:
+		// 流被中断:客户端断开(写失败或请求取消)或上游故障。
+		// 用量未知 → 全额退款 + 失败留痕,摘要列区分原因。
+		entry.Status = usage.StatusUpstreamError
+		entry.UpstreamError = streamAbortSummary(clientGone, streamErr)
+		h.adjustBalance(billing, key.ID, p.reserved, apikey.ReasonRefund)
+	}
+	h.recordUsage(billing, entry)
+}
+
+// streamAbortSummary explains why a stream ended without a reportable
+// completion, for the usage log's error column.
+func streamAbortSummary(clientGone bool, streamErr error) string {
+	switch {
+	case clientGone:
+		return "client disconnected mid-stream"
+	case errors.Is(streamErr, context.Canceled):
+		return "client disconnected mid-stream: " + truncate(streamErr.Error(), 512)
+	default:
+		return "upstream stream failed: " + truncate(streamErr.Error(), 512)
+	}
+}
+
+// adjustBalance applies a signed ledger delta on a context detached from the
+// request: by then the response may already be gone, so a failed adjustment
+// can only scream into the log. Zero deltas change nothing by Store contract.
+func (h *Handlers) adjustBalance(billing context.Context, keyID, delta int64, reason string) {
+	if delta == 0 {
+		return
+	}
+	if _, err := h.Keys.Adjust(billing, keyID, delta, reason); err != nil {
+		log.Printf("relay: adjust key %d delta %d (%s): %v", keyID, delta, reason, err)
+	}
 }
 
 // upstreamFail collects everything the failure path needs, whichever of the
@@ -193,18 +343,25 @@ type upstreamFail struct {
 	normalizeErr  error
 }
 
+// logEntry seeds a usage-log row with the request identity both the success
+// and the failure trail carry; callers fill in the outcome (duration,
+// status, tokens, charge, error summary).
+func (f *upstreamFail) logEntry() usage.Log {
+	return usage.Log{
+		KeyID: f.key.ID, ChannelID: f.ch.ID, ChannelName: f.ch.Name,
+		PublicModel: f.publicModel, UpstreamModel: f.upstreamModel,
+		Unit: f.unit, PriceSnapshot: f.snapshot,
+	}
+}
+
 // failUpstream refunds the whole reserve, leaves the failure trail in the
 // usage log, and answers the client an OpenAI-shaped error: a non-2xx
 // upstream answer passes its status through with the extracted message,
 // everything else becomes 502. billing is a context detached from the
 // request — the caller may already be gone by the time the upstream failed.
 func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, f upstreamFail) {
-	if f.reserved > 0 {
-		// 钱已预扣必须退回;退不回(行消失)是严重账务事故,记日志报警。
-		if _, err := h.Keys.Adjust(billing, f.key.ID, f.reserved, apikey.ReasonRefund); err != nil {
-			log.Printf("relay: refund key %d reserve %d: %v", f.key.ID, f.reserved, err)
-		}
-	}
+	// 钱已预扣必须退回;退不回(行消失)是严重账务事故,记日志报警。
+	h.adjustBalance(billing, f.key.ID, f.reserved, apikey.ReasonRefund)
 
 	var summary string
 	var status int
@@ -220,13 +377,12 @@ func (h *Handlers) failUpstream(c *gin.Context, billing context.Context, f upstr
 		status = f.upstream.Status
 	}
 
-	h.recordUsage(billing, usage.Log{
-		KeyID: f.key.ID, ChannelID: f.ch.ID, ChannelName: f.ch.Name,
-		PublicModel: f.publicModel, UpstreamModel: f.upstreamModel,
-		Unit: f.unit, DurationMS: f.durationMS,
-		Status: usage.StatusUpstreamError, ChargeMicros: 0,
-		PriceSnapshot: f.snapshot, UpstreamError: summary,
-	})
+	entry := f.logEntry()
+	entry.DurationMS = f.durationMS
+	entry.Status = usage.StatusUpstreamError
+	entry.ChargeMicros = 0
+	entry.UpstreamError = summary
+	h.recordUsage(billing, entry)
 
 	apierr.OpenAI(c, status, CodeUpstreamError, CodeUpstreamError, "Upstream request failed: "+summary)
 }

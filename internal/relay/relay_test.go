@@ -611,7 +611,6 @@ func TestRelayRequestValidation(t *testing.T) {
 		{"missing model", `{"messages":[{"role":"user","content":"hi"}]}`, 400, "missing_model"},
 		{"missing messages", `{"model":"public-m"}`, 400, "missing_messages"},
 		{"not json", `{invalid`, 400, "invalid_request"},
-		{"stream rejected", `{"model":"public-m","messages":[{"role":"user","content":"hi"}],"stream":true}`, 400, "stream_unsupported"},
 		{"unknown model", `{"model":"no-such-m","messages":[{"role":"user","content":"hi"}]}`, 404, "model_not_found"},
 		{"unpriced model", `{"model":"no-price-m","messages":[{"role":"user","content":"hi"}]}`, 400, "model_not_priced"},
 	} {
