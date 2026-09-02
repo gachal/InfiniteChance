@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gachal/InfiniteChance/internal/channel"
 )
@@ -64,9 +65,14 @@ type openAIAdaptor struct {
 	Client *http.Client
 }
 
+// upstreamTimeout bounds one upstream chat request; without it a stalled
+// vendor would hang the client's request until the client itself gives up.
+// Generous because non-streaming completions can legitimately run minutes.
+const upstreamTimeout = 5 * time.Minute
+
 // NewOpenAIAdaptor builds the adaptor for channel.TypeOpenAI upstreams.
 func NewOpenAIAdaptor() Adaptor {
-	return &openAIAdaptor{Client: &http.Client{}}
+	return &openAIAdaptor{Client: &http.Client{Timeout: upstreamTimeout}}
 }
 
 func (a *openAIAdaptor) ChatCompletions(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
@@ -135,9 +141,12 @@ func (a *openAIAdaptor) ErrorSummary(body []byte) string {
 	return truncate(s, 512)
 }
 
+// truncate cuts to at most n runes so a Chinese error message can never be
+// split mid-character into invalid UTF-8.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string(runes[:n]) + "…"
 }

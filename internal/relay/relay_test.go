@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
@@ -744,5 +745,18 @@ func TestRelayClientDisconnectMidFlightStillRefundsAndLogs(t *testing.T) {
 	entries := env.quotaLog(t, key.ID)
 	if len(entries) != 3 || entries[0].Reason != apikey.ReasonRefund {
 		t.Fatalf("ledger = %+v, want refund after the estimate", entries)
+	}
+}
+
+func TestRelayErrorSummaryTruncatesOnRuneBoundary(t *testing.T) {
+	a := relay.NewOpenAIAdaptor()
+	// 600 个汉字按字节截断必然劈开 UTF-8;必须按 rune 截且结果合法。
+	long := strings.Repeat("中", 600)
+	s := a.ErrorSummary([]byte(long))
+	if !utf8.ValidString(s) {
+		t.Errorf("ErrorSummary produced invalid UTF-8")
+	}
+	if n := utf8.RuneCountInString(s); n > 513 { // 512 + 省略号
+		t.Errorf("summary = %d runes, want ≤ 513", n)
 	}
 }

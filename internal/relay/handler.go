@@ -240,11 +240,11 @@ func (h *Handlers) reserveFailed(c *gin.Context, key apikey.Key, err error) {
 		apierr.OpenAI(c, http.StatusTooManyRequests, CodeInsufficientQuota, TypeInsufficientQuota,
 			"Insufficient quota: the estimated cost of this request exceeds the remaining balance. Top up the key and retry.")
 	case errors.Is(err, apikey.ErrKeyNotFound):
-		apierr.OpenAI(c, http.StatusUnauthorized, "invalid_api_key", TypeInvalidRequestError, "Incorrect API key provided.")
+		apierr.OpenAI(c, http.StatusUnauthorized, apikey.CodeInvalidAPIKey, TypeInvalidRequestError, "Incorrect API key provided.")
 	case errors.Is(err, apikey.ErrKeyNotActive):
-		code := "key_revoked"
+		code := apikey.CodeKeyRevoked
 		if key.Status(time.Now()) == apikey.StatusExpired {
-			code = "key_expired"
+			code = apikey.CodeKeyExpired
 		}
 		apierr.OpenAI(c, http.StatusUnauthorized, code, TypeInvalidRequestError, "This API key is no longer active.")
 	default:
