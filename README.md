@@ -64,6 +64,16 @@ export REDIS_ADDR=localhost:6380
 
 依赖不可达时对应 `checks` 项为 `"status": "down"` 并带 `error` 摘要。
 
+## 管理端鉴权(票 02)
+
+单管理员账号 + JWT 会话,网关与画布共用一套账号体系:
+
+- **首次使用**:全新库访问管理后台时出现初始化引导,创建唯一管理员账号(密码仅以 bcrypt 哈希入库);初始化完成后引导不再出现。
+- **登录**:网关校验账号密码后签发 HS256 JWT(有效期 7 天);无 token、签名不符或过期的请求一律返回标准 401(`{"error":{"code","message"}}` + `WWW-Authenticate`)。
+- **跨服务校验**:canvas/server 用同一密钥校验网关签发的 JWT,`JWT_SECRET` 环境变量必须两个服务一致(compose 已注入;生产部署请覆盖默认值)。
+
+`GET /auth/status`、`POST /auth/init`、`POST /auth/login` 为公开端点;`GET /auth/me` 需 Bearer token(网关与画布均提供)。
+
 ## 常用命令
 
 ```bash
@@ -73,4 +83,4 @@ make test        # go vet + go test + pnpm -r test
 make lint        # go vet + pnpm -r lint
 ```
 
-配置经环境变量注入:`PORT`、`MYSQL_DSN`、`REDIS_ADDR`。
+配置经环境变量注入:`PORT`、`MYSQL_DSN`、`REDIS_ADDR`、`JWT_SECRET`。
