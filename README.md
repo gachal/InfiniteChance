@@ -70,7 +70,7 @@ export REDIS_ADDR=localhost:6380
 
 - **首次使用**:全新库访问管理后台时出现初始化引导,创建唯一管理员账号(密码仅以 bcrypt 哈希入库);初始化完成后引导不再出现。
 - **登录**:网关校验账号密码后签发 HS256 JWT(有效期 7 天);无 token、签名不符或过期的请求一律返回标准 401(`{"error":{"code","message"}}` + `WWW-Authenticate`)。
-- **跨服务校验**:canvas/server 用同一密钥校验网关签发的 JWT,`JWT_SECRET` 环境变量必须两个服务一致(compose 已注入;生产部署请覆盖默认值)。
+- **跨服务校验**:canvas/server 用同一密钥校验网关签发的 JWT,`JWT_SECRET` 环境变量必须两个服务一致。compose 透传宿主机的 `JWT_SECRET`;未设置时两服务回退到内置开发密钥(仅限本地开发)。生产部署请设置 `JWT_SECRET` 并开启 `JWT_SECRET_REQUIRED=true`——后者会在密钥缺失时拒绝启动,避免带着公开密钥上线。
 
 `GET /auth/status`、`POST /auth/init`、`POST /auth/login` 为公开端点;`GET /auth/me` 需 Bearer token(网关与画布均提供)。
 

@@ -2,13 +2,16 @@
 # 前端 dev 服务器不进 compose,见 README:本机 pnpm 启动,经 8080/8081 访问后端。
 
 # 两个 Go 服务共享的环境变量与依赖条件(YAML 锚点,各服务按需覆盖)。
-# JWT_SECRET 必须两个服务一致,画布才能校验网关签发的管理员会话;
-# 生产部署请通过宿主机环境变量或 .env 覆盖默认值。
+# JWT_SECRET 必须两个服务一致,画布才能校验网关签发的管理员会话:
+# 未设置时两服务回退到内置开发密钥(internal/config 的唯一字面量);
+# 生产部署请在宿主机(或 .env)设置 JWT_SECRET 并开启 JWT_SECRET_REQUIRED=true,
+# 后者会在密钥缺失时拒绝启动。
 x-app-env: &app-env
   GIN_MODE: release
   MYSQL_DSN: root:infinitechance@tcp(mysql:3306)/infinitechance?parseTime=true
   REDIS_ADDR: redis:6379
-  JWT_SECRET: ${JWT_SECRET:-infinitechance-dev-jwt-secret}
+  JWT_SECRET: ${JWT_SECRET:-}
+  JWT_SECRET_REQUIRED: ${JWT_SECRET_REQUIRED:-}
 
 x-app-depends: &app-depends
   mysql:

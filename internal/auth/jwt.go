@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/gachal/InfiniteChance/internal/config"
 )
 
 // SessionTTL is how long an issued JWT stays valid. There is no refresh
@@ -35,6 +37,12 @@ type Issuer struct {
 
 func NewIssuer(secret string, ttl time.Duration) *Issuer {
 	return &Issuer{secret: []byte(secret), ttl: ttl}
+}
+
+// NewIssuerFromConfig builds the issuer from the shared service config,
+// keeping the session TTL choice in one place.
+func NewIssuerFromConfig(cfg config.Config) *Issuer {
+	return NewIssuer(cfg.JWTSecret, SessionTTL)
 }
 
 // Issue mints a token for username valid from now until now+ttl, returning

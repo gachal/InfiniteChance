@@ -25,6 +25,9 @@ type Deps struct {
 func Run(name, defaultPort string, register func(*gin.Engine, Deps)) {
 	cfg := config.Load(name, defaultPort)
 	if cfg.JWTSecretInsecure {
+		if cfg.JWTSecretRequired {
+			log.Fatalf("JWT_SECRET 未设置且 JWT_SECRET_REQUIRED 已开启:拒绝使用内置开发密钥启动")
+		}
 		log.Printf("WARNING: JWT_SECRET 未设置,正在使用内置开发密钥;跨服务令牌校验与公网部署必须设置 JWT_SECRET")
 	}
 

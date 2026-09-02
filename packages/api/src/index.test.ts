@@ -152,4 +152,18 @@ describe('ApiClient auth', () => {
     expect((err as ApiError).status).toBe(409)
     expect((err as ApiError).code).toBe('already_initialized')
   })
+
+  it('maps non-JSON error bodies (proxies, empty pages) to a generic ApiError', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 502,
+      json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
+    })
+    const client = new ApiClient({ base: '/api', fetch: fetchImpl as unknown as typeof fetch })
+
+    const err = await client.login('admin', 's3cret-password').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(502)
+    expect((err as ApiError).code).toBe('error')
+    expect((err as ApiError).message).toBe('请求失败 (HTTP 502)')
+  })
 })

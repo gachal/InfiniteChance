@@ -125,6 +125,56 @@ func TestMySQLStoreFirstAdminLifecycle(t *testing.T) {
 	}
 }
 
+func TestMySQLStoreMigratesLegacyAutoIncrement(t *testing.T) {
+	store, db := openTestStore(t)
+	ctx := context.Background()
+
+	// 还原旧结构的表:自增主键,且仅存的管理员行 id 已漂移到 2
+	// (模拟历史上删除重建过管理员)。
+	if _, err := db.ExecContext(ctx, `DROP TABLE admin_accounts`); err != nil {
+		t.Fatalf("drop legacy table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE admin_accounts (
+		id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		username      VARCHAR(64)  NOT NULL,
+		password_hash VARCHAR(255) NOT NULL
+	) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	hash, err := auth.HashPassword("legacy-password-123")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO admin_accounts (username, password_hash) VALUES ('tmp', ?)`, hash); err != nil {
+		t.Fatalf("seed tmp row: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM admin_accounts WHERE username = 'tmp'`); err != nil {
+		t.Fatalf("delete tmp row: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO admin_accounts (username, password_hash) VALUES ('admin', ?)`, hash); err != nil {
+		t.Fatalf("seed admin row: %v", err)
+	}
+
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema with legacy table: %v", err)
+	}
+
+	// 迁移后旧行归一到 id=1,再次创建首位管理员仍被拒绝。
+	if err := store.CreateFirstAdmin(ctx, "other", hash); !errors.Is(err, auth.ErrAdminExists) {
+		t.Errorf("CreateFirstAdmin after migration err = %v, want ErrAdminExists", err)
+	}
+	var id int
+	if err := db.QueryRowContext(ctx,
+		`SELECT id FROM admin_accounts WHERE username = 'admin'`).Scan(&id); err != nil {
+		t.Fatalf("query migrated row: %v", err)
+	}
+	if id != 1 {
+		t.Errorf("legacy row id = %d, want normalized to 1", id)
+	}
+}
+
 func TestMySQLStoreConcurrentFirstAdminHasSingleWinner(t *testing.T) {
 	store, _ := openTestStore(t)
 	ctx := context.Background()

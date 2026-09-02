@@ -130,13 +130,13 @@ export class ApiClient {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     })
-    const payload: unknown = await res.json()
-
     // 与 Response.ok 等价;自建 fetch 替身只需提供 status 与 json。
     const successful = res.status >= 200 && res.status < 300
     if (successful || allow.includes(res.status)) {
-      return payload as T
+      return (await res.json()) as T
     }
+    // 错误响应体允许缺失或不可解析(如代理返回的 HTML/空体),退化为通用错误。
+    const payload: unknown = await res.json().catch(() => null)
     const { code, message } = errorInfo(payload, res.status)
     if (res.status === 401) {
       throw new UnauthorizedError(code, message)

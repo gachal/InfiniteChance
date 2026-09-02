@@ -19,7 +19,7 @@ func main() {
 		}
 		auth.RegisterRoutes(r, &auth.Handlers{
 			Store:  store,
-			Issuer: auth.NewIssuer(d.Config.JWTSecret, auth.SessionTTL),
+			Issuer: auth.NewIssuerFromConfig(d.Config),
 		})
 	})
 }

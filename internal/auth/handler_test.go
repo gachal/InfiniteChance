@@ -338,7 +338,10 @@ func TestCanvasServerValidatesGatewayToken(t *testing.T) {
 	}
 
 	stranger := auth.NewIssuer("another-secret", auth.SessionTTL)
-	foreign, _, _ := stranger.Issue("admin", time.Now())
+	foreign, _, err := stranger.Issue("admin", time.Now())
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
 	w = doJSON(canvasEngine, http.MethodGet, "/auth/me", foreign, nil)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("canvas /auth/me with foreign token status = %d, want 401", w.Code)
