@@ -34,6 +34,8 @@ export function useAutosave(options: AutosaveOptions) {
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight = false
   let pendingAfterFlight = false
+  /** 等待在途保存结束的调用方(flush)。 */
+  let flightWaiters: Array<() => void> = []
 
   function clearTimer(): void {
     if (timer !== null) {
@@ -72,6 +74,11 @@ export function useAutosave(options: AutosaveOptions) {
         armTimer(delay)
         state.value = 'dirty'
       }
+      const waiters = flightWaiters
+      flightWaiters = []
+      for (const resolve of waiters) {
+        resolve()
+      }
     }
   }
 
@@ -101,10 +108,45 @@ export function useAutosave(options: AutosaveOptions) {
     state.value = 'idle'
   }
 
+  /**
+   * 立即保存未落库的变更(跳过防抖),返回保存是否已确认。生成动作在
+   * 提交任务前调用:结果节点必须先于任务持久化,浏览器随后关闭也不丢。
+   * conflict 态(或尚未加载完成)不做保存并返回 false。
+   */
+  async function flush(): Promise<boolean> {
+    if (version.value < 1) {
+      return false
+    }
+    clearTimer()
+    await whenIdle()
+    clearTimer() // 在途保存的收尾可能又排了防抖,一并取消
+    // await 之后状态可能已被在途保存改写,重新读取而不是沿用前面的收窄。
+    const current: AutosaveState = state.value
+    if (current === 'conflict' || version.value < 1) {
+      return false
+    }
+    if (current === 'dirty' || current === 'error' || pendingAfterFlight) {
+      pendingAfterFlight = false
+      await persist()
+    }
+    return state.value === 'saved'
+  }
+
+  /** 在途保存存在时等它结束;否则立即返回。 */
+  function whenIdle(): Promise<void> {
+    if (!inFlight) {
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      flightWaiters.push(resolve)
+    })
+  }
+
   return {
     state: readonly(state),
     version: readonly(version),
     markDirty,
     setVersion,
+    flush,
   }
 }

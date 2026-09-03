@@ -138,6 +138,38 @@ export interface SaveGraphResult {
   updated_at: string
 }
 
+/** 画布生成任务状态(10 号票):排队 → 生成中 → 成功/失败;失败可在
+ * 节点上原地重试(同一任务回队)。 */
+export type CanvasTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+/** 服务端编排的生成任务。node_id 绑定到编辑器里展示结果的节点;
+ * image_url 是产物地址(成功时与素材行同值),asset_id 是素材库引用。 */
+export interface CanvasTask {
+  id: string
+  canvas_id: number
+  node_id: string
+  kind: string
+  prompt: string
+  model: string
+  size: string
+  status: CanvasTaskStatus
+  attempts: number
+  error: string
+  asset_id: number
+  image_url: string
+  created_at: string
+  updated_at: string
+}
+
+/** 提交文生图任务的请求体。 */
+export interface CreateCanvasTaskInput {
+  node_id: string
+  kind: 'image'
+  prompt: string
+  model: string
+  size?: string
+}
+
 interface ErrorPayload {
   error?: { code?: string; message?: string }
 }
@@ -303,6 +335,35 @@ export class ApiClient {
       method: 'PUT',
       body: { graph, version: expectedVersion },
     })
+  }
+
+  // ---- 画布生成任务(挂 /canvases/:id/tasks,需 JWT 会话)----
+
+  /** 提交文生图任务:任务行落库即返回(queued),服务端 worker 负责后续。 */
+  createCanvasTask(canvasId: number, input: CreateCanvasTaskInput): Promise<CanvasTask> {
+    return this.request<{ task: CanvasTask }>(`/canvases/${canvasId}/tasks`, {
+      method: 'POST',
+      body: input,
+    }).then((body) => body.task)
+  }
+
+  /** 画布的近期任务(最新在前):编辑器加载时对账 + 轮询时同步。 */
+  async listCanvasTasks(canvasId: number): Promise<CanvasTask[]> {
+    const body = await this.request<{ tasks: CanvasTask[] }>(`/canvases/${canvasId}/tasks`)
+    return body.tasks
+  }
+
+  /** 失败任务原地重试:同一任务回队,节点绑定不变。 */
+  retryCanvasTask(canvasId: number, taskId: string): Promise<CanvasTask> {
+    return this.request<{ task: CanvasTask }>(`/canvases/${canvasId}/tasks/${taskId}/retry`, {
+      method: 'POST',
+    }).then((body) => body.task)
+  }
+
+  /** 可用于文生图的公开模型(按次计价的 call 轨模型,名字排序)。 */
+  async listImageModels(): Promise<string[]> {
+    const body = await this.request<{ models: string[] }>('/image-models')
+    return body.models
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {

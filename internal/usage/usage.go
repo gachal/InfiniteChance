@@ -22,7 +22,9 @@ const (
 // Log is one immutable usage row. ChannelName is snapshotted as text so the
 // trail survives a channel deletion; PriceSnapshot is the JSON rendering of
 // the pricing at request time (see pricing.Price.Snapshot), empty when the
-// request never got priced.
+// request never got priced. Source carries the caller's X-InfiniteChance-Source
+// value verbatim (10 号票):canvas/server marks its gateway calls with the
+// canvas origin so canvas spend is auditable apart from direct key traffic.
 type Log struct {
 	ID               int64
 	KeyID            int64
@@ -38,6 +40,7 @@ type Log struct {
 	ChargeMicros     int64
 	PriceSnapshot    []byte // JSON, nil = 未计价
 	UpstreamError    string // 空 = 无上游错误
+	Source           string // 空 = 直连流量;画布侧为 canvas=… task=… node=…
 	CreatedAt        time.Time
 }
 

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // 画布编辑器:vue-flow 三类节点、自由拖拽连线、整图防抖自动保存
-// 与版本冲突处理(09 号票)。
+// 与版本冲突处理(09 号票);文生图任务编排的客户端侧(10 号票):
+// 生成动作 → 结果节点先落库再提交 → 轮询任务 → 产物写回节点。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow, type Connection, type Edge } from '@vue-flow/core'
 
-import { ApiError, type CanvasDetail } from '@infinitechance/api'
+import { ApiError, type CanvasDetail, type CanvasTask } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import {
@@ -15,8 +16,11 @@ import {
   NODE_TYPE_LABEL,
   type CanvasNodeData,
   type CanvasNodeType,
+  type MediaNodeData,
+  type PromptNodeData,
 } from '../graph'
 import { useAutosave } from '../composables/useAutosave'
+import { useCanvasTasks } from '../composables/useCanvasTasks'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PromptNode from '../components/nodes/PromptNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
@@ -29,7 +33,7 @@ const canvasId = Number(route.params.id)
 
 // useVueFlow 在组件挂载前调用:编辑器拥有这个 flow 实例,
 // toObject/addNodes 等操作与 <VueFlow> 渲染共享同一份状态。
-const { addEdges, addNodes, fitView, onConnect, onEdgesChange, onNodesChange, setEdges, setNodes, toObject, updateNodeData } =
+const { addEdges, addNodes, findNode, fitView, onConnect, onEdgesChange, onNodesChange, setEdges, setNodes, toObject, updateNodeData } =
   useVueFlow()
 
 const canvasName = ref('')
@@ -60,6 +64,118 @@ const saveLabel = computed(() => {
       return '所有更改已保存'
   }
 })
+
+// ---- 文生图任务(10 号票)----
+
+// 生图模型目录:拉取失败视为暂无可用模型,生成入口随之隐藏。
+const imageModels = ref<string[]>([])
+
+function nodeUrlFor(task: CanvasTask): string {
+  // data: URI 不进图(几 MB 的内联图片会把整图 JSON 顶破上限):
+  // 有素材引用时走内容寻址,由服务端解出字节。
+  if (task.image_url.startsWith('data:') && task.asset_id > 0) {
+    return `/api/assets/${task.asset_id}/content`
+  }
+  return task.image_url
+}
+
+/** 产物落位:成功任务的地址写进绑定节点;有变化才落一次盘。节点是否存在
+ * 以图为准 —— 结果节点在提交任务前已先落库,这里不负责物化,也不复活
+ * 被删除的节点;产物本体在素材库里,重开可查。 */
+function syncTaskToCanvas(task: CanvasTask): void {
+  if (task.status !== 'succeeded' || task.image_url === '') {
+    return
+  }
+  const node = findNode(task.node_id)
+  const data = node?.data as MediaNodeData | undefined
+  const url = nodeUrlFor(task)
+  if (node && data && data.url !== url) {
+    updateNodeData(task.node_id, { url })
+    autosave.markDirty()
+  }
+}
+
+const taskSync = useCanvasTasks({
+  fetchTasks: () => client.listCanvasTasks(canvasId),
+  retryTask: (taskId) => client.retryCanvasTask(canvasId, taskId),
+  onTask: syncTaskToCanvas,
+})
+
+const generating = ref(false)
+const generateError = ref('')
+const retryingNode = ref('')
+
+/** 生成动作:结果节点(图片)与提示词连线先入图并落库,再提交任务 ——
+ * 浏览器随后关闭,任务与节点也都在服务端/图里,重开不丢。 */
+async function onGenerate(promptNodeId: string, payload: { model: string }): Promise<void> {
+  if (generating.value) {
+    return
+  }
+  const promptNode = findNode(promptNodeId)
+  const data = promptNode?.data as PromptNodeData | undefined
+  const text = data?.text.trim() ?? ''
+  if (!promptNode || text === '' || payload.model === '') {
+    return
+  }
+  generating.value = true
+  generateError.value = ''
+  try {
+    nodeSeq += 1
+    const nodeId = `image-${Date.now()}-${nodeSeq}`
+    addNodes([
+      {
+        id: nodeId,
+        type: 'image',
+        position: { x: promptNode.position.x + 260, y: promptNode.position.y },
+        data: initialData('image'),
+      },
+    ])
+    addEdges([
+      {
+        id: `e-${promptNodeId}-${nodeId}`,
+        source: promptNodeId,
+        target: nodeId,
+        sourceHandle: null,
+        targetHandle: null,
+      },
+    ])
+    autosave.markDirty()
+    const saved = await autosave.flush()
+    if (!saved) {
+      generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'image',
+      prompt: text,
+      model: payload.model,
+    })
+    taskSync.track(task)
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
+  } finally {
+    generating.value = false
+  }
+}
+
+/** 失败任务的原地重试:同一任务回队,节点绑定不变。 */
+async function onRetry(nodeId: string): Promise<void> {
+  const task = taskSync.byNode.get(nodeId)
+  if (!task || retryingNode.value !== '') {
+    return
+  }
+  retryingNode.value = nodeId
+  try {
+    await taskSync.retry(task.id)
+  } catch (e) {
+    if (!taskSync.isRetryConflict(e)) {
+      generateError.value = e instanceof ApiError ? e.message : '重试失败,请稍后再试'
+    }
+  } finally {
+    retryingNode.value = ''
+  }
+}
 
 // 持久化文档:只保留语义字段,vue-flow 的内部装饰不落库。
 function snapshot() {
@@ -234,11 +350,24 @@ function beforeUnload(e: BeforeUnloadEvent): void {
 }
 
 onMounted(() => {
-  void loadCanvas()
+  // 任务同步必须等整图加载落地之后再开始:抢先回来的一次同步会被
+  // applyServerGraph 的 setNodes 整个覆盖掉。
+  void loadCanvas().finally(() => {
+    void taskSync.start()
+  })
+  void client
+    .listImageModels()
+    .then((models) => {
+      imageModels.value = models
+    })
+    .catch(() => {
+      /* 目录拉不到就隐藏生成入口,不打扰画布编辑 */
+    })
   window.addEventListener('beforeunload', beforeUnload)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
+  taskSync.stop()
 })
 
 function backToList(): void {
@@ -300,7 +429,29 @@ function backToList(): void {
       >
         {{ saveLabel }}
       </span>
+
+      <span
+        v-if="taskSync.activeCount.value > 0"
+        class="task-state"
+      >
+        生成中 {{ taskSync.activeCount.value }} 个任务…
+      </span>
     </header>
+
+    <div
+      v-if="generateError"
+      class="generate-error"
+      role="alert"
+    >
+      <p>{{ generateError }}</p>
+      <button
+        class="ghost"
+        type="button"
+        @click="generateError = ''"
+      >
+        知道了
+      </button>
+    </div>
 
     <div
       v-if="autosave.state.value === 'conflict'"
@@ -378,11 +529,21 @@ function backToList(): void {
             :id="nodeProps.id"
             :type="nodeProps.type"
             :data="nodeProps.data"
+            :models="imageModels"
+            :generating="generating"
             @text-change="onTextChange(nodeProps.id, $event)"
+            @generate="onGenerate(nodeProps.id, $event)"
           />
         </template>
         <template #node-image="nodeProps">
-          <ImageNode v-bind="nodeProps" />
+          <ImageNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :task="taskSync.byNode.get(nodeProps.id) ?? null"
+            :retrying="retryingNode === nodeProps.id"
+            @retry="onRetry(nodeProps.id)"
+          />
         </template>
         <template #node-video="nodeProps">
           <VideoNode v-bind="nodeProps" />
@@ -472,6 +633,38 @@ function backToList(): void {
 .save-state[data-state='error'],
 .save-state[data-state='conflict'] {
   color: #ff8f8f;
+}
+
+.task-state {
+  color: #4ade80;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.generate-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  background: rgba(224, 49, 49, 0.12);
+  border-bottom: 1px solid rgba(224, 49, 49, 0.35);
+}
+
+.generate-error p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.generate-error button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  background: transparent;
+  color: #aab1c5;
+  white-space: nowrap;
 }
 
 .conflict-banner {

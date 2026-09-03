@@ -309,7 +309,7 @@ func (e *relayEnv) usageRows(t *testing.T) []usage.Log {
 	rows, err := e.stores.db.QueryContext(context.Background(),
 		`SELECT key_id, channel_id, channel_name, public_model, upstream_model, unit,
 		        prompt_tokens, completion_tokens, duration_ms, status, charge_micros,
-		        price_snapshot, upstream_error
+		        price_snapshot, upstream_error, source
 		 FROM usage_logs ORDER BY id ASC`)
 	if err != nil {
 		t.Fatalf("query usage_logs: %v", err)
@@ -319,15 +319,18 @@ func (e *relayEnv) usageRows(t *testing.T) []usage.Log {
 	for rows.Next() {
 		var l usage.Log
 		var snapshot []byte
-		var upstreamErr *string
+		var upstreamErr, source *string
 		if err := rows.Scan(&l.KeyID, &l.ChannelID, &l.ChannelName, &l.PublicModel, &l.UpstreamModel,
 			&l.Unit, &l.PromptTokens, &l.CompletionTokens, &l.DurationMS, &l.Status,
-			&l.ChargeMicros, &snapshot, &upstreamErr); err != nil {
+			&l.ChargeMicros, &snapshot, &upstreamErr, &source); err != nil {
 			t.Fatalf("scan usage row: %v", err)
 		}
 		l.PriceSnapshot = snapshot
 		if upstreamErr != nil {
 			l.UpstreamError = *upstreamErr
+		}
+		if source != nil {
+			l.Source = *source
 		}
 		out = append(out, l)
 	}

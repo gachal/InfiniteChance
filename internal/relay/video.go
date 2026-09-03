@@ -247,6 +247,7 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 		key:         key, price: price,
 		reserved: reserved, snapshot: snapshot,
 		candidates: candidates,
+		source:     SourceFrom(c),
 	}
 }
 

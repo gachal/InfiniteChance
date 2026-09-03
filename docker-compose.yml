@@ -68,6 +68,11 @@ services:
     environment:
       <<: *app-env
       PORT: "8081"
+      # 画布 worker 调网关用:服务级 key 由 .env 提供(管理端创建),
+      # 未设置时画布拒绝生成提交并给出明确错误,其余功能不受影响。
+      CANVAS_GATEWAY_URL: ${CANVAS_GATEWAY_URL:-http://gateway:8080}
+      CANVAS_SERVICE_KEY: ${CANVAS_SERVICE_KEY:-}
+      CANVAS_TASK_CONCURRENCY: ${CANVAS_TASK_CONCURRENCY:-}
     ports:
       - "8081:8081"
     depends_on: *app-depends

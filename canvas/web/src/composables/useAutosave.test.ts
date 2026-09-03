@@ -130,4 +130,65 @@ describe('useAutosave', () => {
     expect(autosave.state.value).toBe('idle')
     expect(autosave.version.value).toBe(3)
   })
+
+  it('flush saves immediately, skipping the debounce window', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 2 })
+    const autosave = useAutosave({ delay: DELAY, save })
+    autosave.setVersion(1)
+
+    autosave.markDirty()
+    const ok = await autosave.flush()
+
+    expect(ok).toBe(true)
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledWith(1)
+    expect(autosave.state.value).toBe('saved')
+
+    // 已保存状态下的 flush 是空操作,不再发起请求。
+    await autosave.flush()
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+
+  it('flush waits for an in-flight save then saves the pending changes', async () => {
+    let release!: (value: { version: number }) => void
+    const save = vi.fn().mockImplementation(
+      () =>
+        new Promise<{ version: number }>((resolve) => {
+          release = resolve
+        }),
+    )
+    const autosave = useAutosave({ delay: DELAY, save })
+    autosave.setVersion(1)
+
+    autosave.markDirty()
+    await vi.advanceTimersByTimeAsync(DELAY)
+    expect(autosave.state.value).toBe('saving')
+
+    // 在途期间的编辑 + 立即保存:等第一轮结束后马上补一轮。
+    autosave.markDirty()
+    const flushing = autosave.flush()
+    release({ version: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(save).toHaveBeenCalledTimes(2)
+
+    // 第二轮 save 的 resolver 已重新赋给 release:放行后 flush 才算落定。
+    release({ version: 3 })
+    const ok = await flushing
+
+    expect(ok).toBe(true)
+    expect(save).toHaveBeenLastCalledWith(2)
+    expect(autosave.state.value).toBe('saved')
+  })
+
+  it('flush reports false in conflict state and saves nothing', async () => {
+    const save = vi.fn().mockRejectedValue(conflictError())
+    const autosave = useAutosave({ delay: DELAY, save })
+    autosave.setVersion(7)
+    autosave.markDirty()
+    await vi.advanceTimersByTimeAsync(DELAY)
+    expect(autosave.state.value).toBe('conflict')
+
+    expect(await autosave.flush()).toBe(false)
+    expect(save).toHaveBeenCalledTimes(1)
+  })
 })

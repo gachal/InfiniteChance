@@ -79,6 +79,7 @@ type prepared struct {
 	snapshot    []byte
 	started     time.Time         // 第一个上游尝试的起点;成败行的耗时都是请求总耗时
 	candidates  []channel.Channel // 加权排序后的换道候选,首选在前
+	source      string            // X-InfiniteChance-Source 原值(10 号票),空 = 直连
 }
 
 // videoPrep carries one video task's second-track billing facts: the
@@ -140,7 +141,34 @@ func (p *prepared) logEntry(at attempt) usage.Log {
 		KeyID: p.key.ID, ChannelID: at.ch.ID, ChannelName: at.ch.Name,
 		PublicModel: p.publicModel, UpstreamModel: at.upstreamModel,
 		Unit: string(p.price.Unit), PriceSnapshot: p.snapshot,
+		Source: p.source,
 	}
+}
+
+// sourceHeader is the request header canvas/server marks its gateway calls
+// with (10 号票:画布来源标记)。Its value lands verbatim in the usage log's
+// source column, so canvas-origin spend is auditable apart from direct
+// key traffic; any /v1 caller may set it, it is an audit annotation only.
+const sourceHeader = "X-InfiniteChance-Source"
+
+// maxSourceRunes matches the source column's width — longer marks are
+// truncated rather than rejected: a bad mark must not fail a good request.
+const maxSourceRunes = 255
+
+// SourceFrom extracts and sanitizes the origin mark: control characters
+// stripped, whitespace trimmed, capped at the column width.
+func SourceFrom(c *gin.Context) string {
+	v := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, c.GetHeader(sourceHeader))
+	v = strings.TrimSpace(v)
+	if runes := []rune(v); len(runes) > maxSourceRunes {
+		v = string(runes[:maxSourceRunes])
+	}
+	return v
 }
 
 // settle closes out a delivered request: settles the ledger to the actual
@@ -322,6 +350,7 @@ func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
 		req:         req, key: key, price: price, raw: raw,
 		reserved: reserved, snapshot: priceSnapshot(price),
 		candidates: candidates,
+		source:     SourceFrom(c),
 	}
 }
 

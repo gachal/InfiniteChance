@@ -6,6 +6,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +25,17 @@ type Config struct {
 	// refuses the built-in dev secret so production cannot ship a public
 	// signing key by accident.
 	JWTSecretRequired bool
+	// GatewayBaseURL points canvas/server at the gateway's relay surface
+	// (CANVAS_GATEWAY_URL). The gateway ignores it.
+	GatewayBaseURL string
+	// CanvasServiceKey is the canvas's service-level API key for the gateway
+	// (CANVAS_SERVICE_KEY). Empty = canvas/server refuses generation submits
+	// with gateway_unconfigured instead of queueing unworkable work. The
+	// gateway ignores it.
+	CanvasServiceKey string
+	// CanvasTaskConcurrency caps the canvas worker's parallel generations
+	// (CANVAS_TASK_CONCURRENCY). The gateway ignores it.
+	CanvasTaskConcurrency int
 }
 
 // devJWTSecret keeps host-side dev runs working with zero configuration.
@@ -36,13 +48,16 @@ const devJWTSecret = "infinitechance-dev-jwt-secret"
 func Load(name, defaultPort string) Config {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	return Config{
-		Name:              name,
-		Port:              envOr("PORT", defaultPort),
-		MysqlDSN:          envOr("MYSQL_DSN", "root:infinitechance@tcp(localhost:3306)/infinitechance?parseTime=true"),
-		RedisAddr:         envOr("REDIS_ADDR", "localhost:6379"),
-		JWTSecret:         envOr("JWT_SECRET", devJWTSecret),
-		JWTSecretInsecure: jwtSecret == "",
-		JWTSecretRequired: boolEnv("JWT_SECRET_REQUIRED"),
+		Name:                  name,
+		Port:                  envOr("PORT", defaultPort),
+		MysqlDSN:              envOr("MYSQL_DSN", "root:infinitechance@tcp(localhost:3306)/infinitechance?parseTime=true"),
+		RedisAddr:             envOr("REDIS_ADDR", "localhost:6379"),
+		JWTSecret:             envOr("JWT_SECRET", devJWTSecret),
+		JWTSecretInsecure:     jwtSecret == "",
+		JWTSecretRequired:     boolEnv("JWT_SECRET_REQUIRED"),
+		GatewayBaseURL:        envOr("CANVAS_GATEWAY_URL", "http://localhost:8080"),
+		CanvasServiceKey:      os.Getenv("CANVAS_SERVICE_KEY"),
+		CanvasTaskConcurrency: intEnv("CANVAS_TASK_CONCURRENCY", 2),
 	}
 }
 
@@ -54,6 +69,17 @@ func boolEnv(key string) bool {
 	default:
 		return false
 	}
+}
+
+// intEnv reads a positive integer, falling back to def when unset or
+// malformed — a bad knob value degrades to the default, never to zero work.
+func intEnv(key string, def int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
 }
 
 func envOr(key, fallback string) string {
