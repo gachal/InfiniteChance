@@ -14,6 +14,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/relay"
 	"github.com/gachal/InfiniteChance/internal/usage"
+	"github.com/gachal/InfiniteChance/internal/videotask"
 )
 
 func main() {
@@ -38,6 +39,10 @@ func main() {
 		if err := usageLogs.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure usage log schema: %v", err)
 		}
+		videoTasks := videotask.NewMySQLStore(d.DB)
+		if err := videoTasks.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure video task schema: %v", err)
+		}
 
 		issuer := auth.NewIssuerFromConfig(d.Config)
 		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
@@ -58,6 +63,7 @@ func main() {
 			Keys:     keys,
 			Prices:   prices,
 			Usage:    usageLogs,
+			Tasks:    videoTasks,
 		})
 	})
 }

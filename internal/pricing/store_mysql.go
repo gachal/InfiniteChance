@@ -57,7 +57,7 @@ func scanRow(scan rowScanner) (Price, error) {
 		if err := json.Unmarshal(rawConfig, p.Token); err != nil {
 			return Price{}, err
 		}
-	case UnitCall:
+	case UnitCall, UnitSecond:
 		p.Call = &CallPrice{}
 		if err := json.Unmarshal(rawConfig, p.Call); err != nil {
 			return Price{}, err
@@ -95,7 +95,7 @@ func (s *MySQLStore) ByModel(ctx context.Context, publicModel string) (Price, er
 func (s *MySQLStore) Upsert(ctx context.Context, p Price) (Price, error) {
 	// unit 决定 config 列的载荷形状(双轨不变量:恰好一个载荷)。
 	var payload any = p.Token
-	if p.Unit == UnitCall {
+	if p.Unit == UnitCall || p.Unit == UnitSecond {
 		payload = p.Call
 	}
 	config, err := json.Marshal(payload)

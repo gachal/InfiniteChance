@@ -1,7 +1,7 @@
 // Package pricing implements the gateway's dual-track model pricing: chat
 // models bill by token with an upstream-cost multiplier (ratio track), image
-// models bill per generated item in USD with a size coefficient (call track,
-// ticket 07). All amounts are integer micro-USD like the quota ledger, so
+// and video models bill per generated item in USD with a size coefficient
+// (item track). All amounts are integer micro-USD like the quota ledger, so
 // billing arithmetic never touches floats; the admin API converts at the edge.
 package pricing
 
@@ -20,13 +20,16 @@ import (
 )
 
 // Unit names a billing track. TokenTrack bills chat usage by token counts
-// times a ratio; CallTrack (ticket 07) will bill per generated item in USD
-// with size/duration factors.
+// times a ratio; the item track bills per generated unit in USD with a
+// size coefficient — UnitCall for images (07 号票), UnitSecond for video
+// (08 号票:单价按秒,系数按分辨率). Both share CallPrice arithmetic; the
+// unit only decides which requests may use the row and what usage rows log.
 type Unit string
 
 const (
-	UnitToken Unit = "token"
-	UnitCall  Unit = "call"
+	UnitToken  Unit = "token"
+	UnitCall   Unit = "call"
+	UnitSecond Unit = "second"
 )
 
 // ErrNotFound reports a public model with no price row.
@@ -167,12 +170,13 @@ func (p Price) Snapshot() (json.RawMessage, error) {
 	return json.Marshal(s)
 }
 
-// CallSnapshot renders the call-track price plus the request facts the
-// charge derives from — the requested size and item count n. Unlike the
-// token track (usage comes from the vendor's report), a call-track charge
-// cannot be recomputed from the row alone without them.
+// CallSnapshot renders the item-track price plus the request facts the
+// charge derives from — the requested size and the billed item count n
+// (张 for images, 秒 for video). Unlike the token track (usage comes from
+// the vendor's report), an item-track charge cannot be recomputed from the
+// row alone without them.
 func (p Price) CallSnapshot(size string, n int64) (json.RawMessage, error) {
-	if p.Unit != UnitCall {
+	if p.Unit != UnitCall && p.Unit != UnitSecond {
 		return nil, fmt.Errorf("pricing: call snapshot of a %s-track price", p.Unit)
 	}
 	s := struct {
@@ -182,7 +186,7 @@ func (p Price) CallSnapshot(size string, n int64) (json.RawMessage, error) {
 			Size string `json:"size"`
 			N    int64  `json:"n"`
 		} `json:"request"`
-	}{Unit: UnitCall, Call: p.Call}
+	}{Unit: p.Unit, Call: p.Call}
 	s.Request.Size = size
 	s.Request.N = n
 	return json.Marshal(s)
@@ -218,16 +222,16 @@ func (p Price) Normalize() (Price, error) {
 			return p, fmt.Errorf("倍率需在 0 到 %g 之间", float64(MaxRatio))
 		}
 		p.Token = &t
-	case UnitCall:
+	case UnitCall, UnitSecond:
 		if p.Call == nil {
-			return p, fmt.Errorf("按次计价需要 USD 单价")
+			return p, fmt.Errorf("%s计价需要 USD 单价", unitLabel(p.Unit))
 		}
 		if p.Token != nil {
-			return p, fmt.Errorf("按次计价不能带 token 价格")
+			return p, fmt.Errorf("%s计价不能带 token 价格", unitLabel(p.Unit))
 		}
 		c := *p.Call
 		if c.USDPerCallMicros < 0 || c.USDPerCallMicros > MaxUSDPerCall*apikey.MicrosPerUSD {
-			return p, fmt.Errorf("按次单价需在 0 到 %d 美元/张之间", MaxUSDPerCall)
+			return p, fmt.Errorf("%s单价需在 0 到 %d 美元之间", unitLabel(p.Unit), MaxUSDPerCall)
 		}
 		if len(c.SizeFactorMicros) > maxFactorEntries {
 			return p, fmt.Errorf("尺寸系数最多 %d 条", maxFactorEntries)
@@ -257,6 +261,14 @@ func (p Price) Normalize() (Price, error) {
 // maxFactorEntries bounds the size-coefficient table like the channel
 // package bounds model maps.
 const maxFactorEntries = 100
+
+// unitLabel names a unit in admin-facing validation messages.
+func unitLabel(u Unit) string {
+	if u == UnitSecond {
+		return "按秒"
+	}
+	return "按次"
+}
 
 func validatePerMTokens(label string, micros int64) error {
 	if micros < 0 || micros > MaxUSDPerMTokens*mtokensDenom {

@@ -33,10 +33,11 @@ type Capability string
 const (
 	CapChat   Capability = "chat"
 	CapImages Capability = "images"
+	CapVideos Capability = "videos" // 异步视频任务(08 号票)
 )
 
 // SupportedCapabilities lists what a channel may declare.
-var SupportedCapabilities = []Capability{CapChat, CapImages}
+var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos}
 
 // SupportedTypes lists the channel types this build can relay and probe.
 var SupportedTypes = []string{TypeOpenAI}

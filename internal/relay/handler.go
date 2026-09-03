@@ -32,6 +32,7 @@ const (
 	CodeModelUnavailable    = "model_unavailable"
 	CodeInsufficientQuota   = "insufficient_quota"
 	CodeUpstreamError       = "upstream_error"
+	CodeTaskNotFound        = "task_not_found" // 08 号票:未知或他人的任务 id
 	TypeInvalidRequestError = "invalid_request_error"
 	TypeInsufficientQuota   = "insufficient_quota"
 	TypeServerError         = "server_error"
@@ -64,18 +65,27 @@ const (
 // validated, candidates scheduled, price checked, estimate pre-deduction
 // taken. raw is the client body verbatim (public model name) — each channel
 // attempt rewrites the model field to its own upstream name. call 非 nil
-// 标记生图请求(call 轨):请求事实与按渠道重建所需的原材料都在里面。
+// 标记生图请求(call 轨):请求事实与按渠道重建所需的原材料都在里面;
+// video 非 nil 标记视频任务(second 轨):请求事实供计费与快照使用。
 type prepared struct {
 	publicModel string
-	req         chatRequest // 聊天轨的已解析字段;生图请求不填
+	req         chatRequest // 聊天轨的已解析字段;生图/视频请求不填
 	raw         []byte
 	call        *imagesPrep
+	video       *videoPrep
 	key         apikey.Key
 	price       pricing.Price
 	reserved    int64
 	snapshot    []byte
 	started     time.Time         // 第一个上游尝试的起点;成败行的耗时都是请求总耗时
 	candidates  []channel.Channel // 加权排序后的换道候选,首选在前
+}
+
+// videoPrep carries one video task's second-track billing facts: the
+// resolution size (factor key) and the billed seconds.
+type videoPrep struct {
+	size    string
+	seconds int64
 }
 
 // imagesPrep carries one images request's call-track facts: the billing

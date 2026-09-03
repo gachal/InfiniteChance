@@ -9,6 +9,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/usage"
+	"github.com/gachal/InfiniteChance/internal/videotask"
 )
 
 // Handlers serves the relay (/v1) surface. Every dependency is the store
@@ -24,6 +25,7 @@ type Handlers struct {
 	Keys     apikey.Store
 	Prices   pricing.Store
 	Usage    usage.Store
+	Tasks    videotask.Store
 	Adaptor  Adaptor
 	Breaker  *channel.Breaker
 	Rand     *rand.Rand
@@ -41,6 +43,9 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/chat/completions", h.ChatCompletions)
 	group.POST("/images/generations", h.ImagesGenerations)
 	group.POST("/images/edits", h.ImagesEdits)
+	group.POST("/videos/generations", h.CreateVideoGeneration)
+	group.GET("/videos/tasks/:id", h.GetVideoTask)
+	group.POST("/videos/tasks/:id/cancel", h.CancelVideoTask)
 }
 
 // adaptor returns the configured vendor seam, defaulting to the

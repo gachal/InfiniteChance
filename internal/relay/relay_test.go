@@ -23,6 +23,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/relay"
 	"github.com/gachal/InfiniteChance/internal/usage"
+	"github.com/gachal/InfiniteChance/internal/videotask"
 )
 
 // openRelayTestDB brings up all four stores on one throwaway database of the
@@ -34,6 +35,7 @@ type relayStores struct {
 	keys     *apikey.MySQLStore
 	prices   *pricing.MySQLStore
 	usage    *usage.MySQLStore
+	tasks    *videotask.MySQLStore
 	db       *sql.DB
 }
 
@@ -76,17 +78,19 @@ func openRelayTestDB(t *testing.T) *relayStores {
 		keys:     apikey.NewMySQLStore(db),
 		prices:   pricing.NewMySQLStore(db),
 		usage:    usage.NewMySQLStore(db),
+		tasks:    videotask.NewMySQLStore(db),
 		db:       db,
 	}
 	for _, ensure := range []func(context.Context) error{
 		stores.channels.EnsureSchema, stores.keys.EnsureSchema,
 		stores.prices.EnsureSchema, stores.usage.EnsureSchema,
+		stores.tasks.EnsureSchema,
 	} {
 		if err := ensure(ctx); err != nil {
 			t.Fatalf("EnsureSchema: %v", err)
 		}
 	}
-	for _, table := range []string{"api_key_quota_log", "api_keys", "channels", "model_prices", "usage_logs"} {
+	for _, table := range []string{"api_key_quota_log", "api_keys", "channels", "model_prices", "usage_logs", "video_tasks"} {
 		if _, err := db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)
 		}
@@ -191,6 +195,7 @@ func newRelayEnv(t *testing.T, adaptor relay.Adaptor) *relayEnv {
 		Keys:     stores.keys,
 		Prices:   stores.prices,
 		Usage:    stores.usage,
+		Tasks:    stores.tasks,
 		Adaptor:  adaptor,
 	}
 	v1 := r.Group("/v1", apikey.RequireKey(stores.keys))

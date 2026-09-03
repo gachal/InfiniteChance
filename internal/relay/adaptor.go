@@ -7,7 +7,10 @@
 // reached the upstream. Buffered and SSE-streamed chat completions share that
 // skeleton on the token track; the synchronous images endpoints (generations
 // and edits, 07 号票) run it on the per-call track, restricted to
-// image-capable channels.
+// image-capable channels. The async video contract (08 号票) splits the
+// skeleton in two: submit reserves and pins a channel, while each poll
+// merges the vendor's raw status into the external five-state machine and
+// the transition to a terminal state is what settles or refunds.
 package relay
 
 import (
@@ -19,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -63,6 +67,24 @@ type Adaptor interface {
 	// multipart/form-data body (its model field rewritten to the upstream
 	// name) plus the Content-Type that carries the writer's boundary.
 	ImagesEdits(ctx context.Context, ch channel.Channel, contentType string, payload []byte) (*UpstreamResponse, error)
+	// VideosSubmit submits one async video generation (08 号票). payload is
+	// the complete JSON body with the upstream model name already set. A 2xx
+	// answer carries {"task_id": "<vendor task id>"} — the handle every
+	// later poll and cancel goes through. The upstream contract is the
+	// OpenAI-style task face this gateway itself exposes: submit
+	// POST {base_url}/videos/generations, poll GET
+	// {base_url}/videos/tasks/{id}, cancel POST
+	// {base_url}/videos/tasks/{id}/cancel.
+	VideosSubmit(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
+	// VideosQuery polls one submitted task. A 2xx body carries
+	// {"task_status": "<vendor raw status>", "video_url": "…when
+	// succeeded…", "error": {"message": "…when failed…"}}; the relay merges
+	// task_status into the external five states (videotask.MergeStatus).
+	VideosQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error)
+	// VideosCancel asks the vendor to stop one in-flight task. A non-2xx
+	// answer is not fatal by itself — the caller decides whether the task
+	// still cancels locally (取消对外不扣费的语义由网关兑付).
+	VideosCancel(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error)
 	// Normalize converts a 2xx upstream chat-completion body into the
 	// client-facing body (model rewritten to the public name) and extracts
 	// the usage.
@@ -309,6 +331,31 @@ func (a *openAIAdaptor) postUpstream(ctx context.Context, ch channel.Channel, pa
 	}, nil
 }
 
+// getUpstream builds and executes one upstream GET (the video task poll):
+// same auth and body-cap rules as postUpstream.
+func (a *openAIAdaptor) getUpstream(ctx context.Context, ch channel.Channel, path string) (*UpstreamResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ch.BaseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
+
+	resp, err := a.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBody))
+	if err != nil {
+		return nil, err
+	}
+	return &UpstreamResponse{
+		Status: resp.StatusCode,
+		Body:   body,
+		OK:     resp.StatusCode >= 200 && resp.StatusCode < 300,
+	}, nil
+}
+
 // ImagesGenerations relays one POST {base_url}/images/generations; the JSON
 // body rides through with only the model name already swapped by the caller.
 func (a *openAIAdaptor) ImagesGenerations(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
@@ -319,6 +366,23 @@ func (a *openAIAdaptor) ImagesGenerations(ctx context.Context, ch channel.Channe
 // multipart form; contentType carries the matching boundary.
 func (a *openAIAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, contentType string, payload []byte) (*UpstreamResponse, error) {
 	return a.postUpstream(ctx, ch, "/images/edits", contentType, payload)
+}
+
+// VideosSubmit relays one POST {base_url}/videos/generations; the JSON body
+// rides through with only the model name already swapped by the caller.
+func (a *openAIAdaptor) VideosSubmit(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	return a.postUpstream(ctx, ch, "/videos/generations", "application/json", payload)
+}
+
+// VideosQuery relays one GET {base_url}/videos/tasks/{id} — the poll. The
+// vendor's task id is opaque, so it is path-escaped, not trusted raw.
+func (a *openAIAdaptor) VideosQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
+	return a.getUpstream(ctx, ch, "/videos/tasks/"+url.PathEscape(upstreamTaskID))
+}
+
+// VideosCancel relays one POST {base_url}/videos/tasks/{id}/cancel.
+func (a *openAIAdaptor) VideosCancel(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
+	return a.postUpstream(ctx, ch, "/videos/tasks/"+url.PathEscape(upstreamTaskID)+"/cancel", "application/json", nil)
 }
 
 // ChatCompletionsStream opens the streaming variant of the same upstream

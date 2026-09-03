@@ -64,7 +64,7 @@ func toPriceJSON(p Price) priceJSON {
 		} else {
 			body.Ratio = 1
 		}
-	case UnitCall:
+	case UnitCall, UnitSecond:
 		if p.Call != nil {
 			body.USDPerCall = MicrosToUSD(p.Call.USDPerCallMicros)
 			if len(p.Call.SizeFactorMicros) > 0 {
@@ -166,7 +166,7 @@ func (h *Handlers) Upsert(c *gin.Context) {
 			OutputMicrosPerMTokens: usdPerMTokensToMicros(raw.OutputUSDPerMTokens),
 			RatioMicros:            ratioToMicros(ratio),
 		}
-	case UnitCall:
+	case UnitCall, UnitSecond:
 		factors := make(map[string]int64, len(raw.SizeFactors))
 		for size, f := range raw.SizeFactors {
 			factors[size] = factorToMicros(f)

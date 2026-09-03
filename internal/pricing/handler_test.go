@@ -205,6 +205,34 @@ func TestPricingCallTrackRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPricingSecondTrackRoundTrip(t *testing.T) {
+	r := newPricingServer(newFakeStore())
+
+	// 按秒轨(08 号票):视频模型单价按秒、系数按分辨率,字段与按次轨同形。
+	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model": "wan2.2",
+		"unit":         "second",
+		"usd_per_call": 0.10,
+		"size_factors": map[string]any{"720p": 1.0, "1080p": 2.0},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("Upsert status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var wire struct {
+		PublicModel string             `json:"public_model"`
+		Unit        string             `json:"unit"`
+		USDPerCall  float64            `json:"usd_per_call"`
+		SizeFactors map[string]float64 `json:"size_factors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("decode upsert response: %v", err)
+	}
+	if wire.PublicModel != "wan2.2" || wire.Unit != "second" || wire.USDPerCall != 0.10 ||
+		wire.SizeFactors["1080p"] != 2 {
+		t.Fatalf("upsert response = %+v, want echoed human-unit second price", wire)
+	}
+}
+
 func TestPricingUpsertValidation(t *testing.T) {
 	r := newPricingServer(newFakeStore())
 
