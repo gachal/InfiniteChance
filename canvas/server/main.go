@@ -14,6 +14,8 @@ import (
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/promptgen"
+	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 )
 
 func main() {
@@ -41,6 +43,12 @@ func main() {
 		if err := tasks.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure canvas task schema: %v", err)
 		}
+		// 提示词模板:表由网关管理端维护,这里只读(同库共享,11 号票),
+		// EnsureSchema 保证画布服务独立先启动时表也存在。
+		templates := prompttemplate.NewMySQLStore(d.DB)
+		if err := templates.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure prompt template schema: %v", err)
+		}
 
 		issuer := auth.NewIssuerFromConfig(d.Config)
 		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
@@ -55,11 +63,27 @@ func main() {
 			Models:   prices,
 			Gateway:  gateway,
 		})
+		// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
+		// 直接以 gateway_unconfigured 拒绝(serviceGateway 已打警告)。
+		var chatGateway promptgen.Gateway
+		if gateway != nil {
+			chatGateway = promptgen.NewClient(d.Config.GatewayBaseURL, d.Config.CanvasServiceKey)
+		}
+		promptgen.RegisterRoutes(group, &promptgen.Handlers{
+			Templates: templates,
+			Canvases:  canvases,
+			Models:    prices,
+			Gateway:   chatGateway,
+		})
 
 		// 生成模型的目录(按次计价的公开模型)挂 JWT 会话;素材内容寻址
 		// 例外 —— 节点用 <img> 预览,带不了 Authorization 头(见 asset 包)。
 		canvastask.RegisterModelRoutes(r.Group("/image-models", auth.RequireAuth(issuer)),
 			&canvastask.ModelHandlers{Prices: prices})
+		promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
+			&promptgen.CatalogHandlers{Templates: templates})
+		promptgen.RegisterModelRoutes(r.Group("/prompt-models", auth.RequireAuth(issuer)),
+			&promptgen.ModelHandlers{Prices: prices})
 		asset.RegisterRoutes(r.Group("/assets"), &asset.Handlers{Store: assets})
 
 		startWorker(tasks, gateway, d.Config)

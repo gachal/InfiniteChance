@@ -109,6 +109,26 @@ export interface QuotaEntry {
   created_at: string
 }
 
+// ---- 网关管理:提示词模板(挂 /admin/prompt-templates,需 JWT 会话)----
+
+/** 一条提示词模板:template 内含 {topic} 占位符,画布生成提示词时以
+ * 输入的主题替换;画布侧动作每次即时读库,增删改立即生效(11 号票)。 */
+export interface PromptTemplate {
+  id: number
+  name: string
+  template: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PromptTemplateInput {
+  name: string
+  template: string
+  /** 缺省视为启用;显式 false 停用。 */
+  enabled?: boolean
+}
+
 // ---- 画布(canvas/server,挂 /canvases,需 JWT 会话)----
 
 /** 整图 JSON 文档:节点与连线。节点类型与数据形状由编辑器
@@ -168,6 +188,26 @@ export interface CreateCanvasTaskInput {
   prompt: string
   model: string
   size?: string
+}
+
+/** 画布侧提示词模板目录项(仅启用中的模板,只带 id 与名字)。 */
+export interface PromptTemplateOption {
+  id: number
+  name: string
+}
+
+/** 生成提示词的请求体:template_id 选模板,topic 为输入的主题,
+ * model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
+export interface GeneratePromptInput {
+  node_id?: string
+  template_id: number
+  topic: string
+  model: string
+}
+
+/** 生成提示词的响应:文本由编辑器写入当前节点或新建提示词节点。 */
+export interface GeneratePromptResult {
+  text: string
 }
 
 interface ErrorPayload {
@@ -305,6 +345,28 @@ export class ApiClient {
     return body.entries
   }
 
+  // ---- 网关管理:提示词模板(挂 /admin/prompt-templates,需 JWT 会话)----
+
+  async listPromptTemplates(): Promise<PromptTemplate[]> {
+    const body = await this.request<{ templates: PromptTemplate[] }>('/admin/prompt-templates')
+    return body.templates
+  }
+
+  createPromptTemplate(input: PromptTemplateInput): Promise<PromptTemplate> {
+    return this.request<PromptTemplate>('/admin/prompt-templates', { method: 'POST', body: input })
+  }
+
+  updatePromptTemplate(id: number, input: PromptTemplateInput): Promise<PromptTemplate> {
+    return this.request<PromptTemplate>(`/admin/prompt-templates/${id}`, {
+      method: 'PUT',
+      body: input,
+    })
+  }
+
+  async deletePromptTemplate(id: number): Promise<void> {
+    await this.request<void>(`/admin/prompt-templates/${id}`, { method: 'DELETE' })
+  }
+
   // ---- 画布(挂 /canvases,需 JWT 会话)----
 
   async listCanvases(): Promise<CanvasSummary[]> {
@@ -364,6 +426,26 @@ export class ApiClient {
   async listImageModels(): Promise<string[]> {
     const body = await this.request<{ models: string[] }>('/image-models')
     return body.models
+  }
+
+  /** 可用于提示词生成的模板目录(仅启用,画布侧每次即时读库)。 */
+  async listPromptTemplateCatalog(): Promise<PromptTemplateOption[]> {
+    const body = await this.request<{ templates: PromptTemplateOption[] }>('/prompt-templates')
+    return body.templates
+  }
+
+  /** 可用于提示词生成的聊天模型(token 轨计价的公开模型,名字排序)。 */
+  async listPromptModels(): Promise<string[]> {
+    const body = await this.request<{ models: string[] }>('/prompt-models')
+    return body.models
+  }
+
+  /** 生成提示词:canvas/server 经网关聊天接口按模板渲染,同步返回文本。 */
+  generatePrompt(canvasId: number, input: GeneratePromptInput): Promise<GeneratePromptResult> {
+    return this.request<GeneratePromptResult>(`/canvases/${canvasId}/generate-prompt`, {
+      method: 'POST',
+      body: input,
+    })
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {

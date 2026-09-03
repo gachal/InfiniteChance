@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 管理后台布局外壳:标题栏 +「网关管理」分区导航 + 会话操作。
-// 具体页面(仪表盘/渠道/Key)由路由呈现,经默认插槽嵌入。
+// 管理后台布局外壳:标题栏 + 分区导航(网关管理/画布管理,规格定案的
+// 两区)+ 会话操作。具体页面由路由呈现,经默认插槽嵌入。
 import { useRouter } from 'vue-router'
 
 import { useAuth } from '../auth'
@@ -8,10 +8,19 @@ import { useAuth } from '../auth'
 const auth = useAuth()
 const router = useRouter()
 
-const links = [
-  { name: 'dashboard', label: '仪表盘' },
-  { name: 'channels', label: '渠道管理' },
-  { name: 'keys', label: 'API Key 管理' },
+const sections = [
+  {
+    label: '网关管理',
+    links: [
+      { name: 'dashboard', label: '仪表盘' },
+      { name: 'channels', label: '渠道管理' },
+      { name: 'keys', label: 'API Key 管理' },
+    ],
+  },
+  {
+    label: '画布管理',
+    links: [{ name: 'prompt-templates', label: '提示词模板' }],
+  },
 ]
 
 async function logout(): Promise<void> {
@@ -47,14 +56,21 @@ async function logout(): Promise<void> {
       class="nav"
       aria-label="管理分区"
     >
-      <router-link
-        v-for="link in links"
-        :key="link.name"
-        :to="{ name: link.name }"
-        class="nav-link"
+      <span
+        v-for="section in sections"
+        :key="section.label"
+        class="nav-section"
       >
-        {{ link.label }}
-      </router-link>
+        <span class="nav-label">{{ section.label }}</span>
+        <router-link
+          v-for="link in section.links"
+          :key="link.name"
+          :to="{ name: link.name }"
+          class="nav-link"
+        >
+          {{ link.label }}
+        </router-link>
+      </span>
     </nav>
 
     <slot />
@@ -115,10 +131,24 @@ async function logout(): Promise<void> {
 
 .nav {
   display: flex;
-  gap: 8px;
+  gap: 18px;
   margin-top: 20px;
   padding-bottom: 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-section {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.nav-label {
+  color: #5b627a;
+  font-size: 12px;
+  letter-spacing: 1px;
+  margin-right: 4px;
+  white-space: nowrap;
 }
 
 .nav-link {

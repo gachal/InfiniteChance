@@ -10,7 +10,11 @@ import {
   type Channel,
   type ApiKeyRecord,
   type CreatedApiKey,
+  type GeneratePromptInput,
   type HealthReport,
+  type PromptTemplate,
+  type PromptTemplateInput,
+  type PromptTemplateOption,
   type QuotaEntry,
   type SaveGraphResult,
   type SessionInfo,
@@ -430,5 +434,104 @@ describe('ApiClient canvases', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(409)
     expect((err as ApiError).code).toBe('version_conflict')
+  })
+})
+
+describe('ApiClient prompt templates (admin)', () => {
+  const template: PromptTemplate = {
+    id: 3,
+    name: '文生图-中文',
+    template: '请为主题「{topic}」写一段英文文生图提示词,只输出提示词本身。',
+    enabled: true,
+    created_at: '2026-09-03T08:00:00Z',
+    updated_at: '2026-09-03T08:00:00Z',
+  }
+
+  it('listPromptTemplates unwraps the templates envelope', async () => {
+    const fetchImpl = stubFetch(200, { templates: [template] })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listPromptTemplates()).resolves.toEqual([template])
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/admin/prompt-templates')
+  })
+
+  it('createPromptTemplate posts the input and returns the created row', async () => {
+    const fetchImpl = stubFetch(201, template)
+    const client = clientWithBase(fetchImpl)
+
+    const input: PromptTemplateInput = { name: template.name, template: template.template }
+    await expect(client.createPromptTemplate(input)).resolves.toEqual(template)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/prompt-templates')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('updatePromptTemplate PUTs to the id path', async () => {
+    const fetchImpl = stubFetch(200, { ...template, enabled: false })
+    const client = clientWithBase(fetchImpl)
+
+    await client.updatePromptTemplate(3, { name: template.name, template: template.template, enabled: false })
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/prompt-templates/3')
+    expect((init as RequestInit).method).toBe('PUT')
+  })
+
+  it('deletePromptTemplate DELETEs to the id path (204 → undefined)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 204, json: () => Promise.resolve(null) })
+    const client = clientWithBase(fetchImpl as never)
+
+    await expect(client.deletePromptTemplate(3)).resolves.toBeUndefined()
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/prompt-templates/3')
+    expect((init as RequestInit).method).toBe('DELETE')
+  })
+})
+
+describe('ApiClient prompt generation (canvas)', () => {
+  it('listPromptTemplateCatalog unwraps the catalog envelope', async () => {
+    const options: PromptTemplateOption[] = [{ id: 3, name: '文生图-中文' }]
+    const fetchImpl = stubFetch(200, { templates: options })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listPromptTemplateCatalog()).resolves.toEqual(options)
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/prompt-templates')
+  })
+
+  it('listPromptModels unwraps the models envelope', async () => {
+    const fetchImpl = stubFetch(200, { models: ['chat-a', 'chat-b'] })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listPromptModels()).resolves.toEqual(['chat-a', 'chat-b'])
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/prompt-models')
+  })
+
+  it('generatePrompt POSTs to the canvas path and returns the text', async () => {
+    const fetchImpl = stubFetch(200, { text: 'a neon city at dusk' })
+    const client = clientWithBase(fetchImpl)
+
+    const input: GeneratePromptInput = {
+      node_id: 'prompt-1-1',
+      template_id: 3,
+      topic: '赛博朋克城市',
+      model: 'chat-m',
+    }
+    await expect(client.generatePrompt(7, input)).resolves.toEqual({ text: 'a neon city at dusk' })
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/generate-prompt')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('generatePrompt surfaces upstream errors as ApiError with the code', async () => {
+    const fetchImpl = stubFetch(502, { error: { code: 'upstream_error', message: 'gateway 402: 余额不足' } })
+    const client = clientWithBase(fetchImpl)
+
+    const err = await client
+      .generatePrompt(7, { template_id: 3, topic: '任意', model: 'chat-m' })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(502)
+    expect((err as ApiError).code).toBe('upstream_error')
   })
 })

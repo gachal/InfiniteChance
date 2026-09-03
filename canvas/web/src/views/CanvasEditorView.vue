@@ -7,7 +7,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow, type Connection, type Edge } from '@vue-flow/core'
 
-import { ApiError, type CanvasDetail, type CanvasTask } from '@infinitechance/api'
+import {
+  ApiError,
+  type CanvasDetail,
+  type CanvasTask,
+  type PromptTemplateOption,
+} from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import {
@@ -174,6 +179,94 @@ async function onRetry(nodeId: string): Promise<void> {
     }
   } finally {
     retryingNode.value = ''
+  }
+}
+
+// ---- 提示词生成(11 号票)----
+
+// 模板与聊天模型目录。服务端按请求读表,管理端的增删改即刻生效;
+// 这里负责前端目录的新鲜度:窗口重新聚焦时刷新(管理端常在另一窗口
+// 操作),模板失效导致生成失败时也立即刷新,让失效选项当场消失。
+const promptTemplates = ref<PromptTemplateOption[]>([])
+const promptModels = ref<string[]>([])
+const promptGenerating = ref(false)
+
+let refreshingCatalogs = false
+async function refreshCatalogs(): Promise<void> {
+  if (refreshingCatalogs) {
+    return
+  }
+  refreshingCatalogs = true
+  try {
+    const [templates, models] = await Promise.all([
+      client.listPromptTemplateCatalog(),
+      client.listPromptModels(),
+    ])
+    promptTemplates.value = templates
+    promptModels.value = models
+  } catch {
+    /* 目录拉不到就保持现状,不打扰画布编辑 */
+  } finally {
+    refreshingCatalogs = false
+  }
+}
+
+/** 生成提示词:主题按模板经网关聊天生成,同步返回文本。结果落位 ——
+ * 当前节点为空 → 直接写回本节点;已有内容 → 落为新提示词节点并连线
+ * (派生关系可见)。文本落图后由自动保存收尾,无需先 flush。 */
+async function onGeneratePrompt(
+  nodeId: string,
+  payload: { template_id: number; topic: string; model: string },
+): Promise<void> {
+  if (promptGenerating.value) {
+    return
+  }
+  const node = findNode(nodeId)
+  if (!node || payload.topic === '' || payload.model === '') {
+    return
+  }
+  promptGenerating.value = true
+  generateError.value = ''
+  try {
+    const result = await client.generatePrompt(canvasId, {
+      node_id: nodeId,
+      template_id: payload.template_id,
+      topic: payload.topic,
+      model: payload.model,
+    })
+    const data = node.data as PromptNodeData | undefined
+    if (data && data.text.trim() === '') {
+      updateNodeData(nodeId, { text: result.text })
+      autosave.markDirty()
+      return
+    }
+    nodeSeq += 1
+    const newId = `prompt-${Date.now()}-${nodeSeq}`
+    addNodes([
+      {
+        id: newId,
+        type: 'prompt',
+        position: { x: node.position.x + 260, y: node.position.y },
+        data: { text: result.text },
+      },
+    ])
+    addEdges([
+      {
+        id: `e-${nodeId}-${newId}`,
+        source: nodeId,
+        target: newId,
+        sourceHandle: null,
+        targetHandle: null,
+      },
+    ])
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '提示词生成失败,请稍后再试'
+    // 模板刚被删除/停用时本地目录已过期:立刻刷新,失效选项当场消失。
+    if (e instanceof ApiError && (e.status === 404 || e.code === 'template_disabled')) {
+      void refreshCatalogs()
+    }
+  } finally {
+    promptGenerating.value = false
   }
 }
 
@@ -363,10 +456,13 @@ onMounted(() => {
     .catch(() => {
       /* 目录拉不到就隐藏生成入口,不打扰画布编辑 */
     })
+  void refreshCatalogs()
+  window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('beforeunload', beforeUnload)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
+  window.removeEventListener('focus', refreshCatalogs)
   taskSync.stop()
 })
 
@@ -531,8 +627,12 @@ function backToList(): void {
             :data="nodeProps.data"
             :models="imageModels"
             :generating="generating"
+            :templates="promptTemplates"
+            :chat-models="promptModels"
+            :prompt-generating="promptGenerating"
             @text-change="onTextChange(nodeProps.id, $event)"
             @generate="onGenerate(nodeProps.id, $event)"
+            @generate-prompt="onGeneratePrompt(nodeProps.id, $event)"
           />
         </template>
         <template #node-image="nodeProps">

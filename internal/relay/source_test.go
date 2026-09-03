@@ -60,6 +60,39 @@ func TestRelayUsageWithoutSourceHeaderStaysEmpty(t *testing.T) {
 	}
 }
 
+// 11 号票:提示词生成走聊天轨,同样以 source 标记入账 —— 画布来源的
+// token 用量在 usage_logs 里与直连聊天可分、可对账。
+func TestRelayChatUsageCarriesSourceHeaderAndTokens(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	upstream := newFakeUpstream(t, okChatHandler("a neon cyberpunk city", 120, 340))
+	env.seedChannel(t, upstream.server.URL, "public-m", "upstream-m")
+	_, full := env.seedKey(t, 1_000_000)
+	env.seedPrice(t, "public-m")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(testBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+full)
+	req.Header.Set("X-InfiniteChance-Source", "canvas=7 node=prompt-1-1 gen=prompt")
+	w := httptest.NewRecorder()
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+
+	rows := env.usageRows(t)
+	if len(rows) != 1 {
+		t.Fatalf("usage rows = %d, want 1", len(rows))
+	}
+	row := rows[0]
+	if got := row.Source; got != "canvas=7 node=prompt-1-1 gen=prompt" {
+		t.Errorf("usage source = %q, want the canvas origin mark", got)
+	}
+	if row.Unit != "token" || row.PromptTokens != 120 || row.CompletionTokens != 340 {
+		t.Errorf("usage = unit %s tokens %d/%d, want token track with the upstream counts",
+			row.Unit, row.PromptTokens, row.CompletionTokens)
+	}
+}
+
 func TestSourceFromSanitizesHeaderValue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

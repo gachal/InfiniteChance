@@ -1,9 +1,12 @@
 <script setup lang="ts">
-// 提示词节点:自由文本输入 + 文生图动作入口(10 号票)。内容随整图 JSON
-// 自动保存;生成动作上抛给编辑器(建结果节点 → 落库 → 提交任务)。
-// 不直接改 props:文本变更上抛给编辑器,由 updateNodeData 应用。
+// 提示词节点:自由文本输入 + 文生图动作入口(10 号票)+ 提示词生成
+// 动作入口(11 号票)。内容随整图 JSON 自动保存;动作上抛给编辑器
+// (生成结果写回本节点或落为新提示词节点)。不直接改 props:文本变更
+// 上抛给编辑器,由 updateNodeData 应用。
 import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
+
+import type { PromptTemplateOption } from '@infinitechance/api'
 
 import type { PromptNodeData } from '../../graph'
 
@@ -15,11 +18,18 @@ const props = defineProps<{
   models: string[]
   /** 一次只允许一个在途提交(编辑器级状态,防止连点开多个任务)。 */
   generating: boolean
+  /** 提示词模板目录(仅启用中的模板,编辑器从 /prompt-templates 拉取)。 */
+  templates: PromptTemplateOption[]
+  /** 可用的 token 轨聊天模型(编辑器从 /prompt-models 拉取)。 */
+  chatModels: string[]
+  /** 提示词生成的在途标记(编辑器级状态)。 */
+  promptGenerating: boolean
 }>()
 
 const emit = defineEmits<{
   'text-change': [value: string]
   generate: [payload: { model: string }]
+  'generate-prompt': [payload: { template_id: number; topic: string; model: string }]
 }>()
 
 const model = ref('')
@@ -36,6 +46,51 @@ watch(
 const canGenerate = computed(
   () => props.data.text.trim().length > 0 && model.value !== '' && !props.generating,
 )
+
+const templateId = ref<number | null>(null)
+watch(
+  () => props.templates,
+  (list) => {
+    // 目录刷新后原选中可能已被删除/停用:跟随目录收回默认项。
+    if (list.some((t) => t.id === templateId.value)) {
+      return
+    }
+    templateId.value = list.length > 0 ? list[0].id : null
+  },
+  { immediate: true },
+)
+
+const chatModel = ref('')
+watch(
+  () => props.chatModels,
+  (list) => {
+    if (!list.includes(chatModel.value)) {
+      chatModel.value = list.length > 0 ? list[0] : ''
+    }
+  },
+  { immediate: true },
+)
+
+const topic = ref('')
+
+const canGeneratePrompt = computed(
+  () =>
+    templateId.value !== null &&
+    chatModel.value !== '' &&
+    topic.value.trim().length > 0 &&
+    !props.promptGenerating,
+)
+
+function submitGeneratePrompt(): void {
+  if (!canGeneratePrompt.value || templateId.value === null) {
+    return
+  }
+  emit('generate-prompt', {
+    template_id: templateId.value,
+    topic: topic.value.trim(),
+    model: chatModel.value,
+  })
+}
 </script>
 
 <template>
@@ -77,6 +132,68 @@ const canGenerate = computed(
       class="no-models"
     >
       暂无可用生图模型
+    </p>
+
+    <div
+      v-if="templates.length > 0 && chatModels.length > 0"
+      class="prompt-gen"
+    >
+      <div class="generate-row">
+        <select
+          v-model="templateId"
+          title="提示词模板"
+        >
+          <option
+            v-for="t in templates"
+            :key="t.id"
+            :value="t.id"
+          >
+            {{ t.name }}
+          </option>
+        </select>
+        <select
+          v-model="chatModel"
+          title="聊天模型"
+        >
+          <option
+            v-for="m in chatModels"
+            :key="m"
+            :value="m"
+          >
+            {{ m }}
+          </option>
+        </select>
+      </div>
+      <div class="generate-row">
+        <input
+          v-model="topic"
+          type="text"
+          placeholder="输入主题或参考文本…"
+          maxlength="4000"
+          @keydown.enter.prevent="submitGeneratePrompt"
+        >
+        <button
+          class="generate outline"
+          type="button"
+          :disabled="!canGeneratePrompt"
+          title="按模板生成提示词"
+          @click="submitGeneratePrompt"
+        >
+          {{ promptGenerating ? '生成中…' : '生成提示词' }}
+        </button>
+      </div>
+    </div>
+    <p
+      v-else-if="templates.length === 0"
+      class="no-models"
+    >
+      暂无提示词模板,可在管理后台维护
+    </p>
+    <p
+      v-else
+      class="no-models"
+    >
+      暂无可用聊天模型
     </p>
     <Handle
       type="source"
@@ -162,4 +279,35 @@ textarea:focus {
   font-size: 11px;
   color: #8b91a7;
 }
+
+.prompt-gen {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.generate-row input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px;
+  color: inherit;
+  font-size: 12px;
+}
+
+.generate-row input:focus {
+  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+/* 提示词生成与文生图是两个动作:描边样式区分,主蓝留给生图。 */
+.generate.outline {
+  background: transparent;
+  border: 1px solid rgba(122, 162, 247, 0.55);
+  color: #7aa2f7;
+}
+
 </style>

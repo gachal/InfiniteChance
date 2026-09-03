@@ -12,6 +12,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 	"github.com/gachal/InfiniteChance/internal/relay"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
@@ -43,6 +44,10 @@ func main() {
 		if err := videoTasks.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure video task schema: %v", err)
 		}
+		promptTemplates := prompttemplate.NewMySQLStore(d.DB)
+		if err := promptTemplates.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure prompt template schema: %v", err)
+		}
 
 		issuer := auth.NewIssuerFromConfig(d.Config)
 		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
@@ -56,6 +61,8 @@ func main() {
 		})
 		apikey.RegisterAdminRoutes(admin, &apikey.Handlers{Store: keys})
 		pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: prices})
+		// 提示词模板:管理端维护,画布侧经共享库即时读取(11 号票)。
+		prompttemplate.RegisterAdminRoutes(admin, &prompttemplate.Handlers{Store: promptTemplates})
 
 		v1 := r.Group("/v1", apikey.RequireKey(keys))
 		relay.RegisterRoutes(v1, &relay.Handlers{
