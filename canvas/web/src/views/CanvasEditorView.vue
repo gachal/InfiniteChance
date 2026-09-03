@@ -70,30 +70,36 @@ const saveLabel = computed(() => {
   }
 })
 
-// ---- 文生图任务(10 号票)----
+// ---- 生成任务(10 号票文生图,12 号票图生视频)----
 
-// 生图模型目录:拉取失败视为暂无可用模型,生成入口随之隐藏。
+// 生图/图生视频模型目录:拉取失败视为暂无可用模型,生成入口随之隐藏。
 const imageModels = ref<string[]>([])
+const videoModels = ref<string[]>([])
 
-function nodeUrlFor(task: CanvasTask): string {
-  // data: URI 不进图(几 MB 的内联图片会把整图 JSON 顶破上限):
-  // 有素材引用时走内容寻址,由服务端解出字节。
-  if (task.image_url.startsWith('data:') && task.asset_id > 0) {
+/** 任务产物地址:图片任务落 image_url,视频任务落 video_url;
+ * data: URI 不进图(几 MB 的内联图片会把整图 JSON 顶破上限):
+ * 有素材引用时走内容寻址,由服务端解出字节。 */
+function taskUrlFor(task: CanvasTask): string {
+  const url = task.kind === 'video' ? task.video_url : task.image_url
+  if (url.startsWith('data:') && task.asset_id > 0) {
     return `/api/assets/${task.asset_id}/content`
   }
-  return task.image_url
+  return url
 }
 
 /** 产物落位:成功任务的地址写进绑定节点;有变化才落一次盘。节点是否存在
  * 以图为准 —— 结果节点在提交任务前已先落库,这里不负责物化,也不复活
  * 被删除的节点;产物本体在素材库里,重开可查。 */
 function syncTaskToCanvas(task: CanvasTask): void {
-  if (task.status !== 'succeeded' || task.image_url === '') {
+  if (task.status !== 'succeeded') {
+    return
+  }
+  const url = taskUrlFor(task)
+  if (url === '') {
     return
   }
   const node = findNode(task.node_id)
   const data = node?.data as MediaNodeData | undefined
-  const url = nodeUrlFor(task)
   if (node && data && data.url !== url) {
     updateNodeData(task.node_id, { url })
     autosave.markDirty()
@@ -103,12 +109,15 @@ function syncTaskToCanvas(task: CanvasTask): void {
 const taskSync = useCanvasTasks({
   fetchTasks: () => client.listCanvasTasks(canvasId),
   retryTask: (taskId) => client.retryCanvasTask(canvasId, taskId),
+  cancelTask: (taskId) => client.cancelCanvasTask(canvasId, taskId),
   onTask: syncTaskToCanvas,
 })
 
 const generating = ref(false)
+const videoGenerating = ref(false)
 const generateError = ref('')
 const retryingNode = ref('')
+const cancelingNode = ref('')
 
 /** 生成动作:结果节点(图片)与提示词连线先入图并落库,再提交任务 ——
  * 浏览器随后关闭,任务与节点也都在服务端/图里,重开不丢。 */
@@ -179,6 +188,81 @@ async function onRetry(nodeId: string): Promise<void> {
     }
   } finally {
     retryingNode.value = ''
+  }
+}
+
+/** 进行中视频任务的原地取消(12 号票):服务端同步取消网关任务并退预扣。 */
+async function onCancelVideo(nodeId: string): Promise<void> {
+  const task = taskSync.byNode.get(nodeId)
+  if (!task || cancelingNode.value !== '') {
+    return
+  }
+  cancelingNode.value = nodeId
+  try {
+    await taskSync.cancel(task.id)
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '取消失败,请稍后再试'
+  } finally {
+    cancelingNode.value = ''
+  }
+}
+
+/** 图生视频动作(12 号票):以图片节点的产物为参考图,结果视频节点与
+ * 连线先入图并落库,再提交任务 —— 与文生图同一纪律。 */
+async function onGenerateVideo(
+  imageNodeId: string,
+  payload: { model: string; prompt: string; seconds: number },
+): Promise<void> {
+  if (videoGenerating.value) {
+    return
+  }
+  const imageNode = findNode(imageNodeId)
+  const data = imageNode?.data as MediaNodeData | undefined
+  const refUrl = data?.url ?? ''
+  if (!imageNode || !refUrl.startsWith('http') || payload.model === '' || payload.prompt === '') {
+    return
+  }
+  videoGenerating.value = true
+  generateError.value = ''
+  try {
+    nodeSeq += 1
+    const nodeId = `video-${Date.now()}-${nodeSeq}`
+    addNodes([
+      {
+        id: nodeId,
+        type: 'video',
+        position: { x: imageNode.position.x + 260, y: imageNode.position.y },
+        data: initialData('video'),
+      },
+    ])
+    addEdges([
+      {
+        id: `e-${imageNodeId}-${nodeId}`,
+        source: imageNodeId,
+        target: nodeId,
+        sourceHandle: null,
+        targetHandle: null,
+      },
+    ])
+    autosave.markDirty()
+    const saved = await autosave.flush()
+    if (!saved) {
+      generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'video',
+      prompt: payload.prompt,
+      model: payload.model,
+      seconds: payload.seconds,
+      image_url: refUrl,
+    })
+    taskSync.track(task)
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
+  } finally {
+    videoGenerating.value = false
   }
 }
 
@@ -456,6 +540,14 @@ onMounted(() => {
     .catch(() => {
       /* 目录拉不到就隐藏生成入口,不打扰画布编辑 */
     })
+  void client
+    .listVideoModels()
+    .then((models) => {
+      videoModels.value = models
+    })
+    .catch(() => {
+      /* 同上:视频模型目录拉不到就不显示图生视频入口 */
+    })
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('beforeunload', beforeUnload)
@@ -642,11 +734,23 @@ function backToList(): void {
             :data="nodeProps.data"
             :task="taskSync.byNode.get(nodeProps.id) ?? null"
             :retrying="retryingNode === nodeProps.id"
+            :video-models="videoModels"
+            :video-generating="videoGenerating"
             @retry="onRetry(nodeProps.id)"
+            @generate-video="onGenerateVideo(nodeProps.id, $event)"
           />
         </template>
         <template #node-video="nodeProps">
-          <VideoNode v-bind="nodeProps" />
+          <VideoNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :task="taskSync.byNode.get(nodeProps.id) ?? null"
+            :retrying="retryingNode === nodeProps.id"
+            :canceling="cancelingNode === nodeProps.id"
+            @retry="onRetry(nodeProps.id)"
+            @cancel="onCancelVideo(nodeProps.id)"
+          />
         </template>
       </VueFlow>
     </div>

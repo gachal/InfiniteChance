@@ -11,10 +11,15 @@ import (
 	"github.com/gachal/InfiniteChance/internal/asset"
 )
 
-// Gateway is the worker's view of the relay surface: one synchronous
-// text-to-image call. *Client satisfies it; tests substitute fakes.
+// Gateway is the worker's view of the relay surface: the synchronous
+// text-to-image call (10 号票) and the async video contract's three faces —
+// submit, poll, cancel (12 号票). *Client satisfies it; tests substitute
+// fakes.
 type Gateway interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error)
+	SubmitVideo(ctx context.Context, req VideoRequest) (VideoSubmitResult, error)
+	PollVideo(ctx context.Context, taskID string) (VideoPoll, error)
+	CancelVideo(ctx context.Context, taskID string) error
 }
 
 // Worker runs the canvas generation queue server-side (10 号票): claim one
@@ -29,28 +34,38 @@ type Worker struct {
 	concurrency  int
 	pollInterval time.Duration
 	taskTimeout  time.Duration
-	logger       *log.Logger
+	// 视频异步任务的两个旋钮(12 号票):网关轮询节奏与单个任务的时限。
+	// 视频生成普遍在分钟级,时限远宽于同步生图。
+	videoPollInterval time.Duration
+	videoTaskTimeout  time.Duration
+	logger            *log.Logger
 }
 
 // Defaults for a bare NewWorker: two concurrent generations, a 1s queue
 // scan, and a 3min ceiling on one image call (同步生图普遍在秒级到分钟级;
-// 超时视为失败,任务行给出原因,可重试).
+// 超时视为失败,任务行给出原因,可重试). Video jobs poll the gateway every
+// 3s and get a 15min ceiling — minute-scale generations with headroom; the
+// deadline cancels the gateway task so the pre-deduction is refunded.
 const (
-	defaultConcurrency  = 2
-	defaultPollInterval = time.Second
-	defaultTaskTimeout  = 3 * time.Minute
+	defaultConcurrency      = 2
+	defaultPollInterval     = time.Second
+	defaultTaskTimeout      = 3 * time.Minute
+	defaultVideoPoll        = 3 * time.Second
+	defaultVideoTaskTimeout = 15 * time.Minute
 )
 
 // NewWorker wires a worker with production defaults; the With… options
 // override them (tests mostly).
 func NewWorker(store Store, gateway Gateway, opts ...WorkerOption) *Worker {
 	w := &Worker{
-		store:        store,
-		gateway:      gateway,
-		concurrency:  defaultConcurrency,
-		pollInterval: defaultPollInterval,
-		taskTimeout:  defaultTaskTimeout,
-		logger:       log.Default(),
+		store:             store,
+		gateway:           gateway,
+		concurrency:       defaultConcurrency,
+		pollInterval:      defaultPollInterval,
+		taskTimeout:       defaultTaskTimeout,
+		videoPollInterval: defaultVideoPoll,
+		videoTaskTimeout:  defaultVideoTaskTimeout,
+		logger:            log.Default(),
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -78,6 +93,16 @@ func WithPollInterval(d time.Duration) WorkerOption {
 // WithTaskTimeout bounds one gateway call.
 func WithTaskTimeout(d time.Duration) WorkerOption {
 	return func(w *Worker) { w.taskTimeout = d }
+}
+
+// WithVideoPollInterval sets the cadence of the video task's gateway polls.
+func WithVideoPollInterval(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.videoPollInterval = d }
+}
+
+// WithVideoTaskTimeout bounds one video task from submit to terminal state.
+func WithVideoTaskTimeout(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.videoTaskTimeout = d }
 }
 
 // WithLogger routes worker logging (nil keeps the default logger).
@@ -139,11 +164,15 @@ func (w *Worker) sleep(ctx context.Context) bool {
 	}
 }
 
-// runOne carries one claimed task through the gateway and closes it out.
-// Finalizes run on a context detached from the task deadline: the outcome
-// (success or the timeout reason) must reach the row even at the deadline's
-// edge; only a dead process loses it, and boot-time recovery requeues those.
+// runOne carries one claimed task through the gateway and closes it out,
+// dispatching on the task kind: the synchronous image call, or the async
+// video contract's submit-and-poll loop.
 func (w *Worker) runOne(parent context.Context, t Task) {
+	if t.Kind == KindVideo {
+		w.runVideo(parent, t)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(parent, w.taskTimeout)
 	defer cancel()
 
@@ -157,13 +186,7 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 	})
 	bookkeeping := context.WithoutCancel(parent)
 	if err != nil {
-		reason := err.Error()
-		if utf8.RuneCountInString(reason) > maxErrorRunes {
-			reason = string([]rune(reason)[:maxErrorRunes])
-		}
-		if _, _, ferr := w.store.FinalizeFailure(bookkeeping, t.ID, reason); ferr != nil {
-			w.logger.Printf("canvastask: finalize failure %s: %v", t.ID, ferr)
-		}
+		w.fail(bookkeeping, t.ID, err.Error())
 		return
 	}
 	finalized, won, err := w.store.FinalizeSuccess(bookkeeping, t.ID, asset.Asset{
@@ -184,4 +207,135 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 		return
 	}
 	w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)
+}
+
+// fail closes a task failed with a truncated reason (the error column is
+// TEXT; a vendor stack trace is not a reason).
+func (w *Worker) fail(ctx context.Context, id, reason string) {
+	if utf8.RuneCountInString(reason) > maxErrorRunes {
+		reason = string([]rune(reason)[:maxErrorRunes])
+	}
+	if _, _, ferr := w.store.FinalizeFailure(ctx, id, reason); ferr != nil {
+		w.logger.Printf("canvastask: finalize failure %s: %v", id, ferr)
+	}
+}
+
+// runVideo drives one image-to-video task through the gateway's async
+// contract (12 号票): submit → persist the remote handle → poll until the
+// gateway reaches a terminal state or the task deadline hits. The user's
+// cancel runs on the HTTP handler — it cancels the gateway task (releasing
+// the quota hold) and closes the row; the poll loop simply observes whatever
+// the gateway then answers, and its guarded finalizers lose cleanly when the
+// handler got there first.
+func (w *Worker) runVideo(parent context.Context, t Task) {
+	ctx, cancel := context.WithTimeout(parent, w.videoTaskTimeout)
+	defer cancel()
+
+	bookkeeping := context.WithoutCancel(parent)
+	// 重试或重启恢复的任务带着上一次的远端任务:先取消它 —— 失败任务上
+	// 它已终态(取消只是对账),崩溃遗留的任务则由此释放预扣。
+	if t.RemoteTaskID != "" {
+		if err := w.gateway.CancelVideo(bookkeeping, t.RemoteTaskID); err != nil {
+			w.logger.Printf("canvastask: cancel stale remote %s for %s: %v", t.RemoteTaskID, t.ID, err)
+		}
+	}
+
+	w.logger.Printf("canvastask: running %s (canvas %d, node %s, kind video, attempt %d)",
+		t.ID, t.CanvasID, t.NodeID, t.Attempts)
+	ref, err := w.gateway.SubmitVideo(ctx, VideoRequest{
+		Model:   t.Model,
+		Prompt:  t.Prompt,
+		Seconds: t.Seconds,
+		Image:   t.ImageRef,
+		Source:  fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID),
+	})
+	if err != nil {
+		w.fail(bookkeeping, t.ID, err.Error())
+		return
+	}
+
+	// 远端句柄落行,取消与恢复才找得到它。行已不在 running(提交在途时
+	// 被取消)则当场取消刚受理的网关任务,预扣由网关原路退回。落行本身
+	// 的 DB 错误不拦轮询:句柄仍在进程手里,丢进程的极端情形由重启恢复
+	// 兜底(与 10 号票同一责任边界)。
+	if _, ok, aerr := w.store.AttachRemote(bookkeeping, t.ID, ref.TaskID); aerr != nil {
+		w.logger.Printf("canvastask: attach remote %s to %s: %v", ref.TaskID, t.ID, aerr)
+	} else if !ok {
+		if cerr := w.gateway.CancelVideo(bookkeeping, ref.TaskID); cerr != nil {
+			w.logger.Printf("canvastask: cancel race-lost remote %s for %s: %v", ref.TaskID, t.ID, cerr)
+		}
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			// 时限到:取消网关任务让预扣退回,任务行按失败收尾并给出原因
+			// (可重试)。取消走脱离时限的 context —— 决定性的收尾不因
+			// deadline 到点而丢失。
+			if cerr := w.gateway.CancelVideo(bookkeeping, ref.TaskID); cerr != nil {
+				w.logger.Printf("canvastask: cancel on timeout for %s (remote %s): %v", t.ID, ref.TaskID, cerr)
+			}
+			w.fail(bookkeeping, t.ID, fmt.Sprintf("生成超时(上限 %s),已取消网关任务", w.videoTaskTimeout))
+			return
+		case <-time.After(w.videoPollInterval):
+		}
+
+		// 先看本地行:用户取消时 handler 会先取消网关任务再关行,但那次
+		// RPC 可能失败(只留日志)。行已不在 running 而网关任务还在跑,
+		// 厂商若先完成,网关会照常结算 —— 就地补一次取消,预扣原路退回。
+		if row, gerr := w.store.Get(ctx, t.ID); gerr == nil && Terminal(row.Status) {
+			if cerr := w.gateway.CancelVideo(bookkeeping, ref.TaskID); cerr != nil {
+				w.logger.Printf("canvastask: cancel abandoned remote %s for %s: %v", ref.TaskID, t.ID, cerr)
+			}
+			return
+		}
+
+		poll, err := w.gateway.PollVideo(ctx, ref.TaskID)
+		if err != nil {
+			// 一次轮询失败不是任务失败:网关的轮询是代理语义,暂态故障
+			// 稍后再试;总时限兜底。
+			w.logger.Printf("canvastask: poll %s (remote %s): %v", t.ID, ref.TaskID, err)
+			continue
+		}
+		switch poll.Status {
+		case string(StatusQueued), string(StatusRunning):
+			continue
+		case string(StatusSucceeded):
+			if poll.VideoURL == "" {
+				w.fail(bookkeeping, t.ID, "网关报告任务成功但没有视频地址")
+				return
+			}
+			finalized, won, err := w.store.FinalizeVideoSuccess(bookkeeping, t.ID, asset.Asset{
+				Kind:     asset.KindVideo,
+				CanvasID: t.CanvasID,
+				TaskID:   t.ID,
+				Model:    t.Model,
+				Prompt:   t.Prompt,
+				URL:      poll.VideoURL,
+			})
+			if err != nil {
+				w.logger.Printf("canvastask: finalize success %s: %v", t.ID, err)
+				return
+			}
+			if !won {
+				w.logger.Printf("canvastask: finalize success %s lost the race (status now %s)", t.ID, finalized.Status)
+				return
+			}
+			w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)
+			return
+		case string(StatusCanceled):
+			if _, _, ferr := w.store.FinalizeCanceled(bookkeeping, t.ID); ferr != nil {
+				w.logger.Printf("canvastask: finalize canceled %s: %v", t.ID, ferr)
+			}
+			return
+		default: // failed(网关已把未知态归并 failed)
+			reason := poll.Error
+			if reason == "" {
+				reason = "上游报告任务失败"
+			}
+			w.fail(bookkeeping, t.ID, reason)
+			return
+		}
+	}
 }

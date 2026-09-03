@@ -15,16 +15,21 @@ function task(overrides: Partial<CanvasTask>): CanvasTask {
     prompt: 'p',
     model: 'img-m',
     size: '',
+    seconds: 0,
     status: 'queued',
     attempts: 1,
     error: '',
     asset_id: 0,
     image_url: '',
+    video_url: '',
     created_at: '2026-09-03T12:00:00Z',
     updated_at: '2026-09-03T12:00:00Z',
     ...overrides,
   }
 }
+
+/** 不产生副作用的重试/取消替身(用例自身不断言它们的用例共用)。 */
+const noopOp = () => Promise.resolve(task({}))
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -42,7 +47,8 @@ describe('useCanvasTasks', () => {
     const onTask = vi.fn()
     const tasks = useCanvasTasks({
       fetchTasks,
-      retryTask: vi.fn(),
+      retryTask: noopOp,
+      cancelTask: noopOp,
       onTask,
       intervalMs: INTERVAL,
     })
@@ -67,7 +73,8 @@ describe('useCanvasTasks', () => {
     const onTask = vi.fn()
     const tasks = useCanvasTasks({
       fetchTasks,
-      retryTask: vi.fn(),
+      retryTask: noopOp,
+      cancelTask: noopOp,
       onTask,
       intervalMs: INTERVAL,
     })
@@ -98,6 +105,7 @@ describe('useCanvasTasks', () => {
     const tasks = useCanvasTasks({
       fetchTasks,
       retryTask,
+      cancelTask: noopOp,
       onTask,
       intervalMs: INTERVAL,
     })
@@ -118,7 +126,8 @@ describe('useCanvasTasks', () => {
     const fetchTasks = vi.fn().mockResolvedValue([task({})])
     const tasks = useCanvasTasks({
       fetchTasks,
-      retryTask: vi.fn(),
+      retryTask: noopOp,
+      cancelTask: noopOp,
       onTask: vi.fn(),
       intervalMs: INTERVAL,
     })
@@ -139,7 +148,8 @@ describe('useCanvasTasks', () => {
       .mockResolvedValueOnce([task({ status: 'succeeded', image_url: 'u' })])
     const tasks = useCanvasTasks({
       fetchTasks,
-      retryTask: vi.fn(),
+      retryTask: noopOp,
+      cancelTask: noopOp,
       onTask: vi.fn(),
       intervalMs: INTERVAL,
     })
@@ -156,7 +166,8 @@ describe('useCanvasTasks', () => {
   it('isRetryConflict 识别 409 冲突', () => {
     const tasks = useCanvasTasks({
       fetchTasks: vi.fn(),
-      retryTask: vi.fn(),
+      retryTask: noopOp,
+      cancelTask: noopOp,
       onTask: vi.fn(),
     })
     expect(
@@ -164,5 +175,38 @@ describe('useCanvasTasks', () => {
     ).toBe(true)
     expect(tasks.isRetryConflict(new ApiError(500, 'internal_error', 'x'))).toBe(false)
     expect(tasks.isRetryConflict(new Error('x'))).toBe(false)
+  })
+})
+
+describe('useCanvasTasks 取消(12 号票)', () => {
+  it('cancel 采纳取消后的任务,终态后轮询停止', async () => {
+    const cancelTask = vi
+      .fn()
+      .mockResolvedValue(task({ kind: 'video', status: 'canceled', attempts: 1 }))
+    const onTask = vi.fn()
+    const fetchTasks = vi
+      .fn()
+      .mockResolvedValueOnce([task({ kind: 'video', status: 'running' })])
+      .mockResolvedValue([task({ kind: 'video', status: 'canceled' })])
+    const tasks = useCanvasTasks({
+      fetchTasks,
+      retryTask: noopOp,
+      cancelTask,
+      onTask,
+      intervalMs: INTERVAL,
+    })
+
+    await tasks.start()
+    expect(tasks.polling).toBe(true)
+
+    await tasks.cancel('ct_abc')
+    expect(cancelTask).toHaveBeenCalledWith('ct_abc')
+    expect(tasks.byNode.get('image-1-1')?.status).toBe('canceled')
+
+    // 取消是终态:下一轮同步发现再无活动任务,轮询就此停止。
+    await vi.advanceTimersByTimeAsync(INTERVAL)
+    expect(tasks.polling).toBe(false)
+    await vi.advanceTimersByTimeAsync(INTERVAL * 3)
+    expect(tasks.polling).toBe(false)
   })
 })

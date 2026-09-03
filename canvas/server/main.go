@@ -76,9 +76,12 @@ func main() {
 			Gateway:   chatGateway,
 		})
 
-		// 生成模型的目录(按次计价的公开模型)挂 JWT 会话;素材内容寻址
-		// 例外 —— 节点用 <img> 预览,带不了 Authorization 头(见 asset 包)。
+		// 生成模型的目录(按次计价的生图模型、按秒计价的视频模型)挂 JWT
+		// 会话;素材内容寻址例外 —— 节点用 <img>/<video> 预览,带不了
+		// Authorization 头(见 asset 包)。
 		canvastask.RegisterModelRoutes(r.Group("/image-models", auth.RequireAuth(issuer)),
+			&canvastask.ModelHandlers{Prices: prices})
+		canvastask.RegisterVideoModelRoutes(r.Group("/video-models", auth.RequireAuth(issuer)),
 			&canvastask.ModelHandlers{Prices: prices})
 		promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
 			&promptgen.CatalogHandlers{Templates: templates})

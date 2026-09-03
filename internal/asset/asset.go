@@ -13,8 +13,11 @@ import (
 	"time"
 )
 
-// Artifact kinds. 10 号票只产图片;视频走 12 号票时追加。
-const KindImage = "image"
+// Artifact kinds. 10 号票落了图片;12 号票的图生视频产物追加 video。
+const (
+	KindImage = "image"
+	KindVideo = "video"
+)
 
 // ErrNotFound reports an asset id that has no row.
 var ErrNotFound = errors.New("asset: not found")

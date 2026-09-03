@@ -1,7 +1,8 @@
 /**
- * 画布生成任务的客户端状态(10 号票):轮询任务列表、把任务状态同步到
- * 绑定节点、失败任务的原地重试。任务由服务端 worker 编排 —— 浏览器关掉
- * 任务照跑,这里只负责「看」:有活动任务时轮询,全部到终态就停。
+ * 画布生成任务的客户端状态(10 号票,12 号票追加取消):轮询任务列表、
+ * 把任务状态同步到绑定节点、失败任务的原地重试、进行中视频任务的取消。
+ * 任务由服务端 worker 编排 —— 浏览器关掉任务照跑,这里只负责「看」:
+ * 有活动任务时轮询,全部到终态就停。
  */
 import { computed, reactive } from 'vue'
 
@@ -12,6 +13,8 @@ export interface CanvasTasksOptions {
   fetchTasks: () => Promise<CanvasTask[]>
   /** 重试失败任务,返回回队后的任务。 */
   retryTask: (taskId: string) => Promise<CanvasTask>
+  /** 取消进行中的任务(网关侧同步取消并退预扣),返回取消后的任务。 */
+  cancelTask: (taskId: string) => Promise<CanvasTask>
   /** 每次任务状态更新后回调(编辑器据此把产物写进节点数据)。 */
   onTask: (task: CanvasTask) => void
   /** 轮询间隔毫秒数(测试用)。 */
@@ -111,6 +114,12 @@ export function useCanvasTasks(options: CanvasTasksOptions) {
     adopt(await options.retryTask(taskId))
   }
 
+  /** 进行中任务的原地取消:服务端同步取消网关任务并退预扣,这里采纳
+   * 回包(canceled 是终态,不再有活动任务时轮询自然停止)。 */
+  async function cancel(taskId: string): Promise<void> {
+    adopt(await options.cancelTask(taskId))
+  }
+
   /** 409 = 任务不在失败态(多半已被重试),UI 据此静默刷新而非报错。 */
   function isRetryConflict(e: unknown): e is ApiError {
     return e instanceof ApiError && e.status === 409
@@ -126,6 +135,7 @@ export function useCanvasTasks(options: CanvasTasksOptions) {
     stop,
     track,
     retry,
+    cancel,
     isRetryConflict,
   }
 }

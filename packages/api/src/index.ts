@@ -158,12 +158,14 @@ export interface SaveGraphResult {
   updated_at: string
 }
 
-/** 画布生成任务状态(10 号票):排队 → 生成中 → 成功/失败;失败可在
- * 节点上原地重试(同一任务回队)。 */
-export type CanvasTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+/** 画布生成任务状态:排队 → 生成中 → 成功/失败/已取消;失败可在节点上
+ * 原地重试(同一任务回队);取消只属于视频任务(12 号票,同步生图没有
+ * 可撤销的提交)。 */
+export type CanvasTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
 
 /** 服务端编排的生成任务。node_id 绑定到编辑器里展示结果的节点;
- * image_url 是产物地址(成功时与素材行同值),asset_id 是素材库引用。 */
+ * image_url / video_url 是产物地址(成功时与素材行同值),asset_id 是
+ * 素材库引用;seconds 只属于视频任务。 */
 export interface CanvasTask {
   id: string
   canvas_id: number
@@ -172,22 +174,27 @@ export interface CanvasTask {
   prompt: string
   model: string
   size: string
+  seconds: number
   status: CanvasTaskStatus
   attempts: number
   error: string
   asset_id: number
   image_url: string
+  video_url: string
   created_at: string
   updated_at: string
 }
 
-/** 提交文生图任务的请求体。 */
+/** 提交生成任务的请求体。kind=image 为文生图;kind=video 为图生视频,
+ * 需要 image_url(参考图片)并可带 seconds(期望时长,缺省 5 秒)。 */
 export interface CreateCanvasTaskInput {
   node_id: string
-  kind: 'image'
+  kind: 'image' | 'video'
   prompt: string
   model: string
   size?: string
+  image_url?: string
+  seconds?: number
 }
 
 /** 画布侧提示词模板目录项(仅启用中的模板,只带 id 与名字)。 */
@@ -401,7 +408,8 @@ export class ApiClient {
 
   // ---- 画布生成任务(挂 /canvases/:id/tasks,需 JWT 会话)----
 
-  /** 提交文生图任务:任务行落库即返回(queued),服务端 worker 负责后续。 */
+  /** 提交生成任务(文生图 / 图生视频):任务行落库即返回(queued),
+   * 服务端 worker 负责后续。 */
   createCanvasTask(canvasId: number, input: CreateCanvasTaskInput): Promise<CanvasTask> {
     return this.request<{ task: CanvasTask }>(`/canvases/${canvasId}/tasks`, {
       method: 'POST',
@@ -422,9 +430,23 @@ export class ApiClient {
     }).then((body) => body.task)
   }
 
+  /** 撤回进行中的任务(12 号票,图生视频):服务端同步取消网关任务并
+   * 退回预扣;已终态的任务原样回放。 */
+  cancelCanvasTask(canvasId: number, taskId: string): Promise<CanvasTask> {
+    return this.request<{ task: CanvasTask }>(`/canvases/${canvasId}/tasks/${taskId}/cancel`, {
+      method: 'POST',
+    }).then((body) => body.task)
+  }
+
   /** 可用于文生图的公开模型(按次计价的 call 轨模型,名字排序)。 */
   async listImageModels(): Promise<string[]> {
     const body = await this.request<{ models: string[] }>('/image-models')
+    return body.models
+  }
+
+  /** 可用于图生视频的公开模型(按秒计价的 second 轨模型,名字排序)。 */
+  async listVideoModels(): Promise<string[]> {
+    const body = await this.request<{ models: string[] }>('/video-models')
     return body.models
   }
 

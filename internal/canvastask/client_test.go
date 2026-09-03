@@ -153,3 +153,97 @@ func TestClientGenerateImageRejectsOversizedBase64(t *testing.T) {
 		t.Fatalf("error = %v, want an oversized-payload failure", err)
 	}
 }
+
+func TestClientSubmitVideoSendsContractBody(t *testing.T) {
+	g := &fakeGateway{status: http.StatusOK, body: `{"task_id":"vt_abc123"}`}
+	server := newGatewayServer(t, g)
+
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+	res, err := client.SubmitVideo(context.Background(), canvastask.VideoRequest{
+		Model: "vid-m", Prompt: "镜头缓缓推进", Seconds: 5,
+		Image: "https://img.example/cat.png",
+		Source: "canvas=7 task=ct_abc node=video-1-1",
+	})
+	if err != nil {
+		t.Fatalf("SubmitVideo: %v", err)
+	}
+	if res.TaskID != "vt_abc123" {
+		t.Fatalf("task id = %q, want the gateway's handle", res.TaskID)
+	}
+	if g.path != "/v1/videos/generations" {
+		t.Errorf("path = %q, want the video submit endpoint", g.path)
+	}
+	if g.auth != "Bearer sk-service-key" || g.source != "canvas=7 task=ct_abc node=video-1-1" {
+		t.Errorf("headers = %q / %q, want the service key and the canvas origin", g.auth, g.source)
+	}
+	if g.requestBody["model"] != "vid-m" || g.requestBody["prompt"] != "镜头缓缓推进" ||
+		g.requestBody["seconds"] != float64(5) || g.requestBody["image"] != "https://img.example/cat.png" {
+		t.Errorf("body = %v, want the image-to-video facts", g.requestBody)
+	}
+}
+
+func TestClientSubmitVideoRejectsMissingTaskID(t *testing.T) {
+	g := &fakeGateway{status: http.StatusOK, body: `{"created":true}`}
+	server := newGatewayServer(t, g)
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+	if _, err := client.SubmitVideo(context.Background(), canvastask.VideoRequest{Model: "vid-m", Prompt: "p", Seconds: 5}); err == nil {
+		t.Fatalf("submit without task_id = nil error, want a protocol error")
+	}
+}
+
+func TestClientPollVideoReadsStatusAndFacts(t *testing.T) {
+	g := &fakeGateway{status: http.StatusOK,
+		body: `{"task_id":"vt_abc123","status":"succeeded","video_url":"https://vid.example/cat.mp4"}`}
+	server := newGatewayServer(t, g)
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+
+	poll, err := client.PollVideo(context.Background(), "vt_abc123")
+	if err != nil {
+		t.Fatalf("PollVideo: %v", err)
+	}
+	if poll.Status != "succeeded" || poll.VideoURL != "https://vid.example/cat.mp4" {
+		t.Fatalf("poll = %+v, want the terminal facts", poll)
+	}
+	if g.path != "/v1/videos/tasks/vt_abc123" {
+		t.Errorf("path = %q, want the poll endpoint", g.path)
+	}
+
+	// 失败任务的错误消息透传给任务行。
+	g.body = `{"task_id":"vt_abc123","status":"failed","error":{"message":"content policy"}}`
+	poll, err = client.PollVideo(context.Background(), "vt_abc123")
+	if err != nil {
+		t.Fatalf("PollVideo failed task: %v", err)
+	}
+	if poll.Status != "failed" || poll.Error != "content policy" {
+		t.Errorf("poll = %+v, want the failure reason", poll)
+	}
+}
+
+func TestClientPollVideoSurfacesGatewayErrors(t *testing.T) {
+	g := &fakeGateway{status: http.StatusBadGateway, body: `{"error":{"message":"upstream down"}}`}
+	server := newGatewayServer(t, g)
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+	if _, err := client.PollVideo(context.Background(), "vt_abc123"); err == nil || !strings.Contains(err.Error(), "upstream down") {
+		t.Fatalf("poll on 502 = %v, want the gateway reason surfaced", err)
+	}
+}
+
+func TestClientCancelVideoPostsCancelEndpoint(t *testing.T) {
+	g := &fakeGateway{status: http.StatusOK, body: `{"task_id":"vt_abc123","status":"canceled"}`}
+	server := newGatewayServer(t, g)
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+
+	if err := client.CancelVideo(context.Background(), "vt_abc123"); err != nil {
+		t.Fatalf("CancelVideo: %v", err)
+	}
+	if g.path != "/v1/videos/tasks/vt_abc123/cancel" {
+		t.Errorf("path = %q, want the cancel endpoint", g.path)
+	}
+
+	// 非 2xx 是错误:取消路径上所有调用方都按尽力而为处理,这里只保证报告。
+	g.status = http.StatusInternalServerError
+	g.body = `{"error":{"message":"internal"}}`
+	if err := client.CancelVideo(context.Background(), "vt_abc123"); err == nil {
+		t.Fatalf("cancel on 500 = nil error, want one")
+	}
+}

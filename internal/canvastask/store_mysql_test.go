@@ -307,3 +307,167 @@ func TestMySQLCanvasTaskRequeueRunningRecoversOrphans(t *testing.T) {
 		t.Errorf("succeeded task after requeue = %+v, want untouched", skipped)
 	}
 }
+
+// seedVideoTask seeds a kind=video task (12 号票) with the reference facts
+// an image-to-video submit carries.
+func seedVideoTask(t *testing.T, store *canvastask.MySQLStore, canvasID int64, nodeID string, status canvastask.Status) canvastask.Task {
+	t.Helper()
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	task, err := store.Create(context.Background(), canvastask.Task{
+		ID: id, CanvasID: canvasID, NodeID: nodeID, Kind: canvastask.KindVideo,
+		Prompt: "镜头缓缓推进", Model: "vid-m", Seconds: 5,
+		ImageRef: "https://img.example/cat.png", Status: status,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return task
+}
+
+func TestMySQLCanvasTaskVideoFieldsRoundTrip(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+	task := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
+
+	got, err := store.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Kind != canvastask.KindVideo || got.Seconds != 5 ||
+		got.ImageRef != "https://img.example/cat.png" || got.VideoURL != "" ||
+		got.RemoteTaskID != "" {
+		t.Errorf("got = %+v, want the video facts preserved", got)
+	}
+
+	// 图片任务不受影响:video 专属列为零值。
+	imageTask := seedTask(t, store, 7, "image-1-1", canvastask.StatusQueued)
+	got, err = store.Get(ctx, imageTask.ID)
+	if err != nil {
+		t.Fatalf("Get image task: %v", err)
+	}
+	if got.Seconds != 0 || got.ImageRef != "" || got.VideoURL != "" {
+		t.Errorf("image task = %+v, want zero-valued video columns", got)
+	}
+}
+
+func TestMySQLCanvasTaskAttachRemoteOnlyOnRunning(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+	task := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
+	if _, err := store.Claim(ctx); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	fresh, ok, err := store.AttachRemote(ctx, task.ID, "vt_remote_1")
+	if err != nil || !ok {
+		t.Fatalf("AttachRemote = ok %v err %v, want the handle attached", ok, err)
+	}
+	if fresh.RemoteTaskID != "vt_remote_1" {
+		t.Errorf("remote_task_id = %q, want the handle stored", fresh.RemoteTaskID)
+	}
+
+	// 行被取消后 Attach 不再发生:提交在途的取消让 worker 输掉这场写入。
+	if _, err := store.Cancel(ctx, task.ID, 7); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	got, ok, err := store.AttachRemote(ctx, task.ID, "vt_remote_2")
+	if err != nil || ok {
+		t.Fatalf("AttachRemote after cancel = ok %v err %v, want the race lost", ok, err)
+	}
+	if got.Status != canvastask.StatusCanceled || got.RemoteTaskID != "vt_remote_1" {
+		t.Errorf("row = %+v, want canceled keeping the first handle", got)
+	}
+}
+
+func TestMySQLCanvasTaskCancelClosesActiveTasks(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+
+	queued := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
+	canceled, err := store.Cancel(ctx, queued.ID, 7)
+	if err != nil || canceled.Status != canvastask.StatusCanceled {
+		t.Fatalf("queued cancel = %+v err %v, want canceled", canceled, err)
+	}
+	// 终态不可取消。
+	if _, err := store.Cancel(ctx, queued.ID, 7); !errors.Is(err, canvastask.ErrNotCancelable) {
+		t.Fatalf("terminal cancel = %v, want ErrNotCancelable", err)
+	}
+
+	// running 同样可取消;别的画布取消不了本画布的任务。
+	running := seedVideoTask(t, store, 7, "video-1-2", canvastask.StatusQueued)
+	if _, err := store.Claim(ctx); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if _, err := store.Cancel(ctx, running.ID, 8); !errors.Is(err, canvastask.ErrNotCancelable) {
+		t.Fatalf("cross-canvas cancel = %v, want ErrNotCancelable", err)
+	}
+	canceled, err = store.Cancel(ctx, running.ID, 7)
+	if err != nil || canceled.Status != canvastask.StatusCanceled {
+		t.Fatalf("running cancel = %+v err %v, want canceled", canceled, err)
+	}
+
+	if _, err := store.Cancel(ctx, "ct_missing", 7); !errors.Is(err, canvastask.ErrNotFound) {
+		t.Fatalf("missing cancel = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMySQLCanvasTaskFinalizeVideoSuccessRecordsVideoAsset(t *testing.T) {
+	store, db := openTaskTestDB(t)
+	ctx := context.Background()
+	task := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
+	if _, err := store.Claim(ctx); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	finalized, won, err := store.FinalizeVideoSuccess(ctx, task.ID, asset.Asset{
+		Kind: asset.KindVideo, CanvasID: task.CanvasID, TaskID: task.ID,
+		Model: task.Model, Prompt: task.Prompt, URL: "https://vid.example/cat.mp4",
+	})
+	if err != nil || !won {
+		t.Fatalf("FinalizeVideoSuccess = won %v err %v, want the finalize to win", won, err)
+	}
+	if finalized.Status != canvastask.StatusSucceeded || finalized.AssetID == 0 ||
+		finalized.VideoURL != "https://vid.example/cat.mp4" || finalized.ImageURL != "" {
+		t.Errorf("finalized = %+v, want succeeded with video_url only", finalized)
+	}
+	a, err := asset.NewMySQLStore(db).Get(ctx, finalized.AssetID)
+	if err != nil {
+		t.Fatalf("asset Get: %v", err)
+	}
+	if a.Kind != asset.KindVideo || a.URL != finalized.VideoURL {
+		t.Errorf("asset = %+v, want a video asset with the delivered url", a)
+	}
+
+	// queued 态下迟到终态被守卫挡住(任务已被取消的情形)。
+	other := seedVideoTask(t, store, 7, "video-1-2", canvastask.StatusQueued)
+	_, won, err = store.FinalizeVideoSuccess(ctx, other.ID, asset.Asset{Kind: asset.KindVideo, URL: "https://vid.example/x.mp4"})
+	if err != nil || won {
+		t.Fatalf("finalize from queued = won %v err %v, want the guard to win", won, err)
+	}
+}
+
+func TestMySQLCanvasTaskFinalizeCanceledOnlyFromRunning(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+	task := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
+
+	// queued 态下 worker 看不到这个任务,守卫挡住迟到的 FinalizeCanceled。
+	_, won, err := store.FinalizeCanceled(ctx, task.ID)
+	if err != nil || won {
+		t.Fatalf("finalize canceled from queued = won %v err %v, want the guard to win", won, err)
+	}
+
+	if _, err := store.Claim(ctx); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	finalized, won, err := store.FinalizeCanceled(ctx, task.ID)
+	if err != nil || !won {
+		t.Fatalf("FinalizeCanceled = won %v err %v, want the close-out to win", won, err)
+	}
+	if finalized.Status != canvastask.StatusCanceled {
+		t.Errorf("status = %s, want canceled", finalized.Status)
+	}
+}

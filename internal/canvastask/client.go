@@ -137,6 +137,162 @@ func errorSummary(body []byte) string {
 	return summary
 }
 
+// ---- 网关视频异步契约(08 号票;12 号票的图生视频从这里走)----
+
+// VideoRequest is one image-to-video generation the worker submits. Image is
+// the reference picture's http(s) address; empty means plain text-to-video.
+type VideoRequest struct {
+	Model   string
+	Prompt  string
+	Seconds int64
+	Image   string
+	Source  string
+}
+
+// VideoSubmitResult carries the gateway's task handle (vt_…): the worker
+// persists it on the task row and polls the gateway with it.
+type VideoSubmitResult struct {
+	TaskID string
+}
+
+// VideoPoll is one gateway task poll. Status is the gateway's external
+// five-state machine (queued/running/succeeded/failed/canceled); VideoURL
+// and Error carry the terminal facts — a succeeded poll without a URL is a
+// protocol violation the worker reports as a failure.
+type VideoPoll struct {
+	Status   string
+	VideoURL string
+	Error    string
+}
+
+// SubmitVideo calls POST /v1/videos/generations and returns the task handle.
+// A gateway rejection (OpenAI error object) is an error carrying the reason
+// for the task row — the gateway refunds its own pre-deduction on any
+// rejected submit, so nothing is owed on this path.
+func (c *Client) SubmitVideo(ctx context.Context, req VideoRequest) (VideoSubmitResult, error) {
+	body := struct {
+		Model   string `json:"model"`
+		Prompt  string `json:"prompt"`
+		Seconds int64  `json:"seconds"`
+		Image   string `json:"image,omitempty"`
+	}{Model: req.Model, Prompt: req.Prompt, Seconds: req.Seconds, Image: req.Image}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return VideoSubmitResult{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/v1/videos/generations", bytes.NewReader(payload))
+	if err != nil {
+		return VideoSubmitResult{}, err
+	}
+	c.setHeaders(httpReq, req.Source)
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return VideoSubmitResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return VideoSubmitResult{}, fmt.Errorf("read gateway response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return VideoSubmitResult{}, fmt.Errorf("gateway %d: %s", resp.StatusCode, errorSummary(raw))
+	}
+
+	var parsed struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return VideoSubmitResult{}, fmt.Errorf("gateway response not JSON: %w", err)
+	}
+	if strings.TrimSpace(parsed.TaskID) == "" {
+		return VideoSubmitResult{}, fmt.Errorf("gateway accepted the submit but returned no task_id")
+	}
+	return VideoSubmitResult{TaskID: strings.TrimSpace(parsed.TaskID)}, nil
+}
+
+// PollVideo calls GET /v1/videos/tasks/{id}. Transient gateway failures are
+// errors — the worker keeps polling; only the gateway's own status words
+// advance the task.
+func (c *Client) PollVideo(ctx context.Context, taskID string) (VideoPoll, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.BaseURL+"/v1/videos/tasks/"+taskID, nil)
+	if err != nil {
+		return VideoPoll{}, err
+	}
+	c.setHeaders(httpReq, "")
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return VideoPoll{}, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return VideoPoll{}, fmt.Errorf("read gateway response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return VideoPoll{}, fmt.Errorf("gateway %d: %s", resp.StatusCode, errorSummary(raw))
+	}
+
+	var parsed struct {
+		Status   string `json:"status"`
+		VideoURL string `json:"video_url"`
+		Error    *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return VideoPoll{}, fmt.Errorf("gateway response not JSON: %w", err)
+	}
+	status := strings.TrimSpace(parsed.Status)
+	if status == "" {
+		return VideoPoll{}, fmt.Errorf("gateway task body carries no status")
+	}
+	poll := VideoPoll{Status: status, VideoURL: strings.TrimSpace(parsed.VideoURL)}
+	if parsed.Error != nil {
+		poll.Error = strings.TrimSpace(parsed.Error.Message)
+	}
+	return poll, nil
+}
+
+// CancelVideo calls POST /v1/videos/tasks/{id}/cancel. The gateway cancels
+// active tasks locally and refunds regardless of whether the vendor itself
+// stopped, so a 2xx closes the books; any other answer is reported to the
+// caller (cancel is best-effort on every path that invokes it).
+func (c *Client) CancelVideo(ctx context.Context, taskID string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/v1/videos/tasks/"+taskID+"/cancel", nil)
+	if err != nil {
+		return err
+	}
+	c.setHeaders(httpReq, "")
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read gateway response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("gateway %d: %s", resp.StatusCode, errorSummary(raw))
+	}
+	return nil
+}
+
+func (c *Client) setHeaders(req *http.Request, source string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Key)
+	if source != "" {
+		req.Header.Set("X-InfiniteChance-Source", source)
+	}
+}
+
 // dataURIFrom wraps image bytes as a data: URI, sniffing the mime from the
 // byte signature — data URIs carry no headers, the mime string is all the
 // browser gets.
