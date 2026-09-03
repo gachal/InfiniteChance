@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -62,16 +63,28 @@ const (
 // prepared is the outcome of the request prefix both paths share: body
 // validated, candidates scheduled, price checked, estimate pre-deduction
 // taken. raw is the client body verbatim (public model name) — each channel
-// attempt rewrites the model field to its own upstream name.
+// attempt rewrites the model field to its own upstream name. call 非 nil
+// 标记生图请求(call 轨):请求事实与按渠道重建所需的原材料都在里面。
 type prepared struct {
-	req        chatRequest
-	key        apikey.Key
-	price      pricing.Price
-	raw        []byte
-	reserved   int64
-	snapshot   []byte
-	started    time.Time         // 第一个上游尝试的起点;成败行的耗时都是请求总耗时
-	candidates []channel.Channel // 加权排序后的换道候选,首选在前
+	publicModel string
+	req         chatRequest // 聊天轨的已解析字段;生图请求不填
+	raw         []byte
+	call        *imagesPrep
+	key         apikey.Key
+	price       pricing.Price
+	reserved    int64
+	snapshot    []byte
+	started     time.Time         // 第一个上游尝试的起点;成败行的耗时都是请求总耗时
+	candidates  []channel.Channel // 加权排序后的换道候选,首选在前
+}
+
+// imagesPrep carries one images request's call-track facts: the billing
+// inputs (size, n) and, for /images/edits, the parsed multipart form each
+// channel attempt rebuilds with its own upstream model name.
+type imagesPrep struct {
+	size string
+	n    int64
+	form *multipart.Form // edits 的原始表单;generations 为 nil
 }
 
 // attempt binds one channel candidacy of a prepared request: the channel
@@ -80,19 +93,27 @@ type attempt struct {
 	ch            channel.Channel
 	upstreamModel string
 	payload       []byte
+	contentType   string // "application/json" 或 multipart boundary
 }
 
 // attemptFor derives one channel's upstream request from the prepared body.
-// prepareChat already proved the body rewrites; only the model string
-// differs per channel, so an error here is impossible short of a bug — the
-// caller treats one as an internal failure with the reserve refunded.
+// Edits rebuild the multipart form per channel (各渠道上游名不同);JSON
+// bodies (chat 与 generations)只换 model 字段。prepare 已证明两者可重写;
+// 这里的错误只可能是 bug —— 调用方按内部故障处理并退款。
 func (p *prepared) attemptFor(ch channel.Channel) (attempt, error) {
-	upstreamModel := ch.ModelMap[p.req.Model]
+	upstreamModel := ch.ModelMap[p.publicModel]
+	if p.call != nil && p.call.form != nil {
+		payload, contentType, err := rebuildMultipart(p.call.form, upstreamModel)
+		if err != nil {
+			return attempt{}, err
+		}
+		return attempt{ch: ch, upstreamModel: upstreamModel, payload: payload, contentType: contentType}, nil
+	}
 	payload, err := rewriteModel(p.raw, upstreamModel)
 	if err != nil {
 		return attempt{}, err
 	}
-	return attempt{ch: ch, upstreamModel: upstreamModel, payload: payload}, nil
+	return attempt{ch: ch, upstreamModel: upstreamModel, payload: payload, contentType: "application/json"}, nil
 }
 
 // failure seeds the failure bundle with the pre-deduction the failure path
@@ -107,30 +128,46 @@ func (p *prepared) failure() upstreamFailure {
 func (p *prepared) logEntry(at attempt) usage.Log {
 	return usage.Log{
 		KeyID: p.key.ID, ChannelID: at.ch.ID, ChannelName: at.ch.Name,
-		PublicModel: p.req.Model, UpstreamModel: at.upstreamModel,
+		PublicModel: p.publicModel, UpstreamModel: at.upstreamModel,
 		Unit: string(p.price.Unit), PriceSnapshot: p.snapshot,
 	}
 }
 
-// settleSuccess fills the success outcome into a seeded entry, settles the
-// ledger to the actual charge (多退少补:delta = 预扣 − 实际,正数退回、
-// 负数补扣;零差额不动账) and records the row. The runner's retried trail —
-// attempts failover abandoned before this one succeeded — goes into the
-// row's upstream_error column: a success row with a non-empty column reads
-// as "survived upstream errors", which is exactly what the audit trail
-// wants to show.
-func (r *failoverRunner) settleSuccess(at attempt, used Usage, durationMS int64) {
+// settle closes out a delivered request: settles the ledger to the actual
+// charge (多退少补:delta = 预扣 − 实际,正数退回、负数补扣;零差额不动账)
+// and records the row. fill stamps the billed quantity into the trail. The
+// runner's retried trail — attempts failover abandoned before this one
+// succeeded — goes into the row's upstream_error column: a success row with
+// a non-empty column reads as "survived upstream errors", which is exactly
+// what the audit trail wants to show.
+func (r *failoverRunner) settle(at attempt, actual, durationMS int64, fill func(*usage.Log)) {
 	p := r.p
-	actual := p.price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
 	entry := p.logEntry(at)
-	entry.PromptTokens = used.PromptTokens
-	entry.CompletionTokens = used.CompletionTokens
+	if fill != nil {
+		fill(&entry)
+	}
 	entry.DurationMS = durationMS
 	entry.Status = usage.StatusSuccess
 	entry.ChargeMicros = actual
 	entry.UpstreamError = upstreamErrorSummary(r.retried, "")
 	r.h.adjustBalance(r.billing, p.key.ID, p.reserved-actual, apikey.ReasonSettle)
 	r.h.recordUsage(r.billing, entry)
+}
+
+// settleSuccess settles the token track against the vendor's reported usage.
+func (r *failoverRunner) settleSuccess(at attempt, used Usage, durationMS int64) {
+	actual := r.p.price.Token.ChargeMicros(used.PromptTokens, used.CompletionTokens)
+	r.settle(at, actual, durationMS, func(l *usage.Log) {
+		l.PromptTokens = used.PromptTokens
+		l.CompletionTokens = used.CompletionTokens
+	})
+}
+
+// settleImages settles the call track against the images actually delivered:
+// 按实收张数计费,少交的自动退回(多退少补的按次形状)。
+func (r *failoverRunner) settleImages(at attempt, images, durationMS int64) {
+	actual := r.p.price.Call.ChargeMicros(r.p.call.size, images)
+	r.settle(at, actual, durationMS, nil)
 }
 
 // ChatCompletions relays one chat request — buffered or streamed — through
@@ -231,7 +268,7 @@ func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
 		h.failInternal(c, err)
 		return nil
 	}
-	candidates := weightedOrder(eligibleChannels(channels, req.Model), h.randIntn)
+	candidates := weightedOrder(eligibleChannels(channels, req.Model, channel.CapChat), h.randIntn)
 	if len(candidates) == 0 {
 		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
 			"The model '"+req.Model+"' does not exist or no enabled channel serves it.")
@@ -271,7 +308,8 @@ func (h *Handlers) prepareChat(c *gin.Context, key apikey.Key) *prepared {
 	}
 
 	return &prepared{
-		req: req, key: key, price: price, raw: raw,
+		publicModel: req.Model,
+		req:         req, key: key, price: price, raw: raw,
 		reserved: reserved, snapshot: priceSnapshot(price),
 		candidates: candidates,
 	}
@@ -475,7 +513,7 @@ func (r *failoverRunner) exhausted() {
 	}
 	r.h.adjustBalance(r.billing, r.p.key.ID, r.p.reserved, apikey.ReasonRefund)
 	apierr.OpenAI(r.c, http.StatusServiceUnavailable, CodeModelUnavailable, TypeServerError,
-		"The model '"+r.p.req.Model+"' is temporarily unavailable: every channel serving it is circuit-open. Retry shortly.")
+		"The model '"+r.p.publicModel+"' is temporarily unavailable: every channel serving it is circuit-open. Retry shortly.")
 }
 
 // abortInternal closes out an impossible attempt-derivation failure: the

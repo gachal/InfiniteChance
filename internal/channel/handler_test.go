@@ -434,3 +434,73 @@ func TestNormalizeTrimsTrailingSlashOnBaseURL(t *testing.T) {
 		t.Errorf("base_url = %q, want trailing slash trimmed", got.BaseURL)
 	}
 }
+
+func TestCreateChannelCapabilitiesRoundTrip(t *testing.T) {
+	store := newFakeStore()
+	r := newChannelServer(store)
+
+	// 显式声明能力:原样回显。
+	body := validChannelBody()
+	body["capabilities"] = []string{"images", "chat ", "chat"} // 空白修剪 + 去重
+	w := doJSON(r, http.MethodPost, "/admin/channels", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var created struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if strings.Join(created.Capabilities, ",") != "images,chat" {
+		t.Errorf("capabilities = %v, want trimmed and deduped [images chat]", created.Capabilities)
+	}
+
+	// 未知能力必须 400。
+	body["capabilities"] = []string{"video"}
+	w = doJSON(r, http.MethodPost, "/admin/channels", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown capability status = %d body %s, want 400", w.Code, w.Body.String())
+	}
+	if eb := decodeError(t, w); !strings.Contains(eb.Error.Message, "video") {
+		t.Errorf("error = %+v, want the message naming the bad capability", eb.Error)
+	}
+
+	// 历史形状(不带 capabilities)缺省生效集 = 仅聊天,响应回显 ["chat"]。
+	w = doJSON(r, http.MethodPost, "/admin/channels", validChannelBody())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("legacy create status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode legacy create response: %v", err)
+	}
+	if strings.Join(created.Capabilities, ",") != "chat" {
+		t.Errorf("legacy capabilities = %v, want the effective [chat]", created.Capabilities)
+	}
+}
+
+func TestNormalizeCapabilitiesDefaultsAndHasCapability(t *testing.T) {
+	// 未声明能力 = 仅聊天(历史行为);声明了就完全按声明算。
+	in, err := channel.Input{Name: "c", Type: channel.TypeOpenAI, BaseURL: "https://api.openai.com/v1"}.Normalize(false)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if len(in.Capabilities) != 1 || in.Capabilities[0] != channel.CapChat {
+		t.Fatalf("default capabilities = %v, want [chat]", in.Capabilities)
+	}
+
+	ch := channel.Channel{Capabilities: nil}
+	if !ch.HasCapability(channel.CapChat) || ch.HasCapability(channel.CapImages) {
+		t.Errorf("nil capabilities: chat=%v images=%v, want true/false (legacy rows never relay images)",
+			ch.HasCapability(channel.CapChat), ch.HasCapability(channel.CapImages))
+	}
+
+	both := channel.Channel{Capabilities: []channel.Capability{channel.CapImages, channel.CapChat}}
+	if !both.HasCapability(channel.CapImages) || !both.HasCapability(channel.CapChat) {
+		t.Errorf("declared capabilities not honored: %+v", both.Capabilities)
+	}
+	imagesOnly := channel.Channel{Capabilities: []channel.Capability{channel.CapImages}}
+	if imagesOnly.HasCapability(channel.CapChat) {
+		t.Errorf("images-only channel must not claim chat")
+	}
+}

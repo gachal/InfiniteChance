@@ -11,12 +11,14 @@ import (
 // 下一层。Store.List 已按 priority DESC, id ASC 返回,下面的纯函数只在
 // 该顺序上做过滤与层内乱序。
 
-// eligibleChannels filters the channels serving publicModel: enabled only,
-// Store.List order preserved (best priority first, ties by id).
-func eligibleChannels(channels []channel.Channel, publicModel string) []channel.Channel {
+// eligibleChannels filters the channels that may serve publicModel for the
+// given request kind: enabled, capable (07 号票:聊天/生图互不串道), and
+// mapping the model. Store.List order preserved (best priority first, ties
+// by id).
+func eligibleChannels(channels []channel.Channel, publicModel string, need channel.Capability) []channel.Channel {
 	var out []channel.Channel
 	for _, ch := range channels {
-		if !ch.Enabled {
+		if !ch.Enabled || !ch.HasCapability(need) {
 			continue
 		}
 		if _, ok := ch.ModelMap[publicModel]; ok {

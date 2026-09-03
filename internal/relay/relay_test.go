@@ -1,9 +1,11 @@
 package relay_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -97,13 +99,16 @@ func openRelayTestDB(t *testing.T) *relayStores {
 }
 
 // fakeUpstream is an in-memory OpenAI-compatible vendor: it answers
-// /chat/completions with whatever its current handler produces and records
-// the auth headers and model names it saw.
+// /chat/completions (or the images endpoints) with whatever its current
+// handler produces and records the auth headers, paths and model names it
+// saw. The request body is restored after the model peek so multipart
+// handlers can re-read it.
 type fakeUpstream struct {
 	server *httptest.Server
 	mu     sync.Mutex
 	calls  int
 	auth   []string
+	paths  []string
 	models []string
 	handle http.HandlerFunc
 }
@@ -115,10 +120,13 @@ func newFakeUpstream(t *testing.T, handle http.HandlerFunc) *fakeUpstream {
 		f.mu.Lock()
 		f.calls++
 		f.auth = append(f.auth, r.Header.Get("Authorization"))
+		f.paths = append(f.paths, r.URL.Path)
+		raw, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(raw))
 		var body struct {
 			Model string `json:"model"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.Unmarshal(raw, &body)
 		f.models = append(f.models, body.Model)
 		f.mu.Unlock()
 		f.handle(w, r)
@@ -131,6 +139,16 @@ func (f *fakeUpstream) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+// lastPath returns the most recent request path the vendor saw.
+func (f *fakeUpstream) lastPath() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.paths) == 0 {
+		return ""
+	}
+	return f.paths[len(f.paths)-1]
 }
 
 // okChatHandler answers one fixed successful completion.

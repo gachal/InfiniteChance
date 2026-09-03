@@ -57,16 +57,22 @@ func TestWeightedOrderEmptyAndSingle(t *testing.T) {
 	}
 }
 
-func TestEligibleChannelsFiltersEnabledAndModel(t *testing.T) {
+func TestEligibleChannelsFiltersEnabledModelAndCapability(t *testing.T) {
 	channels := []channel.Channel{
-		{ID: 1, Enabled: true, ModelMap: map[string]string{"m": "up"}},
-		{ID: 2, Enabled: false, ModelMap: map[string]string{"m": "up"}},
-		{ID: 3, Enabled: true, ModelMap: map[string]string{"other": "up"}},
-		{ID: 4, Enabled: true, ModelMap: map[string]string{"m": "up4"}},
+		{ID: 1, Enabled: true, ModelMap: map[string]string{"m": "up"}},     // 历史行:仅聊天
+		{ID: 2, Enabled: false, ModelMap: map[string]string{"m": "up"}},    // 停用
+		{ID: 3, Enabled: true, ModelMap: map[string]string{"other": "up"}}, // 不挂 m
+		{ID: 4, Enabled: true, ModelMap: map[string]string{"m": "up4"}},    // 历史行:仅聊天
+		{ID: 5, Enabled: true, Capabilities: []channel.Capability{channel.CapChat, channel.CapImages}, ModelMap: map[string]string{"m": "up5"}},
 	}
-	got := eligibleChannels(channels, "m")
-	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 4 {
-		t.Fatalf("eligible = %+v, want channels 1 and 4 in list order", got)
+	got := eligibleChannels(channels, "m", channel.CapChat)
+	if len(got) != 3 || got[0].ID != 1 || got[1].ID != 4 || got[2].ID != 5 {
+		t.Fatalf("chat eligible = %+v, want channels 1, 4, 5 in list order", got)
+	}
+	// 生图只落在显式声明 images 能力的渠道(07 号票)。
+	img := eligibleChannels(channels, "m", channel.CapImages)
+	if len(img) != 1 || img[0].ID != 5 {
+		t.Fatalf("image eligible = %+v, want only the image-capable channel 5", img)
 	}
 }
 

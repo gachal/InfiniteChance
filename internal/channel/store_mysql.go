@@ -18,38 +18,59 @@ func NewMySQLStore(db *sql.DB) *MySQLStore { return &MySQLStore{DB: db} }
 
 const schema = `
 CREATE TABLE IF NOT EXISTS channels (
-	id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-	name       VARCHAR(64)  NOT NULL,
-	type       VARCHAR(32)  NOT NULL,
-	base_url   VARCHAR(512) NOT NULL,
-	api_key    TEXT         NOT NULL,
-	model_map  JSON         NOT NULL,
-	priority   INT          NOT NULL DEFAULT 0,
-	weight     INT          NOT NULL DEFAULT 0,
-	enabled    TINYINT(1)   NOT NULL DEFAULT 1,
-	created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-	updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+	id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+	name         VARCHAR(64)  NOT NULL,
+	type         VARCHAR(32)  NOT NULL,
+	base_url     VARCHAR(512) NOT NULL,
+	api_key      TEXT         NOT NULL,
+	model_map    JSON         NOT NULL,
+	capabilities JSON         NULL,
+	priority     INT          NOT NULL DEFAULT 0,
+	weight       INT          NOT NULL DEFAULT 0,
+	enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+	created_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+	updated_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
-// EnsureSchema creates the channels table when missing. It runs at gateway
-// startup and is idempotent.
+// EnsureSchema creates the channels table when missing and widens an
+// existing one in place (07 号票新增的 capabilities 列):CREATE TABLE
+// IF NOT EXISTS 永远不会加宽老表,网关要能对已有库原地升级。幂等。
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, schema)
+	if _, err := s.DB.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "capabilities", "JSON NULL")
+}
+
+// ensureColumn adds one column to the channels table when it predates it.
+func (s *MySQLStore) ensureColumn(ctx context.Context, name, decl string) error {
+	var count int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'channels' AND COLUMN_NAME = ?`,
+		name).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err := s.DB.ExecContext(ctx, "ALTER TABLE channels ADD COLUMN "+name+" "+decl)
 	return err
 }
 
-const channelColumns = `id, name, type, base_url, api_key, model_map, priority, weight, enabled, created_at, updated_at`
+const channelColumns = `id, name, type, base_url, api_key, model_map, capabilities, priority, weight, enabled, created_at, updated_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-// scanRow maps one channels row; rawModelMap goes through JSON because the
-// column is a MySQL JSON value handed to us as bytes.
+// scanRow maps one channels row; the JSON columns come through their
+// payloads because MySQL hands them to us as bytes. A NULL capabilities
+// column scans to nil — HasCapability reads that as legacy chat-only.
 func scanRow(scan rowScanner) (Channel, error) {
 	var ch Channel
-	var rawModelMap []byte
-	err := scan.Scan(&ch.ID, &ch.Name, &ch.Type, &ch.BaseURL, &ch.APIKey, &rawModelMap,
+	var rawModelMap, rawCapabilities []byte
+	err := scan.Scan(&ch.ID, &ch.Name, &ch.Type, &ch.BaseURL, &ch.APIKey, &rawModelMap, &rawCapabilities,
 		&ch.Priority, &ch.Weight, &ch.Enabled, &ch.CreatedAt, &ch.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Channel{}, ErrNotFound
@@ -60,6 +81,11 @@ func scanRow(scan rowScanner) (Channel, error) {
 	ch.ModelMap = map[string]string{}
 	if len(rawModelMap) > 0 {
 		if err := json.Unmarshal(rawModelMap, &ch.ModelMap); err != nil {
+			return Channel{}, err
+		}
+	}
+	if len(rawCapabilities) > 0 {
+		if err := json.Unmarshal(rawCapabilities, &ch.Capabilities); err != nil {
 			return Channel{}, err
 		}
 	}
@@ -99,10 +125,14 @@ func (s *MySQLStore) Create(ctx context.Context, ch Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	capabilities, err := json.Marshal(ch.Capabilities)
+	if err != nil {
+		return Channel{}, err
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO channels (name, type, base_url, api_key, model_map, priority, weight, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		ch.Name, ch.Type, ch.BaseURL, ch.APIKey, modelMap, ch.Priority, ch.Weight, ch.Enabled)
+		`INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, priority, weight, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ch.Name, ch.Type, ch.BaseURL, ch.APIKey, modelMap, capabilities, ch.Priority, ch.Weight, ch.Enabled)
 	if err != nil {
 		return Channel{}, err
 	}
@@ -118,16 +148,20 @@ func (s *MySQLStore) Update(ctx context.Context, ch Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	capabilities, err := json.Marshal(ch.Capabilities)
+	if err != nil {
+		return Channel{}, err
+	}
 	// api_key 为空表示保留原密钥:CASE 在同一行内原子取值,避免先读后写的竞态。
 	if _, err := s.DB.ExecContext(ctx,
 		`UPDATE channels SET
 			name = ?, type = ?, base_url = ?,
 			api_key = CASE WHEN ? = '' THEN api_key ELSE ? END,
-			model_map = ?, priority = ?, weight = ?, enabled = ?
+			model_map = ?, capabilities = ?, priority = ?, weight = ?, enabled = ?
 		 WHERE id = ?`,
 		ch.Name, ch.Type, ch.BaseURL,
 		ch.APIKey, ch.APIKey,
-		modelMap, ch.Priority, ch.Weight, ch.Enabled,
+		modelMap, capabilities, ch.Priority, ch.Weight, ch.Enabled,
 		ch.ID); err != nil {
 		return Channel{}, err
 	}

@@ -140,6 +140,71 @@ func TestPricingUpsertListDeleteRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPricingCallTrackRoundTrip(t *testing.T) {
+	r := newPricingServer(newFakeStore())
+
+	// 按次轨:人类单位 USD 单价 + 尺寸系数,微美元整数落库后原样回读。
+	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model": "dall-e-3",
+		"unit":         "call",
+		"usd_per_call": 0.04,
+		"size_factors": map[string]any{"1024x1024": 1.0, "1792x1024": 2.0},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("Upsert status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var wire struct {
+		PublicModel string             `json:"public_model"`
+		Unit        string             `json:"unit"`
+		USDPerCall  float64            `json:"usd_per_call"`
+		SizeFactors map[string]float64 `json:"size_factors"`
+		Ratio       float64            `json:"ratio"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("decode upsert response: %v", err)
+	}
+	if wire.PublicModel != "dall-e-3" || wire.Unit != "call" || wire.USDPerCall != 0.04 ||
+		wire.SizeFactors["1024x1024"] != 1 || wire.SizeFactors["1792x1024"] != 2 {
+		t.Fatalf("upsert response = %+v, want echoed human-unit call price", wire)
+	}
+	if wire.Ratio != 0 {
+		t.Errorf("ratio = %v on a call row, want 0 (token field meaningless here)", wire.Ratio)
+	}
+
+	// token 专属字段混进按次请求不致命:unit 决定载荷,余者忽略。
+	w = doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model":          "gpt-image-1",
+		"unit":                  "call",
+		"usd_per_call":          0.02,
+		"input_usd_per_mtokens": 5.0,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("Upsert with stray token fields status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+
+	// 回读:两行都是 call 轨,人类单位系数原样。
+	w = doPricingJSON(r, "GET", "/admin/prices", nil)
+	var list struct {
+		Prices []struct {
+			PublicModel string             `json:"public_model"`
+			Unit        string             `json:"unit"`
+			USDPerCall  float64            `json:"usd_per_call"`
+			SizeFactors map[string]float64 `json:"size_factors"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Prices) != 2 {
+		t.Fatalf("list = %+v, want both call rows", list.Prices)
+	}
+	for _, row := range list.Prices {
+		if row.Unit != "call" {
+			t.Errorf("row %s unit = %s, want call", row.PublicModel, row.Unit)
+		}
+	}
+}
+
 func TestPricingUpsertValidation(t *testing.T) {
 	r := newPricingServer(newFakeStore())
 
@@ -148,7 +213,10 @@ func TestPricingUpsertValidation(t *testing.T) {
 		body map[string]any
 	}{
 		{"missing model", map[string]any{"unit": "token"}},
-		{"call track rejected", map[string]any{"public_model": "m", "unit": "call"}},
+		{"negative per-call price", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": -1}},
+		{"absurd per-call price", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 1001.0}},
+		{"absurd size factor", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 0.04, "size_factors": map[string]any{"s": 1001.0}}},
+		{"negative size factor", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 0.04, "size_factors": map[string]any{"s": -2.0}}},
 		{"unknown unit", map[string]any{"public_model": "m", "unit": "bogus"}},
 		{"absurd price", map[string]any{"public_model": "m", "unit": "token", "input_usd_per_mtokens": 1e9, "output_usd_per_mtokens": 1}},
 		{"absurd ratio", map[string]any{"public_model": "m", "unit": "token", "ratio": 1001}},
@@ -159,5 +227,11 @@ func TestPricingUpsertValidation(t *testing.T) {
 				t.Fatalf("status = %d body %s, want 400", w.Code, w.Body.String())
 			}
 		})
+	}
+
+	// 免费按次价(0 美元/张)与 token 轨的 0 单价对称,合法。
+	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 0})
+	if w.Code != http.StatusOK {
+		t.Fatalf("free call price status = %d body %s, want 200", w.Code, w.Body.String())
 	}
 }

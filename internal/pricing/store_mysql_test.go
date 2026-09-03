@@ -64,6 +64,44 @@ func openPricingTestDB(t *testing.T) (*pricing.MySQLStore, *sql.DB) {
 	return store, db
 }
 
+func TestMySQLPriceCallTrackRoundTrip(t *testing.T) {
+	store, _ := openPricingTestDB(t)
+	ctx := context.Background()
+
+	p := pricing.Price{
+		PublicModel: "dall-e-3",
+		Unit:        pricing.UnitCall,
+		Call: &pricing.CallPrice{
+			USDPerCallMicros: 40_000,
+			SizeFactorMicros: map[string]int64{"1024x1024": 1_000_000, "1792x1024": 2_000_000},
+		},
+	}
+	stored, err := store.Upsert(ctx, p)
+	if err != nil {
+		t.Fatalf("Upsert call row: %v", err)
+	}
+	if stored.Call == nil || stored.Call.USDPerCallMicros != 40_000 ||
+		stored.Call.SizeFactorMicros["1792x1024"] != 2_000_000 {
+		t.Fatalf("stored = %+v, want the call payload back", stored)
+	}
+	if stored.Token != nil {
+		t.Errorf("stored token payload = %+v, want nil (dual-track invariant)", stored.Token)
+	}
+
+	got, err := store.ByModel(ctx, "dall-e-3")
+	if err != nil || got.Call == nil || got.Call.USDPerCallMicros != 40_000 {
+		t.Fatalf("ByModel = %+v (err %v), want the call payload", got, err)
+	}
+	// 同名换轨覆盖:call → token,config 列载荷随之替换。
+	if _, err := store.Upsert(ctx, samplePrice("dall-e-3")); err != nil {
+		t.Fatalf("Upsert overwrite with token row: %v", err)
+	}
+	got, err = store.ByModel(ctx, "dall-e-3")
+	if err != nil || got.Token == nil || got.Call != nil {
+		t.Errorf("after track switch = %+v (err %v), want token payload only", got, err)
+	}
+}
+
 func samplePrice(model string) pricing.Price {
 	return pricing.Price{
 		PublicModel: model,

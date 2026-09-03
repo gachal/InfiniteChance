@@ -4,8 +4,10 @@
 // the per-channel circuit breaker from internal/channel — 06 号票), forwards
 // through a narrow vendor adaptor, and bills the key with the
 // estimate → settle-or-refund flow, writing a usage-log row per request that
-// reached the upstream. Buffered and SSE-streamed chat completions share
-// that skeleton.
+// reached the upstream. Buffered and SSE-streamed chat completions share that
+// skeleton on the token track; the synchronous images endpoints (generations
+// and edits, 07 号票) run it on the per-call track, restricted to
+// image-capable channels.
 package relay
 
 import (
@@ -54,10 +56,22 @@ type Adaptor interface {
 	// non-2xx answer is returned as a closed !OK stream with the buffered
 	// error body; a transport error returns (nil, err).
 	ChatCompletionsStream(ctx context.Context, ch channel.Channel, publicModel string, payload []byte) (*UpstreamStream, error)
+	// ImagesGenerations forwards one image-generation request. payload is
+	// the complete JSON body with the upstream model name already set.
+	ImagesGenerations(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
+	// ImagesEdits forwards one image-edit request: a rebuilt
+	// multipart/form-data body (its model field rewritten to the upstream
+	// name) plus the Content-Type that carries the writer's boundary.
+	ImagesEdits(ctx context.Context, ch channel.Channel, contentType string, payload []byte) (*UpstreamResponse, error)
 	// Normalize converts a 2xx upstream chat-completion body into the
 	// client-facing body (model rewritten to the public name) and extracts
 	// the usage.
 	Normalize(publicModel string, upstreamBody []byte) (clientBody []byte, usage Usage, err error)
+	// NormalizeImages converts a 2xx upstream images body into the
+	// client-facing body (model rewritten to the public name when the
+	// vendor sent one) and reports how many images the data array
+	// delivered — the call track's settle quantity.
+	NormalizeImages(publicModel string, upstreamBody []byte) (clientBody []byte, images int64, err error)
 	// ErrorSummary extracts a one-line human-readable message from a failed
 	// upstream body, for the usage log and the client-facing error.
 	ErrorSummary(body []byte) string
@@ -265,10 +279,19 @@ func NewOpenAIAdaptor() Adaptor {
 }
 
 func (a *openAIAdaptor) ChatCompletions(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
-	req, err := a.newUpstreamRequest(ctx, ch, payload)
+	return a.postUpstream(ctx, ch, "/chat/completions", "application/json", payload)
+}
+
+// postUpstream builds and executes one buffered upstream POST — the shared
+// body of the chat and images call paths. BaseURL 含版本路径
+// (如 https://api.openai.com/v1),已在录入时规范化。
+func (a *openAIAdaptor) postUpstream(ctx context.Context, ch channel.Channel, path, contentType string, payload []byte) (*UpstreamResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.BaseURL+path, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
 
 	resp, err := a.Client.Do(req)
 	if err != nil {
@@ -286,17 +309,16 @@ func (a *openAIAdaptor) ChatCompletions(ctx context.Context, ch channel.Channel,
 	}, nil
 }
 
-// newUpstreamRequest builds the upstream POST both the buffered and the
-// streaming call share: same URL, same auth headers, body verbatim.
-func (a *openAIAdaptor) newUpstreamRequest(ctx context.Context, ch channel.Channel, payload []byte) (*http.Request, error) {
-	// BaseURL 含版本路径(如 https://api.openai.com/v1),已在录入时规范化。
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.BaseURL+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
-	return req, nil
+// ImagesGenerations relays one POST {base_url}/images/generations; the JSON
+// body rides through with only the model name already swapped by the caller.
+func (a *openAIAdaptor) ImagesGenerations(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	return a.postUpstream(ctx, ch, "/images/generations", "application/json", payload)
+}
+
+// ImagesEdits relays one POST {base_url}/images/edits carrying the rebuilt
+// multipart form; contentType carries the matching boundary.
+func (a *openAIAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, contentType string, payload []byte) (*UpstreamResponse, error) {
+	return a.postUpstream(ctx, ch, "/images/edits", contentType, payload)
 }
 
 // ChatCompletionsStream opens the streaming variant of the same upstream
@@ -311,10 +333,12 @@ func (a *openAIAdaptor) ChatCompletionsStream(ctx context.Context, ch channel.Ch
 	if err != nil {
 		return nil, fmt.Errorf("stream payload is not a JSON object: %w", err)
 	}
-	req, err := a.newUpstreamRequest(ctx, ch, payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.BaseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
 
 	resp, err := a.Client.Do(req)
 	if err != nil {
@@ -391,6 +415,32 @@ func (a *openAIAdaptor) Normalize(publicModel string, upstreamBody []byte) ([]by
 	usage.PromptTokens = max(usage.PromptTokens, 0)
 	usage.CompletionTokens = max(usage.CompletionTokens, 0)
 	return clientBody, usage, nil
+}
+
+// NormalizeImages passes an images response through with the model field
+// rewritten to the public name when the vendor sent one — classic images
+// responses carry no model at all, and faithfulness beats injecting one —
+// and counts the delivered images, the call track's settle quantity.
+func (a *openAIAdaptor) NormalizeImages(publicModel string, upstreamBody []byte) ([]byte, int64, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(upstreamBody, &fields); err != nil {
+		return nil, 0, fmt.Errorf("upstream body is not a JSON object: %w", err)
+	}
+	var data []json.RawMessage
+	if raw, ok := fields["data"]; ok {
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return nil, 0, fmt.Errorf("upstream data is not an array: %w", err)
+		}
+	}
+	clientBody := upstreamBody
+	if _, ok := fields["model"]; ok {
+		rewritten, err := rewriteModel(upstreamBody, publicModel)
+		if err != nil {
+			return nil, 0, fmt.Errorf("upstream body is not a JSON object: %w", err)
+		}
+		clientBody = rewritten
+	}
+	return clientBody, int64(len(data)), nil
 }
 
 func (a *openAIAdaptor) ErrorSummary(body []byte) string {

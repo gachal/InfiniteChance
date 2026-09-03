@@ -240,3 +240,46 @@ func TestMySQLChannelDelete(t *testing.T) {
 		t.Errorf("second Delete err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestMySQLChannelCapabilitiesRoundTrip(t *testing.T) {
+	store, _ := openTestDB(t)
+	ctx := context.Background()
+
+	// 显式能力集落库后原样读回;HasCapability 是调度唯一入口。
+	ch, err := store.Create(ctx, sampleChannel("caps"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Capabilities) != 0 || !got.HasCapability(channel.CapChat) || got.HasCapability(channel.CapImages) {
+		t.Fatalf("legacy row = %+v, want chat-only via the nil default", got.Capabilities)
+	}
+
+	ch.Capabilities = []channel.Capability{channel.CapChat, channel.CapImages}
+	if _, err := store.Update(ctx, ch); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err = store.Get(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if !got.HasCapability(channel.CapImages) || !got.HasCapability(channel.CapChat) {
+		t.Errorf("stored capabilities = %v, want both honored after reload", got.Capabilities)
+	}
+
+	// 能力可收回:改回仅生图后,聊天不再命中。
+	ch.Capabilities = []channel.Capability{channel.CapImages}
+	if _, err := store.Update(ctx, ch); err != nil {
+		t.Fatalf("Update revoke chat: %v", err)
+	}
+	got, err = store.Get(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("Get after revoke: %v", err)
+	}
+	if got.HasCapability(channel.CapChat) || !got.HasCapability(channel.CapImages) {
+		t.Errorf("after revoke = %v, want images only", got.Capabilities)
+	}
+}

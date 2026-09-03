@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,19 @@ var ErrNotFound = errors.New("channel: not found")
 // Kimi, GLM, Qwen compatible-mode, Ark, Gemini's OpenAI layer — all share one
 // adaptor per the spec, and all are probed with GET {base_url}/models.
 const TypeOpenAI = "openai"
+
+// Capability marks what a channel may relay. Scheduling only ever selects a
+// channel whose capabilities cover the request kind, so a chat-only vendor
+// never receives a mapped image model by accident (07 号票).
+type Capability string
+
+const (
+	CapChat   Capability = "chat"
+	CapImages Capability = "images"
+)
+
+// SupportedCapabilities lists what a channel may declare.
+var SupportedCapabilities = []Capability{CapChat, CapImages}
 
 // SupportedTypes lists the channel types this build can relay and probe.
 var SupportedTypes = []string{TypeOpenAI}
@@ -41,40 +55,52 @@ func SupportedType(t string) bool {
 // stored so the gateway can sign upstream requests, but write-only through
 // the admin API — responses carry the key hint, never the key.
 type Channel struct {
-	ID        int64
-	Name      string
-	Type      string
-	BaseURL   string
-	APIKey    string
-	ModelMap  map[string]string // 公开模型名 → 上游模型名
-	Priority  int               // 数值越大越优先:调度先试高优先级层(06 号票定案)
-	Weight    int               // 同优先级层内的加权分流份额(0 按 1 计)
-	Enabled   bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           int64
+	Name         string
+	Type         string
+	BaseURL      string
+	APIKey       string
+	ModelMap     map[string]string // 公开模型名 → 上游模型名
+	Capabilities []Capability      // 可转发的能力;nil = 历史行,仅聊天
+	Priority     int               // 数值越大越优先:调度先试高优先级层(06 号票定案)
+	Weight       int               // 同优先级层内的加权分流份额(0 按 1 计)
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// HasCapability reports whether the channel may relay c. A channel stored
+// without capabilities (rows from before 07 号票) counts as chat-capable
+// only — relaying images must be opted in explicitly, never assumed.
+func (ch Channel) HasCapability(c Capability) bool {
+	if len(ch.Capabilities) == 0 {
+		return c == CapChat
+	}
+	return slices.Contains(ch.Capabilities, c)
 }
 
 // Input is the admin-supplied configuration. APIKey empty on update means
 // "keep the stored secret"; on create it is required.
 type Input struct {
-	Name     string
-	Type     string
-	BaseURL  string
-	APIKey   string
-	ModelMap map[string]string
-	Priority int
-	Weight   int
-	Enabled  bool
+	Name         string
+	Type         string
+	BaseURL      string
+	APIKey       string
+	ModelMap     map[string]string
+	Capabilities []Capability
+	Priority     int
+	Weight       int
+	Enabled      bool
 }
 
 const (
-	maxNameRunes      = 64
-	maxBaseURLRunes   = 512
-	maxAPIKeyRunes    = 4096
-	maxModelMapEntries  = 100
-	maxModelNameRunes = 200
-	maxPriority       = 1_000_000
-	maxWeight         = 1_000_000
+	maxNameRunes       = 64
+	maxBaseURLRunes    = 512
+	maxAPIKeyRunes     = 4096
+	maxModelMapEntries = 100
+	maxModelNameRunes  = 200
+	maxPriority        = 1_000_000
+	maxWeight          = 1_000_000
 )
 
 // Normalize trims and validates Input, returning a canonical copy.
@@ -129,6 +155,22 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 		return in, fmt.Errorf("模型映射最多 %d 条", maxModelMapEntries)
 	}
 
+	// 能力缺省 = 仅聊天,与历史渠道行为一致;能力名去重且必须可识别。
+	if len(in.Capabilities) == 0 {
+		in.Capabilities = []Capability{CapChat}
+	}
+	caps := make([]Capability, 0, len(in.Capabilities))
+	for _, c := range in.Capabilities {
+		c = Capability(strings.TrimSpace(string(c)))
+		if !SupportedCapability(c) {
+			return in, fmt.Errorf("不支持的渠道能力:%s", c)
+		}
+		if !slices.Contains(caps, c) {
+			caps = append(caps, c)
+		}
+	}
+	in.Capabilities = caps
+
 	if in.Priority < 0 || in.Priority > maxPriority {
 		return in, fmt.Errorf("优先级需在 0 到 %d 之间", maxPriority)
 	}
@@ -136,6 +178,16 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 		return in, fmt.Errorf("权重需在 0 到 %d 之间", maxWeight)
 	}
 	return in, nil
+}
+
+// SupportedCapability reports whether c is a capability this build knows.
+func SupportedCapability(c Capability) bool {
+	for _, known := range SupportedCapabilities {
+		if c == known {
+			return true
+		}
+	}
+	return false
 }
 
 // Store persists channels. The MySQL implementation backs the gateway;

@@ -57,6 +57,11 @@ func scanRow(scan rowScanner) (Price, error) {
 		if err := json.Unmarshal(rawConfig, p.Token); err != nil {
 			return Price{}, err
 		}
+	case UnitCall:
+		p.Call = &CallPrice{}
+		if err := json.Unmarshal(rawConfig, p.Call); err != nil {
+			return Price{}, err
+		}
 	default:
 		return Price{}, errors.New("pricing: unknown unit " + string(p.Unit) + " in stored row")
 	}
@@ -88,7 +93,12 @@ func (s *MySQLStore) ByModel(ctx context.Context, publicModel string) (Price, er
 }
 
 func (s *MySQLStore) Upsert(ctx context.Context, p Price) (Price, error) {
-	config, err := json.Marshal(p.Token)
+	// unit 决定 config 列的载荷形状(双轨不变量:恰好一个载荷)。
+	var payload any = p.Token
+	if p.Unit == UnitCall {
+		payload = p.Call
+	}
+	config, err := json.Marshal(payload)
 	if err != nil {
 		return Price{}, err
 	}

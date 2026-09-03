@@ -39,6 +39,8 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	}
 	group.GET("/models", h.ListModels)
 	group.POST("/chat/completions", h.ChatCompletions)
+	group.POST("/images/generations", h.ImagesGenerations)
+	group.POST("/images/edits", h.ImagesEdits)
 }
 
 // adaptor returns the configured vendor seam, defaulting to the

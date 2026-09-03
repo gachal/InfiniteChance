@@ -36,28 +36,36 @@ func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 
 // channelJSON is the wire form of a channel. The vendor secret is never
 // serialized — has_key/key_hint let the admin see that one is stored.
+// Capabilities always renders the effective set (nil legacy rows show as
+// ["chat"]), so the admin sees exactly what scheduling will honor.
 type channelJSON struct {
-	ID        int64             `json:"id"`
-	Name      string            `json:"name"`
-	Type      string            `json:"type"`
-	BaseURL   string            `json:"base_url"`
-	HasKey    bool              `json:"has_key"`
-	KeyHint   string            `json:"key_hint,omitempty"`
-	ModelMap  map[string]string `json:"model_map"`
-	Priority  int               `json:"priority"`
-	Weight    int               `json:"weight"`
-	Enabled   bool              `json:"enabled"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID           int64             `json:"id"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	BaseURL      string            `json:"base_url"`
+	HasKey       bool              `json:"has_key"`
+	KeyHint      string            `json:"key_hint,omitempty"`
+	ModelMap     map[string]string `json:"model_map"`
+	Capabilities []Capability      `json:"capabilities"`
+	Priority     int               `json:"priority"`
+	Weight       int               `json:"weight"`
+	Enabled      bool              `json:"enabled"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 const keyHintRunes = 4
 
 func toChannelJSON(ch Channel) channelJSON {
+	caps := ch.Capabilities
+	if len(caps) == 0 {
+		caps = []Capability{CapChat}
+	}
 	body := channelJSON{
 		ID: ch.ID, Name: ch.Name, Type: ch.Type, BaseURL: ch.BaseURL,
 		HasKey: ch.APIKey != "", ModelMap: ch.ModelMap,
-		Priority: ch.Priority, Weight: ch.Weight, Enabled: ch.Enabled,
+		Capabilities: caps,
+		Priority:     ch.Priority, Weight: ch.Weight, Enabled: ch.Enabled,
 		CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
 	}
 	if body.HasKey {
@@ -71,21 +79,23 @@ func toChannelJSON(ch Channel) channelJSON {
 }
 
 type channelInputJSON struct {
-	Name     string            `json:"name"`
-	Type     string            `json:"type"`
-	BaseURL  string            `json:"base_url"`
-	APIKey   string            `json:"api_key"`
-	ModelMap map[string]string `json:"model_map"`
-	Priority int               `json:"priority"`
-	Weight   int               `json:"weight"`
-	Enabled  bool              `json:"enabled"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	BaseURL      string            `json:"base_url"`
+	APIKey       string            `json:"api_key"`
+	ModelMap     map[string]string `json:"model_map"`
+	Capabilities []Capability      `json:"capabilities"`
+	Priority     int               `json:"priority"`
+	Weight       int               `json:"weight"`
+	Enabled      bool              `json:"enabled"`
 }
 
 // input projects the wire body onto the validated domain input.
 func (raw channelInputJSON) input() Input {
 	return Input{
 		Name: raw.Name, Type: raw.Type, BaseURL: raw.BaseURL, APIKey: raw.APIKey,
-		ModelMap: raw.ModelMap, Priority: raw.Priority, Weight: raw.Weight,
+		ModelMap: raw.ModelMap, Capabilities: raw.Capabilities,
+		Priority: raw.Priority, Weight: raw.Weight,
 		Enabled: raw.Enabled,
 	}
 }
@@ -93,9 +103,10 @@ func (raw channelInputJSON) input() Input {
 // row projects a validated input onto a stored row.
 func (in Input) row(id int64) Channel {
 	return Channel{
-		ID: id,
+		ID:   id,
 		Name: in.Name, Type: in.Type, BaseURL: in.BaseURL, APIKey: in.APIKey,
-		ModelMap: in.ModelMap, Priority: in.Priority, Weight: in.Weight,
+		ModelMap: in.ModelMap, Capabilities: in.Capabilities,
+		Priority: in.Priority, Weight: in.Weight,
 		Enabled: in.Enabled,
 	}
 }
