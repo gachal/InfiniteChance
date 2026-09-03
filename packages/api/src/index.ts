@@ -109,6 +109,35 @@ export interface QuotaEntry {
   created_at: string
 }
 
+// ---- 画布(canvas/server,挂 /canvases,需 JWT 会话)----
+
+/** 整图 JSON 文档:节点与连线。节点类型与数据形状由编辑器
+ * (canvas/web + vue-flow)定义,请求层保持宽松,只保证整图可序列化往返。 */
+export interface CanvasGraph {
+  nodes: unknown[]
+  edges: unknown[]
+}
+
+/** 列表项:不带图(整图文档可能很大,列表页只需要名字)。 */
+export interface CanvasSummary {
+  id: number
+  name: string
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+/** 画布详情:含整图 JSON。 */
+export interface CanvasDetail extends CanvasSummary {
+  graph: CanvasGraph
+}
+
+/** 自动保存成功后的版本指针,下一次保存必须带上它。 */
+export interface SaveGraphResult {
+  version: number
+  updated_at: string
+}
+
 interface ErrorPayload {
   error?: { code?: string; message?: string }
 }
@@ -242,6 +271,38 @@ export class ApiClient {
   async keyQuotaLog(id: number): Promise<QuotaEntry[]> {
     const body = await this.request<{ entries: QuotaEntry[] }>(`/admin/keys/${id}/quota-log`)
     return body.entries
+  }
+
+  // ---- 画布(挂 /canvases,需 JWT 会话)----
+
+  async listCanvases(): Promise<CanvasSummary[]> {
+    const body = await this.request<{ canvases: CanvasSummary[] }>('/canvases')
+    return body.canvases
+  }
+
+  createCanvas(name: string): Promise<CanvasDetail> {
+    return this.request<CanvasDetail>('/canvases', { method: 'POST', body: { name } })
+  }
+
+  getCanvas(id: number): Promise<CanvasDetail> {
+    return this.request<CanvasDetail>(`/canvases/${id}`)
+  }
+
+  renameCanvas(id: number, name: string): Promise<CanvasDetail> {
+    return this.request<CanvasDetail>(`/canvases/${id}`, { method: 'PATCH', body: { name } })
+  }
+
+  async deleteCanvas(id: number): Promise<void> {
+    await this.request<void>(`/canvases/${id}`, { method: 'DELETE' })
+  }
+
+  /** 整图自动保存:expectedVersion 不匹配时后端回答 409 version_conflict
+   * (乐观锁,两标签页后保存者收到冲突)。 */
+  saveCanvasGraph(id: number, graph: CanvasGraph, expectedVersion: number): Promise<SaveGraphResult> {
+    return this.request<SaveGraphResult>(`/canvases/${id}/graph`, {
+      method: 'PUT',
+      body: { graph, version: expectedVersion },
+    })
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {

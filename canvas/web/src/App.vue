@@ -1,39 +1,8 @@
 <script setup lang="ts">
-import { HealthCard } from '@infinitechance/ui'
+// 根组件:路由出口。会话守卫见 router.ts。
 </script>
 
 <template>
-  <main class="shell">
-    <header class="masthead">
-      <h1>无限画布</h1>
-      <p class="subtitle">
-        提示词 · 图片 · 视频
-      </p>
-    </header>
-
-    <HealthCard
-      title="画布服务健康"
-      error-label="无法连接画布服务"
-    />
-  </main>
+  <!-- key 挂 fullPath:画布 id 变化时强制重建编辑器,避免复用旧 flow 状态。 -->
+  <router-view :key="$route.fullPath" />
 </template>
-
-<style scoped>
-.shell {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 48px 24px;
-}
-
-.masthead h1 {
-  margin: 0;
-  font-size: 28px;
-  letter-spacing: 0.5px;
-}
-
-.subtitle {
-  margin: 6px 0 0;
-  color: #8b91a7;
-  font-size: 14px;
-}
-</style>

@@ -4,11 +4,15 @@ import {
   ApiClient,
   ApiError,
   UnauthorizedError,
+  type CanvasDetail,
+  type CanvasGraph,
+  type CanvasSummary,
   type Channel,
   type ApiKeyRecord,
   type CreatedApiKey,
   type HealthReport,
   type QuotaEntry,
+  type SaveGraphResult,
   type SessionInfo,
 } from './index'
 
@@ -335,5 +339,96 @@ describe('ApiClient keys', () => {
 
     await expect(client.keyQuotaLog(5)).resolves.toEqual(entries)
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/admin/keys/5/quota-log')
+  })
+})
+
+describe('ApiClient canvases', () => {
+  const summary: CanvasSummary = {
+    id: 2,
+    name: '第一张画布',
+    version: 4,
+    created_at: '2026-09-03T08:00:00Z',
+    updated_at: '2026-09-03T09:30:00Z',
+  }
+  const graph: CanvasGraph = { nodes: [{ id: 'n1', type: 'prompt' }], edges: [] }
+
+  it('listCanvases unwraps the canvases envelope and attaches the token', async () => {
+    const fetchImpl = stubFetch(200, { canvases: [summary] })
+    const client = new ApiClient({
+      base: '/api',
+      fetch: fetchImpl as unknown as typeof fetch,
+      getToken: () => session.token,
+    })
+
+    await expect(client.listCanvases()).resolves.toEqual([summary])
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases')
+    expect(((init as RequestInit).headers as Headers).get('Authorization')).toBe(
+      `Bearer ${session.token}`,
+    )
+  })
+
+  it('createCanvas POSTs the name and returns the created detail', async () => {
+    const detail: CanvasDetail = { ...summary, graph: { nodes: [], edges: [] } }
+    const fetchImpl = stubFetch(201, detail)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.createCanvas('第一张画布')).resolves.toEqual(detail)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify({ name: '第一张画布' }))
+  })
+
+  it('getCanvas GETs the id path and returns detail with graph', async () => {
+    const detail: CanvasDetail = { ...summary, graph }
+    const fetchImpl = stubFetch(200, detail)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.getCanvas(2)).resolves.toEqual(detail)
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/canvases/2')
+  })
+
+  it('renameCanvas PATCHes {name} to the id path', async () => {
+    const fetchImpl = stubFetch(200, summary)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.renameCanvas(2, '新名字')).resolves.toEqual(summary)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/2')
+    expect((init as RequestInit).method).toBe('PATCH')
+    expect((init as RequestInit).body).toBe(JSON.stringify({ name: '新名字' }))
+  })
+
+  it('deleteCanvas DELETEs to the id path (204 → undefined)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 204, json: () => Promise.resolve(null) })
+    const client = clientWithBase(fetchImpl as never)
+
+    await expect(client.deleteCanvas(2)).resolves.toBeUndefined()
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/2')
+    expect((init as RequestInit).method).toBe('DELETE')
+  })
+
+  it('saveCanvasGraph PUTs {graph, version} and returns the next version', async () => {
+    const result: SaveGraphResult = { version: 5, updated_at: '2026-09-03T09:31:00Z' }
+    const fetchImpl = stubFetch(200, result)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.saveCanvasGraph(2, graph, 4)).resolves.toEqual(result)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/2/graph')
+    expect((init as RequestInit).method).toBe('PUT')
+    expect((init as RequestInit).body).toBe(JSON.stringify({ graph, version: 4 }))
+  })
+
+  it('saveCanvasGraph surfaces 409 as ApiError with code version_conflict', async () => {
+    const fetchImpl = stubFetch(409, { error: { code: 'version_conflict', message: '画布已在其他窗口被修改' } })
+    const client = clientWithBase(fetchImpl)
+
+    const err = await client.saveCanvasGraph(2, graph, 4).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(409)
+    expect((err as ApiError).code).toBe('version_conflict')
   })
 })
