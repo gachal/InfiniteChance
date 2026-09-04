@@ -259,6 +259,94 @@ export interface ListAssetsParams {
   offset?: number
 }
 
+// ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
+
+/** 一条请求级用量行的状态:成功,或离开网关后的失败(上游错误摘要列区分
+ * 具体原因,连接失败/非 2xx/取消/换道史都归并 upstream_error)。 */
+export type UsageStatus = 'success' | 'upstream_error'
+
+/** 按次/按秒轨的计费事实(尺寸与张数/秒数),来自请求时的价格快照;
+ * token 轨的数量在 prompt/completion_tokens 列,此字段为 null。 */
+export interface UsageRequestFacts {
+  size: string
+  n: number
+}
+
+/** 一条请求级用量日志:计费单位下的量、耗时、状态、扣费与画布来源标记。
+ * source 是调用方自报的审计注记,画布侧形如 canvas=<id> task=<ct_…> node=…,
+ * 空 = 直连流量;失败行的 upstream_error 带上游错误/换道摘要。 */
+export interface UsageLogRecord {
+  id: number
+  key_id: number
+  channel_id: number
+  channel_name: string
+  public_model: string
+  upstream_model: string
+  unit: 'token' | 'call' | 'second'
+  prompt_tokens: number
+  completion_tokens: number
+  request: UsageRequestFacts | null
+  duration_ms: number
+  status: UsageStatus
+  charge_usd: number
+  upstream_error: string
+  source: string
+  created_at: string
+}
+
+/** 用量日志列表的过滤与分页:全部缺省 = 不过滤,后端默认一页 50 条(上限
+ * 500)。from/to 是 RFC3339;from 含端点、to 不含;model 按公开模型精确
+ * 匹配。列表与汇总共用这套过滤,数字才可对账。 */
+export interface UsageAuditParams {
+  from?: string
+  to?: string
+  key_id?: number
+  channel_id?: number
+  model?: string
+  status?: UsageStatus
+  source?: 'canvas' | 'direct'
+}
+
+export interface ListUsageLogsParams extends UsageAuditParams {
+  limit?: number
+  offset?: number
+}
+
+export interface UsageLogPage {
+  logs: UsageLogRecord[]
+  /** 过滤后的总行数(不是本页行数),供分页器使用。 */
+  total: number
+}
+
+/** 汇总桶:按 by 维度各带自己的键,数字永远是同一过滤下明细的和。 */
+export interface UsageDayBucket {
+  day: string
+  requests: number
+  errors: number
+  charge_usd: number
+}
+
+export interface UsageModelBucket {
+  model: string
+  requests: number
+  errors: number
+  charge_usd: number
+}
+
+export interface UsageChannelBucket {
+  channel_id: number
+  channel_name: string
+  requests: number
+  errors: number
+  charge_usd: number
+}
+
+export type UsageBucket = UsageDayBucket | UsageModelBucket | UsageChannelBucket
+
+export interface UsageSummaryParams extends UsageAuditParams {
+  by: 'day' | 'model' | 'channel'
+}
+
 interface ErrorPayload {
   error?: { code?: string; message?: string }
 }
@@ -548,6 +636,25 @@ export class ApiClient {
     await this.request<void>(`/assets/${id}`, { method: 'DELETE' })
   }
 
+  // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
+
+  /** 请求级用量日志,最新在前;过滤后的 total 随页返回,驱动分页。 */
+  async listUsageLogs(params: ListUsageLogsParams = {}): Promise<UsageLogPage> {
+    const qs = usageAuditQuery(params)
+    const body = await this.request<UsageLogPage>(`/admin/usage/logs${qs ? `?${qs}` : ''}`)
+    return body
+  }
+
+  /** 按天/模型/渠道汇总;与列表同一套过滤,数字与明细对账一致。 */
+  async usageSummary(params: UsageSummaryParams): Promise<UsageBucket[]> {
+    const by = `by=${encodeURIComponent(params.by)}`
+    const rest = usageAuditQuery(params)
+    const body = await this.request<{ buckets: UsageBucket[] }>(
+      `/admin/usage/summary?${rest ? `${by}&${rest}` : by}`,
+    )
+    return body.buckets
+  }
+
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {
     const headers = new Headers()
     if (body !== undefined) {
@@ -580,6 +687,39 @@ export class ApiClient {
     }
     throw new ApiError(res.status, code, message)
   }
+}
+
+/** 用量审计的公共查询串:列表与汇总共用同一套过滤,保证两处数字对得上。 */
+function usageAuditQuery(params: ListUsageLogsParams): string {
+  const query = new URLSearchParams()
+  if (params.from) {
+    query.set('from', params.from)
+  }
+  if (params.to) {
+    query.set('to', params.to)
+  }
+  if (params.key_id !== undefined) {
+    query.set('key_id', String(params.key_id))
+  }
+  if (params.channel_id !== undefined) {
+    query.set('channel_id', String(params.channel_id))
+  }
+  if (params.model) {
+    query.set('model', params.model)
+  }
+  if (params.status) {
+    query.set('status', params.status)
+  }
+  if (params.source) {
+    query.set('source', params.source)
+  }
+  if (params.limit !== undefined) {
+    query.set('limit', String(params.limit))
+  }
+  if (params.offset !== undefined) {
+    query.set('offset', String(params.offset))
+  }
+  return query.toString()
 }
 
 function errorInfo(payload: unknown, status: number): { code: string; message: string } {

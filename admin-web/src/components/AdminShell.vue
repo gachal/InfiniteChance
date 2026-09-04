@@ -15,6 +15,7 @@ const sections = [
       { name: 'dashboard', label: '仪表盘' },
       { name: 'channels', label: '渠道管理' },
       { name: 'keys', label: 'API Key 管理' },
+      { name: 'usage', label: '用量审计' },
     ],
   },
   {

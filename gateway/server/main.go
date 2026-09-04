@@ -63,6 +63,8 @@ func main() {
 		pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: prices})
 		// 提示词模板:管理端维护,画布侧经共享库即时读取(11 号票)。
 		prompttemplate.RegisterAdminRoutes(admin, &prompttemplate.Handlers{Store: promptTemplates})
+		// 用量审计:请求级日志列表与按天/模型/渠道汇总(15 号票)。
+		usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: usageLogs})
 
 		v1 := r.Group("/v1", apikey.RequireKey(keys))
 		relay.RegisterRoutes(v1, &relay.Handlers{

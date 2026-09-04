@@ -578,3 +578,67 @@ describe('ApiClient asset library (14 号票)', () => {
     expect(fetchImpl).toHaveBeenCalledWith('/api/assets/2', expect.objectContaining({ method: 'DELETE' }))
   })
 })
+
+describe('ApiClient usage audit', () => {
+  const usageLog = {
+    id: 12,
+    key_id: 7,
+    channel_id: 3,
+    channel_name: 'deepseek-main',
+    public_model: 'deepseek-chat',
+    upstream_model: 'ds-up',
+    unit: 'token',
+    prompt_tokens: 120,
+    completion_tokens: 340,
+    request: null,
+    duration_ms: 1234,
+    status: 'success',
+    charge_usd: 0.02125,
+    upstream_error: '',
+    source: 'canvas=1 task=ct_1 node=n1',
+    created_at: '2026-09-04T08:00:00Z',
+  }
+
+  it('lists usage logs with filters as query parameters and unwraps the page', async () => {
+    const fetchImpl = stubFetch(200, { logs: [usageLog], total: 41 })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(
+      client.listUsageLogs({
+        from: '2026-09-01T00:00:00Z',
+        to: '2026-09-04T00:00:00Z',
+        key_id: 7,
+        channel_id: 3,
+        model: 'deepseek-chat',
+        status: 'success',
+        source: 'canvas',
+        limit: 25,
+        offset: 50,
+      }),
+    ).resolves.toEqual({ logs: [usageLog], total: 41 })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/admin/usage/logs?from=2026-09-01T00%3A00%3A00Z&to=2026-09-04T00%3A00%3A00Z&key_id=7&channel_id=3&model=deepseek-chat&status=success&source=canvas&limit=25&offset=50',
+      expect.anything(),
+    )
+  })
+
+  it('omits empty usage-log parameters', async () => {
+    const fetchImpl = stubFetch(200, { logs: [], total: 0 })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listUsageLogs()).resolves.toEqual({ logs: [], total: 0 })
+    expect(fetchImpl).toHaveBeenCalledWith('/api/admin/usage/logs', expect.anything())
+  })
+
+  it('requests summaries with the by dimension plus shared filters', async () => {
+    const buckets = [{ day: '2026-09-04', requests: 3, errors: 1, charge_usd: 0.5 }]
+    const fetchImpl = stubFetch(200, { buckets })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.usageSummary({ by: 'day', source: 'direct' })).resolves.toEqual(buckets)
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/admin/usage/summary?by=day&source=direct',
+      expect.anything(),
+    )
+  })
+})

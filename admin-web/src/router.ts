@@ -12,6 +12,7 @@ import InitView from './views/InitView.vue'
 import KeysView from './views/KeysView.vue'
 import LoginView from './views/LoginView.vue'
 import PromptTemplatesView from './views/PromptTemplatesView.vue'
+import UsageView from './views/UsageView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -19,6 +20,7 @@ export const router = createRouter({
     { path: '/', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
     { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
     { path: '/keys', name: 'keys', component: KeysView, meta: { requiresAuth: true } },
+    { path: '/usage', name: 'usage', component: UsageView, meta: { requiresAuth: true } },
     { path: '/prompt-templates', name: 'prompt-templates', component: PromptTemplatesView, meta: { requiresAuth: true } },
     { path: '/assets', name: 'assets', component: AssetsView, meta: { requiresAuth: true } },
     { path: '/login', name: 'login', component: LoginView },
