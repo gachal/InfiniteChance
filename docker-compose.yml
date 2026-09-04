@@ -1,14 +1,18 @@
-# 一键拉起全栈:MySQL + Redis + 两个 Go 服务。
-# 前端 dev 服务器不进 compose,见 README:本机 pnpm 启动,经 8080/8081 访问后端。
+# 一键拉起全栈(16 号票):MySQL + Redis + 两个 Go 服务 + 两个前端静态托管。
+# 配置经同目录 .env 注入,样例见 .env.example:
+#   cp .env.example .env   # 按需修改(至少为公网部署设置 JWT_SECRET)
+#   docker compose up -d --build
+# 首次访问管理后台(http://localhost:8090)完成初始化引导:管理员账号 → 首个渠道。
+# 备份与恢复:deploy/backup.sh、deploy/restore.sh(make backup / make restore DIR=…)。
 
 # 两个 Go 服务共享的环境变量与依赖条件(YAML 锚点,各服务按需覆盖)。
 # JWT_SECRET 必须两个服务一致,画布才能校验网关签发的管理员会话:
 # 未设置时两服务回退到内置开发密钥(internal/config 的唯一字面量);
-# 生产部署请在宿主机(或 .env)设置 JWT_SECRET 并开启 JWT_SECRET_REQUIRED=true,
+# 公网部署请设置 JWT_SECRET 并开启 JWT_SECRET_REQUIRED=true,
 # 后者会在密钥缺失时拒绝启动。
 x-app-env: &app-env
   GIN_MODE: release
-  MYSQL_DSN: root:infinitechance@tcp(mysql:3306)/infinitechance?parseTime=true
+  MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:-infinitechance}@tcp(mysql:3306)/infinitechance?parseTime=true
   REDIS_ADDR: redis:6379
   JWT_SECRET: ${JWT_SECRET:-}
   JWT_SECRET_REQUIRED: ${JWT_SECRET_REQUIRED:-}
@@ -19,16 +23,22 @@ x-app-depends: &app-depends
   redis:
     condition: service_healthy
 
+x-restart: &restart
+  # 自用部署:进程或守护进程重启后自动拉起(make down 显式移除不受影响)。
+  restart: unless-stopped
+
 services:
   mysql:
     image: mysql:8.4
     container_name: infinitechance-mysql
+    <<: *restart
     environment:
-      MYSQL_ROOT_PASSWORD: infinitechance
+      # 仅对空的 mysql-data 卷首次初始化生效;已有卷改密码不影响既有账号。
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-infinitechance}
       MYSQL_DATABASE: infinitechance
     # 宿主机 3306 常被本机已有 MySQL 占用,故映射到 3307;容器网络内仍是 3306
     ports:
-      - "3307:3306"
+      - "${MYSQL_PORT:-3307}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -41,9 +51,14 @@ services:
   redis:
     image: redis:7-alpine
     container_name: infinitechance-redis
+    <<: *restart
     # 宿主机 6379 常被本机已有 redis 占用,故映射到 6380;容器网络内仍是 6379
     ports:
-      - "6380:6379"
+      - "${REDIS_PORT:-6380}:6379"
+    # RDB 落数据卷(16 号票):redis 数据随 compose down 保留、进备份/恢复链路,
+    # 而非随容器生命周期消失。
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -51,19 +66,33 @@ services:
       retries: 30
 
   gateway:
-    build: .
+    build:
+      context: .
+      target: server
     image: infinitechance/server
+    <<: *restart
     command: ["/app/gateway-server"]
     environment:
       <<: *app-env
       PORT: "8080"
     ports:
-      - "8080:8080"
+      - "${GATEWAY_PORT:-8080}:8080"
     depends_on: *app-depends
+    healthcheck:
+      # busybox wget 探 /healthz:MySQL+Redis 全部可达才算 healthy,
+      # 前端容器按此顺序启动,页面打开即服务可用。
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   canvas:
-    build: .
+    build:
+      context: .
+      target: server
     image: infinitechance/server
+    <<: *restart
     command: ["/app/canvas-server"]
     environment:
       <<: *app-env
@@ -79,9 +108,42 @@ services:
     volumes:
       - asset-data:/data/assets
     ports:
-      - "8081:8081"
+      - "${CANVAS_PORT:-8081}:8081"
     depends_on: *app-depends
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  admin-web:
+    build:
+      context: .
+      target: admin-web
+    image: infinitechance/admin-web
+    <<: *restart
+    ports:
+      - "${ADMIN_WEB_PORT:-8090}:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+      canvas:
+        condition: service_healthy
+
+  canvas-web:
+    build:
+      context: .
+      target: canvas-web
+    image: infinitechance/canvas-web
+    <<: *restart
+    ports:
+      - "${CANVAS_WEB_PORT:-8091}:80"
+    depends_on:
+      canvas:
+        condition: service_healthy
 
 volumes:
   mysql-data:
+  redis-data:
   asset-data:

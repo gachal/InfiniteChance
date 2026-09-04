@@ -12,5 +12,8 @@ coverage/
 .env.local
 *.log
 
+# 备份产物(deploy/backup.sh)
+backups/
+
 # OS
 .DS_Store

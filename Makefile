@@ -1,6 +1,6 @@
-.PHONY: up down logs ps test lint build dev-admin dev-canvas
+.PHONY: up down logs ps backup restore test lint build dev-admin dev-canvas
 
-up: ## 拉起全栈(MySQL、Redis、gateway、canvas)
+up: ## 拉起全栈(MySQL、Redis、gateway、canvas、两个前端)
 	docker compose up -d --build
 
 down: ## 停止并移除容器(数据卷保留)
@@ -11,6 +11,13 @@ logs: ## 跟随全部服务日志
 
 ps: ## 查看服务状态
 	docker compose ps
+
+backup: ## 备份全栈数据(MySQL/Redis/素材卷)→ backups/<时间戳>/
+	deploy/backup.sh
+
+restore: ## 恢复备份:make restore DIR=backups/<时间戳>(追加 Y=1 跳过确认)
+	@[ -n "$(DIR)" ] || { echo '用法: make restore DIR=backups/<时间戳>(追加 Y=1 跳过确认)'; exit 1; }
+	deploy/restore.sh $(DIR) $(if $(Y),-y,)
 
 test: test-go test-web ## 跑全部测试与 vet
 

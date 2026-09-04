@@ -5,9 +5,7 @@ node_modules
 dist
 **/dist
 coverage
-admin-web
-canvas/web
-packages
+backups
 *.log
 .DS_Store
 .env

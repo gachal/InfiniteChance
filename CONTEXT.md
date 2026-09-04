@@ -21,7 +21,9 @@
 
 ## 工程术语
 
-- **健康检查(/healthz)**:两个 Go 服务共有的探针端点,并发探测 MySQL 与 Redis(各自 2s 超时),全部可达返回 200 `ok`,任一不可达返回 503 `degraded` 并附逐项状态与错误摘要。
+- **健康检查(/healthz)**:两个 Go 服务共有的探针端点,并发探测 MySQL 与 Redis(各自 2s 超时),全部可达返回 200 `ok`,任一不可达返回 503 `degraded` 并附逐项状态与错误摘要。compose 里 gateway/canvas 各挂同一端点的容器健康检查(16 号票),两个前端 nginx 容器以 `depends_on: service_healthy` 排在后端之后启动。
+- **部署形态(16 号票定案)**:compose 六服务一键全栈——MySQL、Redis(含 `redis-data` 卷,RDB 持久化并进备份链路)、gateway/canvas(同一 `server` 镜像按 command 分身)、admin-web(:8090)与 canvas-web(:8091)两个 nginx 静态托管运行时。Dockerfile 单文件多阶段:`web-build` 在容器内分别构建 admin/canvas 两个 SPA dist(`pnpm --filter … build`,含 vue-tsc 类型检查),分别 COPY 进 `nginx:1.28-alpine`,反代与 dev 代理同形(`/api`→gateway、`/canvas-api`→canvas、画布侧 `/api`→canvas,SPA history 回退),运行时只依赖镜像与构建产物。栈配置经同目录 `.env` 注入(样例 `.env.example`:JWT_SECRET、JWT_SECRET_REQUIRED、MYSQL_ROOT_PASSWORD、CANVAS_SERVICE_KEY、CANVAS_TASK_CONCURRENCY、六个宿主机端口),全部有内置缺省,缺 `.env` 也能本机自用。前端托管端口 8090/8091 与 dev 端口 5173/5174 并存互补。
+- **备份与恢复(16 号票定案)**:`deploy/backup.sh` 产出单目录备份——MySQL 一致性逻辑转储(mysqldump `--single-transaction --routines --triggers --databases`,含建库语句可入空实例)、Redis RDB(SAVE 后取 `/data/dump.rdb`)、素材卷整卷 tar(canvas 停服窗口内打包,防活动写入撕裂,与恢复的停服语义对称),附 MANIFEST(UTC 时间戳、git 提交、SHA-256);`deploy/restore.sh` 覆盖式灌回运行中的栈:MySQL 直接重放转储,Redis 停服后借同服务临时容器(`docker compose run --no-deps --entrypoint sh`)写 RDB 再启动(绕开 SIGTERM 落盘覆盖新文件的竞态),素材卷停服清空重灌;两脚本都要求栈在运行、都借容器内工具与容器自身的 `MYSQL_ROOT_PASSWORD` 解密,宿主机零依赖。定期备份用 crontab 调 `backup.sh`。素材存储的驱动切换(切 MinIO/云 OSS)仍待后续:实现 `objectstore.Store` 的网络驱动并迁移既有 object_key 即可,备份/恢复脚本里素材卷 tar 需随之换对应存储的备份方式。
 - **服务级 key**:canvas/server 调用网关所用的 API key,用量经请求元数据归属到画布来源;画布前端不持有任何厂商或网关密钥。
 - **管理员账号(admin account)**:全库唯一的登录账号,由首次访问的初始化引导(`POST /auth/init`)创建;密码仅以 bcrypt 哈希存于 `admin_accounts` 表,初始化完成后引导不再出现。
 - **JWT 会话**:管理员登录后由网关签发的 HS256 令牌(7 天有效),承载用户名与签发/过期时间;签名密钥经 `JWT_SECRET` 环境变量在网关与画布间共享,画布据此校验网关签发的令牌。唯一管理员由 `admin_accounts` 固定主键(id=1)保证,不依赖隔离级别。生产环境可设 `JWT_SECRET_REQUIRED=true`,密钥缺失时拒绝启动。无刷新机制,过期即重登;管理端 API 错误统一为 `{"error":{"code","message"}}`。
@@ -31,4 +33,4 @@
 
 ## 待补
 
-- 素材存储的驱动切换(14 号票已落 S3 兼容接口与本地卷):切 MinIO/云 OSS 时实现 `objectstore.Store` 的网络驱动并迁移既有 object_key 即可;签名下载 URL 与多副本/生命周期策略由部署票(16 号票)定案。上游产物 URL 临时(约 24h)的问题已由「成功后立即转存自有存储」解决,但转存前崩溃的窄缝里素材行可能只带临时地址——重启恢复走任务重跑,不补转存历史行。
+- 素材存储的驱动切换(14 号票已落 S3 兼容接口与本地卷):切 MinIO/云 OSS 时实现 `objectstore.Store` 的网络驱动并迁移既有 object_key 即可;签名下载 URL 与多副本/生命周期策略仍待定(16 号票落地的是本地卷 + 卷级 tar 备份/恢复,见「备份与恢复」)。上游产物 URL 临时(约 24h)的问题已由「成功后立即转存自有存储」解决,但转存前崩溃的窄缝里素材行可能只带临时地址——重启恢复走任务重跑,不补转存历史行。
