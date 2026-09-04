@@ -287,14 +287,15 @@ func (h *Handlers) Reverse(c *gin.Context) {
 }
 
 // 视频引用解析的失败形状:引用形状不对(400)、素材不存在(404)、素材
-// 不是视频(400)、素材是厂商回 b64 落库的内联产物(400,12 号票同款
-// 决策:data URI 进不了网关媒体契约)。哨兵错误让 resolveVideo 保持纯
-// 解析,状态码由这里定。
+// 不是视频(400)、内联 data: URI 视频(400,12 号票同款决策:data URI
+// 进不了网关媒体契约 —— 无论是直接携带还是素材落库的 b64 产物,边界处
+// 同码同因地拒绝,不留给网关预扣或上游拒收去炸难懂的错)。哨兵错误让
+// resolveVideo 保持纯解析,状态码由这里定。
 var (
 	errVideoRefMalformed = errors.New("video_url 必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
 	errVideoAssetMissing = errors.New("素材不存在或已被删除")
 	errVideoAssetKind    = errors.New("素材不是视频,或还没有可用的产物地址")
-	errVideoAssetInline  = errors.New("该视频是厂商回传 b64 落库的内联产物,无法作为多模态输入;请使用带 http(s) 地址的视频")
+	errVideoAssetInline  = errors.New("该视频是内联 base64 产物,无法作为多模态输入;请使用带 http(s) 地址的视频")
 )
 
 // assetContentPrefix 是素材内容寻址路径的形状(10 号票定案):节点在厂商
@@ -303,13 +304,16 @@ const assetContentPrefix = "/api/assets/"
 
 // resolveVideo maps the editor's video reference to the address the vendor
 // fetches: an http(s) URL passes through untouched; a content-addressed
-// asset resolves through the store to the http(s) address it holds. 资产行
-// 落的是 data: URI(厂商回 b64)时拒绝 —— 内联视频进不了多模态输入契约
-// (12 号票对参考图的同款决策),与其让几 MB 的请求体在网关预扣/上游
-// 拒收处炸出难懂的错,不如在解析时就说明原因。
+// asset resolves through the store to the http(s) address it holds; an
+// inline data: URI — carried directly or stored in the asset row — is
+// refused (12 号票对参考图的同款决策),与其让几 MB 的请求体在网关预扣/
+// 上游拒收处炸出难懂的错,不如在解析时就说明原因。
 func (h *Handlers) resolveVideo(ctx context.Context, ref string) (string, error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		return ref, nil
+	}
+	if strings.HasPrefix(ref, "data:") {
+		return "", errVideoAssetInline
 	}
 	rest, ok := strings.CutPrefix(ref, assetContentPrefix)
 	if !ok {

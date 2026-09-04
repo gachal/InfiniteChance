@@ -586,6 +586,22 @@ func TestReverseWithInlineVideoAssetAnswers400(t *testing.T) {
 	}
 }
 
+func TestReverseWithInlineDataURIAnswersInlineUnsupported(t *testing.T) {
+	// video_url 直接携带内联 data: URI 与素材落库的 b64 产物同码同因:
+	// 都在解析边界拒绝,而非笼统的 invalid_request。
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "data:video/mp4;base64,AAAA", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "video_inline_unsupported" {
+		t.Errorf("code = %q, want video_inline_unsupported", code)
+	}
+}
+
 func TestReverseWithUnknownAssetAnswers404(t *testing.T) {
 	env := newHandlerEnv(t, nil)
 	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
