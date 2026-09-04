@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 视频节点:图生视频任务的展示面(12 号票)。任务在途时显示进度并可
 // 取消(取消不计费),失败显示原因与原地重试(预扣已退回),取消留痕;
-// 产物落位后内嵌播放。
-import { computed } from 'vue'
+// 产物落位后内嵌播放,并提供视频反推提示词入口(13 号票:选中模型即
+// 反推,动作上抛给编辑器,提示词落为新提示词节点)。
+import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
 import type { CanvasTask } from '@infinitechance/api'
@@ -19,14 +20,42 @@ const props = defineProps<{
   retrying: boolean
   /** 取消请求在途时禁用取消按钮。 */
   canceling: boolean
+  /** 可用的 token 轨聊天模型(编辑器从 /prompt-models 拉取)。 */
+  chatModels: string[]
+  /** 视频反推的在途标记(编辑器级状态)。 */
+  reverseGenerating: boolean
 }>()
 
 const emit = defineEmits<{
   retry: []
   cancel: []
+  'reverse-prompt': [payload: { model: string }]
 }>()
 
 const status = computed(() => props.task?.status)
+
+const reverseModel = ref('')
+watch(
+  () => props.chatModels,
+  (list) => {
+    if (!list.includes(reverseModel.value)) {
+      reverseModel.value = list.length > 0 ? list[0] : ''
+    }
+  },
+  { immediate: true },
+)
+
+// 产物落位才有可反推的视频;聊天模型目录为空时入口整个隐藏。
+const canReverse = computed(
+  () => !!props.data.url && reverseModel.value !== '' && !props.reverseGenerating,
+)
+
+function submitReverse(): void {
+  if (!canReverse.value) {
+    return
+  }
+  emit('reverse-prompt', { model: reverseModel.value })
+}
 </script>
 
 <template>
@@ -86,6 +115,34 @@ const status = computed(() => props.task?.status)
     >
       <span>视频占位</span>
       <small>生成结果将出现在这里</small>
+    </div>
+    <div
+      v-if="data.url && chatModels.length > 0"
+      class="reverse"
+    >
+      <div class="reverse-row">
+        <select
+          v-model="reverseModel"
+          title="反推用的聊天模型"
+        >
+          <option
+            v-for="m in chatModels"
+            :key="m"
+            :value="m"
+          >
+            {{ m }}
+          </option>
+        </select>
+        <button
+          class="reverse-btn"
+          type="button"
+          :disabled="!canReverse"
+          title="分析视频并生成提示词节点"
+          @click="submitReverse"
+        >
+          {{ reverseGenerating ? '反推中…' : '反推提示词' }}
+        </button>
+      </div>
     </div>
     <Handle
       type="source"
@@ -232,5 +289,44 @@ video {
 
 .canceled small {
   font-size: 11px;
+}
+
+/* 反推提示词入口(13 号票):模型选择 + 触发按钮,描边样式与提示词
+ * 节点的生成提示词动作一致(同为提示词生成类动作)。 */
+.reverse {
+  margin-top: 8px;
+}
+
+.reverse-row {
+  display: flex;
+  gap: 6px;
+}
+
+.reverse-row select {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px;
+  color: inherit;
+  font-size: 12px;
+}
+
+.reverse-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(122, 162, 247, 0.55);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #7aa2f7;
+}
+
+.reverse-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

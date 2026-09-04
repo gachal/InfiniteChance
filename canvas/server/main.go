@@ -72,6 +72,7 @@ func main() {
 		promptgen.RegisterRoutes(group, &promptgen.Handlers{
 			Templates: templates,
 			Canvases:  canvases,
+			Assets:    assets,
 			Models:    prices,
 			Gateway:   chatGateway,
 		})

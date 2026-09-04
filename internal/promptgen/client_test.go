@@ -134,6 +134,45 @@ func TestGenerateChatPostsChatCompletionsWithServiceKeyAndSource(t *testing.T) {
 	}
 }
 
+func TestGenerateChatWithVideoSendsMultimodalContentParts(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, chatCompletion("提示词"))
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	if _, err := client.GenerateChat(context.Background(), promptgen.ChatRequest{
+		Model:    "vl-m",
+		Content:  "反推指令",
+		VideoURL: "https://cdn.example.com/clip.mp4",
+	}); err != nil {
+		t.Fatalf("GenerateChat: %v", err)
+	}
+
+	messages, _ := gateway.last.Body["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %v, want exactly one", gateway.last.Body["messages"])
+	}
+	message, _ := messages[0].(map[string]any)
+	if message["role"] != "user" {
+		t.Errorf("role = %v, want user", message["role"])
+	}
+	parts, _ := message["content"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("content = %v, want video part ahead of text part", message["content"])
+	}
+	video, _ := parts[0].(map[string]any)
+	if video["type"] != "video_url" {
+		t.Errorf("part[0] = %v, want a video_url part", video)
+	}
+	videoRef, _ := video["video_url"].(map[string]any)
+	if videoRef["url"] != "https://cdn.example.com/clip.mp4" {
+		t.Errorf("video_url = %v, want the passed address", videoRef)
+	}
+	text, _ := parts[1].(map[string]any)
+	if text["type"] != "text" || text["text"] != "反推指令" {
+		t.Errorf("part[1] = %v, want the instruction as a text part", text)
+	}
+}
+
 func TestGenerateChatOmitsSourceHeaderWhenEmpty(t *testing.T) {
 	gateway := newFakeGateway(http.StatusOK, chatCompletion("答案"))
 	server := newGatewayServer(t, gateway)

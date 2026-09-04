@@ -217,6 +217,20 @@ export interface GeneratePromptResult {
   text: string
 }
 
+/** 视频反推提示词的请求体(13 号票):video_url 是视频节点持有的地址
+ * (厂商 http(s) 地址,或素材内容寻址路径 /api/assets/{id}/content),
+ * model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
+export interface ReversePromptInput {
+  node_id?: string
+  video_url: string
+  model: string
+}
+
+/** 视频反推提示词的响应:文本由编辑器落为新的提示词节点。 */
+export interface ReversePromptResult {
+  text: string
+}
+
 interface ErrorPayload {
   error?: { code?: string; message?: string }
 }
@@ -465,6 +479,15 @@ export class ApiClient {
   /** 生成提示词:canvas/server 经网关聊天接口按模板渲染,同步返回文本。 */
   generatePrompt(canvasId: number, input: GeneratePromptInput): Promise<GeneratePromptResult> {
     return this.request<GeneratePromptResult>(`/canvases/${canvasId}/generate-prompt`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 视频反推提示词(13 号票):canvas/server 经网关多模态聊天接口分析
+   * 视频,同步返回提示词文本;用量按 token 计费入网关用量日志。 */
+  reversePrompt(canvasId: number, input: ReversePromptInput): Promise<ReversePromptResult> {
+    return this.request<ReversePromptResult>(`/canvases/${canvasId}/reverse-prompt`, {
       method: 'POST',
       body: input,
     })

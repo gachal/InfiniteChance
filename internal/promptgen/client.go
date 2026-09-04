@@ -41,11 +41,16 @@ func NewClient(baseURL, key string) *Client {
 
 // ChatRequest is one prompt generation: the fully rendered message (template
 // with the topic filled in) and the public chat model to run it on.
+// VideoURL makes the call multimodal (13 号票视频反推提示词): the message
+// carries the video ahead of the text as a video_url content part — the
+// OpenAI-compatible convention vendors serving vision models accept. Empty
+// VideoURL keeps the plain text shape of the template-driven generation.
 // Source is the canvas origin mark (X-InfiniteChance-Source 值).
 type ChatRequest struct {
-	Model   string
-	Content string
-	Source  string
+	Model    string
+	Content  string
+	VideoURL string
+	Source   string
 }
 
 // ChatResult is the model's answer, whitespace-trimmed.
@@ -64,7 +69,7 @@ func (c *Client) GenerateChat(ctx context.Context, req ChatRequest) (ChatResult,
 		Stream   bool          `json:"stream"`
 	}{
 		Model:    req.Model,
-		Messages: []chatMessage{{Role: "user", Content: req.Content}},
+		Messages: []chatMessage{userMessage(req)},
 		Stream:   false,
 	}
 	payload, err := json.Marshal(body)
@@ -123,7 +128,32 @@ const maxResponseBytes = 4 << 20
 
 type chatMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// userMessage builds the single user message a generation sends: plain text
+// for the template-driven shape, or a multimodal part array — video ahead of
+// text — when a video reference rides along.
+func userMessage(req ChatRequest) chatMessage {
+	if req.VideoURL == "" {
+		return chatMessage{Role: "user", Content: req.Content}
+	}
+	return chatMessage{Role: "user", Content: []chatContentPart{
+		{Type: "video_url", VideoURL: &videoURLPart{URL: req.VideoURL}},
+		{Type: "text", Text: req.Content},
+	}}
+}
+
+// chatContentPart is one multimodal content part; the pointer shape keeps
+// the two part kinds on a single struct without emitting empty fields.
+type chatContentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	VideoURL *videoURLPart `json:"video_url,omitempty"`
+}
+
+type videoURLPart struct {
+	URL string `json:"url"`
 }
 
 // errorSummary picks the OpenAI error message out of a gateway failure body,

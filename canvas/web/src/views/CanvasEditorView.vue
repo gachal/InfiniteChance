@@ -266,7 +266,7 @@ async function onGenerateVideo(
   }
 }
 
-// ---- 提示词生成(11 号票)----
+// ---- 提示词生成(11 号票)与视频反推(13 号票)----
 
 // 模板与聊天模型目录。服务端按请求读表,管理端的增删改即刻生效;
 // 这里负责前端目录的新鲜度:窗口重新聚焦时刷新(管理端常在另一窗口
@@ -274,6 +274,7 @@ async function onGenerateVideo(
 const promptTemplates = ref<PromptTemplateOption[]>([])
 const promptModels = ref<string[]>([])
 const promptGenerating = ref(false)
+const videoReverseGenerating = ref(false)
 
 let refreshingCatalogs = false
 async function refreshCatalogs(): Promise<void> {
@@ -324,25 +325,7 @@ async function onGeneratePrompt(
       autosave.markDirty()
       return
     }
-    nodeSeq += 1
-    const newId = `prompt-${Date.now()}-${nodeSeq}`
-    addNodes([
-      {
-        id: newId,
-        type: 'prompt',
-        position: { x: node.position.x + 260, y: node.position.y },
-        data: { text: result.text },
-      },
-    ])
-    addEdges([
-      {
-        id: `e-${nodeId}-${newId}`,
-        source: nodeId,
-        target: newId,
-        sourceHandle: null,
-        targetHandle: null,
-      },
-    ])
+    landPromptNode(nodeId, result.text)
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '提示词生成失败,请稍后再试'
     // 模板刚被删除/停用时本地目录已过期:立刻刷新,失效选项当场消失。
@@ -351,6 +334,65 @@ async function onGeneratePrompt(
     }
   } finally {
     promptGenerating.value = false
+  }
+}
+
+/** 反推/派生的落图纪律(11/13 号票共用):生成的提示词恒落为新提示词
+ * 节点,与来源节点连线(派生关系可见),图由自动保存收尾。 */
+function landPromptNode(sourceNodeId: string, text: string): void {
+  const node = findNode(sourceNodeId)
+  if (!node) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `prompt-${Date.now()}-${nodeSeq}`
+  addNodes([
+    {
+      id: newId,
+      type: 'prompt',
+      position: { x: node.position.x + 260, y: node.position.y },
+      data: { text },
+    },
+  ])
+  addEdges([
+    {
+      id: `e-${sourceNodeId}-${newId}`,
+      source: sourceNodeId,
+      target: newId,
+      sourceHandle: null,
+      targetHandle: null,
+    },
+  ])
+}
+
+/** 视频反推提示词(13 号票):以视频节点持有的地址为输入,经网关多模态
+ * 聊天同步分析;结果恒落为新提示词节点并与视频节点连线(派生关系可见,
+ * 随后可直接从该节点发起生图/生视频形成闭环)。 */
+async function onReversePrompt(
+  videoNodeId: string,
+  payload: { model: string },
+): Promise<void> {
+  if (videoReverseGenerating.value) {
+    return
+  }
+  const node = findNode(videoNodeId)
+  const data = node?.data as MediaNodeData | undefined
+  if (!node || !data?.url || payload.model === '') {
+    return
+  }
+  videoReverseGenerating.value = true
+  generateError.value = ''
+  try {
+    const result = await client.reversePrompt(canvasId, {
+      node_id: videoNodeId,
+      video_url: data.url,
+      model: payload.model,
+    })
+    landPromptNode(videoNodeId, result.text)
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '视频反推失败,请稍后再试'
+  } finally {
+    videoReverseGenerating.value = false
   }
 }
 
@@ -748,8 +790,11 @@ function backToList(): void {
             :task="taskSync.byNode.get(nodeProps.id) ?? null"
             :retrying="retryingNode === nodeProps.id"
             :canceling="cancelingNode === nodeProps.id"
+            :chat-models="promptModels"
+            :reverse-generating="videoReverseGenerating"
             @retry="onRetry(nodeProps.id)"
             @cancel="onCancelVideo(nodeProps.id)"
+            @reverse-prompt="onReversePrompt(nodeProps.id, $event)"
           />
         </template>
       </VueFlow>

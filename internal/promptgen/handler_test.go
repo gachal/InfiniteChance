@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
@@ -91,10 +92,23 @@ func (f *stubGateway) GenerateChat(_ context.Context, req promptgen.ChatRequest)
 	return promptgen.ChatResult{Content: f.content}, nil
 }
 
+type fakeAssets struct {
+	byID map[int64]asset.Asset
+}
+
+func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
+	a, ok := f.byID[id]
+	if !ok {
+		return asset.Asset{}, asset.ErrNotFound
+	}
+	return a, nil
+}
+
 // ---- test rig: routes wired exactly as canvas/server/main.go does ----
 
 type envParams struct {
 	templates fakeTemplates
+	assets    fakeAssets
 	gateway   promptgen.Gateway
 }
 
@@ -112,6 +126,11 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			1: {ID: 1, Name: "文生图-中文", Template: "请为主题「{topic}」写一段英文文生图提示词,只输出提示词本身。", Enabled: true},
 			2: {ID: 2, Name: "已停用模板", Template: "{topic}", Enabled: false},
 		}},
+		assets: fakeAssets{byID: map[int64]asset.Asset{
+			5: {ID: 5, Kind: asset.KindVideo, CanvasID: 7, URL: "https://cdn.example.com/generated.mp4"},
+			6: {ID: 6, Kind: asset.KindImage, CanvasID: 7, URL: "https://cdn.example.com/pic.png"},
+			7: {ID: 7, Kind: asset.KindVideo, CanvasID: 7, URL: "data:video/mp4;base64,AAAA"},
+		}},
 		gateway: &stubGateway{content: "a neon cyberpunk city at dusk"},
 	}
 	if mutate != nil {
@@ -122,6 +141,7 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 	promptgen.RegisterRoutes(engine.Group("/canvases"), &promptgen.Handlers{
 		Templates: params.templates,
 		Canvases:  fakeCanvases{},
+		Assets:    params.assets,
 		Models: fakePrices{byModel: map[string]pricing.Price{
 			"chat-m": {PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
 			"img-m":  {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
@@ -433,5 +453,228 @@ func TestPromptModelCatalogListsTokenTrackOnlySorted(t *testing.T) {
 	}
 	if len(got.Models) != 2 || got.Models[0] != "chat-a" || got.Models[1] != "chat-b" {
 		t.Fatalf("models = %+v, want sorted token-track models only", got.Models)
+	}
+}
+
+// ---- reverse-prompt (13 号票:视频反推提示词) ----
+
+func TestReverseSendsVideoToGatewayAndReturnsPrompt(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"node_id":   "video-1-1",
+		"video_url": "https://vendor.example.com/clip.mp4",
+		"model":     "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	var got struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if got.Text != "a neon cyberpunk city at dusk" {
+		t.Errorf("text = %q", got.Text)
+	}
+
+	gateway := env.params.gateway.(*stubGateway)
+	if len(gateway.requests) != 1 {
+		t.Fatalf("gateway calls = %d, want 1", len(gateway.requests))
+	}
+	req := gateway.requests[0]
+	if req.Model != "chat-m" {
+		t.Errorf("model = %q", req.Model)
+	}
+	if req.VideoURL != "https://vendor.example.com/clip.mp4" {
+		t.Errorf("video url = %q, want the passed address", req.VideoURL)
+	}
+	if req.Content == "" {
+		t.Errorf("content = empty, want the fixed reverse instruction")
+	}
+	if req.Source != "canvas=7 node=video-1-1 gen=video-prompt" {
+		t.Errorf("source = %q, want the canvas origin mark", req.Source)
+	}
+}
+
+func TestReverseWithoutNodeIDStillMarksCanvasSource(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "https://vendor.example.com/clip.mp4", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.Source != "canvas=7 gen=video-prompt" {
+		t.Errorf("source = %q, want canvas-only mark", req.Source)
+	}
+}
+
+func TestReverseResolvesAssetContentReference(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	// 视频节点在厂商回 b64 时持有内容寻址路径:服务端解出素材行的地址,
+	// 编辑器无需知道素材 URL 本体。
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "/api/assets/5/content", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.VideoURL != "https://cdn.example.com/generated.mp4" {
+		t.Errorf("video url = %q, want the asset's stored address", req.VideoURL)
+	}
+}
+
+func TestReverseValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"missing video_url", map[string]any{"model": "chat-m"}},
+		{"missing model", map[string]any{"video_url": "https://vendor.example.com/clip.mp4"}},
+		{"refusing scheme", map[string]any{"video_url": "file:///etc/passwd", "model": "chat-m"}},
+		{"oversized node_id", map[string]any{"video_url": "https://vendor.example.com/clip.mp4", "model": "chat-m", "node_id": strings.Repeat("x", 200)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", tc.body)
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func TestReverseWithMalformedAssetPathAnswers400(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"non-numeric id", "/api/assets/not-a-number/content"},
+		{"wrong suffix", "/api/assets/5/other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+				"video_url": tc.ref, "model": "chat-m",
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func TestReverseWithInlineVideoAssetAnswers400(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "/api/assets/7/content", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "video_inline_unsupported" {
+		t.Errorf("code = %q, want video_inline_unsupported", code)
+	}
+}
+
+func TestReverseWithUnknownAssetAnswers404(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "/api/assets/99/content", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "asset_not_found" {
+		t.Errorf("code = %q, want asset_not_found", code)
+	}
+}
+
+func TestReverseWithNonVideoAssetAnswers400(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "/api/assets/6/content", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "asset_not_video" {
+		t.Errorf("code = %q, want asset_not_video", code)
+	}
+}
+
+func TestReverseWithNonTokenModelAnswers400(t *testing.T) {
+	cases := []struct {
+		name  string
+		model string
+	}{
+		{"call-track model", "img-m"},
+		{"unpriced model", "no-such-model"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+				"video_url": "https://vendor.example.com/clip.mp4", "model": tc.model,
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+			code, _ := errorBody(t, raw)
+			if code != "model_not_priced" {
+				t.Errorf("code = %q, want model_not_priced", code)
+			}
+		})
+	}
+}
+
+func TestReverseOnMissingCanvasAnswers404(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/99/reverse-prompt", map[string]any{
+		"video_url": "https://vendor.example.com/clip.mp4", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", res.StatusCode, raw)
+	}
+}
+
+func TestReverseWithoutGatewayAnswers503(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) { p.gateway = nil })
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "https://vendor.example.com/clip.mp4", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "gateway_unconfigured" {
+		t.Errorf("code = %q, want gateway_unconfigured", code)
+	}
+}
+
+func TestReverseSurfacesGatewayFailureAsUpstreamError(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.gateway = &stubGateway{err: errors.New("gateway 400: 该模型不支持视频输入")}
+	})
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "https://vendor.example.com/clip.mp4", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body = %s", res.StatusCode, raw)
+	}
+	code, message := errorBody(t, raw)
+	if code != "upstream_error" || !strings.Contains(message, "不支持视频输入") {
+		t.Errorf("error = %q/%q, want upstream_error with the reason", code, message)
 	}
 }
