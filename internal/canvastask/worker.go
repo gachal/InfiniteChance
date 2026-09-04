@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/objectstore"
 )
 
 // Gateway is the worker's view of the relay surface: the synchronous
@@ -30,6 +31,9 @@ type Gateway interface {
 type Worker struct {
 	store   Store
 	gateway Gateway
+	// storage 落产物字节(14 号票):nil 时跳过转存,素材行只带厂商地址
+	// —— 与 10 号票的旧行为一致,测试与未配存储的部署都靠这个 nil 分支。
+	storage objectstore.Store
 
 	concurrency  int
 	pollInterval time.Duration
@@ -103,6 +107,12 @@ func WithVideoPollInterval(d time.Duration) WorkerOption {
 // WithVideoTaskTimeout bounds one video task from submit to terminal state.
 func WithVideoTaskTimeout(d time.Duration) WorkerOption {
 	return func(w *Worker) { w.videoTaskTimeout = d }
+}
+
+// WithStorage routes generated artifacts into object storage before the
+// task finalizes (14 号票); nil keeps the legacy vendor-URL-only rows.
+func WithStorage(s objectstore.Store) WorkerOption {
+	return func(w *Worker) { w.storage = s }
 }
 
 // WithLogger routes worker logging (nil keeps the default logger).
@@ -189,14 +199,12 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 		w.fail(bookkeeping, t.ID, err.Error())
 		return
 	}
-	finalized, won, err := w.store.FinalizeSuccess(bookkeeping, t.ID, asset.Asset{
-		Kind:     asset.KindImage,
-		CanvasID: t.CanvasID,
-		TaskID:   t.ID,
-		Model:    t.Model,
-		Prompt:   t.Prompt,
-		URL:      result.URL,
-	})
+	a, aerr := w.archive(bookkeeping, t, result.URL)
+	if aerr != nil {
+		w.fail(bookkeeping, t.ID, aerr.Error())
+		return
+	}
+	finalized, won, err := w.store.FinalizeSuccess(bookkeeping, t.ID, a)
 	if err != nil {
 		w.logger.Printf("canvastask: finalize success %s: %v", t.ID, err)
 		return
@@ -207,6 +215,32 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 		return
 	}
 	w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)
+}
+
+// archive 产物转存(14 号票):storage 未配置时返回只带厂商地址的素材
+// 事实(旧行为);否则把字节落进对象存储并带上 object_key 三件套。转存
+// 失败以 error 上抛,由调用方按任务失败收尾 —— 原因留在任务行上,可重
+// 试,不悄悄留下只有临时厂商地址(约 24h 过期)的素材。
+func (w *Worker) archive(ctx context.Context, t Task, url string) (asset.Asset, error) {
+	a := asset.Asset{
+		Kind:     t.Kind,
+		CanvasID: t.CanvasID,
+		TaskID:   t.ID,
+		Model:    t.Model,
+		Prompt:   t.Prompt,
+		URL:      url,
+	}
+	if w.storage == nil {
+		return a, nil
+	}
+	stored, err := asset.Transfer(ctx, w.storage, nil, t.CanvasID, t.ID, t.Kind, url)
+	if err != nil {
+		return asset.Asset{}, err
+	}
+	a.ObjectKey = stored.Key
+	a.ContentType = stored.ContentType
+	a.SizeBytes = stored.SizeBytes
+	return a, nil
 }
 
 // fail closes a task failed with a truncated reason (the error column is
@@ -306,14 +340,12 @@ func (w *Worker) runVideo(parent context.Context, t Task) {
 				w.fail(bookkeeping, t.ID, "网关报告任务成功但没有视频地址")
 				return
 			}
-			finalized, won, err := w.store.FinalizeVideoSuccess(bookkeeping, t.ID, asset.Asset{
-				Kind:     asset.KindVideo,
-				CanvasID: t.CanvasID,
-				TaskID:   t.ID,
-				Model:    t.Model,
-				Prompt:   t.Prompt,
-				URL:      poll.VideoURL,
-			})
+			a, aerr := w.archive(bookkeeping, t, poll.VideoURL)
+			if aerr != nil {
+				w.fail(bookkeeping, t.ID, aerr.Error())
+				return
+			}
+			finalized, won, err := w.store.FinalizeVideoSuccess(bookkeeping, t.ID, a)
 			if err != nil {
 				w.logger.Printf("canvastask: finalize success %s: %v", t.ID, err)
 				return

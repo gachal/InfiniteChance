@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/gachal/InfiniteChance/internal/apierr"
+	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 )
@@ -41,6 +42,13 @@ type CanvasGetter interface {
 	Get(ctx context.Context, id int64) (canvas.Canvas, error)
 }
 
+// AssetGetter is the slice of the asset store the handlers need: a video
+// reference in the content-addressed form resolves through it to the
+// vendor address the asset row holds (14 号票起节点普遍持有素材引用).
+type AssetGetter interface {
+	Get(ctx context.Context, id int64) (asset.Asset, error)
+}
+
 // ModelPricer is the slice of the pricing store the handlers need: the
 // submit-time price check and the image/video model catalogs.
 type ModelPricer interface {
@@ -56,6 +64,7 @@ type Handlers struct {
 	Tasks    Store
 	Canvases CanvasGetter
 	Models   ModelPricer
+	Assets   AssetGetter
 	Gateway  Gateway
 }
 
@@ -171,16 +180,16 @@ func (h *Handlers) Create(c *gin.Context) {
 			seconds = *in.Seconds
 		}
 		imageRef = strings.TrimSpace(in.ImageURL)
-		// 参考图必须是厂商能拉取的 http(s) 地址:网关契约如此,内联
-		// data: URI 在这里就拒掉,不落成注定失败的任务行。
-		if imageRef == "" {
-			apierr.InvalidRequest(c, "图生视频需要参考图片(image_url)")
+		// 参考图片的两种引用:厂商能拉取的 http(s) 地址原样透传;素材
+		// 内容寻址路径(14 号票起图片节点普遍持有素材引用)由服务端解出
+		// 素材行的厂商地址。内联 data: URI 在这里就拒掉,不落成注定失败
+		// 的任务行。
+		resolved, err := h.resolveImageRef(c.Request.Context(), imageRef)
+		if err != nil {
+			h.failImageRef(c, err)
 			return
 		}
-		if !strings.HasPrefix(imageRef, "http://") && !strings.HasPrefix(imageRef, "https://") {
-			apierr.InvalidRequest(c, "image_url 必须是 http(s) 地址")
-			return
-		}
+		imageRef = resolved
 		if utf8.RuneCountInString(imageRef) > maxImageRefRunes {
 			apierr.InvalidRequest(c, "image_url 最多 4096 个字符")
 			return
@@ -363,6 +372,77 @@ func (h *Handlers) Cancel(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"task": toTaskJSON(final)})
+	default:
+		h.failStore(c, err)
+	}
+}
+
+// 图生视频参考图解析的失败形状,与 promptgen 的视频引用解析同形:引用
+// 形状不对(400)、素材不存在(404)、素材没有可用的厂商地址(400)、
+// 内联 data: URI(400,data URI 进不了网关媒体契约 —— 12 号票同款决策)。
+var (
+	errImageRefEmpty     = errors.New("图生视频需要参考图片(image_url)")
+	errImageRefMalformed = errors.New("image_url 必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
+	errImageRefInline    = errors.New("内联 base64 参考图不受支持,请使用带 http(s) 地址的图片素材")
+	errImageAssetMissing = errors.New("素材不存在或已被删除")
+	errImageAssetNoURL   = errors.New("该素材没有可用的 http(s) 原始地址,无法作为参考图")
+)
+
+// assetContentPrefix 是素材内容寻址路径的形状(10 号票定案):14 号票起
+// 图片节点普遍持有这个形式的引用,编辑器原样上送,由服务端解出素材行的
+// 厂商地址供网关与上游拉取。
+const assetContentPrefix = "/api/assets/"
+
+// resolveImageRef maps the editor's reference image to the address the
+// vendor fetches: an http(s) URL passes through untouched; a content-
+// addressed asset resolves through the store to the http(s) address it
+// holds; inline data: URIs — carried directly or stored in the asset row —
+// are refused before an unworkable task row lands.
+func (h *Handlers) resolveImageRef(ctx context.Context, ref string) (string, error) {
+	if ref == "" {
+		return "", errImageRefEmpty
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		return ref, nil
+	}
+	if strings.HasPrefix(ref, "data:") {
+		return "", errImageRefInline
+	}
+	rest, ok := strings.CutPrefix(ref, assetContentPrefix)
+	if !ok || !strings.HasSuffix(rest, "/content") {
+		return "", errImageRefMalformed
+	}
+	rest = strings.TrimSuffix(rest, "/content")
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || id < 1 {
+		return "", errImageRefMalformed
+	}
+	if h.Assets == nil {
+		return "", errImageAssetMissing
+	}
+	a, err := h.Assets.Get(ctx, id)
+	if errors.Is(err, asset.ErrNotFound) {
+		return "", errImageAssetMissing
+	}
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
+		return "", errImageAssetNoURL
+	}
+	return a.URL, nil
+}
+
+// failImageRef maps resolveImageRef's sentinels onto their wire responses.
+func (h *Handlers) failImageRef(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errImageAssetMissing):
+		apierr.NotFound(c, err.Error())
+	case errors.Is(err, errImageRefEmpty),
+		errors.Is(err, errImageRefMalformed),
+		errors.Is(err, errImageRefInline),
+		errors.Is(err, errImageAssetNoURL):
+		apierr.InvalidRequest(c, err.Error())
 	default:
 		h.failStore(c, err)
 	}

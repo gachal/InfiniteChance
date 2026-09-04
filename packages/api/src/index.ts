@@ -231,6 +231,34 @@ export interface ReversePromptResult {
   text: string
 }
 
+// ---- 素材库(挂 /assets,canvas/server;列表/删除需 JWT 会话,14 号票)----
+
+/** 一条素材:生成产物在素材库中的引用。content_url 恒为内容寻址路径
+ * (预览与跨画布复用统一走它),url 是原始厂商地址(或历史 data: URI),
+ * 仅排障时关心。canvas_name 来自来源画布,画布已删时为空。 */
+export interface AssetRecord {
+  id: number
+  kind: 'image' | 'video'
+  canvas_id: number
+  canvas_name: string
+  task_id: string
+  model: string
+  prompt: string
+  url: string
+  content_type: string
+  size_bytes: number
+  content_url: string
+  created_at: string
+}
+
+/** 素材列表的过滤与分页:全部缺省 = 不过滤,后端默认一页 50 条。 */
+export interface ListAssetsParams {
+  kind?: 'image' | 'video'
+  canvas_id?: number
+  limit?: number
+  offset?: number
+}
+
 interface ErrorPayload {
   error?: { code?: string; message?: string }
 }
@@ -491,6 +519,33 @@ export class ApiClient {
       method: 'POST',
       body: input,
     })
+  }
+
+  // ---- 素材库(挂 /assets,canvas/server;列表/删除需 JWT 会话,14 号票)----
+
+  /** 素材库列表,最新在前:画布素材面板与管理端素材页共用。 */
+  async listAssets(params: ListAssetsParams = {}): Promise<AssetRecord[]> {
+    const query = new URLSearchParams()
+    if (params.kind) {
+      query.set('kind', params.kind)
+    }
+    if (params.canvas_id !== undefined) {
+      query.set('canvas_id', String(params.canvas_id))
+    }
+    if (params.limit !== undefined) {
+      query.set('limit', String(params.limit))
+    }
+    if (params.offset !== undefined) {
+      query.set('offset', String(params.offset))
+    }
+    const qs = query.toString()
+    const body = await this.request<{ assets: AssetRecord[] }>(`/assets${qs ? `?${qs}` : ''}`)
+    return body.assets
+  }
+
+  /** 删除素材(对象文件与行一起消失);引用它的节点显示占位而非报错。 */
+  async deleteAsset(id: number): Promise<void> {
+    await this.request<void>(`/assets/${id}`, { method: 'DELETE' })
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {

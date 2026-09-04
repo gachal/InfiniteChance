@@ -9,6 +9,7 @@ import { VueFlow, useVueFlow, type Connection, type Edge } from '@vue-flow/core'
 
 import {
   ApiError,
+  type AssetRecord,
   type CanvasDetail,
   type CanvasTask,
   type PromptTemplateOption,
@@ -26,6 +27,7 @@ import {
 } from '../graph'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
+import AssetPanel from '../components/AssetPanel.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PromptNode from '../components/nodes/PromptNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
@@ -76,20 +78,21 @@ const saveLabel = computed(() => {
 const imageModels = ref<string[]>([])
 const videoModels = ref<string[]>([])
 
-/** 任务产物地址:图片任务落 image_url,视频任务落 video_url;
- * data: URI 不进图(几 MB 的内联图片会把整图 JSON 顶破上限):
- * 有素材引用时走内容寻址,由服务端解出字节。 */
+/** 任务产物地址:图片任务落 image_url,视频任务落 video_url。14 号票起
+ * 产物在终态前转存自有对象存储,凡有素材引用一律走内容寻址路径 ——
+ * 厂商临时地址(约 24h 过期)不再出现在节点里,跨画布引用也统一到素材
+ * id 上。 */
 function taskUrlFor(task: CanvasTask): string {
-  const url = task.kind === 'video' ? task.video_url : task.image_url
-  if (url.startsWith('data:') && task.asset_id > 0) {
+  if (task.asset_id > 0) {
     return `/api/assets/${task.asset_id}/content`
   }
-  return url
+  return task.kind === 'video' ? task.video_url : task.image_url
 }
 
 /** 产物落位:成功任务的地址写进绑定节点;有变化才落一次盘。节点是否存在
  * 以图为准 —— 结果节点在提交任务前已先落库,这里不负责物化,也不复活
- * 被删除的节点;产物本体在素材库里,重开可查。 */
+ * 被删除的节点;产物本体在素材库里,重开可查。asset_id 一并落进节点,
+ * 跨画布复用与「素材已删显示占位」都以它为准。 */
 function syncTaskToCanvas(task: CanvasTask): void {
   if (task.status !== 'succeeded') {
     return
@@ -100,8 +103,8 @@ function syncTaskToCanvas(task: CanvasTask): void {
   }
   const node = findNode(task.node_id)
   const data = node?.data as MediaNodeData | undefined
-  if (node && data && data.url !== url) {
-    updateNodeData(task.node_id, { url })
+  if (node && data && (data.url !== url || data.asset_id !== task.asset_id)) {
+    updateNodeData(task.node_id, { url, asset_id: task.asset_id })
     autosave.markDirty()
   }
 }
@@ -454,6 +457,26 @@ function addNode(type: CanvasNodeType): void {
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
 }
 
+// ---- 素材库面板(14 号票)----
+
+const assetPanelOpen = ref(false)
+
+/** 素材插入:从素材库把历史产物放进当前画布 —— 节点持有素材的内容寻
+ * 址引用(asset_id + content_url),不复制字节,跨画布复用同一素材。 */
+function insertAsset(a: AssetRecord): void {
+  nodeSeq += 1
+  const type: CanvasNodeType = a.kind === 'video' ? 'video' : 'image'
+  const step = (toObject().nodes.length % 8) * 48
+  addNodes([
+    {
+      id: `${type}-${Date.now()}-${nodeSeq}`,
+      type,
+      position: { x: 140 + step, y: 120 + step },
+      data: { url: a.content_url, asset_id: a.id, note: '' } satisfies MediaNodeData,
+    },
+  ])
+}
+
 async function loadCanvas(): Promise<void> {
   loading.value = true
   loadError.value = ''
@@ -798,6 +821,10 @@ function backToList(): void {
           />
         </template>
       </VueFlow>
+      <AssetPanel
+        v-if="assetPanelOpen"
+        @insert="insertAsset"
+      />
     </div>
 
     <footer class="toolbar">
@@ -811,6 +838,14 @@ function backToList(): void {
           @click="addNode(t)"
         >
           + {{ NODE_TYPE_LABEL[t] }}
+        </button>
+        <button
+          class="add-asset"
+          type="button"
+          :title="assetPanelOpen ? '关闭素材库面板' : '打开素材库:浏览历史素材并插入画布'"
+          @click="assetPanelOpen = !assetPanelOpen"
+        >
+          {{ assetPanelOpen ? '收起素材库' : '素材库' }}
         </button>
       </span>
     </footer>
@@ -1045,5 +1080,10 @@ function backToList(): void {
 .add-video {
   background: rgba(250, 204, 21, 0.14);
   color: #facc15;
+}
+
+.add-asset {
+  background: rgba(165, 180, 252, 0.16);
+  color: #a5b4fc;
 }
 </style>

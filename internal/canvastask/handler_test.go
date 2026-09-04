@@ -160,6 +160,22 @@ func (fakeCanvases) Get(_ context.Context, id int64) (canvas.Canvas, error) {
 	return canvas.Canvas{}, canvas.ErrNotFound
 }
 
+// fakeAssets answers Get like a library holding one image asset whose
+// vendor URL is alive and one stuck with a data: URI (厂商回 b64 的历史行).
+type fakeAssets struct{}
+
+func (fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
+	switch id {
+	case 5:
+		return asset.Asset{ID: 5, Kind: asset.KindImage, URL: "https://img.example/ref.png",
+			ObjectKey: "canvases/7/ct_ref/image.png"}, nil
+	case 6:
+		return asset.Asset{ID: 6, Kind: asset.KindImage, URL: "data:image/png;base64,AAAA"}, nil
+	default:
+		return asset.Asset{}, asset.ErrNotFound
+	}
+}
+
 // fakePrices answers ByModel for one call-track and one token-track model.
 type fakePrices struct{}
 
@@ -207,7 +223,7 @@ func newHandlerEnv(gateway *okGateway) *handlerEnv {
 	}
 	group := r.Group("/canvases")
 	canvastask.RegisterRoutes(group, &canvastask.Handlers{
-		Tasks: tasks, Canvases: fakeCanvases{}, Models: fakePrices{}, Gateway: gw,
+		Tasks: tasks, Canvases: fakeCanvases{}, Models: fakePrices{}, Assets: fakeAssets{}, Gateway: gw,
 	})
 	canvastask.RegisterModelRoutes(r.Group("/image-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
 	canvastask.RegisterVideoModelRoutes(r.Group("/video-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
@@ -588,5 +604,56 @@ func TestHandlerCancelRejectsImageTasks(t *testing.T) {
 	}
 	if len(env.gateway.cancels) != 0 {
 		t.Errorf("gateway cancels = %v, want none for an image task", env.gateway.cancels)
+	}
+}
+
+func TestHandlerVideoTaskResolvesAssetReference(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
+
+	// 内容寻址引用:任务行落的是素材行的厂商地址,网关才拉得到。
+	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/5/content"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored := env.tasks.tasks[resp.Task.ID]
+	if stored.ImageRef != "https://img.example/ref.png" {
+		t.Errorf("image_ref = %q, want the asset's vendor URL", stored.ImageRef)
+	}
+
+	// 厂商 http(s) 地址原样透传,行为不变。
+	w = env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"https://img.example/direct.png"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("direct URL status = %d, want 201", w.Code)
+	}
+}
+
+func TestHandlerVideoTaskReferenceValidations(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
+
+	cases := []struct {
+		name string
+		code int
+		url  string
+	}{
+		{"素材已被删除", http.StatusNotFound, "/api/assets/99/content"},
+		{"坏引用形状", http.StatusBadRequest, "/assets/5"},
+		{"非数字素材 id", http.StatusBadRequest, "/api/assets/abc/content"},
+		{"内联 data URI", http.StatusBadRequest, "data:image/png;base64,AAAA"},
+		{"素材落的是 data URI", http.StatusBadRequest, "/api/assets/6/content"},
+	}
+	for _, tc := range cases {
+		body := `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"` + tc.url + `"}`
+		w := env.postTask(t, body)
+		if w.Code != tc.code {
+			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
+		}
 	}
 }

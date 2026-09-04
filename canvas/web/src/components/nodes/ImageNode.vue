@@ -44,12 +44,28 @@ watch(
 const videoPrompt = ref('')
 const videoSeconds = ref(5)
 
-// 图生视频只认 http(s) 产物作参考图:data: URI 进不了网关的参考图契约。
-const hasHttpProduct = computed(() => (props.data.url ?? '').startsWith('http'))
+// 图生视频的参考图:厂商 http(s) 地址原样透传;素材内容寻址引用
+// (/api/assets/{id}/content,14 号票起节点普遍持有)由服务端解出素材行
+// 的厂商地址。data: URI 进不了网关的参考图契约,入口不出现。
+const hasReference = computed(() => {
+  const url = props.data.url ?? ''
+  return url.startsWith('http') || url.startsWith('/api/assets/')
+})
+
+// 产物加载失败(素材被删除、对象被清理):显示占位而非破图 —— 删除素材
+// 不应让引用它的画布报错(14 号票)。url 变化(重新生成/插入新素材)时
+// 复位再试。
+const loadFailed = ref(false)
+watch(
+  () => props.data.url,
+  () => {
+    loadFailed.value = false
+  },
+)
 
 const canGenerateVideo = computed(
   () =>
-    hasHttpProduct.value &&
+    hasReference.value &&
     videoModel.value !== '' &&
     videoPrompt.value.trim().length > 0 &&
     !props.videoGenerating,
@@ -98,10 +114,18 @@ function submitGenerateVideo(): void {
       </button>
     </div>
     <img
-      v-else-if="data.url"
+      v-else-if="data.url && !loadFailed"
       :src="data.url"
       alt="图片节点产物"
+      @error="loadFailed = true"
     >
+    <div
+      v-else-if="data.url && loadFailed"
+      class="placeholder missing"
+    >
+      <span>素材不可用</span>
+      <small>原素材可能已被删除</small>
+    </div>
     <div
       v-else
       class="placeholder"
@@ -111,7 +135,7 @@ function submitGenerateVideo(): void {
     </div>
 
     <div
-      v-if="hasHttpProduct && videoModels.length > 0"
+      v-if="hasReference && videoModels.length > 0"
       class="video-gen"
     >
       <select
@@ -215,6 +239,11 @@ img {
 
 .placeholder small {
   font-size: 11px;
+}
+
+.placeholder.missing {
+  border-color: rgba(255, 143, 143, 0.4);
+  color: #ff8f8f;
 }
 
 .working .pill {

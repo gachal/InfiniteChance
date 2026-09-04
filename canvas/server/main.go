@@ -13,6 +13,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 	"github.com/gachal/InfiniteChance/internal/config"
+	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -49,6 +50,13 @@ func main() {
 		if err := templates.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure prompt template schema: %v", err)
 		}
+		// 产物对象存储(14 号票):S3 兼容接口的本地卷落地,键按画布/任务
+		// 归档;建不出来只影响素材转存,不拦整个服务起来 —— 生成任务会以
+		// 「转存失败」落在任务行上,可重试。
+		storage, err := objectstore.NewFileSystem(d.Config.AssetStorageDir)
+		if err != nil {
+			log.Printf("WARNING: 素材对象存储不可用(%v),生成产物将无法转存", err)
+		}
 
 		issuer := auth.NewIssuerFromConfig(d.Config)
 		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
@@ -61,6 +69,7 @@ func main() {
 			Tasks:    tasks,
 			Canvases: canvases,
 			Models:   prices,
+			Assets:   assets,
 			Gateway:  gateway,
 		})
 		// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
@@ -77,9 +86,9 @@ func main() {
 			Gateway:   chatGateway,
 		})
 
-		// 生成模型的目录(按次计价的生图模型、按秒计价的视频模型)挂 JWT
-		// 会话;素材内容寻址例外 —— 节点用 <img>/<video> 预览,带不了
-		// Authorization 头(见 asset 包)。
+		// 素材内容寻址例外 —— 节点用 <img>/<video> 预览,带不了
+		// Authorization 头(见 asset 包);素材库的列表/删除挂 JWT 会话,
+		// 画布素材面板与管理端素材页共用。
 		canvastask.RegisterModelRoutes(r.Group("/image-models", auth.RequireAuth(issuer)),
 			&canvastask.ModelHandlers{Prices: prices})
 		canvastask.RegisterVideoModelRoutes(r.Group("/video-models", auth.RequireAuth(issuer)),
@@ -88,9 +97,11 @@ func main() {
 			&promptgen.CatalogHandlers{Templates: templates})
 		promptgen.RegisterModelRoutes(r.Group("/prompt-models", auth.RequireAuth(issuer)),
 			&promptgen.ModelHandlers{Prices: prices})
-		asset.RegisterRoutes(r.Group("/assets"), &asset.Handlers{Store: assets})
+		asset.RegisterContentRoutes(r.Group("/assets"), &asset.Handlers{Store: assets, Storage: storage})
+		asset.RegisterLibraryRoutes(r.Group("/assets", auth.RequireAuth(issuer)),
+			&asset.Handlers{Store: assets, Storage: storage})
 
-		startWorker(tasks, gateway, d.Config)
+		startWorker(tasks, gateway, d.Config, storage)
 	})
 }
 
@@ -107,8 +118,8 @@ func serviceGateway(cfg config.Config) canvastask.Gateway {
 
 // startWorker recovers orphaned generations (running rows from a previous
 // process go back to the queue) and drives the queue in the background for
-// the lifetime of the process.
-func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config) {
+// the lifetime of the process. storage 非 nil 时产物在终态前转存对象存储.
+func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store) {
 	if gateway == nil {
 		return
 	}
@@ -118,7 +129,10 @@ func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg c
 	} else if n > 0 {
 		log.Printf("canvastask: requeued %d orphaned task(s) from the previous run", n)
 	}
-	worker := canvastask.NewWorker(tasks, gateway,
-		canvastask.WithConcurrency(cfg.CanvasTaskConcurrency))
+	opts := []canvastask.WorkerOption{canvastask.WithConcurrency(cfg.CanvasTaskConcurrency)}
+	if storage != nil {
+		opts = append(opts, canvastask.WithStorage(storage))
+	}
+	worker := canvastask.NewWorker(tasks, gateway, opts...)
 	go worker.Run(ctx)
 }

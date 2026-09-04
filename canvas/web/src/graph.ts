@@ -9,9 +9,13 @@ export interface PromptNodeData {
   text: string
 }
 
-/** 图片/视频节点数据:生成产物或占位;url 为空表示还没有产物。 */
+/** 图片/视频节点数据:生成产物或占位;url 为空表示还没有产物。14 号票起
+ * url 普遍为素材内容寻址路径(/api/assets/{id}/content),asset_id 是素材
+ * 库引用 —— 跨画布复用同一素材 = 引用同一个 id,素材被删时节点据此显示
+ * 占位而非报错。 */
 export interface MediaNodeData {
   url?: string
+  asset_id?: number
   note?: string
 }
 

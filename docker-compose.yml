@@ -73,9 +73,15 @@ services:
       CANVAS_GATEWAY_URL: ${CANVAS_GATEWAY_URL:-http://gateway:8080}
       CANVAS_SERVICE_KEY: ${CANVAS_SERVICE_KEY:-}
       CANVAS_TASK_CONCURRENCY: ${CANVAS_TASK_CONCURRENCY:-}
+      # 素材对象存储根(14 号票):S3 兼容接口的本地卷落地,容器内固定到
+      # 数据卷,产物按 画布/任务 归档落盘。
+      ASSET_STORAGE_DIR: ${ASSET_STORAGE_DIR:-/data/assets}
+    volumes:
+      - asset-data:/data/assets
     ports:
       - "8081:8081"
     depends_on: *app-depends
 
 volumes:
   mysql-data:
+  asset-data:

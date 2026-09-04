@@ -535,3 +535,46 @@ describe('ApiClient prompt generation (canvas)', () => {
     expect((err as ApiError).code).toBe('upstream_error')
   })
 })
+
+describe('ApiClient asset library (14 号票)', () => {
+  const assets = [
+    {
+      id: 2,
+      kind: 'video',
+      canvas_id: 7,
+      canvas_name: '主画布',
+      task_id: 'ct_v',
+      model: 'vid-m',
+      prompt: 'p',
+      url: 'https://vid.example/a.mp4',
+      content_type: 'video/mp4',
+      size_bytes: 123,
+      content_url: '/api/assets/2/content',
+      created_at: '2026-09-04T12:00:00Z',
+    },
+  ]
+
+  it('lists assets with filters as query parameters', async () => {
+    const fetchImpl = stubFetch(200, { assets })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listAssets({ kind: 'video', canvas_id: 7, limit: 10, offset: 5 })).resolves.toEqual(assets)
+    expect(fetchImpl).toHaveBeenCalledWith('/api/assets?kind=video&canvas_id=7&limit=10&offset=5', expect.anything())
+  })
+
+  it('omits empty query parameters', async () => {
+    const fetchImpl = stubFetch(200, { assets: [] })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listAssets()).resolves.toEqual([])
+    expect(fetchImpl).toHaveBeenCalledWith('/api/assets', expect.anything())
+  })
+
+  it('deletes an asset with DELETE and no body', async () => {
+    const fetchImpl = stubFetch(204, null)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.deleteAsset(2)).resolves.toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledWith('/api/assets/2', expect.objectContaining({ method: 'DELETE' }))
+  })
+})

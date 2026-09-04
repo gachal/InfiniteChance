@@ -36,6 +36,10 @@ type Config struct {
 	// CanvasTaskConcurrency caps the canvas worker's parallel generations
 	// (CANVAS_TASK_CONCURRENCY). The gateway ignores it.
 	CanvasTaskConcurrency int
+	// AssetStorageDir is the object-storage root for generated artifacts
+	// (ASSET_STORAGE_DIR, canvas only). 14 号票:S3 兼容接口的 MVP 落地
+	// 是本地卷,切 MinIO/云 OSS 时由驱动实现替换,配置项语义不变。
+	AssetStorageDir string
 }
 
 // devJWTSecret keeps host-side dev runs working with zero configuration.
@@ -58,6 +62,7 @@ func Load(name, defaultPort string) Config {
 		GatewayBaseURL:        envOr("CANVAS_GATEWAY_URL", "http://localhost:8080"),
 		CanvasServiceKey:      os.Getenv("CANVAS_SERVICE_KEY"),
 		CanvasTaskConcurrency: intEnv("CANVAS_TASK_CONCURRENCY", 2),
+		AssetStorageDir:       envOr("ASSET_STORAGE_DIR", "./data/assets"),
 	}
 }
 

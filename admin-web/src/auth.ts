@@ -34,6 +34,10 @@ const initialized = ref<boolean | null>(null) // null = 尚未确认
 
 const client = new ApiClient({ base: '/api', getToken: () => token.value })
 
+// 画布服务的客户端(dev 经 vite 代理 /canvas-api → :8081):素材库等
+// 挂在 canvas/server 的管理面走这里,与网关的管理 API 同一套 JWT 会话。
+const canvasClient = new ApiClient({ base: '/canvas-api', getToken: () => token.value })
+
 const isAuthenticated = computed(() => token.value !== null && username.value !== null)
 
 let bootPromise: Promise<void> | null = null
@@ -106,6 +110,7 @@ export function authErrorMessage(e: unknown): string {
 export function useAuth() {
   return {
     client,
+    canvasClient,
     token,
     username,
     initialized,

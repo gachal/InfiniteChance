@@ -5,6 +5,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useAuth } from './auth'
+import AssetsView from './views/AssetsView.vue'
 import ChannelsView from './views/ChannelsView.vue'
 import DashboardView from './views/DashboardView.vue'
 import InitView from './views/InitView.vue'
@@ -19,6 +20,7 @@ export const router = createRouter({
     { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
     { path: '/keys', name: 'keys', component: KeysView, meta: { requiresAuth: true } },
     { path: '/prompt-templates', name: 'prompt-templates', component: PromptTemplatesView, meta: { requiresAuth: true } },
+    { path: '/assets', name: 'assets', component: AssetsView, meta: { requiresAuth: true } },
     { path: '/login', name: 'login', component: LoginView },
     { path: '/init', name: 'init', component: InitView },
     { path: '/:pathMatch(.*)*', redirect: { name: 'dashboard' } },

@@ -50,6 +50,16 @@ const canReverse = computed(
   () => !!props.data.url && reverseModel.value !== '' && !props.reverseGenerating,
 )
 
+// 产物加载失败(素材被删除、对象被清理):显示占位而非报错(14 号票)。
+// url 变化(重新生成/插入新素材)时复位再试。
+const loadFailed = ref(false)
+watch(
+  () => props.data.url,
+  () => {
+    loadFailed.value = false
+  },
+)
+
 function submitReverse(): void {
   if (!canReverse.value) {
     return
@@ -104,11 +114,19 @@ function submitReverse(): void {
       <small>预扣额度已退回</small>
     </div>
     <video
-      v-else-if="data.url"
+      v-else-if="data.url && !loadFailed"
       :src="data.url"
       controls
       muted
+      @error="loadFailed = true"
     />
+    <div
+      v-else-if="data.url && loadFailed"
+      class="placeholder missing"
+    >
+      <span>素材不可用</span>
+      <small>原素材可能已被删除</small>
+    </div>
     <div
       v-else
       class="placeholder"
@@ -205,6 +223,11 @@ video {
 
 .placeholder small {
   font-size: 11px;
+}
+
+.placeholder.missing {
+  border-color: rgba(255, 143, 143, 0.4);
+  color: #ff8f8f;
 }
 
 .working .pill {

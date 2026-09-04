@@ -19,7 +19,10 @@ const sections = [
   },
   {
     label: '画布管理',
-    links: [{ name: 'prompt-templates', label: '提示词模板' }],
+    links: [
+      { name: 'prompt-templates', label: '提示词模板' },
+      { name: 'assets', label: '素材管理' },
+    ],
   },
 ]
 
