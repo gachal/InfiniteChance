@@ -1,119 +1,121 @@
 # InfiniteChance
 
-自用 Token 网关 + 无限画布,领域术语表见 [CONTEXT.md](CONTEXT.md)。
+[中文](README.zh-CN.md)
 
-## 功能
+A personal-use token gateway + infinite canvas. Domain glossary: [CONTEXT.md](CONTEXT.md).
 
-**网关(gateway/server)** —— OpenAI 兼容中转,SDK `base_url` 指向 `http://localhost:8080/v1` 即用:
+## Features
 
-- 聊天 `POST /v1/chat/completions`:同步转发;`stream:true` 逐帧 SSE 透传不重组内容。计费按 token 单价 × 倍率,预扣 → 多退少补 → 失败退款。
-- 生图 `POST /v1/images/generations`(JSON)/ `POST /v1/images/edits`(multipart):同步转发,按「次」计费(单价 × 尺寸系数 × 张数),只落 `images` 能力渠道。
-- 视频 `POST /v1/videos/generations` + `GET/POST /v1/videos/tasks/{id}`(轮询/取消):异步任务契约,五态状态机(queued/running/succeeded/failed/canceled),仅成功计费,任务归属发放 key。
-- 模型目录 `GET /v1/models`:合并全部启用渠道的公开模型,不受熔断影响。
-- 多渠道调度与熔断:同一模型挂多渠道时按优先级分层故障转移、层内加权随机分流;每渠道独立熔断器(连续临时失败达阈值转 open → 冷却后 half-open 单飞探测),候选全部熔断时 503 `model_unavailable` 拒绝。
-- 计价与额度:双轨计价(token 轨 / 按次·按秒轨,未配价模型一律 `model_not_priced` 拒绝),额度以微美元记账,变动落流水;API key 为 `sk-` + 40 位随机串,仅存哈希,支持过期与吊销。
-- 用量审计:请求级日志(渠道/模型快照、价格快照、上游错误摘要、`X-InfiniteChance-Source` 来源标记,画布来源形如 `canvas=<id> task=<…>`)+ `GET /admin/usage/summary` 按天/模型/渠道汇总,管理后台「用量审计」页可查明细与三种汇总桶。
+**Gateway (gateway/server)** — an OpenAI-compatible relay. Point your SDK's `base_url` at `http://localhost:8080/v1` and go:
 
-**创作画布(canvas/server + canvas/web)**:
+- Chat `POST /v1/chat/completions`: synchronous forwarding; with `stream:true`, SSE frames pass through untouched. Billed as token price × ratio, with pre-deduction → settle-the-difference on completion → full refund on failure.
+- Images `POST /v1/images/generations` (JSON) / `POST /v1/images/edits` (multipart): synchronous forwarding, billed per call (unit price × size factor × image count), routed only to channels with the `images` capability.
+- Video `POST /v1/videos/generations` + `GET/POST /v1/videos/tasks/{id}` (poll/cancel): async task contract with a five-state machine (queued/running/succeeded/failed/canceled), billed only on success; tasks belong to the issuing key.
+- Model catalog `GET /v1/models`: merges public models across all enabled channels; unaffected by circuit breaking.
+- Multi-channel scheduling & circuit breaking: when one public model maps to multiple channels, candidates fail over by priority tiers with weighted-random split within a tier; each channel has its own breaker (consecutive transient failures trip it open → cooldown → half-open single-flight probe); when every candidate is open, requests are rejected with 503 `model_unavailable`.
+- Pricing & quota: dual-track pricing (token track / per-call·per-second track; unpriced models are always rejected with `model_not_priced`); quota is tracked in micro-USD with a ledger entry for every change; API keys are `sk-` + 40 random characters, stored hashed only, with expiry and revocation.
+- Usage audit: per-request logs (channel/model snapshots, price snapshot, upstream error summary, `X-InfiniteChance-Source` source tag — canvas writes look like `canvas=<id> task=<…>`) plus `GET /admin/usage/summary` rollups by day/model/channel; the admin console's Usage Audit page shows details and all three rollup buckets.
 
-- vue-flow 编辑器:提示词/图片/视频节点 + 连线,整图 JSON 乐观锁自动保存;画布列表与 CRUD。
-- 文生图与图生视频:canvas/server worker 编排(FIFO 认领、并发上限、失败重试、取消、重启孤儿回队恢复),浏览器关掉任务照跑;产物落素材库并写回节点,视频支持参考图与时长。
-- 生成提示词与视频反推提示词:同步聊天调用、按 token 计费;管理端维护的提示词模板(含 `{topic}` 占位符)增删改即时生效,无缓存无同步。
-- 素材库:任务成功即把产物转存自有存储(S3 兼容接口 `objectstore`,MVP 落地本地卷,不依赖厂商临时 URL);跨画布复用走内容寻址 `/assets/{id}/content`,素材面板与管理端素材页共用同一列表 API。
+**Creation canvas (canvas/server + canvas/web)**:
 
-**管理后台(admin-web)**:仪表盘(双服务健康)、渠道(含一键连通测试)、API Keys(创建/吊销/额度充值)、用量审计、提示词模板、素材库。模型价格暂走 admin API(`/admin/pricing`),尚无页面。
+- vue-flow editor: prompt/image/video nodes plus edges, whole-graph JSON with optimistic-lock autosave; canvas list and CRUD.
+- Text-to-image and image-to-video: orchestrated by canvas/server workers (FIFO claiming, concurrency cap, retry on failure, cancel, orphan re-queue on restart) — tasks keep running with the browser closed; artifacts land in the asset library and are written back to nodes; video supports a reference image and duration.
+- Prompt generation and video reverse-prompt: synchronous chat calls billed by token; admin-maintained prompt templates (with a `{topic}` placeholder) take effect immediately on create/update/disable — no cache, no sync step.
+- Asset library: on task success, artifacts are copied into self-hosted storage (S3-compatible `objectstore` interface; the MVP ships a local volume, with no reliance on vendor temporary URLs); cross-canvas reuse goes through content addressing at `/assets/{id}/content`; the canvas asset panel and the admin assets page share one list API.
 
-## API 面
+**Admin console (admin-web)**: dashboard (health of both services), channels (with one-click connectivity test), API keys (create/revoke/quota top-up), usage audit, prompt templates, assets. Model pricing currently goes through the admin API (`/admin/pricing`) only — no page yet.
 
-| 挂载点 | 鉴权 | 内容 |
+## API surface
+
+| Mount | Auth | Contents |
 | --- | --- | --- |
-| gateway `/v1/*` | API key(Bearer `sk-…`) | OpenAI 兼容中转面,见上;错误统一 OpenAI error object,code 区分 `invalid_api_key` / `insufficient_quota` / `model_not_priced` 等 |
-| gateway `/admin/*` | JWT 会话 | 渠道、API keys、模型价格、提示词模板的 CRUD,用量日志与汇总查询 |
-| gateway `/auth/*` | `status`/`init`/`login` 公开,`me` 需 JWT | 单管理员会话 |
-| canvas `/canvases` | JWT 会话 | 画布 CRUD + `PUT /:id/graph` 整图保存;`:id/tasks` 创建/查询/重试/取消;`:id/generate-prompt`、`:id/reverse-prompt` 同步动作 |
-| canvas 目录端点 | JWT 会话 | `/image-models`、`/video-models`、`/prompt-templates`(仅启用)、`/prompt-models`(token 轨) |
-| canvas `/assets` | 列表/删除需 JWT;`/:id/content` 公开 | 素材库;content 不挂鉴权是刻意的——`<img>/<video>` 元素带不了 Authorization 头,产物即厂商公开交付的媒体 |
+| gateway `/v1/*` | API key (Bearer `sk-…`) | OpenAI-compatible relay, see above; errors are OpenAI error objects with codes like `invalid_api_key` / `insufficient_quota` / `model_not_priced` |
+| gateway `/admin/*` | JWT session | CRUD for channels, API keys, model prices, and prompt templates; usage log list & rollups |
+| gateway `/auth/*` | `status`/`init`/`login` public; `me` needs JWT | single-admin session |
+| canvas `/canvases` | JWT session | canvas CRUD + `PUT /:id/graph` whole-graph save; `:id/tasks` create/list/retry/cancel; `:id/generate-prompt`, `:id/reverse-prompt` synchronous actions |
+| canvas catalogs | JWT session | `/image-models`, `/video-models`, `/prompt-templates` (enabled only), `/prompt-models` (token track) |
+| canvas `/assets` | list/delete need JWT; `/:id/content` public | asset library; content is deliberately unauthenticated — `<img>/<video>` elements cannot attach an Authorization header, and the artifacts are the same public media the vendor delivered |
 
-部署态反代:admin-web 的 `/api` → gateway、`/canvas-api` → canvas;canvas-web 的 `/api` → canvas;dev 代理同形。
+Deployed reverse proxy: admin-web's `/api` → gateway and `/canvas-api` → canvas; canvas-web's `/api` → canvas; dev proxies mirror this.
 
-## 结构
+## Layout
 
 ```
-gateway/server   Go+Gin 网关入口(OpenAI 兼容 API)
-canvas/server    Go+Gin 画布持久化与任务编排入口
-canvas/web       Vue3 创作画布前端(:5174 dev / :8091 部署)
-admin-web        Vue3 统一管理后台(:5173 dev / :8090 部署)
-packages/api     前端共享请求层(@infinitechance/api)
-packages/ui      前端共享组件(HealthCard 健康卡片)
-deploy/          部署物:nginx 配置 + 备份/恢复脚本
+gateway/server   Go+Gin gateway entrypoint (OpenAI-compatible API)
+canvas/server    Go+Gin canvas persistence & task orchestration entrypoint
+canvas/web       Vue3 creation-canvas frontend (:5174 dev / :8091 deployed)
+admin-web        Vue3 unified admin console (:5173 dev / :8090 deployed)
+packages/api     shared frontend request layer (@infinitechance/api)
+packages/ui      shared frontend components (HealthCard)
+deploy/          deployment artifacts: nginx configs + backup/restore scripts
 ```
 
-Go 侧单 module(`github.com/gachal/InfiniteChance`)、双入口;`internal/` 为两服务共享代码。前端为 pnpm workspace。
+The Go side is a single module (`github.com/gachal/InfiniteChance`) with two binaries; `internal/` holds code shared by both services. The frontend is a pnpm workspace.
 
-## 一键部署
+## One-command deploy
 
-全新机器只要装了 Docker:
+Any fresh machine only needs Docker:
 
 ```bash
-cp .env.example .env   # 可选;所有配置项都有内置缺省
+cp .env.example .env   # optional; every setting has a built-in default
 docker compose up -d --build
 ```
 
-一条命令拉起六件套:MySQL、Redis、gateway、canvas,以及两个前端——Dockerfile 多阶段先在容器内 `pnpm build` 出两个 SPA 静态产物,再交给两个 nginx 运行时托管并反代对应后端;**运行时容器只含镜像与构建产物,不依赖宿主机源码、Node 或 pnpm**。
+One command brings up the six-piece stack: MySQL, Redis, gateway, canvas, plus the two frontends — the multi-stage Dockerfile first runs `pnpm build` inside the container to produce the two SPA bundles, then hands them to two nginx runtime containers that serve the static files and reverse-proxy their backends; **the runtime containers contain only images and build artifacts — no host source code, Node, or pnpm required**.
 
-然后访问管理后台 `http://localhost:8090` 完成初始化引导(两步):
+Then open the admin console at `http://localhost:8090` and finish the init wizard (two steps):
 
-1. 创建唯一管理员账号(密码仅以 bcrypt 哈希入库);
-2. 录入首个厂商渠道(OpenAI 兼容 BaseURL + 密钥 + 可选模型映射,可跳过)。
+1. Create the single admin account (the password is stored only as a bcrypt hash);
+2. Enter the first vendor channel (OpenAI-compatible BaseURL + key + optional model mapping; skippable).
 
-之后到「API Keys」创建一把服务级 key 填入 `.env` 的 `CANVAS_SERVICE_KEY` 并 `docker compose up -d`,画布的 AI 动作即可用。
+Afterwards, create a service-level key under "API Keys", put it into `CANVAS_SERVICE_KEY` in `.env`, and run `docker compose up -d` once more — canvas AI actions become available.
 
-公网/长期部署:`openssl rand -hex 32` 生成 `JWT_SECRET` 填入 `.env`,并把 `JWT_SECRET_REQUIRED=true`(密钥缺失时服务拒绝启动)。全部可配项与注释见 [.env.example](.env.example)。
+For public/long-lived deployments: generate `JWT_SECRET` with `openssl rand -hex 32`, put it in `.env`, and set `JWT_SECRET_REQUIRED=true` (services refuse to start when the secret is missing). All settings and comments: [.env.example](.env.example).
 
-前端开发仍可走 dev 服务器(热更新):`pnpm install && make dev-admin`(:5173)/ `make dev-canvas`(:5174),经 vite 代理访问 8080/8081。
+Frontend development can still use dev servers (hot reload): `pnpm install && make dev-admin` (:5173) / `make dev-canvas` (:5174), reaching 8080/8081 through the vite proxies.
 
-## 端口
+## Ports
 
-| 服务 | 端口 | 说明 |
+| Service | Port | Notes |
 | --- | --- | --- |
-| admin-web(部署) | 8090 | 管理后台静态托管,初始化引导入口 |
-| canvas-web(部署) | 8091 | 无限画布静态托管 |
-| gateway/server | 8080 | 网关 API(OpenAI 兼容 `/v1`) |
-| canvas/server | 8081 | 画布 API |
-| admin-web(dev) | 5173 | 管理后台 dev 服务器 |
-| canvas/web(dev) | 5174 | 画布前端 dev 服务器 |
-| MySQL | 宿主机 3307 → 容器 3306 | 避开本机常见 3306 占用 |
-| Redis | 宿主机 6380 → 容器 6379 | 避开本机常见 6379 占用 |
+| admin-web (deployed) | 8090 | admin console static hosting; init wizard entry |
+| canvas-web (deployed) | 8091 | infinite canvas static hosting |
+| gateway/server | 8080 | gateway API (OpenAI-compatible `/v1`) |
+| canvas/server | 8081 | canvas API |
+| admin-web (dev) | 5173 | admin console dev server |
+| canvas/web (dev) | 5174 | canvas frontend dev server |
+| MySQL | host 3307 → container 3306 | dodges the common local 3306 occupancy |
+| Redis | host 6380 → container 6379 | dodges the common local 6379 occupancy |
 
-以上端口都可用 `.env` 覆写(`ADMIN_WEB_PORT`、`CANVAS_WEB_PORT`、`GATEWAY_PORT`、`CANVAS_PORT`、`MYSQL_PORT`、`REDIS_PORT`)。
+All ports can be overridden via `.env` (`ADMIN_WEB_PORT`, `CANVAS_WEB_PORT`, `GATEWAY_PORT`, `CANVAS_PORT`, `MYSQL_PORT`, `REDIS_PORT`).
 
-宿主机直跑 Go 服务时(`go run ./gateway/server`),默认连接 `localhost:3306/6379`;若基础设施用的是 compose 映射出来的端口,设置:
+When running the Go services directly on the host (`go run ./gateway/server`), they default to `localhost:3306/6379`; if the infrastructure runs on compose-mapped ports, set:
 
 ```bash
 export MYSQL_DSN='root:infinitechance@tcp(localhost:3307)/infinitechance?parseTime=true'
 export REDIS_ADDR=localhost:6380
 ```
 
-## 备份与恢复
+## Backup & restore
 
-`deploy/backup.sh` 把三处状态打包进一个带清单的目录(MySQL 一致性逻辑转储、Redis RDB、素材卷整卷 tar,附时间戳/git 提交/SHA-256 清单),`deploy/restore.sh` 把目录原样灌回运行中的栈(覆盖式,先确认再动手):
+`deploy/backup.sh` packs three state stores into one manifest-carrying directory (consistent MySQL logical dump, Redis RDB, a full tar of the assets volume, with a timestamp/git-commit/SHA-256 manifest), and `deploy/restore.sh` pours a directory back into the running stack (overwrite-style; it confirms before acting):
 
 ```bash
 make backup                          # → backups/YYYYmmdd-HHMMSS/
-make restore DIR=backups/YYYYmmdd-HHMMSS   # 追加 Y=1 跳过交互确认
+make restore DIR=backups/YYYYmmdd-HHMMSS   # append Y=1 to skip the interactive confirmation
 ```
 
-两者都要求 compose 栈在运行(借助容器内的 mysqldump/redis-cli/tar,宿主机无需装任何数据库工具)。备份打包素材卷时 canvas 会停服数秒(防 tar 撕裂,在途画布任务随重启恢复机制照常重跑);跨三个存储间没有全局一致点,建议在低峰期执行。定期备份示例(每天凌晨 3 点):
+Both require the compose stack to be running (they use in-container mysqldump/redis-cli/tar — no database tools on the host). While the assets volume is being packed, canvas pauses for a few seconds (to prevent a torn tar; in-flight canvas tasks re-run via the restart-recovery mechanism); there is no global consistency point across the three stores, so run during off-peak hours. Periodic backup example (daily at 3 AM):
 
 ```
 0 3 * * * cd /path/to/InfiniteChance && deploy/backup.sh >> backups/backup.log 2>&1
 ```
 
-恢复演练:备份 → `docker compose down -v` 清掉全部数据卷 → `docker compose up -d` → `deploy/restore.sh <目录> -y` → 验证登录、渠道、Redis 键与素材俱在。
+Restore drill: backup → `docker compose down -v` to wipe all data volumes → `docker compose up -d` → `deploy/restore.sh <dir> -y` → verify that login, channels, Redis keys, and assets are all back.
 
-## 健康检查契约
+## Health-check contract
 
-`GET /healthz`(两个服务相同),全部依赖可达返回 200,否则 503:
+`GET /healthz` (identical on both services): 200 when every dependency is reachable, 503 otherwise:
 
 ```json
 {
@@ -126,27 +128,27 @@ make restore DIR=backups/YYYYmmdd-HHMMSS   # 追加 Y=1 跳过交互确认
 }
 ```
 
-依赖不可达时对应 `checks` 项为 `"status": "down"` 并带 `error` 摘要。compose 里 gateway/canvas 各挂了 `/healthz` 健康检查,两个前端容器等后端 healthy 才启动——页面打开即服务可用。
+When a dependency is unreachable, its `checks` entry reads `"status": "down"` with an `error` summary. compose attaches `/healthz` health checks to gateway/canvas, and the two frontend containers start only after their backends turn healthy — if the page loads, the service is up.
 
-## 管理端鉴权
+## Admin auth
 
-单管理员账号 + JWT 会话,网关与画布共用一套账号体系:
+A single admin account + JWT sessions, shared by gateway and canvas:
 
-- **首次使用**:全新库访问管理后台时出现初始化引导,创建唯一管理员账号并顺路录入首个厂商渠道;初始化完成后引导不再出现。
-- **登录**:网关校验账号密码后签发 HS256 JWT(有效期 7 天);无 token、签名不符或过期的请求一律返回标准 401(`{"error":{"code","message"}}` + `WWW-Authenticate`)。
-- **跨服务校验**:canvas/server 用同一密钥校验网关签发的 JWT,`JWT_SECRET` 环境变量必须两个服务一致。compose 透传宿主机的 `JWT_SECRET`;未设置时两服务回退到内置开发密钥(仅限本地开发)。生产部署请设置 `JWT_SECRET` 并开启 `JWT_SECRET_REQUIRED=true`——后者会在密钥缺失时拒绝启动,避免带着公开密钥上线。
+- **First use**: visiting the admin console on a fresh database shows the init wizard — create the single admin account and, on the way, enter the first vendor channel; the wizard never appears again after initialization.
+- **Login**: the gateway verifies credentials and issues an HS256 JWT (valid for 7 days); requests without a token, with a bad signature, or expired always get a standard 401 (`{"error":{"code","message"}}` + `WWW-Authenticate`).
+- **Cross-service verification**: canvas/server verifies gateway-issued JWTs with the same secret — the `JWT_SECRET` environment variable must be identical in both services. compose passes the host's `JWT_SECRET` through; when unset, both services fall back to a built-in dev secret (local development only). For production, set `JWT_SECRET` and enable `JWT_SECRET_REQUIRED=true` — the latter refuses to start when the secret is missing, so you never go live with a public key.
 
-`GET /auth/status`、`POST /auth/init`、`POST /auth/login` 为公开端点;`GET /auth/me` 需 Bearer token(网关与画布均提供)。
+`GET /auth/status`, `POST /auth/init`, and `POST /auth/login` are public endpoints; `GET /auth/me` requires a Bearer token (offered by both gateway and canvas).
 
-## 常用命令
+## Common commands
 
 ```bash
-make up          # compose 拉起全栈(六个服务)
-make down        # 停止(数据卷保留)
-make backup      # 备份 MySQL/Redis/素材卷 → backups/<时间戳>/
-make restore     # 从备份恢复(需 DIR= 参数,见上)
+make up          # compose brings up the full stack (six services)
+make down        # stop (data volumes kept)
+make backup      # back up MySQL/Redis/assets volume → backups/<timestamp>/
+make restore     # restore from a backup (needs DIR=, see above)
 make test        # go vet + go test + pnpm -r test
 make lint        # go vet + pnpm -r lint
 ```
 
-配置经环境变量注入:`PORT`、`MYSQL_DSN`、`REDIS_ADDR`、`JWT_SECRET`(服务),compose 栈的端口/密码/密钥经 `.env` 注入(见 `.env.example`)。
+Configuration is injected via environment variables: `PORT`, `MYSQL_DSN`, `REDIS_ADDR`, `JWT_SECRET` (services); the compose stack's ports/passwords/keys come from `.env` (see `.env.example`).
