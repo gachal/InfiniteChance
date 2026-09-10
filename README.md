@@ -48,6 +48,7 @@ admin-web        Vue3 unified admin console (:5173 dev / :8090 deployed)
 packages/api     shared frontend request layer (@infinitechance/api)
 packages/ui      shared frontend components (HealthCard)
 deploy/          deployment artifacts: nginx configs + backup/restore scripts
+desktop/         Wails v3 desktop shell (SQLite; canvas main window + admin config window)
 ```
 
 The Go side is a single module (`github.com/gachal/InfiniteChance`) with two binaries; `internal/` holds code shared by both services. The frontend is a pnpm workspace.
@@ -73,6 +74,17 @@ Afterwards, create a service-level key under "API Keys", put it into `CANVAS_SER
 For public/long-lived deployments: generate `JWT_SECRET` with `openssl rand -hex 32`, put it in `.env`, and set `JWT_SECRET_REQUIRED=true` (services refuse to start when the secret is missing). All settings and comments: [.env.example](.env.example).
 
 Frontend development can still use dev servers (hot reload): `pnpm install && make dev-admin` (:5173) / `make dev-canvas` (:5174), reaching 8080/8081 through the vite proxies.
+
+## Desktop app
+
+`desktop/` packages the same two services into one native app (Wails v3 beta): **one process, one SQLite file — no Docker, no MySQL, no Redis** (Redis was only ever a health-check ping). The canvas opens as the main window; the admin console is an on-demand configuration window (app menu, and auto-opened on first run). The gateway keeps serving the OpenAI-compatible `/v1` on `127.0.0.1:8080` for external SDKs; ports are configurable via `gateway_port`/`canvas_port` in `config.json`, and an occupied port fails the boot loudly instead of drifting.
+
+```bash
+make desktop                                # builds both SPAs, embeds them, -> desktop/build/bin/InfiniteChance
+open desktop/build/bin/InfiniteChance
+```
+
+Data lives in the OS application-data directory — `~/Library/Application Support/InfiniteChance` on macOS, `%APPDATA%\InfiniteChance` on Windows, `~/.config/InfiniteChance` on Linux — holding `app.db`, `assets/` and `config.json`; copying that directory is a full backup. First boot auto-provisions the canvas service key and a random `JWT_SECRET`; a revoked service key re-provisions on the next start. Desktop data is independent of the Docker stack (fresh init; see [ADR 0001](docs/adr/0001-sqlite-dual-dialect-stores.md) for the SQLite dual-dialect decision). Dev mode: `make dev-desktop`, with `INFINITECHANCE_DEV=1` plus `INFINITECHANCE_DEV_CANVAS`/`INFINITECHANCE_DEV_ADMIN` to point the windows at the vite dev servers, and `INFINITECHANCE_DATA_DIR` to relocate the data directory.
 
 ## Ports
 

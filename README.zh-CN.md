@@ -48,6 +48,7 @@ admin-web        Vue3 统一管理后台(:5173 dev / :8090 部署)
 packages/api     前端共享请求层(@infinitechance/api)
 packages/ui      前端共享组件(HealthCard 健康卡片)
 deploy/          部署物:nginx 配置 + 备份/恢复脚本
+desktop/         Wails v3 桌面壳(SQLite;画布主窗 + 管理台配置窗)
 ```
 
 Go 侧单 module(`github.com/gachal/InfiniteChance`)、双入口;`internal/` 为两服务共享代码。前端为 pnpm workspace。
@@ -73,6 +74,17 @@ docker compose up -d --build
 公网/长期部署:`openssl rand -hex 32` 生成 `JWT_SECRET` 填入 `.env`,并把 `JWT_SECRET_REQUIRED=true`(密钥缺失时服务拒绝启动)。全部可配项与注释见 [.env.example](.env.example)。
 
 前端开发仍可走 dev 服务器(热更新):`pnpm install && make dev-admin`(:5173)/ `make dev-canvas`(:5174),经 vite 代理访问 8080/8081。
+
+## 桌面版
+
+`desktop/` 把同样的两个服务装进一个原生应用(Wails v3 beta):**单进程、单 SQLite 文件——不需要 Docker、MySQL、Redis**(Redis 本就只承担健康检查 ping)。画布是主窗口,管理台是按需打开的配置窗口(应用菜单,首启自动带开)。网关继续在 `127.0.0.1:8080` 提供 OpenAI 兼容 `/v1` 供外部 SDK 指向;端口经 `config.json` 的 `gateway_port`/`canvas_port` 修改,端口被占时启动明确报错而不是悄悄换口。
+
+```bash
+make desktop                                # 构建两个 SPA 并内嵌 → desktop/build/bin/InfiniteChance
+open desktop/build/bin/InfiniteChance
+```
+
+数据落 OS 应用数据目录——macOS `~/Library/Application Support/InfiniteChance`、Windows `%APPDATA%\InfiniteChance`、Linux `~/.config/InfiniteChance`——内含 `app.db`、`assets/` 与 `config.json`;整目录拷贝即完整备份。首启自动开通画布服务级 key 并生成随机 `JWT_SECRET`;服务 key 被吊销后下次启动自动重新开通。桌面版数据与 Docker 栈互不通用(全新初始化;SQLite 双方言决策见 [ADR 0001](docs/adr/0001-sqlite-dual-dialect-stores.md))。开发模式:`make dev-desktop`,配 `INFINITECHANCE_DEV=1` 与 `INFINITECHANCE_DEV_CANVAS`/`INFINITECHANCE_DEV_ADMIN`(vite dev server 地址)可让窗口指向热更前端,`INFINITECHANCE_DATA_DIR` 可改挂数据目录。
 
 ## 端口
 
