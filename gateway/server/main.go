@@ -13,9 +13,9 @@ import (
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
-	"github.com/gachal/InfiniteChance/internal/relay"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
+	"github.com/gachal/InfiniteChance/internal/wiring"
 )
 
 func main() {
@@ -49,30 +49,14 @@ func main() {
 			log.Fatalf("ensure prompt template schema: %v", err)
 		}
 
-		issuer := auth.NewIssuerFromConfig(d.Config)
-		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
-
-		// 管理面:统一走 JWT 会话;中转面(/v1)统一走 apikey.RequireKey,
-		// 两者互不混用。
-		admin := r.Group("/admin", auth.RequireAuth(issuer))
-		channel.RegisterAdminRoutes(admin, &channel.Handlers{
-			Store:  channels,
-			Tester: &channel.Tester{},
-		})
-		apikey.RegisterAdminRoutes(admin, &apikey.Handlers{Store: keys})
-		pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: prices})
-		// 提示词模板:管理端维护,画布侧经共享库即时读取(11 号票)。
-		prompttemplate.RegisterAdminRoutes(admin, &prompttemplate.Handlers{Store: promptTemplates})
-		// 用量审计:请求级日志列表与按天/模型/渠道汇总(15 号票)。
-		usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: usageLogs})
-
-		v1 := r.Group("/v1", apikey.RequireKey(keys))
-		relay.RegisterRoutes(v1, &relay.Handlers{
-			Channels: channels,
-			Keys:     keys,
-			Prices:   prices,
-			Usage:    usageLogs,
-			Tasks:    videoTasks,
+		wiring.GatewayRoutes(r, d.Config, wiring.GatewayStores{
+			Auth:            store,
+			Channels:        channels,
+			Keys:            keys,
+			Prices:          prices,
+			UsageLogs:       usageLogs,
+			VideoTasks:      videoTasks,
+			PromptTemplates: promptTemplates,
 		})
 	})
 }

@@ -15,8 +15,8 @@ import (
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
-	"github.com/gachal/InfiniteChance/internal/promptgen"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/wiring"
 )
 
 func main() {
@@ -58,48 +58,15 @@ func main() {
 			log.Printf("WARNING: 素材对象存储不可用(%v),生成产物将无法转存", err)
 		}
 
-		issuer := auth.NewIssuerFromConfig(d.Config)
-		auth.RegisterRoutes(r, &auth.Handlers{Store: store, Issuer: issuer})
-
-		// 画布面:一律先过 JWT 会话,与管理面同一套令牌体系。
 		gateway := serviceGateway(d.Config)
-		group := r.Group("/canvases", auth.RequireAuth(issuer))
-		canvas.RegisterRoutes(group, &canvas.Handlers{Store: canvases})
-		canvastask.RegisterRoutes(group, &canvastask.Handlers{
-			Tasks:    tasks,
-			Canvases: canvases,
-			Models:   prices,
-			Assets:   assets,
-			Gateway:  gateway,
-		})
-		// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
-		// 直接以 gateway_unconfigured 拒绝(serviceGateway 已打警告)。
-		var chatGateway promptgen.Gateway
-		if gateway != nil {
-			chatGateway = promptgen.NewClient(d.Config.GatewayBaseURL, d.Config.CanvasServiceKey)
-		}
-		promptgen.RegisterRoutes(group, &promptgen.Handlers{
-			Templates: templates,
+		wiring.CanvasRoutes(r, d.Config, wiring.CanvasStores{
+			Auth:      store,
 			Canvases:  canvases,
 			Assets:    assets,
-			Models:    prices,
-			Gateway:   chatGateway,
-		})
-
-		// 素材内容寻址例外 —— 节点用 <img>/<video> 预览,带不了
-		// Authorization 头(见 asset 包);素材库的列表/删除挂 JWT 会话,
-		// 画布素材面板与管理端素材页共用。
-		canvastask.RegisterModelRoutes(r.Group("/image-models", auth.RequireAuth(issuer)),
-			&canvastask.ModelHandlers{Prices: prices})
-		canvastask.RegisterVideoModelRoutes(r.Group("/video-models", auth.RequireAuth(issuer)),
-			&canvastask.ModelHandlers{Prices: prices})
-		promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
-			&promptgen.CatalogHandlers{Templates: templates})
-		promptgen.RegisterModelRoutes(r.Group("/prompt-models", auth.RequireAuth(issuer)),
-			&promptgen.ModelHandlers{Prices: prices})
-		asset.RegisterContentRoutes(r.Group("/assets"), &asset.Handlers{Store: assets, Storage: storage})
-		asset.RegisterLibraryRoutes(r.Group("/assets", auth.RequireAuth(issuer)),
-			&asset.Handlers{Store: assets, Storage: storage})
+			Prices:    prices,
+			Tasks:     tasks,
+			Templates: templates,
+		}, gateway, storage)
 
 		startWorker(tasks, gateway, d.Config, storage)
 	})
