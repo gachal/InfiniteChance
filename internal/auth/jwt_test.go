@@ -19,7 +19,10 @@ func issue(t *testing.T, secret string, at time.Time) (string, time.Time) {
 }
 
 func TestIssueThenParseRoundTrip(t *testing.T) {
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	// 签发时刻用当前时钟(截断到秒,与 Issue 的 NumericDate 截断一致;
+	// Truncate 同时剥离单调时钟,下面的 Equal 才成立):
+	// 固定日期会变成定时炸弹 —— exp 按真实时钟校验,日期一过即永久失败。
+	now := time.Now().Truncate(time.Second)
 	token, expiresAt := issue(t, "secret-1", now)
 
 	if !expiresAt.Equal(now.Add(auth.SessionTTL)) {
