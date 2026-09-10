@@ -17,3 +17,12 @@ backups/
 
 # OS
 .DS_Store
+
+# 桌面版内嵌的前端构建产物(make desktop-frontend 复制,不入库)
+desktop/web/admin/*
+desktop/web/canvas/*
+!desktop/web/admin/.gitkeep
+!desktop/web/canvas/.gitkeep
+
+# 桌面版构建产物(二进制,不入库)
+desktop/build/

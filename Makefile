@@ -45,3 +45,15 @@ dev-admin: ## 启动管理后台 dev 服务器(:5173)
 
 dev-canvas: ## 启动画布前端 dev 服务器(:5174)
 	pnpm --filter canvas-web dev
+
+desktop-frontend: ## 构建两个 SPA 并复制进桌面内嵌目录(desktop/web/*)
+	pnpm --filter admin-web build
+	pnpm --filter canvas-web build
+	rsync -a --delete --exclude='.gitkeep' admin-web/dist/ desktop/web/admin/
+	rsync -a --delete --exclude='.gitkeep' canvas/web/dist/ desktop/web/canvas/
+
+desktop: desktop-frontend ## 构建桌面应用(先自动构建 SPA)→ desktop/build/bin/
+	go build -o desktop/build/bin/InfiniteChance ./desktop
+
+dev-desktop: ## 跑桌面壳(配合 INFINITECHANCE_DEV=1 可指向 vite dev server)
+	go run ./desktop
