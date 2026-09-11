@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 视频节点:图生视频任务的展示面(12 号票)。任务在途时显示进度并可
 // 取消(取消不计费),失败显示原因与原地重试(预扣已退回),取消留痕;
-// 产物落位后内嵌播放,并提供视频反推提示词入口(13 号票:选中模型即
-// 反推,动作上抛给编辑器,提示词落为新提示词节点)。
+// 产物落位后内嵌播放,并提供视频反推提示词入口(13 号票)与分析入口
+// (17 号票:选定模型即发起,动作上抛给编辑器 —— 反推落新提示词节点,
+// 分析落新分析节点)。
 import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
@@ -24,12 +25,15 @@ const props = defineProps<{
   chatModels: string[]
   /** 视频反推的在途标记(编辑器级状态)。 */
   reverseGenerating: boolean
+  /** 画布分析的在途标记(编辑器级状态,任一分析在途即禁用)。 */
+  analyzing: boolean
 }>()
 
 const emit = defineEmits<{
   retry: []
   cancel: []
   'reverse-prompt': [payload: { model: string }]
+  analyze: [payload: { model: string }]
 }>()
 
 const status = computed(() => props.task?.status)
@@ -45,9 +49,12 @@ watch(
   { immediate: true },
 )
 
-// 产物落位才有可反推的视频;聊天模型目录为空时入口整个隐藏。
+// 产物落位才有可反推/可分析的视频;聊天模型目录为空时入口整个隐藏。
 const canReverse = computed(
   () => !!props.data.url && reverseModel.value !== '' && !props.reverseGenerating,
+)
+const canAnalyze = computed(
+  () => !!props.data.url && reverseModel.value !== '' && !props.analyzing,
 )
 
 // 产物加载失败(素材被删除、对象被清理):显示占位而非报错(14 号票)。
@@ -65,6 +72,13 @@ function submitReverse(): void {
     return
   }
   emit('reverse-prompt', { model: reverseModel.value })
+}
+
+function submitAnalyze(): void {
+  if (!canAnalyze.value) {
+    return
+  }
+  emit('analyze', { model: reverseModel.value })
 }
 </script>
 
@@ -141,7 +155,7 @@ function submitReverse(): void {
       <div class="reverse-row">
         <select
           v-model="reverseModel"
-          title="反推用的聊天模型"
+          title="反推/分析用的聊天模型"
         >
           <option
             v-for="m in chatModels"
@@ -159,6 +173,17 @@ function submitReverse(): void {
           @click="submitReverse"
         >
           {{ reverseGenerating ? '反推中…' : '反推提示词' }}
+        </button>
+      </div>
+      <div class="reverse-row">
+        <button
+          class="analyze-btn"
+          type="button"
+          :disabled="!canAnalyze"
+          title="分析视频生成分镜报告,落为分析节点"
+          @click="submitAnalyze"
+        >
+          {{ analyzing ? '分析中…' : '分析' }}
         </button>
       </div>
     </div>
@@ -349,6 +374,25 @@ video {
 }
 
 .reverse-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 分析动作(17 号票):整行按钮,描边用分析节点的淡紫 —— 与反推同属
+ * 聊天驱动动作,但落点是分析节点而非提示词节点。 */
+.analyze-btn {
+  width: 100%;
+  background: transparent;
+  border: 1px solid rgba(165, 180, 252, 0.55);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #a5b4fc;
+}
+
+.analyze-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 图片节点:文生图任务的展示面(10 号票)。任务在途时显示排队/生成中,
 // 失败显示原因与原地重试,产物落位后直接呈现图片;有产物时提供图生视频
-// 动作入口(12 号票)—— 以本节点产物为参考图,结果落为新的视频节点。
+// 动作入口(12 号票)与分析入口(17 号票)—— 前者以本节点产物为参考图
+// 落新视频节点,后者经网关多模态聊天理解产物、落新分析节点。
 import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
@@ -21,11 +22,16 @@ const props = defineProps<{
   videoModels: string[]
   /** 图生视频提交在途(编辑器级状态,防止连点开多个任务)。 */
   videoGenerating: boolean
+  /** 可用的 token 轨聊天模型(编辑器从 /prompt-models 拉取)。 */
+  chatModels: string[]
+  /** 画布分析的在途标记(编辑器级状态,任一分析在途即禁用)。 */
+  analyzing: boolean
 }>()
 
 const emit = defineEmits<{
   retry: []
   'generate-video': [payload: { model: string; prompt: string; seconds: number }]
+  analyze: [payload: { model: string }]
 }>()
 
 const status = computed(() => props.task?.status)
@@ -80,6 +86,30 @@ function submitGenerateVideo(): void {
     prompt: videoPrompt.value.trim(),
     seconds: videoSeconds.value,
   })
+}
+
+const analyzeModel = ref('')
+watch(
+  () => props.chatModels,
+  (list) => {
+    if (!list.includes(analyzeModel.value)) {
+      analyzeModel.value = list.length > 0 ? list[0] : ''
+    }
+  },
+  { immediate: true },
+)
+
+// 分析与图生视频共用 hasReference 的地址判断:data URI 节点在服务端
+// 也会被拒,入口直接不出现。
+const canAnalyze = computed(
+  () => hasReference.value && analyzeModel.value !== '' && !props.analyzing,
+)
+
+function submitAnalyze(): void {
+  if (!canAnalyze.value) {
+    return
+  }
+  emit('analyze', { model: analyzeModel.value })
 }
 </script>
 
@@ -175,6 +205,34 @@ function submitGenerateVideo(): void {
           @click="submitGenerateVideo"
         >
           {{ videoGenerating ? '提交中…' : '生成视频' }}
+        </button>
+      </div>
+    </div>
+    <div
+      v-if="hasReference && chatModels.length > 0"
+      class="analyze"
+    >
+      <div class="analyze-row">
+        <select
+          v-model="analyzeModel"
+          title="分析用的聊天模型"
+        >
+          <option
+            v-for="m in chatModels"
+            :key="m"
+            :value="m"
+          >
+            {{ m }}
+          </option>
+        </select>
+        <button
+          class="analyze-btn"
+          type="button"
+          :disabled="!canAnalyze"
+          title="分析图片产出画面理解,落为分析节点"
+          @click="submitAnalyze"
+        >
+          {{ analyzing ? '分析中…' : '分析' }}
         </button>
       </div>
     </div>
@@ -343,6 +401,44 @@ img {
 
 .video-gen-btn:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 分析动作(17 号票):模型选择 + 触发按钮,描边用分析节点的淡紫。 */
+.analyze {
+  margin-top: 8px;
+}
+
+.analyze-row {
+  display: flex;
+  gap: 6px;
+}
+
+.analyze-row select {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px;
+  color: inherit;
+  font-size: 12px;
+}
+
+.analyze-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(165, 180, 252, 0.55);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #a5b4fc;
+}
+
+.analyze-btn:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 </style>

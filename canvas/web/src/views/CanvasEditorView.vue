@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 画布编辑器:vue-flow 三类节点、自由拖拽连线、整图防抖自动保存
-// 与版本冲突处理(09 号票);文生图任务编排的客户端侧(10 号票):
-// 生成动作 → 结果节点先落库再提交 → 轮询任务 → 产物写回节点。
+// 画布编辑器:vue-flow 四类节点(提示词/图片/视频,17 号票起加分析)、
+// 自由拖拽连线、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
+// 编排的客户端侧(10 号票):生成动作 → 结果节点先落库再提交 → 轮询
+// 任务 → 产物写回节点。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
@@ -28,6 +29,7 @@ import {
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import AssetPanel from '../components/AssetPanel.vue'
+import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PromptNode from '../components/nodes/PromptNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
@@ -397,6 +399,104 @@ async function onReversePrompt(
   } finally {
     videoReverseGenerating.value = false
   }
+}
+
+// ---- 画布分析(17 号票)----
+
+// 在途分析绑定到分析节点 id:来源节点上的按钮只看「有没有分析在跑」,
+// 分析节点自己则按 id 命中「分析中…」占位。一次只跑一个分析(聊天动作
+// 无取消语义,连点只会多花钱)。
+const analyzingNode = ref('')
+
+/** 执行一次分析:以来源节点的产物地址发起同步调用,文本写入分析节点。
+ * 失败时分析节点保留(文本为空),由横幅报错 —— 空节点可原地重新分析
+ * 或删除(选中 + Delete)。 */
+async function runAnalysis(
+  sourceNodeId: string,
+  analysisNodeId: string,
+  payload: { model: string },
+): Promise<void> {
+  const source = findNode(sourceNodeId)
+  const media = source?.data as MediaNodeData | undefined
+  if (!source || !media?.url || payload.model === '') {
+    return
+  }
+  if (source.type !== 'video' && source.type !== 'image') {
+    return
+  }
+  analyzingNode.value = analysisNodeId
+  generateError.value = ''
+  try {
+    const result = await client.analyzeMedia(canvasId, {
+      node_id: analysisNodeId,
+      media_url: media.url,
+      media_kind: source.type,
+      model: payload.model,
+    })
+    updateNodeData(analysisNodeId, { text: result.text, model: payload.model })
+    autosave.markDirty()
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '分析失败,请稍后再试'
+  } finally {
+    analyzingNode.value = ''
+  }
+}
+
+/** 视频/图片节点上的「分析」动作:分析节点与连线先入图并立即落盘
+ * (flush 跳过防抖),再发起同步调用 —— 与生成任务「结果节点先落库再
+ * 提交」同一纪律,分析比反推慢,用户需要看到占位。 */
+async function onAnalyzeAction(
+  sourceNodeId: string,
+  payload: { model: string },
+): Promise<void> {
+  if (analyzingNode.value !== '') {
+    return
+  }
+  const source = findNode(sourceNodeId)
+  if (!source || (source.type !== 'video' && source.type !== 'image')) {
+    return
+  }
+  nodeSeq += 1
+  const analysisId = `analysis-${Date.now()}-${nodeSeq}`
+  addNodes([
+    {
+      id: analysisId,
+      type: 'analysis',
+      position: { x: source.position.x + 260, y: source.position.y },
+      data: initialData('analysis'),
+    },
+  ])
+  addEdges([
+    {
+      id: `e-${sourceNodeId}-${analysisId}`,
+      source: sourceNodeId,
+      target: analysisId,
+      sourceHandle: null,
+      targetHandle: null,
+    },
+  ])
+  autosave.markDirty()
+  const saved = await autosave.flush()
+  if (!saved) {
+    generateError.value = '画布尚未保存成功,分析未发起;请先解决保存问题'
+    return
+  }
+  await runAnalysis(sourceNodeId, analysisId, payload)
+}
+
+/** 空分析节点的原地重新分析:经连线找回来源媒体节点,不新建节点。 */
+async function onReanalyze(
+  analysisNodeId: string,
+  payload: { model: string },
+): Promise<void> {
+  if (analyzingNode.value !== '') {
+    return
+  }
+  const sourceId = toObject().edges.find((e) => e.target === analysisNodeId)?.source
+  if (!sourceId) {
+    return
+  }
+  await runAnalysis(sourceId, analysisNodeId, payload)
 }
 
 // 持久化文档:只保留语义字段,vue-flow 的内部装饰不落库。
@@ -801,8 +901,11 @@ function backToList(): void {
             :retrying="retryingNode === nodeProps.id"
             :video-models="videoModels"
             :video-generating="videoGenerating"
+            :chat-models="promptModels"
+            :analyzing="analyzingNode !== ''"
             @retry="onRetry(nodeProps.id)"
             @generate-video="onGenerateVideo(nodeProps.id, $event)"
+            @analyze="onAnalyzeAction(nodeProps.id, $event)"
           />
         </template>
         <template #node-video="nodeProps">
@@ -815,9 +918,21 @@ function backToList(): void {
             :canceling="cancelingNode === nodeProps.id"
             :chat-models="promptModels"
             :reverse-generating="videoReverseGenerating"
+            :analyzing="analyzingNode !== ''"
             @retry="onRetry(nodeProps.id)"
             @cancel="onCancelVideo(nodeProps.id)"
             @reverse-prompt="onReversePrompt(nodeProps.id, $event)"
+            @analyze="onAnalyzeAction(nodeProps.id, $event)"
+          />
+        </template>
+        <template #node-analysis="nodeProps">
+          <AnalysisNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :chat-models="promptModels"
+            :analyzing="analyzingNode === nodeProps.id"
+            @analyze="onReanalyze(nodeProps.id, $event)"
           />
         </template>
       </VueFlow>

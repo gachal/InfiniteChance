@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -691,6 +692,306 @@ func TestReverseSurfacesGatewayFailureAsUpstreamError(t *testing.T) {
 	}
 	code, message := errorBody(t, raw)
 	if code != "upstream_error" || !strings.Contains(message, "不支持视频输入") {
+		t.Errorf("error = %q/%q, want upstream_error with the reason", code, message)
+	}
+}
+
+// ---- analyze(17 号票)----
+
+func TestAnalyzeSendsVideoToGatewayAndReturnsText(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"node_id":    "video-1-1",
+		"media_url":  "https://vendor.example.com/clip.mp4",
+		"media_kind": "video",
+		"model":      "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	var got struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if got.Text != "a neon cyberpunk city at dusk" {
+		t.Errorf("text = %q", got.Text)
+	}
+
+	gateway := env.params.gateway.(*stubGateway)
+	if len(gateway.requests) != 1 {
+		t.Fatalf("gateway calls = %d, want 1", len(gateway.requests))
+	}
+	req := gateway.requests[0]
+	if req.Model != "chat-m" {
+		t.Errorf("model = %q", req.Model)
+	}
+	if req.VideoURL != "https://vendor.example.com/clip.mp4" {
+		t.Errorf("video url = %q, want the passed address", req.VideoURL)
+	}
+	if req.ImageURL != "" {
+		t.Errorf("image url = %q, want empty for a video analysis", req.ImageURL)
+	}
+	if req.Content == "" {
+		t.Errorf("content = empty, want the fixed analysis instruction")
+	}
+	if req.Source != "canvas=7 node=video-1-1 gen=analyze" {
+		t.Errorf("source = %q, want the canvas origin mark", req.Source)
+	}
+}
+
+func TestAnalyzeImageKindSendsImageAndMarksSource(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"node_id":    "image-1-1",
+		"media_url":  "https://vendor.example.com/pic.png",
+		"media_kind": "image",
+		"model":      "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.ImageURL != "https://vendor.example.com/pic.png" {
+		t.Errorf("image url = %q, want the passed address", req.ImageURL)
+	}
+	if req.VideoURL != "" {
+		t.Errorf("video url = %q, want empty for an image analysis", req.VideoURL)
+	}
+	if req.Source != "canvas=7 node=image-1-1 gen=analyze" {
+		t.Errorf("source = %q, want the canvas origin mark", req.Source)
+	}
+}
+
+func TestAnalyzeWithoutNodeIDStillMarksCanvasSource(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.Source != "canvas=7 gen=analyze" {
+		t.Errorf("source = %q, want canvas-only mark", req.Source)
+	}
+}
+
+func TestAnalyzeResolvesAssetContentReference(t *testing.T) {
+	cases := []struct {
+		name      string
+		mediaKind string
+		assetID   int64
+		want      string
+	}{
+		{"video asset", "video", 5, "https://cdn.example.com/generated.mp4"},
+		{"image asset", "image", 6, "https://cdn.example.com/pic.png"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+
+			// 分析来源的媒体普遍持有内容寻址路径:服务端解出素材行的地址,
+			// 编辑器无需知道素材 URL 本体。
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+				"media_url":  fmt.Sprintf("/api/assets/%d/content", tc.assetID),
+				"media_kind": tc.mediaKind,
+				"model":      "chat-m",
+			})
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+			}
+			req := env.params.gateway.(*stubGateway).requests[0]
+			got := req.VideoURL
+			if tc.mediaKind == "image" {
+				got = req.ImageURL
+			}
+			if got != tc.want {
+				t.Errorf("resolved url = %q, want the asset's stored address", got)
+			}
+		})
+	}
+}
+
+func TestAnalyzeValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"missing media_url", map[string]any{"media_kind": "video", "model": "chat-m"}},
+		{"missing media_kind", map[string]any{"media_url": "https://vendor.example.com/clip.mp4", "model": "chat-m"}},
+		{"unknown media_kind", map[string]any{"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "audio", "model": "chat-m"}},
+		{"missing model", map[string]any{"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video"}},
+		{"refusing scheme", map[string]any{"media_url": "file:///etc/passwd", "media_kind": "video", "model": "chat-m"}},
+		{"oversized node_id", map[string]any{"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video", "model": "chat-m", "node_id": strings.Repeat("x", 200)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", tc.body)
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func TestAnalyzeWithMalformedAssetPathAnswers400(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"non-numeric id", "/api/assets/not-a-number/content"},
+		{"wrong suffix", "/api/assets/5/other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+				"media_url": tc.ref, "media_kind": "video", "model": "chat-m",
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func TestAnalyzeWithInlineAssetAnswersMediaInlineUnsupported(t *testing.T) {
+	// 素材行落的 b64 产物与直接携带的 data: URI 同码同因:都在解析边界以
+	// media_inline_unsupported 拒绝(17 号票定的分析端点码)。
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"inline video asset", "/api/assets/7/content"},
+		{"direct data uri", "data:video/mp4;base64,AAAA"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+				"media_url": tc.ref, "media_kind": "video", "model": "chat-m",
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+			code, _ := errorBody(t, raw)
+			if code != "media_inline_unsupported" {
+				t.Errorf("code = %q, want media_inline_unsupported", code)
+			}
+		})
+	}
+}
+
+func TestAnalyzeWithUnknownAssetAnswers404(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"media_url": "/api/assets/99/content", "media_kind": "video", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "asset_not_found" {
+		t.Errorf("code = %q, want asset_not_found", code)
+	}
+}
+
+func TestAnalyzeWithKindMismatchedAssetAnswers400(t *testing.T) {
+	cases := []struct {
+		name      string
+		mediaKind string
+		assetID   int64
+		wantCode  string
+	}{
+		{"image asked for as video", "video", 6, "asset_not_video"},
+		{"video asked for as image", "image", 5, "asset_not_image"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+				"media_url":  fmt.Sprintf("/api/assets/%d/content", tc.assetID),
+				"media_kind": tc.mediaKind,
+				"model":      "chat-m",
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+			code, _ := errorBody(t, raw)
+			if code != tc.wantCode {
+				t.Errorf("code = %q, want %s", code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestAnalyzeWithNonTokenModelAnswers400(t *testing.T) {
+	cases := []struct {
+		name  string
+		model string
+	}{
+		{"call-track model", "img-m"},
+		{"unpriced model", "no-such-model"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+				"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video", "model": tc.model,
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+			code, _ := errorBody(t, raw)
+			if code != "model_not_priced" {
+				t.Errorf("code = %q, want model_not_priced", code)
+			}
+		})
+	}
+}
+
+func TestAnalyzeOnMissingCanvasAnswers404(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/99/analyze", map[string]any{
+		"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", res.StatusCode, raw)
+	}
+}
+
+func TestAnalyzeWithoutGatewayAnswers503(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) { p.gateway = nil })
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "gateway_unconfigured" {
+		t.Errorf("code = %q, want gateway_unconfigured", code)
+	}
+}
+
+func TestAnalyzeSurfacesGatewayFailureAsUpstreamError(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.gateway = &stubGateway{err: errors.New("gateway 400: 该模型不支持视觉输入")}
+	})
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"media_url": "https://vendor.example.com/clip.mp4", "media_kind": "video", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body = %s", res.StatusCode, raw)
+	}
+	code, message := errorBody(t, raw)
+	if code != "upstream_error" || !strings.Contains(message, "不支持视觉输入") {
 		t.Errorf("error = %q/%q, want upstream_error with the reason", code, message)
 	}
 }

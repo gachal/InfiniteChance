@@ -173,6 +173,39 @@ func TestGenerateChatWithVideoSendsMultimodalContentParts(t *testing.T) {
 	}
 }
 
+func TestGenerateChatWithImageSendsImagePartAheadOfText(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, chatCompletion("分析报告"))
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	if _, err := client.GenerateChat(context.Background(), promptgen.ChatRequest{
+		Model:    "vl-m",
+		Content:  "分析指令",
+		ImageURL: "https://cdn.example.com/pic.png",
+	}); err != nil {
+		t.Fatalf("GenerateChat: %v", err)
+	}
+
+	messages, _ := gateway.last.Body["messages"].([]any)
+	message, _ := messages[0].(map[string]any)
+	parts, _ := message["content"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("content = %v, want image part ahead of text part", message["content"])
+	}
+	image, _ := parts[0].(map[string]any)
+	if image["type"] != "image_url" {
+		t.Errorf("part[0] = %v, want an image_url part", image)
+	}
+	imageRef, _ := image["image_url"].(map[string]any)
+	if imageRef["url"] != "https://cdn.example.com/pic.png" {
+		t.Errorf("image_url = %v, want the passed address", imageRef)
+	}
+	text, _ := parts[1].(map[string]any)
+	if text["type"] != "text" || text["text"] != "分析指令" {
+		t.Errorf("part[1] = %v, want the instruction as a text part", text)
+	}
+}
+
 func TestGenerateChatOmitsSourceHeaderWhenEmpty(t *testing.T) {
 	gateway := newFakeGateway(http.StatusOK, chatCompletion("答案"))
 	server := newGatewayServer(t, gateway)

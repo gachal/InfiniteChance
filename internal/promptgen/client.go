@@ -41,15 +41,17 @@ func NewClient(baseURL, key string) *Client {
 
 // ChatRequest is one prompt generation: the fully rendered message (template
 // with the topic filled in) and the public chat model to run it on.
-// VideoURL makes the call multimodal (13 号票视频反推提示词): the message
-// carries the video ahead of the text as a video_url content part — the
-// OpenAI-compatible convention vendors serving vision models accept. Empty
-// VideoURL keeps the plain text shape of the template-driven generation.
+// VideoURL / ImageURL make the call multimodal (13 号票视频反推、17 号票
+// 画布分析):the message carries the media ahead of the text as a
+// video_url / image_url content part — the OpenAI-compatible convention
+// vendors serving vision models accept. Both empty keeps the plain text
+// shape of the template-driven generation.
 // Source is the canvas origin mark (X-InfiniteChance-Source 值).
 type ChatRequest struct {
 	Model    string
 	Content  string
 	VideoURL string
+	ImageURL string
 	Source   string
 }
 
@@ -132,27 +134,34 @@ type chatMessage struct {
 }
 
 // userMessage builds the single user message a generation sends: plain text
-// for the template-driven shape, or a multimodal part array — video ahead of
-// text — when a video reference rides along.
+// for the template-driven shape, or a multimodal part array — media ahead of
+// text — when a video or image reference rides along.
 func userMessage(req ChatRequest) chatMessage {
-	if req.VideoURL == "" {
+	if req.VideoURL == "" && req.ImageURL == "" {
 		return chatMessage{Role: "user", Content: req.Content}
 	}
-	return chatMessage{Role: "user", Content: []chatContentPart{
-		{Type: "video_url", VideoURL: &videoURLPart{URL: req.VideoURL}},
-		{Type: "text", Text: req.Content},
-	}}
+	parts := make([]chatContentPart, 0, 2)
+	if req.VideoURL != "" {
+		parts = append(parts, chatContentPart{Type: "video_url", VideoURL: &mediaURLPart{URL: req.VideoURL}})
+	}
+	if req.ImageURL != "" {
+		parts = append(parts, chatContentPart{Type: "image_url", ImageURL: &mediaURLPart{URL: req.ImageURL}})
+	}
+	parts = append(parts, chatContentPart{Type: "text", Text: req.Content})
+	return chatMessage{Role: "user", Content: parts}
 }
 
 // chatContentPart is one multimodal content part; the pointer shape keeps
-// the two part kinds on a single struct without emitting empty fields.
+// the part kinds on a single struct without emitting empty fields.
 type chatContentPart struct {
 	Type     string        `json:"type"`
 	Text     string        `json:"text,omitempty"`
-	VideoURL *videoURLPart `json:"video_url,omitempty"`
+	VideoURL *mediaURLPart `json:"video_url,omitempty"`
+	ImageURL *mediaURLPart `json:"image_url,omitempty"`
 }
 
-type videoURLPart struct {
+// mediaURLPart is the {url} payload video_url and image_url parts share.
+type mediaURLPart struct {
 	URL string `json:"url"`
 }
 

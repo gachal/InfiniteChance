@@ -4,6 +4,7 @@ import {
   ApiClient,
   ApiError,
   UnauthorizedError,
+  type AnalyzeInput,
   type CanvasDetail,
   type CanvasGraph,
   type CanvasSummary,
@@ -533,6 +534,23 @@ describe('ApiClient prompt generation (canvas)', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(502)
     expect((err as ApiError).code).toBe('upstream_error')
+  })
+
+  it('analyzeMedia POSTs the media reference to the canvas analyze path', async () => {
+    const fetchImpl = stubFetch(200, { text: '# 分镜表\n…' })
+    const client = clientWithBase(fetchImpl)
+
+    const input: AnalyzeInput = {
+      node_id: 'analysis-1-1',
+      media_url: '/api/assets/5/content',
+      media_kind: 'video',
+      model: 'chat-m',
+    }
+    await expect(client.analyzeMedia(7, input)).resolves.toEqual({ text: '# 分镜表\n…' })
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/analyze')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
   })
 })
 

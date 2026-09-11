@@ -22,12 +22,12 @@ import (
 
 // 输入上限与既有约定对齐:node_id 与节点 id 列约定同宽(VARCHAR(128)),
 // model 走 pricing 的公开模型名上限,topic 是用户手输的一段话,
-// video_url 对齐 canvastask 参考图地址的上限(厂商可拉取的 http(s) 地址
+// media_url 对齐 canvastask 参考图地址的上限(厂商可拉取的 http(s) 地址
 // 或素材内容寻址路径)。
 const (
 	maxNodeIDRunes   = 128
 	maxTopicRunes    = 4000
-	maxVideoRefRunes = 4096
+	maxMediaRefRunes = 4096
 )
 
 // TemplateSource is the slice of the template store the handlers need: the
@@ -81,9 +81,11 @@ type Handlers struct {
 //
 //	POST /:id/generate-prompt — {node_id?, template_id, topic, model} → text
 //	POST /:id/reverse-prompt  — {node_id?, video_url, model} → text
+//	POST /:id/analyze         — {node_id?, media_url, media_kind, model} → text
 func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/:id/generate-prompt", h.Generate)
 	group.POST("/:id/reverse-prompt", h.Reverse)
+	group.POST("/:id/analyze", h.Analyze)
 }
 
 type generateInput struct {
@@ -249,7 +251,7 @@ func (h *Handlers) Reverse(c *gin.Context) {
 		apierr.InvalidRequest(c, "video_url 不能为空")
 		return
 	}
-	if utf8.RuneCountInString(videoRef) > maxVideoRefRunes {
+	if utf8.RuneCountInString(videoRef) > maxMediaRefRunes {
 		apierr.InvalidRequest(c, "video_url 最多 4096 个字符")
 		return
 	}
@@ -266,9 +268,9 @@ func (h *Handlers) Reverse(c *gin.Context) {
 		return
 	}
 
-	videoURL, err := h.resolveVideo(c.Request.Context(), videoRef)
+	videoURL, err := h.resolveMedia(c.Request.Context(), videoRef, asset.KindVideo)
 	if err != nil {
-		h.failVideoRef(c, err)
+		h.failMediaRef(c, err, "video_url", "video_inline_unsupported", asset.KindVideo)
 		return
 	}
 
@@ -286,72 +288,195 @@ func (h *Handlers) Reverse(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"text": result.Content})
 }
 
-// 视频引用解析的失败形状:引用形状不对(400)、素材不存在(404)、素材
-// 不是视频(400)、内联 data: URI 视频(400,12 号票同款决策:data URI
-// 进不了网关媒体契约 —— 无论是直接携带还是素材落库的 b64 产物,边界处
-// 同码同因地拒绝,不留给网关预扣或上游拒收去炸难懂的错)。哨兵错误让
-// resolveVideo 保持纯解析,状态码由这里定。
+// analyzeInput is one analyze request (17 号票):media_url 是视频/图片
+// 节点持有的地址,与反推同一套引用规则;media_kind 声明输入种类,决定
+// 多模态分节的形状(video_url / image_url)与内容寻址素材的种类校验。
+// node_id 用于用量归因。
+type analyzeInput struct {
+	NodeID    string `json:"node_id"`
+	MediaURL  string `json:"media_url"`
+	MediaKind string `json:"media_kind"`
+	Model     string `json:"model"`
+}
+
+// analyzeInstruction is the fixed analysis brief (17 号票,固定常量同
+// reverseInstruction 先例,无模板依赖 —— 可配置的分析模板需要多占位符
+// 的模板系统,超出 MVP):视频输出结构化分镜 markdown(分镜表 + 整体
+// 风格概述),图片输出同一套观察维度的画面理解。输出语言跟随指令(中文)。
+const analyzeInstruction = "请分析这段媒体,输出结构化的中文 markdown 分析报告。" +
+	"若输入是视频:先给分镜表(markdown 表格,列为「序号|时间码|画面内容|镜头运动|转场|声音台词」,逐镜头一行)," +
+	"再给整体风格概述(画面基调、色调光影、节奏与叙事手法)。" +
+	"若输入是图片:按画面内容、构图与镜头、光影色调、风格质感四节描述。" +
+	"只输出分析报告本身,不要任何解释、前缀或结语。"
+
+// Analyze understands an existing video or image and answers a structured
+// markdown report (storyboard table for video): the media rides to a vision
+// chat model as a video_url / image_url content part through the gateway's
+// chat surface — 同步聊天调用而非画布任务(11/13 号票先例),用量按
+// token 计费入网关用量日志(来源标记 gen=analyze)。文本回到编辑器,由
+// 它写入分析节点(先落图后调用,编辑器负责)。
+func (h *Handlers) Analyze(c *gin.Context) {
+	canvasID, ok := bindID(c)
+	if !ok {
+		return
+	}
+	if _, err := h.Canvases.Get(c.Request.Context(), canvasID); err != nil {
+		h.failCanvas(c, err)
+		return
+	}
+	if !h.requireGateway(c) {
+		return
+	}
+
+	var in analyzeInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		apierr.InvalidRequest(c, "请求体必须是 {media_url, media_kind, model} JSON")
+		return
+	}
+	nodeID := strings.TrimSpace(in.NodeID)
+	if utf8.RuneCountInString(nodeID) > maxNodeIDRunes {
+		apierr.InvalidRequest(c, "node_id 最多 128 个字符")
+		return
+	}
+	mediaRef := strings.TrimSpace(in.MediaURL)
+	if mediaRef == "" {
+		apierr.InvalidRequest(c, "media_url 不能为空")
+		return
+	}
+	if utf8.RuneCountInString(mediaRef) > maxMediaRefRunes {
+		apierr.InvalidRequest(c, "media_url 最多 4096 个字符")
+		return
+	}
+	var kind string
+	switch in.MediaKind {
+	case "video":
+		kind = asset.KindVideo
+	case "image":
+		kind = asset.KindImage
+	default:
+		apierr.InvalidRequest(c, "media_kind 必须是 video 或 image")
+		return
+	}
+	model := strings.TrimSpace(in.Model)
+	if model == "" {
+		apierr.InvalidRequest(c, "model 不能为空")
+		return
+	}
+	if utf8.RuneCountInString(model) > pricing.ModelNameRunes {
+		apierr.InvalidRequest(c, "model 名最多 200 个字符")
+		return
+	}
+	if !h.chatModelPriced(c, model) {
+		return
+	}
+
+	mediaURL, err := h.resolveMedia(c.Request.Context(), mediaRef, kind)
+	if err != nil {
+		h.failMediaRef(c, err, "media_url", "media_inline_unsupported", kind)
+		return
+	}
+
+	req := ChatRequest{
+		Model:   model,
+		Content: analyzeInstruction,
+		Source:  canvasSource(canvasID, nodeID, "analyze"),
+	}
+	if kind == asset.KindVideo {
+		req.VideoURL = mediaURL
+	} else {
+		req.ImageURL = mediaURL
+	}
+	result, err := h.Gateway.GenerateChat(c.Request.Context(), req)
+	if err != nil {
+		log.Printf("promptgen: %s %s: gateway: %v", c.Request.Method, c.Request.URL.Path, err)
+		apierr.Write(c, http.StatusBadGateway, "upstream_error", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"text": result.Content})
+}
+
+// 媒体引用解析的失败形状:引用形状不对(400)、素材不存在(404)、素材
+// 种类与请求不符(400)、内联 data: URI 媒体(400,12 号票同款决策:
+// data URI 进不了网关媒体契约 —— 无论是直接携带还是素材落库的 b64 产物,
+// 边界处同码同因地拒绝,不留给网关预扣或上游拒收去炸难懂的错)。哨兵只
+// 标原因;用户可见的文案与错误码按端点补齐(field 名反推是 video_url、
+// 分析是 media_url;内联拒绝码 13 号票定 video_inline_unsupported、
+// 17 号票定 media_inline_unsupported),resolveMedia 保持纯解析。
 var (
-	errVideoRefMalformed = errors.New("video_url 必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
-	errVideoAssetMissing = errors.New("素材不存在或已被删除")
-	errVideoAssetKind    = errors.New("素材不是视频,或还没有可用的产物地址")
-	errVideoAssetInline  = errors.New("该视频是内联 base64 产物,无法作为多模态输入;请使用带 http(s) 地址的视频")
+	errMediaRefMalformed = errors.New("media reference must be an http(s) URL or a /api/assets/{id}/content path")
+	errMediaAssetMissing = errors.New("asset does not exist or has been deleted")
+	errMediaAssetKind    = errors.New("asset kind does not match the requested media kind, or holds no usable address")
+	errMediaAssetInline  = errors.New("asset holds an inline base64 payload and cannot ride as multimodal input")
 )
 
 // assetContentPrefix 是素材内容寻址路径的形状(10 号票定案):节点在厂商
 // 回 b64 时持有的正是这个形式,编辑器原样上送,由服务端解出真实地址。
 const assetContentPrefix = "/api/assets/"
 
-// resolveVideo maps the editor's video reference to the address the vendor
-// fetches: an http(s) URL passes through untouched; a content-addressed
-// asset resolves through the store to the http(s) address it holds; an
-// inline data: URI — carried directly or stored in the asset row — is
-// refused (12 号票对参考图的同款决策),与其让几 MB 的请求体在网关预扣/
-// 上游拒收处炸出难懂的错,不如在解析时就说明原因。
-func (h *Handlers) resolveVideo(ctx context.Context, ref string) (string, error) {
+// resolveMedia maps the editor's media reference to the address the vendor
+// fetches; kind selects which asset kind a content-addressed reference must
+// be. An http(s) URL passes through untouched; a content-addressed asset
+// resolves through the store to the http(s) address it holds; an inline
+// data: URI — carried directly or stored in the asset row — is refused
+// (12 号票对参考图的同款决策),与其让几 MB 的请求体在网关预扣/上游拒收处
+// 炸出难懂的错,不如在解析时就说明原因。
+func (h *Handlers) resolveMedia(ctx context.Context, ref string, kind string) (string, error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		return ref, nil
 	}
 	if strings.HasPrefix(ref, "data:") {
-		return "", errVideoAssetInline
+		return "", errMediaAssetInline
 	}
 	rest, ok := strings.CutPrefix(ref, assetContentPrefix)
 	if !ok {
-		return "", errVideoRefMalformed
+		return "", errMediaRefMalformed
 	}
 	idPart, suffix, found := strings.Cut(rest, "/")
 	id, err := strconv.ParseInt(idPart, 10, 64)
 	if err != nil || id < 1 || !found || suffix != "content" {
-		return "", errVideoRefMalformed
+		return "", errMediaRefMalformed
 	}
 	a, err := h.Assets.Get(ctx, id)
 	if errors.Is(err, asset.ErrNotFound) {
-		return "", errVideoAssetMissing
+		return "", errMediaAssetMissing
 	}
 	if err != nil {
 		return "", err
 	}
-	if a.Kind != asset.KindVideo || a.URL == "" {
-		return "", errVideoAssetKind
+	if a.Kind != kind || a.URL == "" {
+		return "", errMediaAssetKind
 	}
 	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
-		return "", errVideoAssetInline
+		return "", errMediaAssetInline
 	}
 	return a.URL, nil
 }
 
-// failVideoRef maps a reference-resolution failure onto the admin-API error
-// surface; store faults (non-sentinel) stay internal.
-func (h *Handlers) failVideoRef(c *gin.Context, err error) {
+// failMediaRef maps a reference-resolution failure onto the admin-API error
+// surface; store faults (non-sentinel) stay internal. fieldLabel names the
+// request field the reference arrived on, inlineCode is the endpoint's
+// inline-refusal code, want carries the requested asset kind (决定种类
+// 不符的错误码与文案:反推与分析视频用 asset_not_video,分析图片用
+// asset_not_image)。
+func (h *Handlers) failMediaRef(c *gin.Context, err error, fieldLabel, inlineCode string, want string) {
 	switch {
-	case errors.Is(err, errVideoRefMalformed):
-		apierr.Write(c, http.StatusBadRequest, "invalid_request", err.Error())
-	case errors.Is(err, errVideoAssetKind):
-		apierr.Write(c, http.StatusBadRequest, "asset_not_video", err.Error())
-	case errors.Is(err, errVideoAssetInline):
-		apierr.Write(c, http.StatusBadRequest, "video_inline_unsupported", err.Error())
-	case errors.Is(err, errVideoAssetMissing):
-		apierr.Write(c, http.StatusNotFound, "asset_not_found", err.Error())
+	case errors.Is(err, errMediaRefMalformed):
+		apierr.Write(c, http.StatusBadRequest, "invalid_request",
+			fieldLabel+" 必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
+	case errors.Is(err, errMediaAssetKind):
+		code := "asset_not_video"
+		label := "视频"
+		if want == asset.KindImage {
+			code = "asset_not_image"
+			label = "图片"
+		}
+		apierr.Write(c, http.StatusBadRequest, code,
+			fmt.Sprintf("素材不是%s,或还没有可用的产物地址", label))
+	case errors.Is(err, errMediaAssetInline):
+		apierr.Write(c, http.StatusBadRequest, inlineCode,
+			"该媒体是内联 base64 产物,无法作为多模态输入;请使用带 http(s) 地址的媒体")
+	case errors.Is(err, errMediaAssetMissing):
+		apierr.Write(c, http.StatusNotFound, "asset_not_found", "素材不存在或已被删除")
 	default:
 		h.failStore(c, err)
 	}

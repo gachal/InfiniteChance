@@ -231,6 +231,22 @@ export interface ReversePromptResult {
   text: string
 }
 
+/** 画布分析(17 号票)的请求体:media_url 与反推同一套引用规则(厂商
+ * http(s) 地址,或素材内容寻址路径;data URI 服务端拒绝),media_kind
+ * 声明输入是视频还是图片,model 是 token 轨聊天模型;node_id 是承接
+ * 结果的分析节点 id,用于用量归因。 */
+export interface AnalyzeInput {
+  node_id?: string
+  media_url: string
+  media_kind: 'video' | 'image'
+  model: string
+}
+
+/** 画布分析的响应:结构化分镜 markdown,由编辑器写入分析节点。 */
+export interface AnalyzeResult {
+  text: string
+}
+
 // ---- 素材库(挂 /assets,canvas/server;列表/删除需 JWT 会话,14 号票)----
 
 /** 一条素材:生成产物在素材库中的引用。content_url 恒为内容寻址路径
@@ -604,6 +620,15 @@ export class ApiClient {
    * 视频,同步返回提示词文本;用量按 token 计费入网关用量日志。 */
   reversePrompt(canvasId: number, input: ReversePromptInput): Promise<ReversePromptResult> {
     return this.request<ReversePromptResult>(`/canvases/${canvasId}/reverse-prompt`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 画布分析(17 号票):canvas/server 经网关多模态聊天接口理解视频/
+   * 图片,同步返回结构化分镜 markdown;文本由编辑器写入分析节点。 */
+  analyzeMedia(canvasId: number, input: AnalyzeInput): Promise<AnalyzeResult> {
+    return this.request<AnalyzeResult>(`/canvases/${canvasId}/analyze`, {
       method: 'POST',
       body: input,
     })

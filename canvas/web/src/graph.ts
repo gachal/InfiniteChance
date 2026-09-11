@@ -19,21 +19,31 @@ export interface MediaNodeData {
   note?: string
 }
 
-export type CanvasNodeData = PromptNodeData | MediaNodeData
-
-export type CanvasNodeType = 'prompt' | 'image' | 'video'
-
-export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
-  return value === 'prompt' || value === 'image' || value === 'video'
+/** 分析节点数据(17 号票):对来源媒体(视频/图片)的结构化理解,文本
+ * 只读展示;model 记录生成这次分析所用的聊天模型(原地重新分析时默认
+ * 选中)。来源派生关系由连线表达,不冗余存引用。 */
+export interface AnalysisNodeData {
+  text: string
+  model?: string
 }
 
-/** 新节点的初始数据。 */
+export type CanvasNodeData = PromptNodeData | MediaNodeData | AnalysisNodeData
+
+export type CanvasNodeType = 'prompt' | 'image' | 'video' | 'analysis'
+
+export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
+  return value === 'prompt' || value === 'image' || value === 'video' || value === 'analysis'
+}
+
+/** 新节点的初始数据。分析节点由视频/图片节点上的「分析」动作创建
+ * (文本后填),不从工具栏直接添加。 */
 export function initialData(type: CanvasNodeType): CanvasNodeData {
-  return type === 'prompt' ? { text: '' } : { url: '', note: '' }
+  return type === 'prompt' || type === 'analysis' ? { text: '' } : { url: '', note: '' }
 }
 
 export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   prompt: '提示词',
   image: '图片',
   video: '视频',
+  analysis: '分析',
 }
