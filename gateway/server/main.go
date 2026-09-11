@@ -13,6 +13,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
 	"github.com/gachal/InfiniteChance/internal/wiring"
@@ -48,6 +49,12 @@ func main() {
 		if err := promptTemplates.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure prompt template schema: %v", err)
 		}
+		// 动态配置(19 号票):管理面挂 /admin/settings/storage,画布侧
+		// 同库只读。
+		settingsStore := settings.NewMySQLStore(d.DB)
+		if err := settingsStore.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure settings schema: %v", err)
+		}
 
 		wiring.GatewayRoutes(r, d.Config, wiring.GatewayStores{
 			Auth:            store,
@@ -57,6 +64,7 @@ func main() {
 			UsageLogs:       usageLogs,
 			VideoTasks:      videoTasks,
 			PromptTemplates: promptTemplates,
+			Settings:        settingsStore,
 		})
 	})
 }

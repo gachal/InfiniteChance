@@ -21,6 +21,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/promptgen"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 	"github.com/gachal/InfiniteChance/internal/relay"
+	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
 )
@@ -34,6 +35,9 @@ type GatewayStores struct {
 	UsageLogs       usage.Store
 	VideoTasks      videotask.Store
 	PromptTemplates prompttemplate.Store
+	// Settings backs the admin storage-config CRUD (19 号票);canvas/server
+	// reads the same table.
+	Settings settings.Store
 }
 
 // GatewayRoutes mounts the gateway surface: /auth (public init/login),
@@ -53,6 +57,8 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 	pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: s.Prices})
 	// 提示词模板:管理端维护,画布侧经共享库即时读取(11 号票)。
 	prompttemplate.RegisterAdminRoutes(admin, &prompttemplate.Handlers{Store: s.PromptTemplates})
+	// 动态配置:存储驱动的管理面(19 号票),画布侧同库只读。
+	settings.RegisterAdminRoutes(admin, &settings.Handlers{Store: s.Settings})
 	// 用量审计:请求级日志列表与按天/模型/渠道汇总(15 号票)。
 	usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: s.UsageLogs})
 
@@ -68,7 +74,9 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 }
 
 // CanvasStores carries the wired canvas stores. Templates is read-only on
-// the canvas side — the table is administered through the gateway.
+// the canvas side — the table is administered through the gateway. Settings
+// is read-only the same way (19 号票): the storage row drives the object
+// store's dynamic routing and the assets' public-address resolution.
 type CanvasStores struct {
 	Auth      auth.Store
 	Canvases  canvas.Store
@@ -76,6 +84,7 @@ type CanvasStores struct {
 	Prices    pricing.Store
 	Tasks     canvastask.Store
 	Templates prompttemplate.Store
+	Settings  settings.Store
 }
 
 // CanvasRoutes mounts the canvas surface: /auth (same account table),
@@ -83,20 +92,26 @@ type CanvasStores struct {
 // /assets/:id/content preview route. gateway is the pre-built service-key
 // client (nil = unconfigured: submits refuse with gateway_unconfigured);
 // storage backs asset archiving (nil = archiving failures recorded on
-// tasks, service still boots).
+// tasks, service still boots) — 19 号票起装配侧传 settings 驱动的
+// Dynamic,local 驱动时行为与此前逐字节一致。
 func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canvastask.Gateway, storage objectstore.Store) {
 	issuer := auth.NewIssuerFromConfig(cfg)
 	auth.RegisterRoutes(r, &auth.Handlers{Store: s.Auth, Issuer: issuer})
+
+	// 公网地址提供者(18 号票接缝 → 19 号票接线):解析顺序里的自有存储
+	// 公网地址按请求读 settings,未配置即 nil = 现状行为。
+	publicBase := settings.PublicBaseURL(s.Settings)
 
 	// 画布面:一律先过 JWT 会话,与管理面同一套令牌体系。
 	group := r.Group("/canvases", auth.RequireAuth(issuer))
 	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases})
 	canvastask.RegisterRoutes(group, &canvastask.Handlers{
-		Tasks:    s.Tasks,
-		Canvases: s.Canvases,
-		Models:   s.Prices,
-		Assets:   s.Assets,
-		Gateway:  gateway,
+		Tasks:         s.Tasks,
+		Canvases:      s.Canvases,
+		Models:        s.Prices,
+		Assets:        s.Assets,
+		Gateway:       gateway,
+		PublicBaseURL: publicBase,
 	})
 	// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
 	// 直接以 gateway_unconfigured 拒绝。
@@ -105,11 +120,12 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		chatGateway = promptgen.NewClient(cfg.GatewayBaseURL, cfg.CanvasServiceKey)
 	}
 	promptgen.RegisterRoutes(group, &promptgen.Handlers{
-		Templates: s.Templates,
-		Canvases:  s.Canvases,
-		Assets:    s.Assets,
-		Models:    s.Prices,
-		Gateway:   chatGateway,
+		Templates:     s.Templates,
+		Canvases:      s.Canvases,
+		Assets:        s.Assets,
+		Models:        s.Prices,
+		Gateway:       chatGateway,
+		PublicBaseURL: publicBase,
 	})
 
 	// 目录面:图像/视频模型与提示词模板、提示词聊天模型,全挂 JWT 会话。

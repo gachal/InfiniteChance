@@ -16,6 +16,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/wiring"
 )
 
@@ -50,12 +51,21 @@ func main() {
 		if err := templates.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure prompt template schema: %v", err)
 		}
-		// 产物对象存储(14 号票):S3 兼容接口的本地卷落地,键按画布/任务
-		// 归档;建不出来只影响素材转存,不拦整个服务起来 —— 生成任务会以
-		// 「转存失败」落在任务行上,可重试。
-		storage, err := objectstore.NewFileSystem(d.Config.AssetStorageDir)
-		if err != nil {
+		// 动态配置(19 号票):storage 行按请求读取,驱动对象存储路由与素材
+		// 公网地址解析;行缺省即 local,零配置不受影响。
+		settingsStore := settings.NewMySQLStore(d.DB)
+		if err := settingsStore.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure settings schema: %v", err)
+		}
+		// 产物对象存储(14 号票):本地卷落地为缺省驱动,19 号票起由 settings
+		// 的 storage 行动态切 OSS(读回退本地、删两头都试);建不出来只影响
+		// 素材转存,不拦整个服务起来 —— 生成任务会以「转存失败」落在任务行
+		// 上,可重试。
+		var storage objectstore.Store
+		if local, err := objectstore.NewFileSystem(d.Config.AssetStorageDir); err != nil {
 			log.Printf("WARNING: 素材对象存储不可用(%v),生成产物将无法转存", err)
+		} else {
+			storage = objectstore.NewDynamic(local, settings.NewStorageReader(settingsStore))
 		}
 
 		gateway := serviceGateway(d.Config)
@@ -66,6 +76,7 @@ func main() {
 			Prices:    prices,
 			Tasks:     tasks,
 			Templates: templates,
+			Settings:  settingsStore,
 		}, gateway, storage)
 
 		lifetime := d.Lifetime

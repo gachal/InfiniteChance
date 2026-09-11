@@ -26,6 +26,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/sqlitedb"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
@@ -43,6 +44,7 @@ type Desktop struct {
 	db      *sql.DB
 	auths   *auth.SQLiteStore
 	tasks   *canvastask.SQLiteStore
+	storage objectstore.Store
 
 	gateway   *app.App
 	canvas    *app.App
@@ -81,13 +83,14 @@ func NewDesktop() (*Desktop, error) {
 	usageLogs := usage.NewSQLiteStore(db)
 	videoTasks := videotask.NewSQLiteStore(db)
 	templates := prompttemplate.NewSQLiteStore(db)
+	settingsStore := settings.NewSQLiteStore(db)
 	canvases := canvas.NewSQLiteStore(db)
 	assets := asset.NewSQLiteStore(db)
 	tasks := canvastask.NewSQLiteStore(db, assets)
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, templates, canvases, assets, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, tasks,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -105,11 +108,15 @@ func NewDesktop() (*Desktop, error) {
 		return nil, err
 	}
 
-	// 产物对象存储:建不出来只影响素材转存,不拦启动(与服务器形态一致)。
+	// 产物对象存储:本地卷为缺省驱动,settings 的 storage 行(19 号票)
+	// 动态切 OSS;桌面装配无 OSS 诉求,行缺省即 local,零配置不受影响。
+	// 建不出来只影响素材转存,不拦启动(与服务器形态一致)。
 	assetsDir := filepath.Join(dataDir, "assets")
-	storage, err := objectstore.NewFileSystem(assetsDir)
-	if err != nil {
+	var storage objectstore.Store
+	if local, err := objectstore.NewFileSystem(assetsDir); err != nil {
 		log.Printf("WARNING: 素材对象存储不可用(%v),生成产物将无法转存", err)
+	} else {
+		storage = objectstore.NewDynamic(local, settings.NewStorageReader(settingsStore))
 	}
 
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.GatewayPort)
@@ -145,6 +152,7 @@ func NewDesktop() (*Desktop, error) {
 			UsageLogs:       usageLogs,
 			VideoTasks:      videoTasks,
 			PromptTemplates: templates,
+			Settings:        settingsStore,
 		})
 	}, app.WithConfig(gcfg), app.WithDB(db), app.WithPingers(pingers),
 		app.WithHTTPHandler(func(h http.Handler) http.Handler {
@@ -167,6 +175,7 @@ func NewDesktop() (*Desktop, error) {
 			Prices:    prices,
 			Tasks:     tasks,
 			Templates: templates,
+			Settings:  settingsStore,
 		}, canvastask.NewClient(gatewayURL, cfg.CanvasServiceKey), storage)
 	}, app.WithConfig(ccfg), app.WithDB(db), app.WithPingers(pingers),
 		app.WithHTTPHandler(func(h http.Handler) http.Handler {
@@ -184,6 +193,7 @@ func NewDesktop() (*Desktop, error) {
 		db:      db,
 		auths:   auths,
 		tasks:   tasks,
+		storage: storage,
 		gateway: gatewayApp,
 		canvas:  canvasApp,
 	}, nil
@@ -210,9 +220,15 @@ func (dt *Desktop) Start() error {
 	} else if n > 0 {
 		log.Printf("canvastask: requeued %d orphaned task(s) from the previous run", n)
 	}
+	// worker 与服务器形态同款带 storage(此前桌面漏挂:任务只留厂商地址
+	// 行,不落自有对象存储)—— 产物经 Dynamic 转存,缺省仍本地卷。
+	opts := []canvastask.WorkerOption{canvastask.WithConcurrency(dt.cfg.CanvasTaskConcurrency)}
+	if dt.storage != nil {
+		opts = append(opts, canvastask.WithStorage(dt.storage))
+	}
 	worker := canvastask.NewWorker(dt.tasks, canvastask.NewClient(
 		fmt.Sprintf("http://127.0.0.1:%d", dt.cfg.GatewayPort), dt.cfg.CanvasServiceKey,
-	), canvastask.WithConcurrency(dt.cfg.CanvasTaskConcurrency))
+	), opts...)
 	go worker.Run(dt.workerCtx)
 	return nil
 }

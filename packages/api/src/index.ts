@@ -275,6 +275,42 @@ export interface ListAssetsParams {
   offset?: number
 }
 
+// ---- 网关管理:存储设置(挂 /admin/settings/storage,需 JWT 会话,19 号票)----
+
+/** 存储驱动:local = 本地卷(缺省),oss = 阿里云 OSS(原生 SDK)。 */
+export type StorageDriver = 'local' | 'oss'
+
+/** GET 回答的 OSS 连接:密钥永不跨线,只有 has_* 与尾 4 位提示。 */
+export interface OSSStorageConfig {
+  endpoint: string
+  bucket: string
+  public_base_url: string
+  has_access_key: boolean
+  access_key_hint?: string
+  has_secret: boolean
+  secret_hint?: string
+}
+
+/** 存储设置(19 号票):驱动与 OSS 连接,画布侧按请求读表即时生效。
+ * updated_at 为空 = 行从未保存过(零配置起步)。 */
+export interface StorageSettings {
+  driver: StorageDriver
+  oss: OSSStorageConfig
+  updated_at: string
+}
+
+/** PUT 的请求体:空 access_key/secret_key = 保留已存密钥。 */
+export interface StorageSettingsInput {
+  driver: StorageDriver
+  oss?: {
+    endpoint: string
+    bucket: string
+    public_base_url: string
+    access_key: string
+    secret_key: string
+  }
+}
+
 // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
 
 /** 一条请求级用量行的状态:成功,或离开网关后的失败(上游错误摘要列区分
@@ -691,6 +727,23 @@ export class ApiClient {
       `/admin/usage/summary?${rest ? `${by}&${rest}` : by}`,
     )
     return body.buckets
+  }
+
+  // ---- 网关管理:存储设置(挂 /admin/settings/storage,需 JWT 会话)----
+
+  /** 存储设置;缺行时后端回答 local 缺省(密钥仅 has_* + 尾 4 位提示)。 */
+  async getStorageSettings(): Promise<StorageSettings> {
+    const body = await this.request<{ storage: StorageSettings }>('/admin/settings/storage')
+    return body.storage
+  }
+
+  /** 更新存储设置;空 access_key/secret_key 保留已存密钥,即时生效。 */
+  async updateStorageSettings(input: StorageSettingsInput): Promise<StorageSettings> {
+    const body = await this.request<{ storage: StorageSettings }>('/admin/settings/storage', {
+      method: 'PUT',
+      body: input,
+    })
+    return body.storage
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {

@@ -35,6 +35,12 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/storage',
+      name: 'storage',
+      component: () => import('./views/StorageView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/prompt-templates',
       name: 'prompt-templates',
       component: () => import('./views/PromptTemplatesView.vue'),

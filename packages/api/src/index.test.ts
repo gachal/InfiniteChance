@@ -19,6 +19,8 @@ import {
   type QuotaEntry,
   type SaveGraphResult,
   type SessionInfo,
+  type StorageSettings,
+  type StorageSettingsInput,
 } from './index'
 
 const healthy: HealthReport = {
@@ -692,5 +694,52 @@ describe('ApiClient uploadAsset (18 号票)', () => {
     expect(body.get('file')).toBe(file)
     // multipart 的 Content-Type 由 fetch 编码时生成,手工设置会丢 boundary。
     expect(new Headers((init as RequestInit).headers).has('Content-Type')).toBe(false)
+  })
+})
+
+describe('ApiClient storage settings', () => {
+  const storage: StorageSettings = {
+    driver: 'oss',
+    oss: {
+      endpoint: 'oss-cn-hangzhou.aliyuncs.com',
+      bucket: 'infinitechance',
+      public_base_url: 'https://infinitechance.oss-cn-hangzhou.aliyuncs.com',
+      has_access_key: true,
+      access_key_hint: '…z9ab',
+      has_secret: true,
+      secret_hint: '…wxyz',
+    },
+    updated_at: '2026-09-11T12:00:00Z',
+  }
+
+  it('getStorageSettings unwraps the storage envelope', async () => {
+    const fetchImpl = stubFetch(200, { storage })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.getStorageSettings()).resolves.toEqual(storage)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/storage')
+    expect((init as RequestInit).method).toBe('GET')
+  })
+
+  it('updateStorageSettings PUTs the config (blank secrets keep stored ones)', async () => {
+    const fetchImpl = stubFetch(200, { storage })
+    const client = clientWithBase(fetchImpl)
+
+    const input: StorageSettingsInput = {
+      driver: 'oss',
+      oss: {
+        endpoint: 'oss-cn-hangzhou.aliyuncs.com',
+        bucket: 'infinitechance',
+        public_base_url: '',
+        access_key: '',
+        secret_key: '',
+      },
+    }
+    await expect(client.updateStorageSettings(input)).resolves.toEqual(storage)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/storage')
+    expect((init as RequestInit).method).toBe('PUT')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
   })
 })

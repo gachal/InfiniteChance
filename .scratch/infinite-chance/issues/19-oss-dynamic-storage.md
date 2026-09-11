@@ -1,7 +1,7 @@
 # 19 OSS 对接与动态配置
 
 Type: grilling
-Status: proposed（草案——grilling 会话用户未到场,按推荐解落稿,待确认后转定案）
+Status: implemented（2026-09-11 按草案实现:`settings` 表双方言落地 + 网关 `GET/PUT /admin/settings/storage`（AK/SK 只写不读）+ `objectstore` OSS 原生 SDK 驱动与 settings 驱动的 Dynamic 路由（写按 driver、读回退本地、删两头都试）+ `public_base_url` 接线进 18 号票解析链 + admin-web「存储设置」页 + 桌面 SQLite 建表（行缺省 local,零配置不变）。存量迁移脚本与备份脚本 OSS 导出策略仍列待补）
 
 ## Question
 
