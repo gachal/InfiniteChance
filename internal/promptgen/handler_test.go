@@ -108,9 +108,10 @@ func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
 // ---- test rig: routes wired exactly as canvas/server/main.go does ----
 
 type envParams struct {
-	templates fakeTemplates
-	assets    fakeAssets
-	gateway   promptgen.Gateway
+	templates     fakeTemplates
+	assets        fakeAssets
+	gateway       promptgen.Gateway
+	publicBaseURL func(ctx context.Context) string
 }
 
 type handlerEnv struct {
@@ -147,7 +148,8 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			"chat-m": {PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
 			"img-m":  {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
 		}},
-		Gateway: params.gateway,
+		Gateway:       params.gateway,
+		PublicBaseURL: params.publicBaseURL,
 	})
 	promptgen.RegisterCatalogRoutes(engine.Group("/prompt-templates"),
 		&promptgen.CatalogHandlers{Templates: params.templates})
@@ -993,5 +995,100 @@ func TestAnalyzeSurfacesGatewayFailureAsUpstreamError(t *testing.T) {
 	code, message := errorBody(t, raw)
 	if code != "upstream_error" || !strings.Contains(message, "不支持视觉输入") {
 		t.Errorf("error = %q/%q, want upstream_error with the reason", code, message)
+	}
+}
+
+// ---- 18 号票:「LLM 可达地址」解析顺序(自有公网地址优先、厂商原址回落)----
+
+// TestReversePrefersPublicStorageAddress 验证转存过的素材在配置了公网
+// 基址时优先走自有地址:厂商原址约 24h 过期,自有地址永久。
+func TestReversePrefersPublicStorageAddress(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.assets.byID[5] = asset.Asset{
+			ID: 5, Kind: asset.KindVideo, CanvasID: 7,
+			URL:       "https://cdn.example.com/generated.mp4",
+			ObjectKey: "canvases/7/ct_v/video.mp4",
+		}
+		p.publicBaseURL = func(context.Context) string { return "https://assets.example.org" }
+	})
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "/api/assets/5/content", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.VideoURL != "https://assets.example.org/canvases/7/ct_v/video.mp4" {
+		t.Errorf("video url = %q, want the public storage address", req.VideoURL)
+	}
+}
+
+// TestReverseWithoutPublicBaseFallsBackToVendorURL 验证未配置公网基址时
+// 回落厂商原址 —— 19 号票落地前的现状行为。
+func TestReverseWithoutPublicBaseFallsBackToVendorURL(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.assets.byID[5] = asset.Asset{
+			ID: 5, Kind: asset.KindVideo, CanvasID: 7,
+			URL:       "https://cdn.example.com/generated.mp4",
+			ObjectKey: "canvases/7/ct_v/video.mp4",
+		}
+		// publicBaseURL 留 nil:未配置。
+	})
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/reverse-prompt", map[string]any{
+		"video_url": "/api/assets/5/content", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.VideoURL != "https://cdn.example.com/generated.mp4" {
+		t.Errorf("video url = %q, want the vendor address fallback", req.VideoURL)
+	}
+}
+
+// TestAnalyzeResolvesUploadedAssetViaPublicAddress 验证上传素材(url 为空、
+// 只有自有字节)在公网基址配置后可作多模态输入;未配置时按「还没有可用
+// 的产物地址」拒绝 —— 上传素材没有厂商原址可回落。
+func TestAnalyzeResolvesUploadedAssetViaPublicAddress(t *testing.T) {
+	uploaded := asset.Asset{
+		ID: 8, Kind: asset.KindImage, CanvasID: 0, URL: "",
+		ObjectKey: "uploads/20260911/1b0e0c2a-9d4d-4c1e-8f3a-2f6c8d5e7a91.png",
+	}
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.assets.byID[8] = uploaded
+		p.publicBaseURL = func(context.Context) string { return "https://assets.example.org/" }
+	})
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"media_url": "/api/assets/8/content", "media_kind": "image", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.ImageURL != "https://assets.example.org/"+uploaded.ObjectKey {
+		t.Errorf("image url = %q, want the public address (base trailing slash trimmed)", req.ImageURL)
+	}
+}
+
+func TestAnalyzeUploadedAssetWithoutPublicBaseAnswers400(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.assets.byID[8] = asset.Asset{
+			ID: 8, Kind: asset.KindImage, URL: "",
+			ObjectKey: "uploads/20260911/1b0e0c2a-9d4d-4c1e-8f3a-2f6c8d5e7a91.png",
+		}
+	})
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
+		"media_url": "/api/assets/8/content", "media_kind": "image", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "asset_not_image" {
+		t.Errorf("code = %q, want asset_not_image (还没有可用的产物地址)", code)
 	}
 }

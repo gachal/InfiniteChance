@@ -577,6 +577,44 @@ function insertAsset(a: AssetRecord): void {
   ])
 }
 
+// ---- 本机素材上传(18 号票)----
+
+const uploading = ref(false)
+const uploadInput = ref<HTMLInputElement | null>(null)
+
+/** 上传种类按浏览器 MIME 判断,缺失时按扩展名兜底;服务端按魔数嗅探最
+ * 终裁决,这里的判断只为选对 kind 字段与立即反馈。 */
+function uploadKindOf(file: File): 'image' | 'video' {
+  if (file.type.startsWith('video/')) {
+    return 'video'
+  }
+  if (file.type.startsWith('image/')) {
+    return 'image'
+  }
+  return /\.(mp4|m4v|webm|mov|avi)$/i.test(file.name) ? 'video' : 'image'
+}
+
+/** 工具栏「上传」:本机文件进素材库,成功后落媒体节点 —— 与素材面板插
+ * 入同一语义(asset_id + 内容寻址),节点先上图,自动保存收尾。 */
+async function onUploadChange(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 复位,同一文件下次选择仍触发 change。
+  if (!file || uploading.value) {
+    return
+  }
+  uploading.value = true
+  generateError.value = ''
+  try {
+    const a = await client.uploadAsset(file, uploadKindOf(file))
+    insertAsset(a)
+  } catch (err) {
+    generateError.value = err instanceof ApiError ? err.message : '上传失败,请稍后再试'
+  } finally {
+    uploading.value = false
+  }
+}
+
 async function loadCanvas(): Promise<void> {
   loading.value = true
   loadError.value = ''
@@ -962,6 +1000,22 @@ function backToList(): void {
         >
           {{ assetPanelOpen ? '收起素材库' : '素材库' }}
         </button>
+        <button
+          class="add-upload"
+          type="button"
+          :disabled="uploading"
+          :title="uploading ? '上传中…' : '上传本机图片/视频进素材库,并作为节点插入画布'"
+          @click="uploadInput?.click()"
+        >
+          {{ uploading ? '上传中…' : '上传' }}
+        </button>
+        <input
+          ref="uploadInput"
+          class="upload-input"
+          type="file"
+          accept="image/*,video/*"
+          @change="onUploadChange"
+        >
       </span>
     </footer>
   </div>
@@ -1200,5 +1254,19 @@ function backToList(): void {
 .add-asset {
   background: rgba(165, 180, 252, 0.16);
   color: #a5b4fc;
+}
+
+.add-upload {
+  background: rgba(94, 234, 212, 0.14);
+  color: #5eead4;
+}
+
+.add-upload:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.upload-input {
+  display: none;
 }
 </style>

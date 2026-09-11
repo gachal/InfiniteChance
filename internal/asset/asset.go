@@ -10,6 +10,7 @@ package asset
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,19 @@ const (
 
 // ErrNotFound reports an asset id that has no row.
 var ErrNotFound = errors.New("asset: not found")
+
+// PublicAddress answers the object-storage public address of one asset:
+// publicBase joined with its object key, when the row holds archived bytes
+// and a public base is configured. 18 号票的「LLM 可达地址」解析顺序由此
+// 起步:自有地址永久,优先于约 24h 过期的厂商原址(url 列回落);调用方
+// 在两者皆无时按各自的错误形状拒绝。publicBase 来自 19 号票 settings 的
+// public_base_url,未配置(空)时本函数恒答未命中,行为与升级前一致。
+func PublicAddress(a Asset, publicBase string) (string, bool) {
+	if a.ObjectKey == "" || publicBase == "" {
+		return "", false
+	}
+	return strings.TrimRight(publicBase, "/") + "/" + strings.TrimLeft(a.ObjectKey, "/"), true
+}
 
 // Asset is one generated artifact. CanvasID and TaskID record its provenance
 // (the originating canvas and the canvas task that produced it); Model and

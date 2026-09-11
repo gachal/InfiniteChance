@@ -74,6 +74,11 @@ type Handlers struct {
 	Assets    AssetGetter
 	Models    ModelPricer
 	Gateway   Gateway
+	// PublicBaseURL answers the configured public base address of the
+	// object storage for LLM-reachable media resolution (18 号票解析顺序:
+	// 自有公网地址优先、厂商原址回落)。19 号票落地 settings 前没有配置
+	// 来源,留 nil = 未配置,解析行为与升级前一致。
+	PublicBaseURL func(ctx context.Context) string
 }
 
 // RegisterRoutes mounts (relative to the group, which the binary mounts at
@@ -416,10 +421,11 @@ const assetContentPrefix = "/api/assets/"
 // resolveMedia maps the editor's media reference to the address the vendor
 // fetches; kind selects which asset kind a content-addressed reference must
 // be. An http(s) URL passes through untouched; a content-addressed asset
-// resolves through the store to the http(s) address it holds; an inline
+// resolves through the store with 18 号票的顺序:自有存储公网地址(object_key
+// 拼 public_base_url,永久)优先,厂商原址(约 24h 过期)回落;an inline
 // data: URI — carried directly or stored in the asset row — is refused
 // (12 号票对参考图的同款决策),与其让几 MB 的请求体在网关预扣/上游拒收处
-// 炸出难懂的错,不如在解析时就说明原因。
+// 炸难懂的错,不如在解析时就说明原因。
 func (h *Handlers) resolveMedia(ctx context.Context, ref string, kind string) (string, error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		return ref, nil
@@ -443,13 +449,30 @@ func (h *Handlers) resolveMedia(ctx context.Context, ref string, kind string) (s
 	if err != nil {
 		return "", err
 	}
-	if a.Kind != kind || a.URL == "" {
+	if a.Kind != kind {
+		return "", errMediaAssetKind
+	}
+	if addr, ok := asset.PublicAddress(a, h.publicBaseURL(ctx)); ok {
+		return addr, nil
+	}
+	if a.URL == "" {
+		// 上传素材(url 为空)在未配公网地址时解析不出 — 「还没有可用
+		// 的产物地址」如实相告,19 号票配置后即通。
 		return "", errMediaAssetKind
 	}
 	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
 		return "", errMediaAssetInline
 	}
 	return a.URL, nil
+}
+
+// publicBaseURL reads the configured public base through the optional
+// provider; nil or empty means "not configured".
+func (h *Handlers) publicBaseURL(ctx context.Context) string {
+	if h.PublicBaseURL == nil {
+		return ""
+	}
+	return h.PublicBaseURL(ctx)
 }
 
 // failMediaRef maps a reference-resolution failure onto the admin-API error

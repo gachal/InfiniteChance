@@ -23,6 +23,8 @@ type fakeStore struct {
 	mu     sync.Mutex
 	assets map[int64]asset.Asset
 	seq    int64
+	// createErr makes Create fail (upload tests: 行落库失败时对象字节要回收).
+	createErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -32,6 +34,9 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) Create(_ context.Context, a asset.Asset) (asset.Asset, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return asset.Asset{}, f.createErr
+	}
 	f.seq++
 	a.ID = f.seq
 	a.CreatedAt = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)

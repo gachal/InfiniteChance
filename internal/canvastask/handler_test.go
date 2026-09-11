@@ -162,9 +162,16 @@ func (fakeCanvases) Get(_ context.Context, id int64) (canvas.Canvas, error) {
 
 // fakeAssets answers Get like a library holding one image asset whose
 // vendor URL is alive and one stuck with a data: URI (厂商回 b64 的历史行).
-type fakeAssets struct{}
+type fakeAssets struct {
+	// override 按素材 id 覆盖默认行:18 号票的解析顺序测试用它注入
+	// 上传素材(url 为空、只有自有字节)等形状。
+	override map[int64]asset.Asset
+}
 
-func (fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
+func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
+	if a, ok := f.override[id]; ok {
+		return a, nil
+	}
 	switch id {
 	case 5:
 		return asset.Asset{ID: 5, Kind: asset.KindImage, URL: "https://img.example/ref.png",
@@ -214,6 +221,12 @@ type handlerEnv struct {
 }
 
 func newHandlerEnv(gateway *okGateway) *handlerEnv {
+	return newHandlerEnvWith(gateway, fakeAssets{}, "")
+}
+
+// newHandlerEnvWith additionally injects the asset double and the object
+// storage's public base URL (18 号票解析顺序;空串 = 未配置,现状行为)。
+func newHandlerEnvWith(gateway *okGateway, assets fakeAssets, publicBase string) *handlerEnv {
 	gin.SetMode(gin.TestMode)
 	tasks := newFakeTasks()
 	r := gin.New()
@@ -221,9 +234,15 @@ func newHandlerEnv(gateway *okGateway) *handlerEnv {
 	if gateway != nil {
 		gw = gateway
 	}
+	var publicBaseURL func(context.Context) string
+	if publicBase != "" {
+		base := publicBase
+		publicBaseURL = func(context.Context) string { return base }
+	}
 	group := r.Group("/canvases")
 	canvastask.RegisterRoutes(group, &canvastask.Handlers{
-		Tasks: tasks, Canvases: fakeCanvases{}, Models: fakePrices{}, Assets: fakeAssets{}, Gateway: gw,
+		Tasks: tasks, Canvases: fakeCanvases{}, Models: fakePrices{}, Assets: assets, Gateway: gw,
+		PublicBaseURL: publicBaseURL,
 	})
 	canvastask.RegisterModelRoutes(r.Group("/image-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
 	canvastask.RegisterVideoModelRoutes(r.Group("/video-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
@@ -655,5 +674,52 @@ func TestHandlerVideoTaskReferenceValidations(t *testing.T) {
 		if w.Code != tc.code {
 			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
 		}
+	}
+}
+
+// ---- 18 号票:参考图解析顺序(自有公网地址优先、厂商原址回落)----
+
+func TestHandlerVideoTaskReferencePrefersPublicAddress(t *testing.T) {
+	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
+		fakeAssets{}, "https://assets.example.org")
+
+	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/5/content"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored := env.tasks.tasks[resp.Task.ID]
+	if stored.ImageRef != "https://assets.example.org/canvases/7/ct_ref/image.png" {
+		t.Errorf("image_ref = %q, want the public storage address over the vendor URL", stored.ImageRef)
+	}
+}
+
+// 上传素材(url 为空)在公网基址配置后可作参考图;未配置时按现有错误
+// 形状拒绝 —— 上传素材没有厂商原址可回落。
+func TestHandlerVideoTaskUploadedAssetAsReference(t *testing.T) {
+	uploaded := map[int64]asset.Asset{
+		9: {ID: 9, Kind: asset.KindImage, URL: "",
+			ObjectKey: "uploads/20260911/2c1f1d3b-8e4c-4d2f-9a5b-1e7d9f0a6b82.png"},
+	}
+
+	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
+		fakeAssets{override: uploaded}, "https://assets.example.org")
+	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/9/content"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+
+	env = newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
+		fakeAssets{override: uploaded}, "")
+	w = env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/9/content"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body %s, want 400 without a public base", w.Code, w.Body.String())
 	}
 }

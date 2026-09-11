@@ -661,6 +661,19 @@ export class ApiClient {
     await this.request<void>(`/assets/${id}`, { method: 'DELETE' })
   }
 
+  /** 上传素材(18 号票):multipart 把本机图片/视频送进素材库,响应即新
+   * 素材行 —— content_url 可直接落媒体节点(与素材面板插入同语义)。
+   * kind 声明意图,服务端按魔数嗅探裁决真实类型。 */
+  uploadAsset(file: File, kind: 'image' | 'video'): Promise<AssetRecord> {
+    const form = new FormData()
+    form.set('kind', kind)
+    form.set('file', file)
+    return this.request<{ asset: AssetRecord }>('/assets/upload', {
+      method: 'POST',
+      body: form,
+    }).then((body) => body.asset)
+  }
+
   // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
 
   /** 请求级用量日志,最新在前;过滤后的 total 随页返回,驱动分页。 */
@@ -681,8 +694,11 @@ export class ApiClient {
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {
+    // multipart 表单(上传素材)交给 fetch 自带的多部分编码:手工设
+    // Content-Type 反而会丢掉浏览器生成的 boundary。
+    const isForm = typeof FormData !== 'undefined' && body instanceof FormData
     const headers = new Headers()
-    if (body !== undefined) {
+    if (body !== undefined && !isForm) {
       headers.set('Content-Type', 'application/json')
     }
     const token = this.getToken?.()
@@ -690,10 +706,12 @@ export class ApiClient {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
+    // multipart 表单原样交给 fetch,JSON 体序列化后出发。
+    const outgoingBody = body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body)
     const res = await this.fetchImpl(`${this.base}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: outgoingBody,
     })
     if (res.status === 204) {
       // 删除等操作无响应体;json() 会对空体抛错,直接返回。

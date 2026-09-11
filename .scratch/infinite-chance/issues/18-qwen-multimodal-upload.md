@@ -1,7 +1,7 @@
 # 18 千问多模态支持与素材上传
 
 Type: grilling
-Status: proposed（草案——grilling 会话用户未到场,按推荐解落稿,待确认后转定案）
+Status: implemented（2026-09-11 按草案实现:上传入口、解析顺序升级、编辑器联动;`public_base_url` 的 settings 来源随 19 号票接线,落地前解析回落厂商原址/按现有错误形状拒绝）
 
 ## Question
 

@@ -48,10 +48,12 @@ func RegisterContentRoutes(group *gin.RouterGroup, h *Handlers) {
 // RegisterLibraryRoutes mounts the library surfaces (relative to the group,
 // which the binary mounts at /assets behind the JWT middleware):
 //
-//	GET    /     — list with kind / canvas_id filters (素材面板与管理页共用)
-//	DELETE /:id  — remove one asset: object first, then the row
+//	GET    /        — list with kind / canvas_id filters (素材面板与管理页共用)
+//	POST   /upload  — user-local media into the library (18 号票上传入口)
+//	DELETE /:id     — remove one asset: object first, then the row
 func RegisterLibraryRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.GET("", h.List)
+	group.POST("/upload", h.Upload)
 	group.DELETE("/:id", h.Delete)
 }
 
@@ -232,18 +234,25 @@ func (h *Handlers) List(c *gin.Context) {
 	}
 	out := make([]listJSON, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, listJSON{
-			ID: row.ID, Kind: row.Kind, CanvasID: row.CanvasID,
-			CanvasName: row.CanvasName, TaskID: row.TaskID, Model: row.Model,
-			Prompt:     row.Prompt,
-			URL:        row.URL,
-			ContentType: row.ContentType,
-			SizeBytes:  row.SizeBytes,
-			ContentURL: contentPath(row.ID),
-			CreatedAt:  row.CreatedAt.Format(timeFormat),
-		})
+		out = append(out, assetListJSON(row.Asset, row.CanvasName))
 	}
 	c.JSON(http.StatusOK, gin.H{"assets": out})
+}
+
+// assetListJSON renders one asset row in the library's wire shape; the list
+// page and the upload response share it, so a freshly uploaded asset lands
+// in the editor exactly like a listed one.
+func assetListJSON(a Asset, canvasName string) listJSON {
+	return listJSON{
+		ID: a.ID, Kind: a.Kind, CanvasID: a.CanvasID,
+		CanvasName: canvasName, TaskID: a.TaskID, Model: a.Model,
+		Prompt:      a.Prompt,
+		URL:         a.URL,
+		ContentType: a.ContentType,
+		SizeBytes:   a.SizeBytes,
+		ContentURL:  contentPath(a.ID),
+		CreatedAt:   a.CreatedAt.Format(timeFormat),
+	}
 }
 
 // contentPath is the canonical preview/reuse address of an asset. 画布前

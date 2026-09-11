@@ -66,6 +66,11 @@ type Handlers struct {
 	Models   ModelPricer
 	Assets   AssetGetter
 	Gateway  Gateway
+	// PublicBaseURL answers the configured public base address of the
+	// object storage for the reference-image resolution (18 号票解析顺序:
+	// 自有公网地址优先、厂商原址回落)。19 号票落地 settings 前没有配置
+	// 来源,留 nil = 未配置,解析行为与升级前一致。
+	PublicBaseURL func(ctx context.Context) string
 }
 
 // RegisterRoutes mounts (relative to the group, which the binary mounts at
@@ -395,9 +400,10 @@ const assetContentPrefix = "/api/assets/"
 
 // resolveImageRef maps the editor's reference image to the address the
 // vendor fetches: an http(s) URL passes through untouched; a content-
-// addressed asset resolves through the store to the http(s) address it
-// holds; inline data: URIs — carried directly or stored in the asset row —
-// are refused before an unworkable task row lands.
+// addressed asset resolves through the store with 18 号票的顺序 — 自有存储
+// 公网地址(object_key 拼 public_base_url,永久)优先,厂商原址(约 24h
+// 过期)回落;inline data: URIs — carried directly or stored in the asset
+// row — are refused before an unworkable task row lands.
 func (h *Handlers) resolveImageRef(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", errImageRefEmpty
@@ -427,10 +433,22 @@ func (h *Handlers) resolveImageRef(ctx context.Context, ref string) (string, err
 	if err != nil {
 		return "", err
 	}
+	if addr, ok := asset.PublicAddress(a, h.publicBaseURL(ctx)); ok {
+		return addr, nil
+	}
 	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
 		return "", errImageAssetNoURL
 	}
 	return a.URL, nil
+}
+
+// publicBaseURL reads the configured public base through the optional
+// provider; nil or empty means "not configured".
+func (h *Handlers) publicBaseURL(ctx context.Context) string {
+	if h.PublicBaseURL == nil {
+		return ""
+	}
+	return h.PublicBaseURL(ctx)
 }
 
 // failImageRef maps resolveImageRef's sentinels onto their wire responses.

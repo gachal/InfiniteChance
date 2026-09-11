@@ -660,3 +660,37 @@ describe('ApiClient usage audit', () => {
     )
   })
 })
+
+describe('ApiClient uploadAsset (18 号票)', () => {
+  it('posts multipart form to /assets/upload and unwraps the asset', async () => {
+    const asset = {
+      id: 9,
+      kind: 'image',
+      canvas_id: 0,
+      canvas_name: '',
+      task_id: '',
+      model: '',
+      prompt: '',
+      url: '',
+      content_type: 'image/png',
+      size_bytes: 4,
+      content_url: '/api/assets/9/content',
+      created_at: '2026-09-11T12:00:00Z',
+    }
+    const fetchImpl = stubFetch(201, { asset })
+    const client = clientWithBase(fetchImpl)
+
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'photo.png', { type: 'image/png' })
+    await expect(client.uploadAsset(file, 'image')).resolves.toEqual(asset)
+
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/assets/upload')
+    expect((init as RequestInit).method).toBe('POST')
+    const body = (init as RequestInit).body as FormData
+    expect(body).toBeInstanceOf(FormData)
+    expect(body.get('kind')).toBe('image')
+    expect(body.get('file')).toBe(file)
+    // multipart 的 Content-Type 由 fetch 编码时生成,手工设置会丢 boundary。
+    expect(new Headers((init as RequestInit).headers).has('Content-Type')).toBe(false)
+  })
+})
