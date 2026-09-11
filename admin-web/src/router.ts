@@ -5,26 +5,49 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useAuth } from './auth'
-import AssetsView from './views/AssetsView.vue'
-import ChannelsView from './views/ChannelsView.vue'
-import DashboardView from './views/DashboardView.vue'
-import InitView from './views/InitView.vue'
-import KeysView from './views/KeysView.vue'
-import LoginView from './views/LoginView.vue'
-import PromptTemplatesView from './views/PromptTemplatesView.vue'
-import UsageView from './views/UsageView.vue'
 
+// 视图全部懒加载:登录前只拉入口 chunk,各页面按需取自己的代码。
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
-    { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
-    { path: '/keys', name: 'keys', component: KeysView, meta: { requiresAuth: true } },
-    { path: '/usage', name: 'usage', component: UsageView, meta: { requiresAuth: true } },
-    { path: '/prompt-templates', name: 'prompt-templates', component: PromptTemplatesView, meta: { requiresAuth: true } },
-    { path: '/assets', name: 'assets', component: AssetsView, meta: { requiresAuth: true } },
-    { path: '/login', name: 'login', component: LoginView },
-    { path: '/init', name: 'init', component: InitView },
+    {
+      path: '/',
+      name: 'dashboard',
+      component: () => import('./views/DashboardView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/channels',
+      name: 'channels',
+      component: () => import('./views/ChannelsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/keys',
+      name: 'keys',
+      component: () => import('./views/KeysView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/usage',
+      name: 'usage',
+      component: () => import('./views/UsageView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/prompt-templates',
+      name: 'prompt-templates',
+      component: () => import('./views/PromptTemplatesView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/assets',
+      name: 'assets',
+      component: () => import('./views/AssetsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    { path: '/login', name: 'login', component: () => import('./views/LoginView.vue') },
+    { path: '/init', name: 'init', component: () => import('./views/InitView.vue') },
     { path: '/:pathMatch(.*)*', redirect: { name: 'dashboard' } },
   ],
 })

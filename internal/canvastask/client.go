@@ -130,11 +130,17 @@ func errorSummary(body []byte) string {
 	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error.Message != "" {
 		return parsed.Error.Message
 	}
-	summary := string(body)
-	if len(summary) > 200 {
-		summary = summary[:200]
+	return truncateRunes(string(body), 200)
+}
+
+// truncateRunes cuts to at most n runes so a Chinese error message can never
+// be split mid-character into invalid UTF-8(与 relay 的摘要截断同规).
+func truncateRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
 	}
-	return summary
+	return string(runes[:n]) + "…"
 }
 
 // ---- 网关视频异步契约(08 号票;12 号票的图生视频从这里走)----

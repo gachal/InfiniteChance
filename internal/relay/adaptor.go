@@ -290,14 +290,29 @@ type openAIAdaptor struct {
 	Client *http.Client
 }
 
-// upstreamTimeout bounds one upstream chat request; without it a stalled
-// vendor would hang the client's request until the client itself gives up.
-// Generous because non-streaming completions can legitimately run minutes.
+// upstreamTimeout bounds one buffered upstream call (non-streaming chat,
+// images, video submit/poll/cancel); without it a stalled vendor would hang
+// the client's request until the client itself gives up. Generous because
+// non-streaming completions can legitimately run minutes. Streams must not
+// take this bound: a Client.Timeout covers the whole body read and would cut
+// a live SSE stream once it ran long, so the shared client carries only the
+// tuned transport and the buffered paths apply the timeout per request.
 const upstreamTimeout = 5 * time.Minute
+
+// upstreamTransport reuses upstream connections: the default transport
+// keeps only two idle connections per host, so a gateway talking to a
+// handful of vendors pays a fresh TLS handshake on most requests.
+var upstreamTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 16
+	t.ResponseHeaderTimeout = upstreamTimeout
+	return t
+}()
 
 // NewOpenAIAdaptor builds the adaptor for channel.TypeOpenAI upstreams.
 func NewOpenAIAdaptor() Adaptor {
-	return &openAIAdaptor{Client: &http.Client{Timeout: upstreamTimeout}}
+	return &openAIAdaptor{Client: &http.Client{Transport: upstreamTransport}}
 }
 
 func (a *openAIAdaptor) ChatCompletions(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
@@ -308,6 +323,8 @@ func (a *openAIAdaptor) ChatCompletions(ctx context.Context, ch channel.Channel,
 // body of the chat and images call paths. BaseURL 含版本路径
 // (如 https://api.openai.com/v1),已在录入时规范化。
 func (a *openAIAdaptor) postUpstream(ctx context.Context, ch channel.Channel, path, contentType string, payload []byte) (*UpstreamResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, upstreamTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.BaseURL+path, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -334,6 +351,8 @@ func (a *openAIAdaptor) postUpstream(ctx context.Context, ch channel.Channel, pa
 // getUpstream builds and executes one upstream GET (the video task poll):
 // same auth and body-cap rules as postUpstream.
 func (a *openAIAdaptor) getUpstream(ctx context.Context, ch channel.Channel, path string) (*UpstreamResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, upstreamTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ch.BaseURL+path, nil)
 	if err != nil {
 		return nil, err

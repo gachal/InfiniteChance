@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -52,6 +53,11 @@ type Desktop struct {
 // NewDesktop loads config, opens the database, provisions the service key
 // and assembles both services (not yet listening).
 func NewDesktop() (*Desktop, error) {
+	// 桌面壳的 gin 请求日志只在开发模式开(INFINITECHANCE_DEV 指向 vite
+	// dev server 时保留):发布形态每个请求刷一行日志纯属噪音。
+	if os.Getenv("INFINITECHANCE_DEV") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	dataDir, err := DataDir()
 	if err != nil {
 		return nil, err

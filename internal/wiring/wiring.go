@@ -63,6 +63,7 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 		Prices:   s.Prices,
 		Usage:    s.UsageLogs,
 		Tasks:    s.VideoTasks,
+		CacheTTL: relay.DefaultCacheTTL,
 	})
 }
 

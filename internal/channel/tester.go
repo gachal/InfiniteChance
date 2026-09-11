@@ -22,11 +22,15 @@ const maxErrorSnippet = 512
 // needs its own generous budget.
 const maxListingBytes = 4 << 20
 
+// probeClient is the shared probe client — one pool for all connectivity
+// probes instead of a fresh client (and fresh TLS handshake) per click.
+var probeClient = &http.Client{Timeout: probeTimeout}
+
 // Tester probes a channel by calling GET {base_url}/models with the stored
 // secret — the one free request every OpenAI-compatible vendor answers, so
 // the admin gets a decidable ok/fail right after saving a channel.
 type Tester struct {
-	// Client is optional; nil means a client with probeTimeout.
+	// Client is optional; nil means the shared probe client.
 	Client *http.Client
 }
 
@@ -46,7 +50,7 @@ func (t *Tester) Test(ctx context.Context, ch Channel) Result {
 	}
 	client := t.Client
 	if client == nil {
-		client = &http.Client{Timeout: probeTimeout}
+		client = probeClient
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)

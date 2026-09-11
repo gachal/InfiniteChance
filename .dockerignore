@@ -10,3 +10,9 @@ backups
 .DS_Store
 .env
 .env.local
+# 桌面壳(含内嵌 SPA)与文档不进服务器镜像构建上下文;server 镜像只构建
+# gateway/server 与 canvas/server,互不引用。
+desktop
+docs
+**/*.md
+.env.example

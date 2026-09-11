@@ -5,6 +5,18 @@ import { defineConfig } from 'vite'
 // same-origin backend without CORS setup.
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    target: 'es2020',
+    rollupOptions: {
+      output: {
+        // 框架与画布引擎稳定缓存:业务改动不再拖上 vue/vue-flow 一起失效。
+        manualChunks: {
+          vue: ['vue', 'vue-router'],
+          flow: ['@vue-flow/core', '@vue-flow/background'],
+        },
+      },
+    },
+  },
   server: {
     port: 5174,
     proxy: {

@@ -5,6 +5,7 @@ package apierr
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,4 +54,11 @@ func Internal(c *gin.Context, message string) {
 // NotFound answers 404 for an id that has no row.
 func NotFound(c *gin.Context, message string) {
 	Write(c, http.StatusNotFound, "not_found", message)
+}
+
+// TooManyRequests answers 429 for a rate-limited request; retryAfter bounds
+// the wait and lands in Retry-After.
+func TooManyRequests(c *gin.Context, code, message string, retryAfter int) {
+	c.Header("Retry-After", strconv.Itoa(retryAfter))
+	Write(c, http.StatusTooManyRequests, code, message)
 }

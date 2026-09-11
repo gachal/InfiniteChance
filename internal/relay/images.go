@@ -56,7 +56,7 @@ func (h *Handlers) ImagesEdits(c *gin.Context) {
 func (h *Handlers) prepareImagesGeneration(c *gin.Context, key apikey.Key) *prepared {
 	raw, err := c.GetRawData()
 	if err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body could not be read.")
+		refuseBody(c, err)
 		return nil
 	}
 	var req imagesRequest
@@ -74,8 +74,7 @@ func (h *Handlers) prepareImagesGeneration(c *gin.Context, key apikey.Key) *prep
 func (h *Handlers) prepareImagesEdit(c *gin.Context, key apikey.Key) *prepared {
 	form, err := c.MultipartForm()
 	if err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
-			"The request must be multipart/form-data with an 'image' file part.")
+		refuseBody(c, err)
 		return nil
 	}
 	req := imagesRequest{Model: formValue(form, "model"), Size: formValue(form, "size")}
@@ -119,7 +118,7 @@ func (h *Handlers) prepareImages(c *gin.Context, key apikey.Key, req imagesReque
 		return nil
 	}
 
-	channels, err := h.Channels.List(ctx)
+	channels, err := h.listChannels(ctx)
 	if err != nil {
 		h.failInternal(c, err)
 		return nil
@@ -130,7 +129,7 @@ func (h *Handlers) prepareImages(c *gin.Context, key apikey.Key, req imagesReque
 			"The model '"+req.Model+"' does not exist or no image-capable channel serves it.")
 		return nil
 	}
-	price, err := h.Prices.ByModel(ctx, req.Model)
+	price, err := h.priceFor(ctx, req.Model)
 	if errors.Is(err, pricing.ErrNotFound) {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
 			"The model '"+req.Model+"' has no price configured; ask the administrator to add one.")

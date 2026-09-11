@@ -105,9 +105,15 @@ func spaHandler(fsys fs.FS) http.Handler {
 		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p := strings.TrimPrefix(r.URL.Path, "/"); p != "" {
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		if p != "" {
 			if f, err := fsys.Open(p); err == nil {
 				f.Close()
+				// Vite 的产物文件名带内容哈希:可以让 webview 放心长缓存,
+				// 窗口重开不再重复解码同一批 JS/CSS。
+				if strings.HasPrefix(p, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}

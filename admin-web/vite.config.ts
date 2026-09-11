@@ -5,6 +5,17 @@ import { defineConfig } from 'vite'
 // canvas server, so the page talks to same-origin backends without CORS setup.
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    target: 'es2020',
+    rollupOptions: {
+      output: {
+        // 框架代码稳定缓存:业务改动不再拖上 vue/vue-router 一起失效。
+        manualChunks: {
+          vue: ['vue', 'vue-router'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

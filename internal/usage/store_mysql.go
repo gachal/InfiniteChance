@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // MySQLStore backs Store with the usage_logs table.
@@ -71,15 +72,20 @@ func (s *MySQLStore) Insert(ctx context.Context, l Log) (Log, error) {
 	if l.Source != "" {
 		source = l.Source
 	}
+	// created_at 由应用侧显式供给(数据库默认值仍在,作其他写入方的兜底):
+	// 免掉插入后再回查时间戳的第二次往返 —— 每一条计费请求都要付这笔账。
+	if l.CreatedAt.IsZero() {
+		l.CreatedAt = time.Now()
+	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO usage_logs
 			(key_id, channel_id, channel_name, public_model, upstream_model, unit,
 			 prompt_tokens, completion_tokens, duration_ms, status, charge_micros,
-			 price_snapshot, upstream_error, source)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 price_snapshot, upstream_error, source, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.KeyID, l.ChannelID, l.ChannelName, l.PublicModel, l.UpstreamModel, l.Unit,
 		l.PromptTokens, l.CompletionTokens, l.DurationMS, l.Status, l.ChargeMicros,
-		snapshot, upstreamErr, source)
+		snapshot, upstreamErr, source, l.CreatedAt)
 	if err != nil {
 		return Log{}, err
 	}
@@ -88,10 +94,6 @@ func (s *MySQLStore) Insert(ctx context.Context, l Log) (Log, error) {
 		return Log{}, err
 	}
 	l.ID = id
-	if err := s.DB.QueryRowContext(ctx,
-		`SELECT created_at FROM usage_logs WHERE id = ?`, id).Scan(&l.CreatedAt); err != nil {
-		return Log{}, err
-	}
 	return l, nil
 }
 

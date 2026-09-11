@@ -33,7 +33,7 @@ type modelList struct {
 // ListModels answers the catalog. created is when the model was first hung
 // out — the earliest creation time among the enabled channels serving it.
 func (h *Handlers) ListModels(c *gin.Context) {
-	channels, err := h.Channels.List(c.Request.Context())
+	channels, err := h.listChannels(c.Request.Context())
 	if err != nil {
 		h.failInternal(c, err)
 		return

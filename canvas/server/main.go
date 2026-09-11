@@ -68,7 +68,11 @@ func main() {
 			Templates: templates,
 		}, gateway, storage)
 
-		startWorker(tasks, gateway, d.Config, storage)
+		lifetime := d.Lifetime
+		if lifetime == nil {
+			lifetime = context.Background()
+		}
+		startWorker(tasks, gateway, d.Config, storage, lifetime)
 	})
 }
 
@@ -84,14 +88,15 @@ func serviceGateway(cfg config.Config) canvastask.Gateway {
 }
 
 // startWorker recovers orphaned generations (running rows from a previous
-// process go back to the queue) and drives the queue in the background for
-// the lifetime of the process. storage 非 nil 时产物在终态前转存对象存储.
-func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store) {
+// process go back to the queue) and drives the queue until lifetime is
+// canceled (SIGINT/SIGTERM, see app.Run). storage 非 nil 时产物在终态前转存
+// 对象存储.
+func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store, lifetime context.Context) {
 	if gateway == nil {
 		return
 	}
-	ctx := context.Background()
-	if n, err := tasks.RequeueRunning(ctx); err != nil {
+	ctx := lifetime
+	if n, err := tasks.RequeueRunning(context.Background()); err != nil {
 		log.Printf("canvastask: requeue running: %v", err)
 	} else if n > 0 {
 		log.Printf("canvastask: requeued %d orphaned task(s) from the previous run", n)

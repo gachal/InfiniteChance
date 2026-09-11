@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -15,6 +16,13 @@ type Config struct {
 	Port      string
 	MysqlDSN  string
 	RedisAddr string
+	// MySQL pool bounds (MYSQL_MAX_OPEN_CONNS / MYSQL_MAX_IDLE_CONNS /
+	// MYSQL_CONN_MAX_LIFETIME): cap concurrent connections and recycle them
+	// before the server's wait_timeout kills stale ones. The desktop SQLite
+	// assembly ignores these.
+	DBMaxOpen         int
+	DBMaxIdle         int
+	DBConnMaxLifetime time.Duration
 	// JWTSecret signs admin session tokens. Gateway and canvas must run
 	// with the same value for canvas to accept gateway-issued tokens.
 	JWTSecret string
@@ -56,6 +64,9 @@ func Load(name, defaultPort string) Config {
 		Port:                  envOr("PORT", defaultPort),
 		MysqlDSN:              envOr("MYSQL_DSN", "root:infinitechance@tcp(localhost:3306)/infinitechance?parseTime=true"),
 		RedisAddr:             envOr("REDIS_ADDR", "localhost:6379"),
+		DBMaxOpen:             intEnv("MYSQL_MAX_OPEN_CONNS", 25),
+		DBMaxIdle:             intEnv("MYSQL_MAX_IDLE_CONNS", 10),
+		DBConnMaxLifetime:     durationEnv("MYSQL_CONN_MAX_LIFETIME", 30*time.Minute),
 		JWTSecret:             envOr("JWT_SECRET", devJWTSecret),
 		JWTSecretInsecure:     jwtSecret == "",
 		JWTSecretRequired:     boolEnv("JWT_SECRET_REQUIRED"),
@@ -92,4 +103,15 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// durationEnv reads a Go duration (e.g. 30m, 1h), falling back to def when
+// unset or malformed — a bad knob value degrades to the default.
+func durationEnv(key string, def time.Duration) time.Duration {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
 }

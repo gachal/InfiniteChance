@@ -1,6 +1,7 @@
 package asset
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -41,14 +42,14 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 		return Stored{}, errors.New("asset: object storage not configured")
 	}
 	if hc == nil {
-		hc = &http.Client{Timeout: transferTimeout}
+		hc = transferClient // handler.go 的共享下载 client,复用连接池
 	}
 
 	var payload io.Reader
 	var contentType string
 	var size int64
 	if data, ct, ok := splitDataURI(url); ok {
-		payload = strings.NewReader(string(data))
+		payload = bytes.NewReader(data)
 		contentType = ct
 		size = int64(len(data))
 	} else {
@@ -72,7 +73,7 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 		if int64(len(body)) > maxTransferBytes {
 			return Stored{}, fmt.Errorf("产物超过转存上限(%d MiB)", maxTransferBytes>>20)
 		}
-		payload = strings.NewReader(string(body))
+		payload = bytes.NewReader(body) // 直接包住已读缓冲,不再整份复制一遍
 		size = int64(len(body))
 	}
 

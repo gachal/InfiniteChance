@@ -9,7 +9,6 @@ package sqlitedb
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -31,24 +30,39 @@ func ParseTime(s string) (time.Time, error) {
 	return time.Parse(TimeLayout, s)
 }
 
+// pragmaQuery rides on the DSN so every pooled connection gets the pragmas:
+// busy_timeout and foreign_keys are connection-scoped, so applying them once
+// via db.Exec left every pool connection after the first without them
+// (spurious SQLITE_BUSY, unenforced FKs). synchronous=NORMAL is the WAL
+// pairing that drops fsync pressure without losing crash safety beyond a
+// power-cut transaction.
+const pragmaQuery = "_pragma=busy_timeout(5000)" +
+	"&_pragma=foreign_keys(ON)" +
+	"&_pragma=journal_mode(WAL)" +
+	"&_pragma=synchronous(NORMAL)"
+
+// pragmaDSN appends the pragma query to dsn, whatever form it came in
+// (plain path, file: URI, :memory:, already-parameterized).
+func pragmaDSN(dsn string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + pragmaQuery
+}
+
 // Open opens dsn with the pragmas a single-writer desktop app wants: WAL
 // journaling (readers don't block the writer), a generous busy timeout and
-// enforced foreign keys.
+// enforced foreign keys — on every connection of the pool.
 func Open(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", pragmaDSN(dsn))
 	if err != nil {
 		return nil, err
 	}
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("sqlite %s: %w", pragma, err)
-		}
-	}
+	// 网关 + 画布双服务与 worker 共用这一个库:WAL 下并发读安全,写锁
+	// 竞争由 busy_timeout 化解;封顶连接数防止突发把文件锁打崩。
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	return db, nil
 }
 

@@ -31,11 +31,15 @@ type Handlers struct {
 //	POST /auth/init    — create the first admin (once), returns a session
 //	POST /auth/login   — verify credentials, returns a session
 //	GET  /auth/me      — protected: who holds this token?
+//
+// The two credential endpoints sit behind a per-IP rate limiter (each
+// attempt burns real bcrypt work).
 func RegisterRoutes(r *gin.Engine, h *Handlers) {
+	limiter := (&RateLimiter{Max: 10, Window: time.Minute}).Limit()
 	group := r.Group("/auth")
 	group.GET("/status", h.Status)
-	group.POST("/init", h.Init)
-	group.POST("/login", h.Login)
+	group.POST("/init", limiter, h.Init)
+	group.POST("/login", limiter, h.Login)
 	group.GET("/me", RequireAuth(h.Issuer), me)
 }
 

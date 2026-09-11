@@ -6,23 +6,25 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useAuth } from './auth'
-import CanvasEditorView from './views/CanvasEditorView.vue'
-import CanvasListView from './views/CanvasListView.vue'
-import InitView from './views/InitView.vue'
-import LoginView from './views/LoginView.vue'
 
+// 视图全部懒加载:编辑器(含 vue-flow)代码量大,只在真正进入画布时拉取。
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'canvases', component: CanvasListView, meta: { requiresAuth: true } },
+    {
+      path: '/',
+      name: 'canvases',
+      component: () => import('./views/CanvasListView.vue'),
+      meta: { requiresAuth: true },
+    },
     {
       path: '/canvas/:id',
       name: 'canvas-editor',
-      component: CanvasEditorView,
+      component: () => import('./views/CanvasEditorView.vue'),
       meta: { requiresAuth: true },
     },
-    { path: '/login', name: 'login', component: LoginView },
-    { path: '/init', name: 'init', component: InitView },
+    { path: '/login', name: 'login', component: () => import('./views/LoginView.vue') },
+    { path: '/init', name: 'init', component: () => import('./views/InitView.vue') },
     { path: '/:pathMatch(.*)*', redirect: { name: 'canvases' } },
   ],
 })

@@ -14,6 +14,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -26,6 +30,11 @@ import (
 type Deps struct {
 	Config config.Config
 	DB     *sql.DB
+	// Lifetime is canceled when Run's process receives SIGINT/SIGTERM —
+	// background workers registered during route setup should drive off it
+	// so graceful shutdown reaches them. Empty (desktop assembly) = the
+	// caller manages its own worker lifecycle.
+	Lifetime context.Context
 }
 
 // Option overrides a default wiring decision for Assemble.
@@ -35,9 +44,17 @@ type options struct {
 	cfg     *config.Config
 	db      *sql.DB
 	pingers map[string]health.Pinger
+	// lifetime backs Deps.Lifetime (Run's signal context).
+	lifetime context.Context
 	// wrap decorates the assembled engine as the root HTTP handler (the
 	// desktop wraps it with SPA static hosting + API aliasing).
 	wrap func(http.Handler) http.Handler
+}
+
+// WithLifetime supplies the Deps.Lifetime context — Run wires its signal
+// context through it.
+func WithLifetime(ctx context.Context) Option {
+	return func(o *options) { o.lifetime = ctx }
 }
 
 // WithConfig supplies a fully built config instead of loading env vars —
@@ -99,6 +116,7 @@ func Assemble(name, defaultPort string, register func(*gin.Engine, Deps), opts .
 		if err != nil {
 			return nil, err
 		}
+		health.ConfigurePool(db, cfg.DBMaxOpen, cfg.DBMaxIdle, cfg.DBConnMaxLifetime)
 	}
 
 	pingers := o.pingers
@@ -111,13 +129,19 @@ func Assemble(name, defaultPort string, register func(*gin.Engine, Deps), opts .
 
 	r := server.New(cfg.Name, pingers)
 	if register != nil {
-		register(r, Deps{Config: cfg, DB: db})
+		register(r, Deps{Config: cfg, DB: db, Lifetime: o.lifetime})
 	}
 	var handler http.Handler = r
 	if o.wrap != nil {
 		handler = o.wrap(r)
 	}
-	return &App{Engine: r, Config: cfg, srv: &http.Server{Handler: handler}}, nil
+	// Read/Write 超时刻意不设:SSE 中转与长时间生成不能被服务器截断;
+	// 只掐慢速接头(slowloris)与泄漏的空闲连接。
+	return &App{Engine: r, Config: cfg, srv: &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}}, nil
 }
 
 // Start binds the configured port and serves in the background. Port
@@ -142,14 +166,29 @@ func (a *App) Stop(ctx context.Context) error {
 	return a.srv.Shutdown(ctx)
 }
 
-// Run boots the service identified by name and only returns on failure.
+// shutdownGrace bounds the graceful drain on SIGINT/SIGTERM: long enough
+// for in-flight relay calls to settle their billing, short enough that
+// container orchestrators don't SIGKILL first.
+const shutdownGrace = 10 * time.Second
+
+// Run boots the service identified by name, serves until SIGINT/SIGTERM,
+// then drains gracefully — in-flight requests finish, Deps.Lifetime is
+// canceled so background workers registered during setup stop too.
 func Run(name, defaultPort string, register func(*gin.Engine, Deps)) {
-	a, err := Assemble(name, defaultPort, register)
+	lifetime, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	a, err := Assemble(name, defaultPort, register, WithLifetime(lifetime))
 	if err != nil {
 		log.Fatal(err)
 	}
 	if err := a.Start(); err != nil {
 		log.Fatal(err)
 	}
-	select {} // serve runs in a background goroutine; block forever
+	<-lifetime.Done()
+	log.Printf("%s: received %v, draining (up to %s)", name, lifetime.Err(), shutdownGrace)
+	drain, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := a.Stop(drain); err != nil {
+		log.Printf("%s: shutdown: %v", name, err)
+	}
 }

@@ -151,7 +151,7 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 
 	raw, err := c.GetRawData()
 	if err != nil {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body could not be read.")
+		refuseBody(c, err)
 		return nil
 	}
 	var req videoRequest
@@ -188,7 +188,7 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 		return nil
 	}
 
-	channels, err := h.Channels.List(ctx)
+	channels, err := h.listChannels(ctx)
 	if err != nil {
 		h.failInternal(c, err)
 		return nil
@@ -199,7 +199,7 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 			"The model '"+req.Model+"' does not exist or no video-capable channel serves it.")
 		return nil
 	}
-	price, err := h.Prices.ByModel(ctx, req.Model)
+	price, err := h.priceFor(ctx, req.Model)
 	if errors.Is(err, pricing.ErrNotFound) {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
 			"The model '"+req.Model+"' has no price configured; ask the administrator to add one.")
