@@ -24,6 +24,10 @@ type stubGateway struct {
 	// fn, when set, answers every image call (and may block).
 	fn func(context.Context, canvastask.ImageRequest) (canvastask.ImageResult, error)
 
+	// edits/editFn 是图生图面(21 号票):记录请求并按脚本应答。
+	edits  []canvastask.EditRequest
+	editFn func(context.Context, canvastask.EditRequest) (canvastask.ImageResult, error)
+
 	videoSubmits []canvastask.VideoRequest
 	videoCancels []string
 	videoPolls   int
@@ -38,6 +42,17 @@ func (g *stubGateway) GenerateImage(ctx context.Context, req canvastask.ImageReq
 	g.mu.Unlock()
 	if fn == nil {
 		return canvastask.ImageResult{}, errors.New("stub gateway: no script")
+	}
+	return fn(ctx, req)
+}
+
+func (g *stubGateway) EditImage(ctx context.Context, req canvastask.EditRequest) (canvastask.ImageResult, error) {
+	g.mu.Lock()
+	g.edits = append(g.edits, req)
+	fn := g.editFn
+	g.mu.Unlock()
+	if fn == nil {
+		return canvastask.ImageResult{}, errors.New("stub gateway: no edit script")
 	}
 	return fn(ctx, req)
 }
@@ -76,6 +91,12 @@ func (g *stubGateway) seen() []canvastask.ImageRequest {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]canvastask.ImageRequest(nil), g.requests...)
+}
+
+func (g *stubGateway) seenEdits() []canvastask.EditRequest {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]canvastask.EditRequest(nil), g.edits...)
 }
 
 func (g *stubGateway) seenVideoSubmits() []canvastask.VideoRequest {
@@ -602,5 +623,52 @@ func TestWorkerVideoRechecksRowWhenLocalCancelMissedRemote(t *testing.T) {
 	got, err := store.Get(context.Background(), task.ID)
 	if err != nil || got.Status != canvastask.StatusCanceled {
 		t.Fatalf("row = %+v err %v, want the canceled state to stand", got, err)
+	}
+}
+
+// 21 号票:带参考图的图片任务走 edits 面,文生图面不动。
+func TestWorkerImageTaskWithRefsRoutesThroughEdits(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	gateway := &stubGateway{
+		editFn: func(_ context.Context, _ canvastask.EditRequest) (canvastask.ImageResult, error) {
+			return canvastask.ImageResult{URL: "https://img.example/edited.png"}, nil
+		},
+	}
+	runWorker(t, newTestWorker(store, gateway))
+
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	task, err := store.Create(context.Background(), canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "image-3-1", Kind: canvastask.KindImage,
+		Prompt: "把背景换成雪原", Model: "img-m", Size: "1792x1024",
+		ImageRefs: []string{"https://img.example/ref1.png", "https://img.example/ref2.png"},
+		Status:    canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	final := awaitTask(t, store, task.ID)
+
+	if final.Status != canvastask.StatusSucceeded || final.ImageURL != "https://img.example/edited.png" {
+		t.Fatalf("task = %+v, want succeeded with the edits result", final)
+	}
+	edits := gateway.seenEdits()
+	if len(edits) != 1 {
+		t.Fatalf("edit calls = %d, want 1", len(edits))
+	}
+	if edits[0].Model != "img-m" || edits[0].Prompt != task.Prompt || edits[0].Size != "1792x1024" {
+		t.Errorf("edit request = %+v, want the task's generation facts", edits[0])
+	}
+	if len(edits[0].Images) != 2 || edits[0].Images[0] != "https://img.example/ref1.png" || edits[0].Images[1] != "https://img.example/ref2.png" {
+		t.Errorf("edit images = %v, want both references in order", edits[0].Images)
+	}
+	if edits[0].Source != "canvas=7 task="+task.ID+" node=image-3-1" {
+		t.Errorf("source = %q, want the canvas origin mark", edits[0].Source)
+	}
+	// 文生图面必须保持沉默:分流是二选一,不是叠加。
+	if gens := gateway.seen(); len(gens) != 0 {
+		t.Errorf("generations calls = %d, want 0 for a reference task", len(gens))
 	}
 }

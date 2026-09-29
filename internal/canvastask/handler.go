@@ -30,6 +30,10 @@ const (
 	maxPromptRunes   = 8000
 	listLimit        = 200
 	maxImageRefRunes = 4096
+	// maxImageRefs 是一次图生图提交的参考图上限(21 号票):网关 edits 的
+	// multipart 整体上限 32MiB,四张参考图连同表单余量必须落在其内,前端
+	// 同款常量拦在入口。
+	maxImageRefs = 4
 )
 
 // defaultVideoSeconds matches the gateway's own default clip length
@@ -124,13 +128,14 @@ func toTaskJSON(t Task) taskJSON {
 }
 
 type createInput struct {
-	NodeID   string `json:"node_id"`
-	Kind     string `json:"kind"`
-	Prompt   string `json:"prompt"`
-	Model    string `json:"model"`
-	Size     string `json:"size"`
-	Seconds  *int64 `json:"seconds"`
-	ImageURL string `json:"image_url"`
+	NodeID    string   `json:"node_id"`
+	Kind      string   `json:"kind"`
+	Prompt    string   `json:"prompt"`
+	Model     string   `json:"model"`
+	Size      string   `json:"size"`
+	Seconds   *int64   `json:"seconds"`
+	ImageURL  string   `json:"image_url"`
+	ImageURLs []string `json:"image_urls"`
 }
 
 // Create accepts one generation for the canvas. The task row lands queued —
@@ -200,6 +205,29 @@ func (h *Handlers) Create(c *gin.Context) {
 			return
 		}
 	}
+	// 图生图的专属入参(21 号票):参考图片列表。逐条走与视频同一个解引
+	// 用(顺序保留),超限在落任务行之前就拒;video 任务上不读,与上面的
+	// seconds/image_url 对图片任务的态度对称。
+	var imageRefs []string
+	if kind == KindImage && len(in.ImageURLs) > 0 {
+		if len(in.ImageURLs) > maxImageRefs {
+			apierr.InvalidRequest(c, "image_urls 最多 "+
+				strconv.Itoa(maxImageRefs)+" 条")
+			return
+		}
+		for _, raw := range in.ImageURLs {
+			resolved, err := h.resolveImageRef(c.Request.Context(), strings.TrimSpace(raw))
+			if err != nil {
+				h.failImageRef(c, err)
+				return
+			}
+			if utf8.RuneCountInString(resolved) > maxImageRefRunes {
+				apierr.InvalidRequest(c, "image_urls 每条最多 4096 个字符")
+				return
+			}
+			imageRefs = append(imageRefs, resolved)
+		}
+	}
 	prompt := strings.TrimSpace(in.Prompt)
 	if prompt == "" {
 		apierr.InvalidRequest(c, "prompt 不能为空")
@@ -260,7 +288,7 @@ func (h *Handlers) Create(c *gin.Context) {
 	task, err := h.Tasks.Create(c.Request.Context(), Task{
 		ID: id, CanvasID: canvasID, NodeID: nodeID, Kind: kind,
 		Prompt: prompt, Model: model, Size: size,
-		Seconds: seconds, ImageRef: imageRef,
+		Seconds: seconds, ImageRef: imageRef, ImageRefs: imageRefs,
 	})
 	if err != nil {
 		h.failStore(c, err)
@@ -382,12 +410,13 @@ func (h *Handlers) Cancel(c *gin.Context) {
 	}
 }
 
-// 图生视频参考图解析的失败形状,与 promptgen 的视频引用解析同形:引用
-// 形状不对(400)、素材不存在(404)、素材没有可用的厂商地址(400)、
+// 图生视频/图生图参考图解析的失败形状,与 promptgen 的视频引用解析同形:
+// 引用形状不对(400)、素材不存在(404)、素材没有可用的厂商地址(400)、
 // 内联 data: URI(400,data URI 进不了网关媒体契约 —— 12 号票同款决策)。
+// 文案对两种任务通用(21 号票起列表条目走同一条解析)。
 var (
-	errImageRefEmpty     = errors.New("图生视频需要参考图片(image_url)")
-	errImageRefMalformed = errors.New("image_url 必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
+	errImageRefEmpty     = errors.New("缺少参考图片地址(image_url)")
+	errImageRefMalformed = errors.New("参考图必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
 	errImageRefInline    = errors.New("内联 base64 参考图不受支持,请使用带 http(s) 地址的图片素材")
 	errImageAssetMissing = errors.New("素材不存在或已被删除")
 	errImageAssetNoURL   = errors.New("该素材没有可用的 http(s) 原始地址,无法作为参考图")

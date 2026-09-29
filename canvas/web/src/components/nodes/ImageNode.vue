@@ -143,12 +143,23 @@ function submitAnalyze(): void {
         {{ retrying ? '重试中…' : '重试' }}
       </button>
     </div>
-    <img
+    <div
       v-else-if="data.url && !loadFailed"
-      :src="data.url"
-      alt="图片节点产物"
-      @error="loadFailed = true"
+      class="media-frame"
     >
+      <img
+        :src="data.url"
+        alt="图片节点产物"
+        @error="loadFailed = true"
+      >
+      <a
+        class="download"
+        :href="data.url"
+        download
+        title="下载图片"
+        @click.stop
+      >⬇</a>
+    </div>
     <div
       v-else-if="data.url && loadFailed"
       class="placeholder missing"
@@ -248,8 +259,10 @@ function submitAnalyze(): void {
 </template>
 
 <style scoped>
+/* 21 号票的媒体卡片:更宽、大图圆角;图生视频/分析表单暂留卡片底部
+ * (后续视频票收进对话框)。 */
 .node {
-  width: 200px;
+  width: 280px;
   background: rgba(20, 26, 43, 0.92);
   border: 1px solid rgba(74, 222, 128, 0.4);
   border-radius: 12px;
@@ -275,10 +288,51 @@ function submitAnalyze(): void {
   border-color: rgba(255, 143, 143, 0.6);
 }
 
-img {
+/* vue-flow 把选中态标在节点包装层(本组件根的祖先),作用域样式以
+ * 前置 :global 够到它 —— 编译为 .vue-flow__node.selected .media-frame[data-v]。 */
+:global(.vue-flow__node.selected) .media-frame {
+  outline: 2px solid rgba(122, 162, 247, 0.8);
+  outline-offset: 2px;
+}
+
+.media-frame {
+  position: relative;
+}
+
+.media-frame img {
   display: block;
   width: 100%;
+  border-radius: 10px;
+}
+
+/* 悬浮下载:媒体卡片右上角,hover 才出现(触屏常显)。 */
+.media-frame .download {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
   border-radius: 8px;
+  background: rgba(13, 18, 32, 0.85);
+  color: #dfe3ee;
+  font-size: 14px;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.media-frame:hover .download,
+.media-frame .download:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .media-frame .download {
+    opacity: 1;
+  }
 }
 
 .placeholder {

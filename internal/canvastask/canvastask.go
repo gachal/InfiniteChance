@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -79,7 +80,10 @@ func NewID() (string, error) {
 // keeps its row and grows the count, so audit can see repeats). Video tasks
 // (12 号票) additionally carry the reference image, the clip length, the
 // gateway task handle once the submit was accepted, and the delivered video
-// address; the image product column stays image-only.
+// address; the image product column stays image-only. Image tasks with
+// references (21 号票的图生图) carry the resolved vendor addresses in
+// ImageRefs — resolved at submit time so the row is self-sufficient across
+// retries and restarts.
 type Task struct {
 	ID           string
 	CanvasID     int64
@@ -88,8 +92,9 @@ type Task struct {
 	Prompt       string
 	Model        string
 	Size         string
-	Seconds      int64  // video: 期望时长(秒);image 恒 0
-	ImageRef     string // video: 图生视频的参考图片地址
+	Seconds      int64    // video: 期望时长(秒);image 恒 0
+	ImageRef     string   // video: 图生视频的参考图片地址
+	ImageRefs    []string // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
 	Status       Status
 	Attempts     int64
 	Error        string // failed 的原因摘要;重试入队时清空
@@ -99,6 +104,33 @@ type Task struct {
 	RemoteTaskID string // 网关侧任务 id(vt_…),提交受理后回填
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// encodeImageRefs serializes the reference list for its TEXT column; an
+// empty list lands as NULL. Marshaling []string cannot fail, so the error
+// branch exists only to keep the signature honest.
+func encodeImageRefs(refs []string) any {
+	if len(refs) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(refs)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// decodeImageRefs parses the column back; anything unreadable reads as no
+// references (文生图) — a corrupt column must not take the worker down.
+func decodeImageRefs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var refs []string
+	if err := json.Unmarshal([]byte(s), &refs); err != nil {
+		return nil
+	}
+	return refs
 }
 
 // Store persists canvas tasks and drives the state machine. Every

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +114,8 @@ func TestMySQLCanvasTaskCreateGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got != task {
+	// Task 带 ImageRefs 切片(21 号票)后不可比较,按内容深比。
+	if !reflect.DeepEqual(got, task) {
 		t.Errorf("Get = %+v, want the created row %+v", got, task)
 	}
 	if _, err := store.Get(ctx, "ct_missing"); !errors.Is(err, canvastask.ErrNotFound) {
@@ -469,5 +471,41 @@ func TestMySQLCanvasTaskFinalizeCanceledOnlyFromRunning(t *testing.T) {
 	}
 	if finalized.Status != canvastask.StatusCanceled {
 		t.Errorf("status = %s, want canceled", finalized.Status)
+	}
+}
+
+// 21 号票:图生图参考图列表随行落库,重试/重启恢复后 worker 仍拿得到。
+func TestMySQLCanvasTaskImageRefsRoundTrip(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	withRefs, err := store.Create(ctx, canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "image-4-1", Kind: canvastask.KindImage,
+		Prompt: "把背景换成雪原", Model: "img-m",
+		ImageRefs: []string{"https://img.example/ref1.png", "https://img.example/ref2.png"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, withRefs.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.ImageRefs) != 2 || got.ImageRefs[0] != "https://img.example/ref1.png" || got.ImageRefs[1] != "https://img.example/ref2.png" {
+		t.Fatalf("image_refs = %v, want both references in order", got.ImageRefs)
+	}
+
+	// 空列表落 NULL,读回空切片 = 文生图任务不受影响。
+	plain := seedTask(t, store, 7, "image-4-2", canvastask.StatusQueued)
+	got, err = store.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.ImageRefs != nil {
+		t.Errorf("plain image_refs = %v, want nil", got.ImageRefs)
 	}
 }

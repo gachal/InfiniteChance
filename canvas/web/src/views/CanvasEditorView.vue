@@ -3,7 +3,7 @@
 // 自由拖拽连线、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
 // 编排的客户端侧(10 号票):生成动作 → 结果节点先落库再提交 → 轮询
 // 任务 → 产物写回节点。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow, type Connection, type Edge } from '@vue-flow/core'
@@ -26,9 +26,16 @@ import {
   type MediaNodeData,
   type PromptNodeData,
 } from '../graph'
+import {
+  appendComposerRef,
+  composerImageUrls,
+  isRelayableRef,
+  type ComposerRef,
+} from '../composer'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import AssetPanel from '../components/AssetPanel.vue'
+import GenerationComposer from '../components/GenerationComposer.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PromptNode from '../components/nodes/PromptNode.vue'
@@ -42,8 +49,24 @@ const canvasId = Number(route.params.id)
 
 // useVueFlow 在组件挂载前调用:编辑器拥有这个 flow 实例,
 // toObject/addNodes 等操作与 <VueFlow> 渲染共享同一份状态。
-const { addEdges, addNodes, findNode, fitView, onConnect, onEdgesChange, onNodesChange, setEdges, setNodes, toObject, updateNodeData } =
-  useVueFlow()
+const {
+  addEdges,
+  addNodes,
+  addSelectedNodes,
+  findNode,
+  fitView,
+  getSelectedNodes,
+  onConnect,
+  onEdgesChange,
+  onNodesChange,
+  removeSelectedNodes,
+  screenToFlowCoordinate,
+  setEdges,
+  setNodes,
+  toObject,
+  updateNodeData,
+  viewport,
+} = useVueFlow()
 
 const canvasName = ref('')
 const loadError = ref('')
@@ -124,57 +147,232 @@ const generateError = ref('')
 const retryingNode = ref('')
 const cancelingNode = ref('')
 
-/** 生成动作:结果节点(图片)与提示词连线先入图并落库,再提交任务 ——
- * 浏览器随后关闭,任务与节点也都在服务端/图里,重开不丢。 */
-async function onGenerate(promptNodeId: string, payload: { model: string }): Promise<void> {
+/** 图片任务的统一提交路径(10 号票纪律,21 号票对话框共用):结果节点
+ * 与连线先入图并立即落库(autosave flush 跳过防抖),再提交任务 ——
+ * 浏览器随后关闭,任务与节点都在服务端/图里,重开不丢。sourceNodeId
+ * 给出时结果节点落其右侧并连线(迭代来源可见);无来源落视口中心。
+ * imageUrls 非空 = 图生图(服务端按有无参考分流 generations/edits)。
+ * 成功提交返回 true。 */
+async function submitImageTask(payload: {
+  prompt: string
+  model: string
+  size?: string
+  imageUrls?: string[]
+  sourceNodeId?: string
+}): Promise<boolean> {
   if (generating.value) {
-    return
+    return false
   }
-  const promptNode = findNode(promptNodeId)
-  const data = promptNode?.data as PromptNodeData | undefined
-  const text = data?.text.trim() ?? ''
-  if (!promptNode || text === '' || payload.model === '') {
-    return
+  const source = payload.sourceNodeId ? findNode(payload.sourceNodeId) : null
+  if (payload.sourceNodeId && !source) {
+    return false
   }
   generating.value = true
   generateError.value = ''
   try {
     nodeSeq += 1
     const nodeId = `image-${Date.now()}-${nodeSeq}`
+    const position = source
+      ? { x: source.position.x + 320, y: source.position.y }
+      : viewportCenterPosition()
+    // 新结果节点成为唯一选中(21 号票:发送后自动选中,参考条切到新
+    // 产物,迭代链在对话框里连续推进)。addNodes 的入参类型不带选中位,
+    // 落图后再用 store 的选区动作补上。
+    removeSelectedNodes(getSelectedNodes.value)
     addNodes([
       {
         id: nodeId,
         type: 'image',
-        position: { x: promptNode.position.x + 260, y: promptNode.position.y },
+        position,
         data: initialData('image'),
       },
     ])
-    addEdges([
-      {
-        id: `e-${promptNodeId}-${nodeId}`,
-        source: promptNodeId,
-        target: nodeId,
-        sourceHandle: null,
-        targetHandle: null,
-      },
-    ])
+    const added = findNode(nodeId)
+    if (added) {
+      addSelectedNodes([added])
+    }
+    if (source) {
+      addEdges([
+        {
+          id: `e-${source.id}-${nodeId}`,
+          source: source.id,
+          target: nodeId,
+          sourceHandle: null,
+          targetHandle: null,
+        },
+      ])
+    }
     autosave.markDirty()
     const saved = await autosave.flush()
     if (!saved) {
       generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
-      return
+      return false
     }
     const task = await client.createCanvasTask(canvasId, {
       node_id: nodeId,
       kind: 'image',
-      prompt: text,
+      prompt: payload.prompt,
       model: payload.model,
+      ...(payload.size ? { size: payload.size } : {}),
+      ...(payload.imageUrls && payload.imageUrls.length > 0 ? { image_urls: payload.imageUrls } : {}),
     })
     taskSync.track(task)
+    return true
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
+    return false
   } finally {
     generating.value = false
+  }
+}
+
+/** 无来源(未选中节点)时结果节点的落位:视口中心偏左上,避免落在
+ * 对话框正后方。 */
+function viewportCenterPosition(): { x: number; y: number } {
+  const wrap = wrapEl.value
+  const rect = wrap?.getBoundingClientRect()
+  const center = rect
+    ? screenToFlowCoordinate({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+    : screenToFlowCoordinate({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  return { x: center.x - 140, y: center.y - 100 }
+}
+
+/** 提示词节点的生成动作(10 号票入口,保留):以节点文本提交文生图。 */
+async function onGenerate(promptNodeId: string, payload: { model: string }): Promise<void> {
+  const promptNode = findNode(promptNodeId)
+  const data = promptNode?.data as PromptNodeData | undefined
+  const text = data?.text.trim() ?? ''
+  if (!promptNode || text === '' || payload.model === '') {
+    return
+  }
+  await submitImageTask({ prompt: text, model: payload.model, sourceNodeId: promptNodeId })
+}
+
+// ---- 生成对话框(21 号票)----
+
+const wrapEl = ref<HTMLDivElement | null>(null)
+
+// 全局持久草稿:提示词/模型/尺寸不随选中切换清空(ADR 0002)。
+const composerPrompt = ref('')
+const composerModel = ref('')
+const composerSize = ref('')
+// 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
+const uploadedRefs = ref<ComposerRef[]>([])
+// 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
+// 一变(切到别的图)即复位。
+const detachedFromSelection = ref(false)
+const refUploading = ref(false)
+
+/** 对话框的上下文 = 最近选中的图片节点(多选时取数组末位);空 =
+ * 停靠底部中央的从零文生图。 */
+const composerNode = computed(() => {
+  const selected = getSelectedNodes.value.filter((n) => n.type === 'image')
+  return selected.length > 0 ? selected[selected.length - 1] : null
+})
+
+watch(
+  () => composerNode.value?.id ?? '',
+  () => {
+    detachedFromSelection.value = false
+  },
+)
+
+watch(
+  () => imageModels.value,
+  (list) => {
+    if (!list.includes(composerModel.value)) {
+      composerModel.value = list.length > 0 ? list[0] : ''
+    }
+  },
+  { immediate: true },
+)
+
+/** 生效参考图 = 选中节点产物(未拆下时)+ 本会话上传,收编规则走
+ * composer 纯函数(去重、data URI 不收、上限 4)。 */
+const composerRefs = computed<ComposerRef[]>(() => {
+  const node = composerNode.value
+  const data = node?.data as MediaNodeData | undefined
+  let list: ComposerRef[] = []
+  if (!detachedFromSelection.value && node && data?.url && isRelayableRef(data.url)) {
+    list = appendComposerRef(list, { url: data.url, asset_id: data.asset_id })
+  }
+  for (const up of uploadedRefs.value) {
+    list = appendComposerRef(list, up)
+  }
+  return list
+})
+
+/** 悬浮定位:选中时贴节点正下方(视口变换 + 节点尺寸换算成画布区坐
+ * 标,拖动/缩放/图片加载都跟随),并 clamp 在画布区内;未选中停靠底
+ * 部中央。 */
+const composerStyle = computed(() => {
+  const node = composerNode.value
+  if (!node) {
+    return { left: '50%', bottom: '20px', transform: 'translateX(-50%)' }
+  }
+  const vp = viewport.value
+  const wrapW = wrapEl.value?.clientWidth ?? 0
+  const wrapH = wrapEl.value?.clientHeight ?? 0
+  const halfW = 280
+  const estH = 240
+  const dims = node.dimensions
+  const left = vp.x + (node.position.x + (dims?.width ?? 200) / 2) * vp.zoom
+  const top = vp.y + (node.position.y + (dims?.height ?? 160)) * vp.zoom + 12
+  const clampedLeft = Math.min(Math.max(left, halfW + 8), Math.max(wrapW - halfW - 8, halfW + 8))
+  const clampedTop = Math.min(Math.max(top, 8), Math.max(wrapH - estH, 8))
+  return { left: `${clampedLeft}px`, top: `${clampedTop}px`, transform: 'translateX(-50%)' }
+})
+
+/** 参考条移除:第 0 位且来自选中节点 = 拆下产物 chip(发送退化为文生
+ * 图,连线仍建立);其余按上传列表移除。 */
+function onRemoveRef(index: number): void {
+  const node = composerNode.value
+  const data = node?.data as MediaNodeData | undefined
+  const hasSelectionChip =
+    !detachedFromSelection.value && !!(node && data?.url && isRelayableRef(data.url))
+  if (hasSelectionChip && index === 0) {
+    detachedFromSelection.value = true
+    return
+  }
+  const uploadIndex = hasSelectionChip ? index - 1 : index
+  uploadedRefs.value = uploadedRefs.value.filter((_, i) => i !== uploadIndex)
+}
+
+/** 参考图上传:复用 18 号票素材入库,内容寻址引用进列表(与素材面板
+ * 插入同语义),顺带获得转存与跨画布复用。 */
+async function onComposerUpload(file: File): Promise<void> {
+  if (refUploading.value) {
+    return
+  }
+  refUploading.value = true
+  generateError.value = ''
+  try {
+    const a = await client.uploadAsset(file, 'image')
+    uploadedRefs.value = appendComposerRef(uploadedRefs.value, { url: a.content_url, asset_id: a.id })
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
+  } finally {
+    refUploading.value = false
+  }
+}
+
+/** 对话框发送:选中图片节点时其产物即参考图(可被拆下),有参考走图
+ * 生图、无参考走文生图;成功后清空提示词(草稿的其余部分保留)。 */
+async function onComposerSend(): Promise<void> {
+  const prompt = composerPrompt.value.trim()
+  if (prompt === '' || composerModel.value === '') {
+    return
+  }
+  const urls = composerImageUrls(composerRefs.value)
+  const ok = await submitImageTask({
+    prompt,
+    model: composerModel.value,
+    size: composerSize.value || undefined,
+    imageUrls: urls.length > 0 ? urls : undefined,
+    sourceNodeId: composerNode.value?.id,
+  })
+  if (ok) {
+    composerPrompt.value = ''
   }
 }
 
@@ -902,7 +1100,10 @@ function backToList(): void {
       </button>
     </div>
 
-    <div class="canvas-wrap">
+    <div
+      ref="wrapEl"
+      class="canvas-wrap"
+    >
       <div
         v-if="loading"
         class="canvas-loading"
@@ -974,6 +1175,23 @@ function backToList(): void {
           />
         </template>
       </VueFlow>
+      <GenerationComposer
+        v-if="imageModels.length > 0"
+        :style="composerStyle"
+        :models="imageModels"
+        :refs="composerRefs"
+        :prompt="composerPrompt"
+        :model="composerModel"
+        :size="composerSize"
+        :generating="generating"
+        :uploading="refUploading"
+        @update:prompt="composerPrompt = $event"
+        @update:model="composerModel = $event"
+        @update:size="composerSize = $event"
+        @remove-ref="onRemoveRef"
+        @upload="onComposerUpload"
+        @send="onComposerSend"
+      />
       <AssetPanel
         v-if="assetPanelOpen"
         @insert="insertAsset"

@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"path"
 	"strings"
 	"time"
 )
@@ -52,6 +55,17 @@ type ImageResult struct {
 // tens of megabytes.
 const maxB64Bytes = 9 << 20
 
+// maxEditRefBytes caps one fetched reference image (21 号票的图生图):
+// 网关 /v1 整体请求体上限 32MiB,几张参考图连同表单余量必须落在其内;
+// 8MiB 与交付图(b64 上限)同量级,超出在 worker 侧就报可读的原因。
+const maxEditRefBytes = 8 << 20
+
+// maxEditRefsTotalBytes caps the references' combined size: four 8MiB
+// singles are individually legal but together bust the gateway's 32MiB
+// request cap — fail here with a readable reason instead of a late 413
+// a retry could never get past.
+const maxEditRefsTotalBytes = 24 << 20
+
 // GenerateImage calls POST /v1/images/generations (n=1) and returns the
 // first delivered image. A gateway rejection (OpenAI error object) or an
 // empty delivery is an error carrying the reason for the task row.
@@ -91,7 +105,13 @@ func (c *Client) GenerateImage(ctx context.Context, req ImageRequest) (ImageResu
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return ImageResult{}, fmt.Errorf("gateway %d: %s", resp.StatusCode, errorSummary(raw))
 	}
+	return decodeImageDelivery(raw)
+}
 
+// decodeImageDelivery reads the OpenAI-shaped images body both relay
+// endpoints answer with: the first url entry wins, a b64 entry wraps into a
+// data: URI, an empty delivery is an error for the task row.
+func decodeImageDelivery(raw []byte) (ImageResult, error) {
 	var parsed struct {
 		Data []struct {
 			URL     string `json:"url"`
@@ -117,6 +137,173 @@ func (c *Client) GenerateImage(ctx context.Context, req ImageRequest) (ImageResu
 		}
 	}
 	return ImageResult{}, fmt.Errorf("gateway delivered no images")
+}
+
+// ---- 图生图(21 号票):POST /v1/images/edits 的 multipart 契约 ----
+
+// EditRequest is one image-to-image generation the worker submits. Images
+// carries the already-resolved http(s) reference addresses; the client
+// fetches each one and uploads the bytes as multipart file parts — the
+// gateway's edits contract is a rebuilt multipart form, not a URL list.
+type EditRequest struct {
+	Model  string
+	Prompt string
+	Size   string
+	Images []string
+	Source string
+}
+
+// EditImage calls POST /v1/images/edits (n=1) with the reference images as
+// file parts — 单张分节名 image,多张 image[](OpenAI 约定,中转按渠道原样
+// 重建,VOD adaptor 对每个文件分节都转 Base64 参考). A reference that
+// cannot be fetched or busts the size cap is an error carrying the reason
+// for the task row.
+func (c *Client) EditImage(ctx context.Context, req EditRequest) (ImageResult, error) {
+	if len(req.Images) == 0 {
+		return ImageResult{}, fmt.Errorf("image-to-image needs at least one reference image")
+	}
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	fields := []struct{ name, value string }{
+		{"model", req.Model},
+		{"prompt", req.Prompt},
+		{"n", "1"},
+	}
+	if req.Size != "" {
+		fields = append(fields, struct{ name, value string }{"size", req.Size})
+	}
+	for _, f := range fields {
+		if err := w.WriteField(f.name, f.value); err != nil {
+			return ImageResult{}, err
+		}
+	}
+	total := 0
+	for i, ref := range req.Images {
+		data, contentType, err := c.fetchImageRef(ctx, ref)
+		if err != nil {
+			return ImageResult{}, fmt.Errorf("参考图 %d: %w", i+1, err)
+		}
+		total += len(data)
+		if total > maxEditRefsTotalBytes {
+			return ImageResult{}, fmt.Errorf("参考图合计超过 %d MiB 上限", maxEditRefsTotalBytes>>20)
+		}
+		name := "image"
+		if len(req.Images) > 1 {
+			name = "image[]"
+		}
+		part, err := w.CreatePart(filePartHeader(name, refFileName(ref, i, contentType), contentType))
+		if err != nil {
+			return ImageResult{}, err
+		}
+		if _, err := part.Write(data); err != nil {
+			return ImageResult{}, err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return ImageResult{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/v1/images/edits", body)
+	if err != nil {
+		return ImageResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", w.FormDataContentType())
+	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+	if req.Source != "" {
+		httpReq.Header.Set("X-InfiniteChance-Source", req.Source)
+	}
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return ImageResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxB64Bytes*2))
+	if err != nil {
+		return ImageResult{}, fmt.Errorf("read gateway response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return ImageResult{}, fmt.Errorf("gateway %d: %s", resp.StatusCode, errorSummary(raw))
+	}
+	return decodeImageDelivery(raw)
+}
+
+// fetchImageRef downloads one reference image: a vendor original or our own
+// stored object, both plain http(s) GETs with no auth. The byte cap keeps a
+// fat reference from blowing the gateway's request limit; the content type
+// is sanitized to an image mime (fallback png) so the vendor sees a sane
+// part header.
+func (c *Client) fetchImageRef(ctx context.Context, ref string) ([]byte, string, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, ref, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", fmt.Errorf("拉取失败(gateway %d)", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxEditRefBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > maxEditRefBytes {
+		return nil, "", fmt.Errorf("超过 %d MiB 上限", maxEditRefBytes>>20)
+	}
+	return data, sanitizeImageMime(resp.Header.Get("Content-Type")), nil
+}
+
+// sanitizeImageMime reduces a Content-Type header to a bare image mime the
+// multipart part header can carry; anything non-image (or empty) falls back
+// to png, the vendor's sniffing has the final word anyway.
+func sanitizeImageMime(raw string) string {
+	mime := strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
+	if strings.HasPrefix(mime, "image/") {
+		return mime
+	}
+	return "image/png"
+}
+
+// filePartHeader builds the multipart part header with an explicit file name
+// and content type (CreateFormFile would force application/octet-stream).
+func filePartHeader(field, filename, contentType string) textproto.MIMEHeader {
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition",
+		fmt.Sprintf(`form-data; name="%s"; filename="%s"`, field, filename))
+	h.Set("Content-Type", contentType)
+	return h
+}
+
+// refFileName derives a part filename from the reference address's extension
+// (query string stripped) when it carries a known image one, else from the
+// sanitized mime — some vendors key their decoder on the filename.
+func refFileName(ref string, i int, contentType string) string {
+	base := path.Base(strings.SplitN(ref, "?", 2)[0])
+	ext := strings.ToLower(path.Ext(base))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+	default:
+		ext = mimeExt(contentType)
+	}
+	return fmt.Sprintf("reference-%d%s", i+1, ext)
+}
+
+// mimeExt maps the mimes sanitizeImageMime can emit onto file extensions.
+func mimeExt(contentType string) string {
+	switch contentType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".png"
+	}
 }
 
 // errorSummary picks the OpenAI error message out of a gateway failure body,

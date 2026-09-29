@@ -277,6 +277,10 @@ func (g *okGateway) GenerateImage(context.Context, canvastask.ImageRequest) (can
 	return canvastask.ImageResult{URL: g.url}, nil
 }
 
+func (g *okGateway) EditImage(context.Context, canvastask.EditRequest) (canvastask.ImageResult, error) {
+	return canvastask.ImageResult{URL: g.url}, nil
+}
+
 func (g *okGateway) SubmitVideo(context.Context, canvastask.VideoRequest) (canvastask.VideoSubmitResult, error) {
 	return canvastask.VideoSubmitResult{TaskID: "vt_handler_ok"}, nil
 }
@@ -721,5 +725,112 @@ func TestHandlerVideoTaskUploadedAssetAsReference(t *testing.T) {
 	w = env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/9/content"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body %s, want 400 without a public base", w.Code, w.Body.String())
+	}
+}
+
+// ---- 21 号票:图生图任务(image_urls 参考图列表)----
+
+func TestHandlerCreateImageTaskWithReferences(t *testing.T) {
+	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
+		fakeAssets{}, "https://assets.example.org")
+
+	// 内容寻址引用解出公网地址、厂商地址原样透传,顺序保留。
+	w := env.postTask(t, `{"node_id":"image-2-1","prompt":"把背景换成雪原","model":"img-m",
+		"image_urls":["/api/assets/5/content","https://img.example/direct.png"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored := env.tasks.tasks[resp.Task.ID]
+	if len(stored.ImageRefs) != 2 {
+		t.Fatalf("image_refs = %v, want 2 resolved entries", stored.ImageRefs)
+	}
+	if stored.ImageRefs[0] != "https://assets.example.org/canvases/7/ct_ref/image.png" {
+		t.Errorf("image_refs[0] = %q, want the asset's public address", stored.ImageRefs[0])
+	}
+	if stored.ImageRefs[1] != "https://img.example/direct.png" {
+		t.Errorf("image_refs[1] = %q, want the direct URL untouched", stored.ImageRefs[1])
+	}
+
+	// 不带 image_urls 的提交落空列表 = 文生图,行为不变。
+	w = env.postTask(t, `{"node_id":"image-2-2","prompt":"p","model":"img-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("plain submit status = %d, want 201", w.Code)
+	}
+	var plain struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &plain); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if refs := env.tasks.tasks[plain.Task.ID].ImageRefs; len(refs) != 0 {
+		t.Errorf("plain task image_refs = %v, want empty", refs)
+	}
+}
+
+func TestHandlerImageTaskReferenceValidations(t *testing.T) {
+	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
+		fakeAssets{}, "https://assets.example.org")
+
+	cases := []struct {
+		name string
+		code int
+		urls string
+	}{
+		{"素材已被删除", http.StatusNotFound, `["/api/assets/99/content"]`},
+		{"坏引用形状", http.StatusBadRequest, `["/assets/5"]`},
+		{"内联 data URI", http.StatusBadRequest, `["data:image/png;base64,AAAA"]`},
+		{"列表混入坏条目整体拒绝", http.StatusBadRequest, `["https://img.example/ok.png","/assets/5"]`},
+		{"超过四条", http.StatusBadRequest, `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png"]`},
+	}
+	for _, tc := range cases {
+		body := `{"node_id":"n","prompt":"p","model":"img-m","image_urls":` + tc.urls + `}`
+		w := env.postTask(t, body)
+		if w.Code != tc.code {
+			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
+		}
+	}
+
+	// video 任务不读 image_urls(与 seconds/image_url 对图片任务的态度对称):
+	// 带了也不报错、不落参考图;视频自己的参考图仍走 image_url。
+	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video",
+		"image_url":"/api/assets/5/content","image_urls":["/assets/5"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("video with image_urls status = %d body %s, want 201 (field unread)", w.Code, w.Body.String())
+	}
+	var vresp struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &vresp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	vtask := env.tasks.tasks[vresp.Task.ID]
+	if vtask.ImageRef != "https://assets.example.org/canvases/7/ct_ref/image.png" || len(vtask.ImageRefs) != 0 {
+		t.Errorf("video task refs = (%q, %v), want image_url resolved and image_urls unread", vtask.ImageRef, vtask.ImageRefs)
+	}
+}
+
+// 空列表 = 文生图;列表里的空串条目按坏引用拒绝,不落成注定失败的任务行。
+func TestHandlerImageTaskEmptyReferenceList(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
+
+	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"img-m","image_urls":[]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("empty list status = %d, want 201", w.Code)
+	}
+	w = env.postTask(t, `{"node_id":"n","prompt":"p","model":"img-m","image_urls":["   "]}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("blank entry status = %d body %s, want 400", w.Code, w.Body.String())
 	}
 }

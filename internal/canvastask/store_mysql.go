@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	size           VARCHAR(64)  NOT NULL DEFAULT '',
 	seconds        BIGINT       NOT NULL DEFAULT 0,
 	image_ref      MEDIUMTEXT   NULL,
+	image_refs     MEDIUMTEXT   NULL,
 	status         VARCHAR(16)  NOT NULL,
 	attempts       BIGINT       NOT NULL DEFAULT 0,
 	error          TEXT         NULL,
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 var migrations = []struct{ column, ddl string }{
 	{"seconds", "ALTER TABLE canvas_tasks ADD COLUMN seconds BIGINT NOT NULL DEFAULT 0"},
 	{"image_ref", "ALTER TABLE canvas_tasks ADD COLUMN image_ref MEDIUMTEXT NULL"},
+	{"image_refs", "ALTER TABLE canvas_tasks ADD COLUMN image_refs MEDIUMTEXT NULL"},
 	{"video_url", "ALTER TABLE canvas_tasks ADD COLUMN video_url MEDIUMTEXT NULL"},
 	{"remote_task_id", "ALTER TABLE canvas_tasks ADD COLUMN remote_task_id VARCHAR(64) NOT NULL DEFAULT ''"},
 }
@@ -81,7 +83,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 }
 
 const taskColumns = `id, canvas_id, node_id, kind, prompt, model, size, seconds,
-	image_ref, status, attempts, error, asset_id, image_url, video_url,
+	image_ref, image_refs, status, attempts, error, asset_id, image_url, video_url,
 	remote_task_id, created_at, updated_at`
 
 func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
@@ -89,10 +91,10 @@ func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, seconds, image_ref, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, seconds, image_ref, image_refs, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size,
-		t.Seconds, t.ImageRef, t.Status)
+		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), t.Status)
 	if err != nil {
 		return Task{}, err
 	}
@@ -360,10 +362,10 @@ type rowScanner interface {
 
 func scanTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs sql.NullString
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Seconds, &imageRef, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Seconds, &imageRef, &imageRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}
@@ -372,5 +374,6 @@ func scanTask(row rowScanner) (Task, error) {
 	t.ImageURL = imageURL.String
 	t.VideoURL = videoURL.String
 	t.ImageRef = imageRef.String
+	t.ImageRefs = decodeImageRefs(imageRefs.String)
 	return t, nil
 }

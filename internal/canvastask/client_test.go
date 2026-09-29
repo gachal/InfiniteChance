@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,7 +163,7 @@ func TestClientSubmitVideoSendsContractBody(t *testing.T) {
 	client := canvastask.NewClient(server.URL, "sk-service-key")
 	res, err := client.SubmitVideo(context.Background(), canvastask.VideoRequest{
 		Model: "vid-m", Prompt: "镜头缓缓推进", Seconds: 5,
-		Image: "https://img.example/cat.png",
+		Image:  "https://img.example/cat.png",
 		Source: "canvas=7 task=ct_abc node=video-1-1",
 	})
 	if err != nil {
@@ -245,5 +247,206 @@ func TestClientCancelVideoPostsCancelEndpoint(t *testing.T) {
 	g.body = `{"error":{"message":"internal"}}`
 	if err := client.CancelVideo(context.Background(), "vt_abc123"); err == nil {
 		t.Fatalf("cancel on 500 = nil error, want one")
+	}
+}
+
+// ---- 21 号票:EditImage 的 multipart 契约 ----
+
+// refServer serves the reference bytes the canvas client fetches before
+// building the edits multipart body.
+func refServer(t *testing.T, png []byte) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func TestClientEditImagePostsMultipartEdits(t *testing.T) {
+	var gotPath, gotAuth, gotSource string
+	var fields map[string][]string
+	var files []struct {
+		name    string
+		file    string
+		ctype   string
+		content []byte
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotSource = r.Header.Get("X-InfiniteChance-Source")
+		r.ParseMultipartForm(32 << 20)
+		fields = r.MultipartForm.Value
+		for name, fhs := range r.MultipartForm.File {
+			for _, fh := range fhs {
+				f, _ := fh.Open()
+				data, _ := io.ReadAll(f)
+				f.Close()
+				files = append(files, struct {
+					name    string
+					file    string
+					ctype   string
+					content []byte
+				}{name, fh.Filename, fh.Header.Get("Content-Type"), data})
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"url":"https://img.example/edited.png"}]}`))
+	}))
+	t.Cleanup(gateway.Close)
+
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x01}
+	refs := refServer(t, png)
+	client := canvastask.NewClient(gateway.URL, "sk-service-key")
+	res, err := client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "img-m", Prompt: "把背景换成雪原", Size: "1792x1024",
+		Images: []string{refs.URL + "/one.png", refs.URL + "/two.png"},
+		Source: "canvas=7 task=ct_abc node=image-1-1",
+	})
+	if err != nil {
+		t.Fatalf("EditImage: %v", err)
+	}
+	if res.URL != "https://img.example/edited.png" {
+		t.Errorf("url = %q, want the delivered image", res.URL)
+	}
+	if gotPath != "/v1/images/edits" || gotAuth != "Bearer sk-service-key" ||
+		gotSource != "canvas=7 task=ct_abc node=image-1-1" {
+		t.Fatalf("request = (%s, %s, %s), want the edits endpoint with key and source", gotPath, gotAuth, gotSource)
+	}
+	// 文本字段:model/prompt/n=1 + size;多张参考图分节名 image[](OpenAI
+	// 约定),文件名字节原样到达。
+	if fields["model"][0] != "img-m" || fields["prompt"][0] != "把背景换成雪原" ||
+		fields["n"][0] != "1" || fields["size"][0] != "1792x1024" {
+		t.Errorf("fields = %v, want the generation facts", fields)
+	}
+	if len(files) != 2 {
+		t.Fatalf("file parts = %d, want 2", len(files))
+	}
+	for i, p := range files {
+		if p.name != "image[]" || p.file != fmt.Sprintf("reference-%d.png", i+1) || p.ctype != "image/png" {
+			t.Errorf("part %d = (%s, %s, %s), want image[]/reference-%d.png/image/png", i, p.name, p.file, p.ctype, i+1)
+		}
+		if string(p.content) != string(png) {
+			t.Errorf("part %d content drifted", i)
+		}
+	}
+}
+
+// 单张参考图的分节名是 image(OpenAI 单图约定);不带 size 时字段缺席。
+func TestClientEditImageSingleRefUsesImageField(t *testing.T) {
+	var fields map[string][]string
+	var fileNames []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseMultipartForm(32 << 20)
+		fields = r.MultipartForm.Value
+		for name, fhs := range r.MultipartForm.File {
+			for range fhs {
+				fileNames = append(fileNames, name)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"url":"https://img.example/e.png"}]}`))
+	}))
+	t.Cleanup(gateway.Close)
+
+	png := []byte{0x89, 'P', 'N', 'G'}
+	refs := refServer(t, png)
+	client := canvastask.NewClient(gateway.URL, "sk-service-key")
+	if _, err := client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "img-m", Prompt: "p",
+		Images: []string{refs.URL + "/ref.png"},
+	}); err != nil {
+		t.Fatalf("EditImage: %v", err)
+	}
+	if fields["model"][0] != "img-m" || fields["n"][0] != "1" {
+		t.Errorf("fields = %v, want model and n=1", fields)
+	}
+	if _, ok := fields["size"]; ok {
+		t.Errorf("size field present, want it omitted when empty")
+	}
+	if len(fileNames) != 1 || fileNames[0] != "image" {
+		t.Errorf("file parts = %v, want a single image part", fileNames)
+	}
+}
+
+// 参考图拉取失败与超限都要在任务行留下可读原因。
+func TestClientEditImageReferenceFailures(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(dead.Close)
+
+	client := canvastask.NewClient("http://gateway.invalid", "sk-service-key")
+	_, err := client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "img-m", Prompt: "p", Images: []string{dead.URL + "/gone.png"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "拉取失败") {
+		t.Fatalf("err = %v, want the fetch failure reason", err)
+	}
+
+	// 超限:响应体截断在 8MiB+1,客户端必须报上限而不是把胖参考图发出去。
+	fat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(make([]byte, 9<<20))
+	}))
+	t.Cleanup(fat.Close)
+	_, err = client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "img-m", Prompt: "p", Images: []string{fat.URL + "/fat.png"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Fatalf("err = %v, want the size-cap reason", err)
+	}
+}
+
+// 网关的 OpenAI 错误体原样进错误串,任务行因此拿到厂商原因。
+func TestClientEditImageSurfacesGatewayErrors(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"size not supported by model"}}`))
+	}))
+	t.Cleanup(gateway.Close)
+
+	png := []byte{0x89, 'P', 'N', 'G'}
+	refs := refServer(t, png)
+	client := canvastask.NewClient(gateway.URL, "sk-service-key")
+	_, err := client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "img-m", Prompt: "p", Images: []string{refs.URL + "/r.png"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "size not supported by model") {
+		t.Fatalf("err = %v, want the gateway's message", err)
+	}
+}
+
+// 单张合规、合计超限:四张 8MiB 参考图各自过单张上限,但合计撞破
+// 24MiB 组合上限 —— 必须在拨号网关之前就地失败,失败原因可读。
+func TestClientEditImageRejectsCombinedReferenceSize(t *testing.T) {
+	dialed := false
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dialed = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(gateway.Close)
+
+	fat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(make([]byte, 8<<20))
+	}))
+	t.Cleanup(fat.Close)
+
+	client := canvastask.NewClient(gateway.URL, "sk-service-key")
+	_, err := client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "img-m", Prompt: "p",
+		Images: []string{
+			fat.URL + "/1.png", fat.URL + "/2.png", fat.URL + "/3.png", fat.URL + "/4.png",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "合计") {
+		t.Fatalf("err = %v, want the combined size-cap reason", err)
+	}
+	if dialed {
+		t.Errorf("gateway was dialed despite the combined cap")
 	}
 }

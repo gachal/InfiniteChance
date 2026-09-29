@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	size           TEXT    NOT NULL DEFAULT '',
 	seconds        INTEGER NOT NULL DEFAULT 0,
 	image_ref      TEXT    NULL,
+	image_refs     TEXT    NULL,
 	status         TEXT    NOT NULL,
 	attempts       INTEGER NOT NULL DEFAULT 0,
 	error          TEXT    NULL,
@@ -59,16 +60,53 @@ var sqliteIndexes = []string{
 	`CREATE INDEX IF NOT EXISTS idx_canvas_tasks_status ON canvas_tasks (status, created_at)`,
 }
 
-// EnsureSchema creates the canvas_tasks table and its indexes when missing.
-// The desktop database starts from scratch, so the MySQL-side
-// information_schema column migration has no counterpart here: 新建表自带
-// 全部列(视频四列已在表里)。Idempotent.
+// sqliteMigrations widens tables created by earlier desktop builds in place
+// (21 号票起与 MySQL 侧同款决策:CREATE TABLE IF NOT EXISTS 不会加宽已存在
+// 的表,存量 app.db 靠 PRAGMA table_info 检查后 ALTER)。此前视频列未迁移
+// 是因为当时桌面尚无存量;如今有,就照同一条幂等路走。Idempotent.
+var sqliteMigrations = []struct{ column, ddl string }{
+	{"image_refs", "ALTER TABLE canvas_tasks ADD COLUMN image_refs TEXT NULL"},
+}
+
+// EnsureSchema creates the canvas_tasks table and its indexes when missing,
+// then widens an existing table in place. Idempotent.
 func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 	if _, err := s.DB.ExecContext(ctx, sqliteSchema); err != nil {
 		return err
 	}
 	for _, ddl := range sqliteIndexes {
 		if _, err := s.DB.ExecContext(ctx, ddl); err != nil {
+			return err
+		}
+	}
+	for _, m := range sqliteMigrations {
+		rows, err := s.DB.QueryContext(ctx, `PRAGMA table_info(canvas_tasks)`)
+		if err != nil {
+			return err
+		}
+		found := false
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notNull, pk int
+			var dfltValue any
+			if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == m.column {
+				found = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if found {
+			continue
+		}
+		if _, err := s.DB.ExecContext(ctx, m.ddl); err != nil {
 			return err
 		}
 	}
@@ -81,10 +119,10 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, seconds, image_ref, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, seconds, image_ref, image_refs, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size,
-		t.Seconds, t.ImageRef, t.Status, now, now)
+		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), t.Status, now, now)
 	if err != nil {
 		return Task{}, err
 	}
@@ -353,11 +391,11 @@ func (s *SQLiteStore) ResetForRetry(ctx context.Context, id string, canvasID int
 // 读出转回 time.Time,保持与 MySQL 版相同的 Go 返回类型。
 func scanSQLiteTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs sql.NullString
 	var createdAt, updatedAt string
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Seconds, &imageRef, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Seconds, &imageRef, &imageRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &createdAt, &updatedAt); err != nil {
 		return Task{}, err
 	}
@@ -366,6 +404,7 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	t.ImageURL = imageURL.String
 	t.VideoURL = videoURL.String
 	t.ImageRef = imageRef.String
+	t.ImageRefs = decodeImageRefs(imageRefs.String)
 	var err error
 	if t.CreatedAt, err = sqlitedb.ParseTime(createdAt); err != nil {
 		return Task{}, err

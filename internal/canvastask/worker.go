@@ -12,12 +12,13 @@ import (
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 )
 
-// Gateway is the worker's view of the relay surface: the synchronous
-// text-to-image call (10 号票) and the async video contract's three faces —
-// submit, poll, cancel (12 号票). *Client satisfies it; tests substitute
-// fakes.
+// Gateway is the worker's view of the relay surface: the synchronous image
+// calls — text-to-image (10 号票) and image-to-image (21 号票) — and the
+// async video contract's three faces — submit, poll, cancel (12 号票).
+// *Client satisfies it; tests substitute fakes.
 type Gateway interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error)
+	EditImage(ctx context.Context, req EditRequest) (ImageResult, error)
 	SubmitVideo(ctx context.Context, req VideoRequest) (VideoSubmitResult, error)
 	PollVideo(ctx context.Context, taskID string) (VideoPoll, error)
 	CancelVideo(ctx context.Context, taskID string) error
@@ -188,12 +189,27 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 
 	w.logger.Printf("canvastask: running %s (canvas %d, node %s, attempt %d)",
 		t.ID, t.CanvasID, t.NodeID, t.Attempts)
-	result, err := w.gateway.GenerateImage(ctx, ImageRequest{
-		Model:  t.Model,
-		Prompt: t.Prompt,
-		Size:   t.Size,
-		Source: fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID),
-	})
+	// 图生图分流(21 号票):带参考图的任务走 edits multipart,其余与
+	// 文生图同一 generations 调用;产物/记账/失败路径两种形态完全同构。
+	source := fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID)
+	var result ImageResult
+	var err error
+	if len(t.ImageRefs) > 0 {
+		result, err = w.gateway.EditImage(ctx, EditRequest{
+			Model:  t.Model,
+			Prompt: t.Prompt,
+			Size:   t.Size,
+			Images: t.ImageRefs,
+			Source: source,
+		})
+	} else {
+		result, err = w.gateway.GenerateImage(ctx, ImageRequest{
+			Model:  t.Model,
+			Prompt: t.Prompt,
+			Size:   t.Size,
+			Source: source,
+		})
+	}
 	bookkeeping := context.WithoutCancel(parent)
 	if err != nil {
 		w.fail(bookkeeping, t.ID, err.Error())

@@ -191,8 +191,10 @@ export interface CanvasTask {
   updated_at: string
 }
 
-/** 提交生成任务的请求体。kind=image 为文生图;kind=video 为图生视频,
- * 需要 image_url(参考图片)并可带 seconds(期望时长,缺省 5 秒)。 */
+/** 提交生成任务的请求体。kind=image 为文生图/图生图(image_urls 带参考
+ * 图列表,≤4 条:厂商 http(s) 地址或素材内容寻址路径,服务端逐条解引用,
+ * 21 号票);kind=video 为图生视频,需要 image_url(参考图片)并可带
+ * seconds(期望时长,缺省 5 秒)。 */
 export interface CreateCanvasTaskInput {
   node_id: string
   kind: 'image' | 'video'
@@ -200,6 +202,7 @@ export interface CreateCanvasTaskInput {
   model: string
   size?: string
   image_url?: string
+  image_urls?: string[]
   seconds?: number
 }
 
