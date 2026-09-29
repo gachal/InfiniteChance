@@ -191,23 +191,105 @@ func vodRefusal(message string) *UpstreamResponse {
 // vodImagesRequest is the slice of the (model-rewritten) OpenAI images
 // body the VOD translation needs; everything else is not expressible
 // upstream and dropped by design (response_format 恒 url,quality 不翻译).
+// 21 号票:image(参考图 URL,单个字符串或数组)存在即图生图,ratio 为
+// 显式宽高比、优先于 size 推导。
 type vodImagesRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	N      *int64 `json:"n"`
-	Size   string `json:"size"`
+	Model  string       `json:"model"`
+	Prompt string       `json:"prompt"`
+	N      *int64       `json:"n"`
+	Size   string       `json:"size"`
+	Ratio  string       `json:"ratio"`
+	Image  vodImageRefs `json:"image"`
+}
+
+// vodImageRefs accepts the reference-image parameter in both wire shapes —
+// one URL string or an array of URL strings (order = 参考序,提示词「图N」
+// 按下标对应). Absent or null decodes to nil.
+type vodImageRefs []string
+
+func (r *vodImageRefs) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	trim := func(list []string) []string {
+		out := make([]string, len(list))
+		for i, u := range list {
+			// 解析处统一剥首尾空白:校验与 FileInfos 构造消费同一份值,
+			// 不留「带空格通过校验、原样提交被厂商拒」的缝隙。空条目
+			// 原样保留,交给校验层按票定案 400,不静默丢弃。
+			out[i] = strings.TrimSpace(u)
+		}
+		return out
+	}
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		if one == "" {
+			return nil // 显式空串/缺省同义:未携带参考图
+		}
+		*r = trim([]string{one})
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return fmt.Errorf("'image' must be a URL string or an array of URL strings")
+	}
+	*r = trim(many)
+	return nil
+}
+
+// vodMaxImageRefs is the vendor-side reference-image quota (参考实现的生图
+// 参考图配额); beyond it the request is refused before submit as a client
+// error, cheaper than Tencent's opaque one.
+const vodMaxImageRefs = 9
+
+// vodCheckImageRefs validates the reference list: http(s) only — inline
+// data: URIs are the shape 12 号票 already banned from gateway media
+// contracts — and at most 9 entries. Returns a refusal response or nil.
+func vodCheckImageRefs(refs []string) *UpstreamResponse {
+	if len(refs) > vodMaxImageRefs {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody(fmt.Sprintf("'image' supports at most %d reference images, got %d.", vodMaxImageRefs, len(refs)))}
+	}
+	for _, u := range refs {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			return &UpstreamResponse{Status: http.StatusBadRequest,
+				Body: vodErrorBody("'image' entries must not be empty.")}
+		}
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			return &UpstreamResponse{Status: http.StatusBadRequest,
+				Body: vodErrorBody("'image' entries must be http(s) URLs the vendor can fetch (inline data: URIs are not supported).")}
+		}
+	}
+	return nil
+}
+
+// vodURLFileInfos renders the reference list as the URL-typed FileInfos the
+// vendor fetches itself — 零下载零转码,腾讯自拉.
+func vodURLFileInfos(refs []string) []map[string]string {
+	if len(refs) == 0 {
+		return nil
+	}
+	infos := make([]map[string]string, len(refs))
+	for i, u := range refs {
+		infos[i] = map[string]string{"Type": "Url", "Url": u}
+	}
+	return infos
 }
 
 // vodSubmitTask builds and submits one CreateAigcImageTask, returning the
 // vendor TaskId. modelName carries the ModelMap upstream string with the
 // documented shape "ModelName ModelVersion" (空格连接,如 "OG image2.5_sunburst")。
-func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, modelName, prompt, size string, n int64, refs []map[string]string) (*UpstreamResponse, string, error) {
+func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, modelName, prompt, size, aspectOverride string, n int64, refs []map[string]string) (*UpstreamResponse, string, error) {
 	if n < 1 || n > vodMaxOutputImages {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: vodErrorBody(fmt.Sprintf("'n' must be between 1 and %d on tencent-vod image channels.", vodMaxOutputImages))}, "", nil
 	}
 	name, version, _ := strings.Cut(strings.TrimSpace(modelName), " ")
 	resolution, aspect := vodSizeConfig(size)
+	if r := strings.TrimSpace(aspectOverride); r != "" {
+		aspect = r // ratio 显式给出时优先于 size 推导(枚举交腾讯裁)
+	}
 	output := map[string]any{
 		"StorageMode": "Temporary", // 持久化交由 14 号票转存链;Permanent 留待 VOD 侧超分诉求
 		"Resolution":  resolution,
@@ -402,7 +484,7 @@ func urlsToData(urls []string) []map[string]string {
 }
 
 // vodSizeConfig maps one OpenAI size ("1024x1024"/"auto"/缺省) onto the
-// VOD OutputConfig pair: 短边 ≥2048 → 2K 档,否则 1K;宽高比就近取枚举;
+// VOD OutputConfig pair: 长边 ≥2048 → 2K 档,否则 1K;宽高比就近取枚举;
 // 解析不了的尺寸(含 auto/缺省)落 1K + adaptive,由模型自行决定构图。
 func vodSizeConfig(size string) (resolution, aspect string) {
 	resolution, aspect = "1K", "adaptive"
@@ -415,7 +497,7 @@ func vodSizeConfig(size string) (resolution, aspect string) {
 	if errW != nil || errH != nil || w <= 0 || h <= 0 {
 		return resolution, aspect
 	}
-	if min(w, h) >= 2048 {
+	if max(w, h) >= 2048 { // 长边判定(21 号票):横版 2048x1152 属 2K 档
 		resolution = "2K"
 	}
 	aspect = nearestVODAspect(w, h)
@@ -455,7 +537,10 @@ func (a *vodAdaptor) ImagesGenerations(ctx context.Context, ch channel.Channel, 
 	if req.N != nil {
 		n = *req.N
 	}
-	upstream, taskID, err := a.vodSubmitTask(ctx, ch, req.Model, req.Prompt, req.Size, n, nil)
+	if refusal := vodCheckImageRefs(req.Image); refusal != nil {
+		return refusal, nil
+	}
+	upstream, taskID, err := a.vodSubmitTask(ctx, ch, req.Model, req.Prompt, req.Size, req.Ratio, n, vodURLFileInfos(req.Image))
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}
@@ -513,7 +598,7 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 		})
 	}
 
-	upstream, taskID, err := a.vodSubmitTask(ctx, ch, model, prompt, size, n, refs)
+	upstream, taskID, err := a.vodSubmitTask(ctx, ch, model, prompt, size, "", n, refs)
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}

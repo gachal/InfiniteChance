@@ -320,6 +320,8 @@ func TestVODSizeConfig(t *testing.T) {
 		{"1536x1024", "1K", "4:3"},
 		{"1024x1536", "1K", "3:4"},
 		{"2048x2048", "2K", "1:1"},
+		{"2048x1152", "2K", "16:9"}, // 21 号票:长边判定,横版 2048 系是 2K
+		{"1152x2048", "2K", "9:16"},
 		{"3072x2048", "2K", "4:3"},
 		{"768x1280", "1K", "9:16"},
 		{"1792x768", "1K", "21:9"},
@@ -345,5 +347,110 @@ func TestVODAdaptorChatAndVideoRefuse(t *testing.T) {
 	}
 	if _, err := a.VideosSubmit(context.Background(), ch, nil); err == nil {
 		t.Error("VideosSubmit should refuse on the VOD adaptor")
+	}
+}
+
+// 21 号票:generations 带 image(URL)即图生图——URL 型 FileInfos(腾讯
+// 自拉)、顺序保持;ratio 显式优先于 size 推导;约束(http(s) only、
+// data: 拒、≤9 张)在提交前裁。
+func TestVODAdaptorGenerationsWithImageRefs(t *testing.T) {
+	stub, srv := newVODStub(t,
+		`{"Response":{"AigcImageTask":{"Status":"SUCCESS","Output":{"FileInfos":[{"FileUrl":"https://cdn/out.png"}]}}}}`)
+	a := fastVODAdaptor(srv.URL)
+
+	payload := []byte(`{
+		"model":"OG image2.5_flare_low",
+		"prompt":"图1 保持人物五官,图2 是场景参考",
+		"n":1,
+		"size":"1024x1024",
+		"ratio":"16:9",
+		"image":["https://example.com/ref-1.png","https://example.com/ref-2.jpg"]
+	}`)
+	upstream, err := a.ImagesGenerations(context.Background(), vodTestChannel(srv.URL), payload)
+	if err != nil || !upstream.OK {
+		t.Fatalf("ImagesGenerations = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+
+	var submit struct {
+		OutputConfig map[string]any `json:"OutputConfig"`
+		FileInfos    []struct {
+			Type string `json:"Type"`
+			Url  string `json:"Url"`
+		} `json:"FileInfos"`
+	}
+	select {
+	case raw := <-stub.submits:
+		if err := json.Unmarshal(raw, &submit); err != nil {
+			t.Fatalf("submit body: %v (%s)", err, raw)
+		}
+	default:
+		t.Fatal("no submit reached the stub")
+	}
+	if len(submit.FileInfos) != 2 ||
+		submit.FileInfos[0].Type != "Url" || submit.FileInfos[0].Url != "https://example.com/ref-1.png" ||
+		submit.FileInfos[1].Url != "https://example.com/ref-2.jpg" {
+		t.Fatalf("FileInfos = %+v", submit.FileInfos)
+	}
+	// size 1024x1024 推导 1:1,但 ratio 16:9 显式优先。
+	if submit.OutputConfig["AspectRatio"] != "16:9" || submit.OutputConfig["Resolution"] != "1K" {
+		t.Fatalf("OutputConfig = %v", submit.OutputConfig)
+	}
+}
+
+func TestVODAdaptorSingleStringRefForm(t *testing.T) {
+	stub, srv := newVODStub(t,
+		`{"Response":{"AigcImageTask":{"Status":"SUCCESS","Output":{"FileInfos":[{"FileUrl":"https://cdn/out.png"}]}}}}`)
+	a := fastVODAdaptor(srv.URL)
+	upstream, err := a.ImagesGenerations(context.Background(), vodTestChannel(srv.URL),
+		[]byte(`{"model":"OG image2.5_flare_low","prompt":"x","image":"https://example.com/one.png"}`))
+	if err != nil || !upstream.OK {
+		t.Fatalf("single-string form = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	var submit struct {
+		FileInfos []map[string]string `json:"FileInfos"`
+	}
+	select {
+	case raw := <-stub.submits:
+		_ = json.Unmarshal(raw, &submit)
+	default:
+		t.Fatal("no submit reached the stub")
+	}
+	if len(submit.FileInfos) != 1 || submit.FileInfos[0]["Url"] != "https://example.com/one.png" {
+		t.Fatalf("FileInfos = %v", submit.FileInfos)
+	}
+}
+
+func TestVODAdaptorImageRefConstraints(t *testing.T) {
+	_, srv := newVODStub(t)
+	a := fastVODAdaptor(srv.URL)
+
+	cases := map[string]string{
+		`{"model":"m","prompt":"x","image":"data:image/png;base64,AAAA"}`: "http(s)",
+		`{"model":"m","prompt":"x","image":["https://a/1.png",""]}`:       "empty",
+		`{"model":"m","prompt":"x","image":["  "]}`:                       "empty",
+		`{"model":"m","prompt":"x","image":"ftp://a/1.png"}`:              "http(s)",
+	}
+	for body, want := range cases {
+		upstream, err := a.ImagesGenerations(context.Background(), vodTestChannel(srv.URL), []byte(body))
+		if err != nil || upstream.OK || upstream.Status != http.StatusBadRequest {
+			t.Fatalf("body %s: got %d/%v, want 400", body, upstream.Status, err)
+		}
+		if !strings.Contains(string(upstream.Body), want) {
+			t.Fatalf("body %s: refusal %s missing %q", body, upstream.Body, want)
+		}
+	}
+
+	// 10 张参考图:超 9 上限。
+	refs := make([]string, 10)
+	for i := range refs {
+		refs[i] = fmt.Sprintf("https://example.com/%d.png", i)
+	}
+	raw, _ := json.Marshal(map[string]any{"model": "m", "prompt": "x", "image": refs})
+	upstream, err := a.ImagesGenerations(context.Background(), vodTestChannel(srv.URL), raw)
+	if err != nil || upstream.OK || upstream.Status != http.StatusBadRequest {
+		t.Fatalf("10 refs: got %d/%v, want 400", upstream.Status, err)
+	}
+	if !strings.Contains(string(upstream.Body), "at most 9") {
+		t.Fatalf("10 refs refusal = %s", upstream.Body)
 	}
 }

@@ -47,6 +47,7 @@ export interface Channel {
    * come back blanked; config_hints carries their tail hints. */
   config?: Record<string, string>
   config_hints?: Record<string, string>
+  capabilities: string[]
   model_map: Record<string, string>
   priority: number
   weight: number
@@ -64,6 +65,8 @@ export interface ChannelInput {
   api_key?: string
   /** Secret-key entries empty on update keep the stored value. */
   config?: Record<string, string>
+  /** Empty array defaults to chat-only; images/videos must be explicit. */
+  capabilities?: string[]
   model_map: Record<string, string>
   priority: number
   weight: number

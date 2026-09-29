@@ -32,6 +32,9 @@ interface ChannelForm {
   subAppId: string
   region: string
   mappings: { from: string; to: string }[]
+  capChat: boolean
+  capImages: boolean
+  capVideos: boolean
   priority: number
   weight: number
   enabled: boolean
@@ -48,6 +51,9 @@ function blankForm(): ChannelForm {
     subAppId: '',
     region: '',
     mappings: [{ from: '', to: '' }],
+    capChat: true,
+    capImages: false,
+    capVideos: false,
     priority: 0,
     weight: 1,
     enabled: true,
@@ -98,6 +104,9 @@ function openEdit(ch: Channel): void {
     subAppId: ch.config?.sub_app_id ?? '',
     region: ch.config?.region ?? '',
     mappings: mappings.length > 0 ? mappings : [{ from: '', to: '' }],
+    capChat: ch.capabilities.includes('chat'),
+    capImages: ch.capabilities.includes('images'),
+    capVideos: ch.capabilities.includes('videos'),
     priority: ch.priority,
     weight: ch.weight,
     enabled: ch.enabled,
@@ -131,11 +140,16 @@ function buildInput() {
       modelMap[from.trim()] = to.trim()
     }
   }
+  const capabilities: string[] = []
+  if (form.capChat) capabilities.push('chat')
+  if (form.capImages) capabilities.push('images')
+  if (form.capVideos) capabilities.push('videos')
   const input: Parameters<typeof auth.client.createChannel>[0] = {
     name: form.name.trim(),
     type: form.type,
     base_url: form.baseUrl.trim(),
     api_key: isVod.value ? '' : form.apiKey.trim(),
+    capabilities,
     model_map: modelMap,
     priority: form.priority,
     weight: form.weight,
@@ -183,6 +197,7 @@ async function toggleEnabled(ch: Channel): Promise<void> {
       base_url: ch.base_url,
       api_key: '', // 保留已存密钥
       config: ch.config, // 敏感键回显为空 = 保留已存值
+      capabilities: ch.capabilities,
       model_map: ch.model_map,
       priority: ch.priority,
       weight: ch.weight,
@@ -287,18 +302,22 @@ function modelMapSummary(ch: Channel): string {
           <span>厂商类型</span>
           <select v-model="form.type">
             <option value="openai">OpenAI 兼容</option>
+            <option value="tencent-vod">腾讯云 VOD AIGC</option>
           </select>
         </label>
         <label class="wide">
-          <span>BaseURL(含版本路径)</span>
+          <span>BaseURL{{ isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : '(含版本路径)' }}</span>
           <input
             v-model="form.baseUrl"
             type="text"
-            required
-            placeholder="https://api.openai.com/v1"
+            :required="!isVod"
+            :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : 'https://api.openai.com/v1'"
           >
         </label>
-        <label class="wide">
+        <label
+          v-if="!isVod"
+          class="wide"
+        >
           <span>厂商密钥{{ editingId === null ? '' : '(留空保持现有密钥)' }}</span>
           <input
             v-model="form.apiKey"
@@ -308,6 +327,50 @@ function modelMapSummary(ch: Channel): string {
             placeholder="sk-…"
           >
         </label>
+        <template v-else>
+          <label>
+            <span>SecretId{{ editingId === null ? '' : '(留空保持现有)' }}</span>
+            <input
+              v-model="form.secretId"
+              type="password"
+              :required="editingId === null"
+              autocomplete="off"
+              placeholder="AKID…"
+            >
+          </label>
+          <label>
+            <span>SecretKey{{ editingId === null ? '' : '(留空保持现有)' }}</span>
+            <input
+              v-model="form.secretKey"
+              type="password"
+              :required="editingId === null"
+              autocomplete="off"
+              placeholder="腾讯云 API 密钥"
+            >
+          </label>
+          <label>
+            <span>SubAppId(点播子应用,可空)</span>
+            <input
+              v-model="form.subAppId"
+              type="text"
+              placeholder="1500000000"
+            >
+          </label>
+          <label>
+            <span>地域(可空)</span>
+            <input
+              v-model="form.region"
+              type="text"
+              placeholder="ap-guangzhou"
+            >
+          </label>
+          <p
+            v-if="editingId !== null && editingHints"
+            class="muted wide"
+          >
+            已存凭据:{{ editingHints }}
+          </p>
+        </template>
 
         <fieldset class="wide">
           <legend>模型映射(公开模型名 → 上游模型名)</legend>
@@ -345,6 +408,33 @@ function modelMapSummary(ch: Channel): string {
           >
             + 添加映射
           </button>
+        </fieldset>
+
+        <fieldset class="wide">
+          <legend>能力(该渠道可转发的请求;不勾任何项按仅聊天处理)</legend>
+          <div class="cap-row">
+            <label class="check">
+              <input
+                v-model="form.capChat"
+                type="checkbox"
+              >
+              <span>聊天(chat)</span>
+            </label>
+            <label class="check">
+              <input
+                v-model="form.capImages"
+                type="checkbox"
+              >
+              <span>生图(images)</span>
+            </label>
+            <label class="check">
+              <input
+                v-model="form.capVideos"
+                type="checkbox"
+              >
+              <span>生视频(videos)</span>
+            </label>
+          </div>
         </fieldset>
 
         <label>
@@ -532,6 +622,12 @@ function modelMapSummary(ch: Channel): string {
 
 .arrow {
   color: #8b91a7;
+}
+
+.cap-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 label.check {

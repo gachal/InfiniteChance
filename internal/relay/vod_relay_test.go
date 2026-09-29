@@ -23,12 +23,16 @@ import (
 )
 
 // fakeVOD answers one CreateAigcImageTask + one SUCCESS DescribeTaskDetail.
+// CreateAigcImageTask bodies are recorded on lastSubmit for assertions.
+var lastSubmit []byte
+
 func fakeVOD(t *testing.T, urls ...string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.ReadAll(r.Body)
+		body, _ := io.ReadAll(r.Body)
 		switch r.Header.Get("X-TC-Action") {
 		case "CreateAigcImageTask":
+			lastSubmit = body
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"Response":{"TaskId":"task-e2e"}}`)
 		case "DescribeTaskDetail":
@@ -128,5 +132,47 @@ func TestImagesEditsThroughTencentVodChannel(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "vod-edited.png") {
 		t.Fatalf("edits body = %s", rec.Body.String())
+	}
+}
+
+// 21 号票端到端:generations JSON 带 image URL 数组 → tencent-vod 渠道
+// 翻译成 Url 型 FileInfos 提交,同步响应照常结算。
+func TestImagesGenerationsWithURLRefsThroughTencentVodChannel(t *testing.T) {
+	srv := fakeVOD(t, "https://cdn.example/vod-i2i.png")
+	e := newRelayEnv(t, nil)
+	e.seedVodChannel(t, srv.URL)
+	e.seedImagePrice(t, "og-image-2.5", nil)
+	key, fullKey := e.seedKey(t, 400_000)
+
+	w := e.postImages(t, fullKey, `{
+		"model":"og-image-2.5",
+		"prompt":"图1 保持人物,图2 场景参考,生成横版",
+		"n":1,
+		"ratio":"16:9",
+		"size":"2048x1152",
+		"image":["https://example.com/face.png","https://example.com/scene.jpg"]
+	}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "vod-i2i.png") {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+
+	var submit struct {
+		FileInfos    []map[string]string `json:"FileInfos"`
+		OutputConfig map[string]any      `json:"OutputConfig"`
+	}
+	if err := json.Unmarshal(lastSubmit, &submit); err != nil {
+		t.Fatalf("captured submit: %v (%s)", err, lastSubmit)
+	}
+	if len(submit.FileInfos) != 2 || submit.FileInfos[0]["Type"] != "Url" || submit.FileInfos[0]["Url"] != "https://example.com/face.png" {
+		t.Fatalf("FileInfos = %v", submit.FileInfos)
+	}
+	if submit.OutputConfig["Resolution"] != "2K" || submit.OutputConfig["AspectRatio"] != "16:9" {
+		t.Fatalf("OutputConfig = %v", submit.OutputConfig)
+	}
+	if got := e.balanceOf(t, key.ID); got != 400_000-40_000 {
+		t.Fatalf("balance = %d, want 360000", got)
 	}
 }
