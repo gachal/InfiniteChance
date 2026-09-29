@@ -112,7 +112,7 @@ func (h *Handlers) CreateVideoGeneration(c *gin.Context) {
 			return
 		}
 
-		upstream, err := h.adaptor().VideosSubmit(ctx, at.ch, at.payload)
+		upstream, err := h.adaptorFor(at.ch).VideosSubmit(ctx, at.ch, at.payload)
 		if err == nil && upstream.OK {
 			vendorID, perr := parseVideoSubmit(upstream.Body)
 			if perr == nil {
@@ -322,13 +322,13 @@ func (h *Handlers) GetVideoTask(c *gin.Context) {
 		return
 	}
 
-	upstream, err := h.adaptor().VideosQuery(ctx, ch, task.UpstreamTaskID)
+	upstream, err := h.adaptorFor(ch).VideosQuery(ctx, ch, task.UpstreamTaskID)
 	if err != nil || !upstream.OK {
 		// 一次轮询失败不是任务失败:任务原地不动、账不动,稍后再试。
 		status, summary := http.StatusBadGateway, "(transport error)"
 		if err == nil {
 			status = upstream.Status
-			summary = h.adaptor().ErrorSummary(upstream.Body)
+			summary = h.adaptorFor(ch).ErrorSummary(upstream.Body)
 		}
 		apierr.OpenAI(c, status, CodeUpstreamError, CodeUpstreamError,
 			"Upstream task query failed: "+summary)
@@ -430,12 +430,12 @@ func (h *Handlers) CancelVideoTask(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	if ch, err := h.Channels.Get(ctx, task.ChannelID); err == nil {
-		if upstream, uerr := h.adaptor().VideosCancel(ctx, ch, task.UpstreamTaskID); uerr != nil || !upstream.OK {
+		if upstream, uerr := h.adaptorFor(ch).VideosCancel(ctx, ch, task.UpstreamTaskID); uerr != nil || !upstream.OK {
 			// 厂商侧取消失败不拦本地取消:对外「已取消且不扣费」由网关
 			// 兑付,厂商那边是否真停下只进日志。
 			reason := "(transport error)"
 			if uerr == nil {
-				reason = h.adaptor().ErrorSummary(upstream.Body)
+				reason = h.adaptorFor(ch).ErrorSummary(upstream.Body)
 			}
 			log.Printf("relay: upstream cancel for task %s (vendor %s) failed: %s",
 				task.ID, task.UpstreamTaskID, reason)

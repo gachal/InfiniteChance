@@ -243,9 +243,9 @@ func (h *Handlers) ChatCompletions(c *gin.Context) {
 			return
 		}
 
-		upstream, err := h.adaptor().ChatCompletions(ctx, at.ch, at.payload)
+		upstream, err := h.adaptorFor(at.ch).ChatCompletions(ctx, at.ch, at.payload)
 		if err == nil && upstream.OK {
-			clientBody, used, nerr := h.adaptor().Normalize(p.req.Model, upstream.Body)
+			clientBody, used, nerr := h.adaptorFor(at.ch).Normalize(p.req.Model, upstream.Body)
 			if nerr == nil {
 				// 命中:结算多退少补,按实际用量落成功留痕。
 				run.breaker.RecordSuccess(at.ch.ID)
@@ -379,7 +379,7 @@ func (h *Handlers) streamChat(c *gin.Context, p *prepared) {
 			return
 		}
 
-		stream, err := h.adaptor().ChatCompletionsStream(ctx, at.ch, p.req.Model, at.payload)
+		stream, err := h.adaptorFor(at.ch).ChatCompletionsStream(ctx, at.ch, p.req.Model, at.payload)
 		if err == nil && stream.OK {
 			// 流已开:响应头随之发出,此后不再换道;熔断的成败记账延到
 			// 流收尾(pumpStream)—— 打开流本身不算交付。
@@ -526,7 +526,7 @@ func (r *failoverRunner) failed(at attempt, f upstreamFailure, more bool) bool {
 		r.breaker.Release(at.ch.ID)
 	}
 	if retryable && r.c.Request.Context().Err() == nil && more {
-		r.retried = append(r.retried, "'"+at.ch.Name+"': "+f.summary(r.h.adaptor()))
+		r.retried = append(r.retried, "'"+at.ch.Name+"': "+f.summary(r.h.adaptorFor(at.ch)))
 		r.lastAttempt, r.lastFailure = at, &f
 		return true
 	}
@@ -649,7 +649,7 @@ func (r *failoverRunner) failUpstream(at attempt, f upstreamFailure) {
 	// 钱已预扣必须退回;退不回(行消失)是严重账务事故,记日志报警。
 	h.adjustBalance(r.billing, p.key.ID, f.reserved, apikey.ReasonRefund)
 
-	summary := f.summary(h.adaptor())
+	summary := f.summary(h.adaptorFor(at.ch))
 	entry := p.logEntry(at)
 	entry.DurationMS = f.durationMS
 	entry.Status = usage.StatusUpstreamError

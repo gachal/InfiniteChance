@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	api_key      TEXT         NOT NULL,
 	model_map    JSON         NOT NULL,
 	capabilities JSON         NULL,
+	config       JSON         NULL,
 	priority     INT          NOT NULL DEFAULT 0,
 	weight       INT          NOT NULL DEFAULT 0,
 	enabled      TINYINT(1)   NOT NULL DEFAULT 1,
@@ -33,13 +34,16 @@ CREATE TABLE IF NOT EXISTS channels (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
 // EnsureSchema creates the channels table when missing and widens an
-// existing one in place (07 号票新增的 capabilities 列):CREATE TABLE
-// IF NOT EXISTS 永远不会加宽老表,网关要能对已有库原地升级。幂等。
+// existing one in place (07 号票的 capabilities 列、20 号票的 config 列):
+// CREATE TABLE IF NOT EXISTS 永远不会加宽老表,网关要能对已有库原地升级。幂等。
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	if _, err := s.DB.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	return s.ensureColumn(ctx, "capabilities", "JSON NULL")
+	if err := s.ensureColumn(ctx, "capabilities", "JSON NULL"); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "config", "JSON NULL")
 }
 
 // ensureColumn adds one column to the channels table when it predates it.
@@ -58,7 +62,7 @@ func (s *MySQLStore) ensureColumn(ctx context.Context, name, decl string) error 
 	return err
 }
 
-const channelColumns = `id, name, type, base_url, api_key, model_map, capabilities, priority, weight, enabled, created_at, updated_at`
+const channelColumns = `id, name, type, base_url, api_key, model_map, capabilities, config, priority, weight, enabled, created_at, updated_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -69,8 +73,8 @@ type rowScanner interface {
 // column scans to nil — HasCapability reads that as legacy chat-only.
 func scanRow(scan rowScanner) (Channel, error) {
 	var ch Channel
-	var rawModelMap, rawCapabilities []byte
-	err := scan.Scan(&ch.ID, &ch.Name, &ch.Type, &ch.BaseURL, &ch.APIKey, &rawModelMap, &rawCapabilities,
+	var rawModelMap, rawCapabilities, rawConfig []byte
+	err := scan.Scan(&ch.ID, &ch.Name, &ch.Type, &ch.BaseURL, &ch.APIKey, &rawModelMap, &rawCapabilities, &rawConfig,
 		&ch.Priority, &ch.Weight, &ch.Enabled, &ch.CreatedAt, &ch.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Channel{}, ErrNotFound
@@ -86,6 +90,11 @@ func scanRow(scan rowScanner) (Channel, error) {
 	}
 	if len(rawCapabilities) > 0 {
 		if err := json.Unmarshal(rawCapabilities, &ch.Capabilities); err != nil {
+			return Channel{}, err
+		}
+	}
+	if len(rawConfig) > 0 {
+		if err := json.Unmarshal(rawConfig, &ch.Config); err != nil {
 			return Channel{}, err
 		}
 	}
@@ -129,10 +138,11 @@ func (s *MySQLStore) Create(ctx context.Context, ch Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	config := mapOrNil(ch.Config)
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, priority, weight, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ch.Name, ch.Type, ch.BaseURL, ch.APIKey, modelMap, capabilities, ch.Priority, ch.Weight, ch.Enabled)
+		`INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, config, priority, weight, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ch.Name, ch.Type, ch.BaseURL, ch.APIKey, modelMap, capabilities, config, ch.Priority, ch.Weight, ch.Enabled)
 	if err != nil {
 		return Channel{}, err
 	}
@@ -152,16 +162,17 @@ func (s *MySQLStore) Update(ctx context.Context, ch Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	config := mapOrNil(ch.Config)
 	// api_key 为空表示保留原密钥:CASE 在同一行内原子取值,避免先读后写的竞态。
 	if _, err := s.DB.ExecContext(ctx,
 		`UPDATE channels SET
 			name = ?, type = ?, base_url = ?,
 			api_key = CASE WHEN ? = '' THEN api_key ELSE ? END,
-			model_map = ?, capabilities = ?, priority = ?, weight = ?, enabled = ?
+			model_map = ?, capabilities = ?, config = ?, priority = ?, weight = ?, enabled = ?
 		 WHERE id = ?`,
 		ch.Name, ch.Type, ch.BaseURL,
 		ch.APIKey, ch.APIKey,
-		modelMap, capabilities, ch.Priority, ch.Weight, ch.Enabled,
+		modelMap, capabilities, config, ch.Priority, ch.Weight, ch.Enabled,
 		ch.ID); err != nil {
 		return Channel{}, err
 	}

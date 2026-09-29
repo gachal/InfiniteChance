@@ -43,6 +43,10 @@ export interface Channel {
   base_url: string
   has_key: boolean
   key_hint?: string
+  /** Type-specific settings. Secret-key entries (name contains secret/key)
+   * come back blanked; config_hints carries their tail hints. */
+  config?: Record<string, string>
+  config_hints?: Record<string, string>
   model_map: Record<string, string>
   priority: number
   weight: number
@@ -58,6 +62,8 @@ export interface ChannelInput {
   type: string
   base_url: string
   api_key?: string
+  /** Secret-key entries empty on update keep the stored value. */
+  config?: Record<string, string>
   model_map: Record<string, string>
   priority: number
   weight: number

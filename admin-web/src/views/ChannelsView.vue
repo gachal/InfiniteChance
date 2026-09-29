@@ -27,6 +27,10 @@ interface ChannelForm {
   type: string
   baseUrl: string
   apiKey: string
+  secretId: string
+  secretKey: string
+  subAppId: string
+  region: string
   mappings: { from: string; to: string }[]
   priority: number
   weight: number
@@ -39,6 +43,10 @@ function blankForm(): ChannelForm {
     type: 'openai',
     baseUrl: '',
     apiKey: '',
+    secretId: '',
+    secretKey: '',
+    subAppId: '',
+    region: '',
     mappings: [{ from: '', to: '' }],
     priority: 0,
     weight: 1,
@@ -46,7 +54,12 @@ function blankForm(): ChannelForm {
   }
 }
 
+const isVod = computed(() => form.type === 'tencent-vod')
+
 const form = reactive<ChannelForm>(blankForm())
+
+// 编辑 tencent-vod 渠道时展示已存敏感键的尾号提示(值本身只写不读)。
+const editingHints = ref('')
 
 const formTitle = computed(() => (editingId.value === null ? '新建渠道' : '编辑渠道'))
 
@@ -67,6 +80,7 @@ onMounted(() => void refresh())
 function openCreate(): void {
   editingId.value = null
   Object.assign(form, blankForm())
+  editingHints.value = ''
   formError.value = ''
   showForm.value = true
 }
@@ -79,11 +93,18 @@ function openEdit(ch: Channel): void {
     type: ch.type,
     baseUrl: ch.base_url,
     apiKey: '', // 留空 = 保留已存密钥
+    secretId: '', // 敏感键:留空 = 保留已存值(hint 见表单提示)
+    secretKey: '',
+    subAppId: ch.config?.sub_app_id ?? '',
+    region: ch.config?.region ?? '',
     mappings: mappings.length > 0 ? mappings : [{ from: '', to: '' }],
     priority: ch.priority,
     weight: ch.weight,
     enabled: ch.enabled,
   } satisfies ChannelForm)
+  editingHints.value = Object.entries(ch.config_hints ?? {})
+    .map(([k, hint]) => `${k} ${hint}`)
+    .join('、')
   formError.value = ''
   showForm.value = true
 }
@@ -91,6 +112,7 @@ function openEdit(ch: Channel): void {
 function closeForm(): void {
   showForm.value = false
   editingId.value = null
+  editingHints.value = ''
   formError.value = ''
 }
 
@@ -109,16 +131,26 @@ function buildInput() {
       modelMap[from.trim()] = to.trim()
     }
   }
-  return {
+  const input: Parameters<typeof auth.client.createChannel>[0] = {
     name: form.name.trim(),
     type: form.type,
     base_url: form.baseUrl.trim(),
-    api_key: form.apiKey.trim(),
+    api_key: isVod.value ? '' : form.apiKey.trim(),
     model_map: modelMap,
     priority: form.priority,
     weight: form.weight,
     enabled: form.enabled,
   }
+  if (isVod.value) {
+    // 敏感键留空 = 后端保留已存值;非敏感键(sub_app_id/region)原值回传。
+    input.config = {
+      secret_id: form.secretId.trim(),
+      secret_key: form.secretKey.trim(),
+      sub_app_id: form.subAppId.trim(),
+      region: form.region.trim(),
+    }
+  }
+  return input
 }
 
 async function submit(): Promise<void> {
@@ -150,6 +182,7 @@ async function toggleEnabled(ch: Channel): Promise<void> {
       type: ch.type,
       base_url: ch.base_url,
       api_key: '', // 保留已存密钥
+      config: ch.config, // 敏感键回显为空 = 保留已存值
       model_map: ch.model_map,
       priority: ch.priority,
       weight: ch.weight,
@@ -424,11 +457,17 @@ function modelMapSummary(ch: Channel): string {
         </div>
         <div class="wide">
           <dt>BaseURL</dt>
-          <dd><code>{{ ch.base_url }}</code></dd>
+          <dd><code>{{ ch.base_url || (ch.type === 'tencent-vod' ? 'https://vod.tencentcloudapi.com(缺省)' : '-') }}</code></dd>
         </div>
         <div>
-          <dt>密钥</dt>
-          <dd>{{ ch.has_key ? `已设置 ${ch.key_hint ?? ''}` : '未设置' }}</dd>
+          <dt>{{ ch.type === 'tencent-vod' ? '凭据' : '密钥' }}</dt>
+          <dd>
+            {{
+              ch.type === 'tencent-vod'
+                ? (ch.config_hints?.secret_id ? `已设置 ${Object.values(ch.config_hints).join(' / ')}` : '未设置')
+                : ch.has_key ? `已设置 ${ch.key_hint ?? ''}` : '未设置'
+            }}
+          </dd>
         </div>
         <div>
           <dt>优先级 / 权重</dt>

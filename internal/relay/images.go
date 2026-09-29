@@ -206,9 +206,9 @@ func (h *Handlers) images(c *gin.Context, prepare func(*gin.Context, apikey.Key)
 	// model 已重写的 JSON 体。
 	dial := func(at attempt) (*UpstreamResponse, error) {
 		if p.call.form != nil {
-			return h.adaptor().ImagesEdits(ctx, at.ch, at.contentType, at.payload)
+			return h.adaptorFor(at.ch).ImagesEdits(ctx, at.ch, at.contentType, at.payload)
 		}
-		return h.adaptor().ImagesGenerations(ctx, at.ch, at.payload)
+		return h.adaptorFor(at.ch).ImagesGenerations(ctx, at.ch, at.payload)
 	}
 
 	for i, cand := range p.candidates {
@@ -223,7 +223,7 @@ func (h *Handlers) images(c *gin.Context, prepare func(*gin.Context, apikey.Key)
 
 		upstream, err := dial(at)
 		if err == nil && upstream.OK {
-			clientBody, delivered, nerr := h.adaptor().NormalizeImages(p.publicModel, upstream.Body)
+			clientBody, delivered, nerr := h.adaptorFor(at.ch).NormalizeImages(p.publicModel, upstream.Body)
 			// 命中且实交了图:按实交张数结算,响应体回写公开名后透传。
 			if nerr == nil && delivered > 0 {
 				run.breaker.RecordSuccess(at.ch.ID)

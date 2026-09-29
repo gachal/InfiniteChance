@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	api_key      TEXT         NOT NULL,
 	model_map    TEXT         NOT NULL,
 	capabilities TEXT         NULL,
+	config       TEXT         NULL,
 	priority     INTEGER      NOT NULL DEFAULT 0,
 	weight       INTEGER      NOT NULL DEFAULT 0,
 	enabled      INTEGER      NOT NULL DEFAULT 1,
@@ -36,13 +37,43 @@ CREATE TABLE IF NOT EXISTS channels (
 	updated_at   TEXT         NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
 
-// EnsureSchema creates the channels table when missing. 桌面库从零建表:
-// 07 号票新增的 capabilities 列直接进 DDL,MySQL 侧 information_schema
-// 加宽老表的迁移在这边没有对应物。时间戳统一由写入方用
-// sqlitedb.FormatTime 显式提供(默认值仅作 DDL 兜底,其精度是毫秒,
+// EnsureSchema creates the channels table when missing and widens a
+// pre-existing desktop database in place (20 号票的 config 列——capabilities
+// 进 DDL 时桌面库尚无存量,这次起桌面渠道表也有历史行,需要 PRAGMA 探测
+// 加列,对齐 MySQL 侧 ensureColumn 的原地升级语义)。时间戳统一由写入方
+// 用 sqlitedb.FormatTime 显式提供(默认值仅作 DDL 兜底,其精度是毫秒,
 // 不是 sqlitedb.ParseTime 期望的 9 位定宽形式)。幂等。
 func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, sqliteSchema)
+	if _, err := s.DB.ExecContext(ctx, sqliteSchema); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "config", "TEXT NULL")
+}
+
+// ensureColumn adds one column to the channels table when a desktop
+// database predates it — PRAGMA table_info is SQLite's information_schema.
+func (s *SQLiteStore) ensureColumn(ctx context.Context, name, decl string) error {
+	rows, err := s.DB.QueryContext(ctx, "PRAGMA table_info(channels)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var colName, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &colName, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if colName == name {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.DB.ExecContext(ctx, "ALTER TABLE channels ADD COLUMN "+name+" "+decl)
 	return err
 }
 
@@ -53,9 +84,9 @@ func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 // chat-only.
 func scanSQLiteRow(scan rowScanner) (Channel, error) {
 	var ch Channel
-	var rawModelMap, rawCapabilities []byte
+	var rawModelMap, rawCapabilities, rawConfig []byte
 	var createdAt, updatedAt string
-	err := scan.Scan(&ch.ID, &ch.Name, &ch.Type, &ch.BaseURL, &ch.APIKey, &rawModelMap, &rawCapabilities,
+	err := scan.Scan(&ch.ID, &ch.Name, &ch.Type, &ch.BaseURL, &ch.APIKey, &rawModelMap, &rawCapabilities, &rawConfig,
 		&ch.Priority, &ch.Weight, &ch.Enabled, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Channel{}, ErrNotFound
@@ -120,12 +151,13 @@ func (s *SQLiteStore) Create(ctx context.Context, ch Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	config := mapOrNil(ch.Config)
 	// 时间戳显式写入,对应 MySQL 交给服务端 DEFAULT CURRENT_TIMESTAMP(6)。
 	now := sqlitedb.FormatTime(time.Now())
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, priority, weight, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ch.Name, ch.Type, ch.BaseURL, ch.APIKey, modelMap, capabilities, ch.Priority, ch.Weight, ch.Enabled, now, now)
+		`INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, config, priority, weight, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ch.Name, ch.Type, ch.BaseURL, ch.APIKey, modelMap, capabilities, config, ch.Priority, ch.Weight, ch.Enabled, now, now)
 	if err != nil {
 		return Channel{}, err
 	}
@@ -145,18 +177,19 @@ func (s *SQLiteStore) Update(ctx context.Context, ch Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	config := mapOrNil(ch.Config)
 	// api_key 为空表示保留原密钥:CASE 在同一行内原子取值,避免先读后写的竞态。
 	// updated_at 显式补写,对应 MySQL 的 ON UPDATE CURRENT_TIMESTAMP(6)。
 	if _, err := s.DB.ExecContext(ctx,
 		`UPDATE channels SET
 			name = ?, type = ?, base_url = ?,
 			api_key = CASE WHEN ? = '' THEN api_key ELSE ? END,
-			model_map = ?, capabilities = ?, priority = ?, weight = ?, enabled = ?,
+			model_map = ?, capabilities = ?, config = ?, priority = ?, weight = ?, enabled = ?,
 			updated_at = ?
 		 WHERE id = ?`,
 		ch.Name, ch.Type, ch.BaseURL,
 		ch.APIKey, ch.APIKey,
-		modelMap, capabilities, ch.Priority, ch.Weight, ch.Enabled,
+		modelMap, capabilities, config, ch.Priority, ch.Weight, ch.Enabled,
 		sqlitedb.FormatTime(time.Now()),
 		ch.ID); err != nil {
 		return Channel{}, err
