@@ -62,6 +62,8 @@ cp .env.example .env   # 可选;所有配置项都有内置缺省
 docker compose up -d --build
 ```
 
+`.env` 在**仓库根目录**(与 `docker-compose.yml` 同级;点开头是隐藏文件,Finder 按 ⌘⇧. 或 `ls -a` 可见)。它不是自带文件——`cp` 之前不存在,compose 读取的只有这一个位置。
+
 一条命令拉起六件套:MySQL、Redis、gateway、canvas,以及两个前端——Dockerfile 多阶段先在容器内 `pnpm build` 出两个 SPA 静态产物,再交给两个 nginx 运行时托管并反代对应后端;**运行时容器只含镜像与构建产物,不依赖宿主机源码、Node 或 pnpm**。
 
 然后访问管理后台 `http://localhost:8090` 完成初始化引导(两步):
@@ -69,11 +71,11 @@ docker compose up -d --build
 1. 创建唯一管理员账号(密码仅以 bcrypt 哈希入库);
 2. 录入首个厂商渠道(OpenAI 兼容 BaseURL + 密钥 + 可选模型映射,可跳过)。
 
-之后到「API Keys」创建一把服务级 key 填入 `.env` 的 `CANVAS_SERVICE_KEY` 并 `docker compose up -d`,画布的 AI 动作即可用。
+之后到「API Keys」创建一把**服务级 key**(画布服务调网关扣费生成所用的凭据)填入 `.env` 的 `CANVAS_SERVICE_KEY`,再 `docker compose up -d canvas`(env 改动需重建容器,光 restart 不生效)——画布的 AI 动作即可用。没配这把 key 时画布生成以 `gateway_unconfigured` 拒绝;key 没额度时节点上报 `insufficient_quota`(管理台 topup 充值)。key 必须是画布所指向的同一套网关签发的;不走界面也可 curl 发放(登录拿 JWT 后 `POST /admin/keys`,示例见 [docs/api.md](docs/api.md) 4.2)。
 
 公网/长期部署:`openssl rand -hex 32` 生成 `JWT_SECRET` 填入 `.env`,并把 `JWT_SECRET_REQUIRED=true`(密钥缺失时服务拒绝启动)。全部可配项与注释见 [.env.example](.env.example)。
 
-前端开发仍可走 dev 服务器(热更新):`pnpm install && make dev-admin`(:5173)/ `make dev-canvas`(:5174),经 vite 代理访问 8080/8081。
+前端开发仍可走 dev 服务器(热更新):`pnpm install && make dev-admin`(:5173)/ `make dev-canvas`(:5174),经 vite 代理访问 8080/8081。本机直接跑后端服务(`go run ./canvas/server`)时同理要配服务级 key:进程环境 `export CANVAS_SERVICE_KEY=sk-…` 后再启动(网关不在缺省地址时另加 `CANVAS_GATEWAY_URL`,缺省 `http://localhost:8080`),否则画布生成同样以 `gateway_unconfigured` 拒绝。
 
 ## 桌面版
 

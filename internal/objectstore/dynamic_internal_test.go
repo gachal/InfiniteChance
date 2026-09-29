@@ -265,3 +265,92 @@ func TestDynamicDriverCacheAndNilReader(t *testing.T) {
 		t.Fatal("config change should rebuild the driver")
 	}
 }
+
+func cosCfg() *settings.COSConfig {
+	return &settings.COSConfig{Endpoint: "cos.ap-guangzhou.myqcloud.com",
+		Bucket: "demo-1250000000", SecretID: "ID", SecretKey: "SK"}
+}
+
+// newDynamicCOSTest 同款注入,但把 cos 工厂换成内存桩 —— 路由套件不碰网络。
+func newDynamicCOSTest(reader *fixedReader) (*Dynamic, *memStore, *memStore) {
+	local := newMemStore()
+	remote := newMemStore()
+	d := NewDynamic(local, reader.read)
+	d.newCOS = func(cfg settings.COSConfig) (Store, error) { return remote, nil }
+	return d, local, remote
+}
+
+// 23 号票:cos 驱动的路由语义与 oss 完全同款 —— 写落云端、读未命中回退
+// 本地、删除两头都试。
+func TestDynamicCOSRoutesLikeOSS(t *testing.T) {
+	ctx := context.Background()
+
+	reader := &fixedReader{cfg: settings.StorageConfig{Driver: settings.DriverCOS, COS: cosCfg()}}
+	d, local, remote := newDynamicCOSTest(reader)
+
+	// 写只进云侧(单向迁移,新对象不落本地)。
+	if err := d.Put(ctx, "k", strings.NewReader("v"), 1, "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	if !remote.called("put:k") || local.called("put:k") {
+		t.Fatalf("cos put: remote=%v local=%v, want remote only", remote.called("put:k"), local.called("put:k"))
+	}
+
+	// 云侧未命中(fs.ErrNotExist)回退本地卷。
+	if _, err := d.Open(ctx, "legacy"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("open both-miss = %v, want fs.ErrNotExist", err)
+	}
+	if err := local.Put(ctx, "legacy", strings.NewReader("old"), 3, "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	body, err := d.Open(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("open fallback: %v", err)
+	}
+	defer body.Close()
+	got, _ := io.ReadAll(body)
+	if string(got) != "old" {
+		t.Fatalf("fallback bytes = %q", got)
+	}
+
+	// 删除两头都试。
+	if err := d.Delete(ctx, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if !local.called("delete:k") || !remote.called("delete:k") {
+		t.Fatal("delete should try both sides")
+	}
+}
+
+// Cloud():一次 settings 读同快照回答「写入目标 + 配置」—— relay 转存的
+// 两者同源契约;local/读失败时 store 为 nil 且 cfg 是缺省(RelayPersist
+// 必为 false)。
+func TestDynamicCloudSnapshot(t *testing.T) {
+	ctx := context.Background()
+
+	reader := &fixedReader{cfg: settings.StorageConfig{Driver: settings.DriverCOS,
+		COS:          cosCfg(),
+		RelayPersist: true}}
+	d, _, remote := newDynamicCOSTest(reader)
+
+	st, cfg := d.Cloud(ctx)
+	if st == nil || cfg.RelayPersist != true || cfg.EffectiveDriver() != settings.DriverCOS {
+		t.Fatalf("cos cloud = %v cfg %+v", st, cfg)
+	}
+	if err := st.Put(ctx, "k", strings.NewReader("v"), 1, "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	if !remote.called("put:k") {
+		t.Fatal("snapshot store should be the cos driver")
+	}
+
+	reader.set(settings.StorageConfig{Driver: settings.DriverLocal})
+	if st, cfg := d.Cloud(ctx); st != nil || cfg.RelayPersist {
+		t.Fatalf("local cloud = %v cfg %+v, want nil store", st, cfg)
+	}
+
+	reader.err = errors.New("boom")
+	if st, cfg := d.Cloud(ctx); st != nil || cfg.RelayPersist {
+		t.Fatalf("failed read cloud = %v cfg %+v, want nil store", st, cfg)
+	}
+}

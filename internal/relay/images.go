@@ -224,10 +224,15 @@ func (h *Handlers) images(c *gin.Context, prepare func(*gin.Context, apikey.Key)
 		upstream, err := dial(at)
 		if err == nil && upstream.OK {
 			clientBody, delivered, nerr := h.adaptorFor(at.ch).NormalizeImages(p.publicModel, upstream.Body)
-			// 命中且实交了图:按实交张数结算,响应体回写公开名后透传。
+			// 命中且实交了图:按实交张数结算;relay_persist 开着时先把
+			// 产物搬进自有桶并把 URL 回写成永久地址(尽力而为,失败该张
+			// 保留厂商临时 URL),再透传。
 			if nerr == nil && delivered > 0 {
 				run.breaker.RecordSuccess(at.ch.ID)
 				run.settleImages(at, delivered, time.Since(p.started).Milliseconds())
+				if h.Persist != nil {
+					clientBody = h.Persist.rewriteBody(ctx, clientBody, p.publicModel, imagePrompt(p))
+				}
 				c.Data(http.StatusOK, "application/json; charset=utf-8", clientBody)
 				return
 			}
@@ -264,6 +269,22 @@ func formValue(form *multipart.Form, field string) string {
 		return values[0]
 	}
 	return ""
+}
+
+// imagePrompt pulls the request's prompt for the relay-persist asset row's
+// provenance (23 号票):generations 从 JSON 体读,edits 从表单文本字段读。
+// 计费与调度不看它,缺了也只是行上溯源为空。
+func imagePrompt(p *prepared) string {
+	if p.call != nil && p.call.form != nil {
+		return formValue(p.call.form, "prompt")
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal(p.raw, &req); err != nil {
+		return ""
+	}
+	return req.Prompt
 }
 
 // rebuildMultipart re-serializes the client's multipart form with the model

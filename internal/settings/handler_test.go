@@ -348,8 +348,9 @@ func TestNewStorageReaderDefaults(t *testing.T) {
 	}
 }
 
-// 公网地址提供者(18 号票接缝 → 19 号票接线):未配置恒空,配置后原样
-// 回答;nil Store 保持升级前行为(nil provider)。
+// 公网地址提供者(18 号票接缝 → 19 号票接线;23 号票起读活跃驱动块):
+// 未配置恒空,活跃云驱动配置后原样回答;driver=local 时惰性云块的地址
+// 不再冒充自有公网基座;nil Store 保持升级前行为(nil provider)。
 func TestPublicBaseURLProvider(t *testing.T) {
 	ctx := context.Background()
 	if settings.PublicBaseURL(nil) != nil {
@@ -363,11 +364,174 @@ func TestPublicBaseURLProvider(t *testing.T) {
 	}
 
 	raw, _ := json.Marshal(settings.StorageConfig{Driver: settings.DriverOSS,
-		OSS: &settings.OSSConfig{PublicBaseURL: "https://cdn.example.com/base/"}})
+		OSS: &settings.OSSConfig{
+			Endpoint: "oss-cn-hangzhou.aliyuncs.com", Bucket: "demo",
+			AccessKey: "ak", SecretKey: "sk", PublicBaseURL: "https://cdn.example.com/base/",
+		}})
 	store.rows[settings.NameStorage] = settings.Setting{
 		Name: settings.NameStorage, Value: raw, UpdatedAt: time.Now(),
 	}
 	if addr := provider(ctx); addr != "https://cdn.example.com/base/" {
 		t.Fatalf("configured base = %q", addr)
+	}
+
+	// 23 号票语义:切回 local(oss 块惰性保留)后公网基座随之停用 ——
+	// 本地卷的对象没有云侧公网地址可指。
+	local, _ := json.Marshal(settings.StorageConfig{Driver: settings.DriverLocal,
+		OSS: &settings.OSSConfig{
+			Endpoint: "oss-cn-hangzhou.aliyuncs.com", Bucket: "demo",
+			AccessKey: "ak", SecretKey: "sk", PublicBaseURL: "https://cdn.example.com/base/",
+		}})
+	store.rows[settings.NameStorage] = settings.Setting{
+		Name: settings.NameStorage, Value: local, UpdatedAt: time.Now(),
+	}
+	if addr := provider(ctx); addr != "" {
+		t.Fatalf("local driver with lazy oss block = %q, want empty", addr)
+	}
+
+	// cos 活跃时读 cos 块的基座(每驱动块各自携带)。
+	cos, _ := json.Marshal(settings.StorageConfig{Driver: settings.DriverCOS,
+		COS: &settings.COSConfig{
+			Endpoint: "cos.ap-guangzhou.myqcloud.com", Bucket: "demo-1250000000",
+			SecretID: "id", SecretKey: "sk", PublicBaseURL: "https://cos.example.com/base/",
+		}})
+	store.rows[settings.NameStorage] = settings.Setting{
+		Name: settings.NameStorage, Value: cos, UpdatedAt: time.Now(),
+	}
+	if addr := provider(ctx); addr != "https://cos.example.com/base/" {
+		t.Fatalf("cos base = %q", addr)
+	}
+}
+
+func cosField(t *testing.T, storage map[string]any) map[string]any {
+	t.Helper()
+	cos, ok := storage["cos"].(map[string]any)
+	if !ok {
+		t.Fatalf("response has no cos object: %v", storage)
+	}
+	return cos
+}
+
+func putCOSBody(relayPersist any) map[string]any {
+	body := map[string]any{
+		"driver": "cos",
+		"cos": map[string]any{
+			"endpoint":        "cos.ap-guangzhou.myqcloud.com",
+			"bucket":          "demo-1250000000",
+			"public_base_url": "https://demo-1250000000.cos.ap-guangzhou.myqcloud.com",
+			"secret_id":       "AKIDdemo",
+			"secret_key":      "sk-demo",
+		},
+	}
+	if relayPersist != nil {
+		body["relay_persist"] = relayPersist
+	}
+	return body
+}
+
+// 23 号票:cos 块完整落库;GET 只回 has_* 与尾 4 位,relay_persist 透传。
+func TestPutCOSRoundTripMasksCredentials(t *testing.T) {
+	env := newHandlerEnv()
+
+	storage := decodeStorage(t, env.do(t, http.MethodPut, "/admin/settings/storage", putCOSBody(true)))
+	if storage["driver"] != "cos" || storage["relay_persist"] != true {
+		t.Fatalf("driver/relay_persist = %v/%v, want cos/true", storage["driver"], storage["relay_persist"])
+	}
+	cos := cosField(t, storage)
+	if cos["has_secret_id"] != true || cos["has_secret_key"] != true {
+		t.Fatalf("has_* hints missing: %v", cos)
+	}
+	if cos["secret_id_hint"] != "…demo" || cos["secret_key_hint"] != "…demo" {
+		t.Fatalf("tail hints = %v/%v", cos["secret_id_hint"], cos["secret_key_hint"])
+	}
+	for _, key := range []string{"secret_id", "secret_key"} {
+		if _, ok := cos[key]; ok {
+			t.Fatalf("response leaks %q", key)
+		}
+	}
+}
+
+// 半套密钥拒绝(oss 同款纪律)。
+func TestPutCOSHalfSecretRejected(t *testing.T) {
+	env := newHandlerEnv()
+
+	body := putCOSBody(nil)
+	body["cos"].(map[string]any)["secret_key"] = ""
+	w := env.do(t, http.MethodPut, "/admin/settings/storage", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("HTTP %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// driver=cos 而无连接块/半截连接 → 400。
+func TestPutCOSWithoutCompleteConnectionRejected(t *testing.T) {
+	env := newHandlerEnv()
+
+	w := env.do(t, http.MethodPut, "/admin/settings/storage", map[string]any{"driver": "cos"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("no block: HTTP %d: %s", w.Code, w.Body.String())
+	}
+
+	body := putCOSBody(nil)
+	blk := body["cos"].(map[string]any)
+	blk["endpoint"] = ""
+	blk["secret_id"] = ""
+	blk["secret_key"] = ""
+	w = env.do(t, http.MethodPut, "/admin/settings/storage", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("hollow block: HTTP %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// relay_persist 前置:local 拒;云驱动缺 public_base_url 拒;齐全放行。
+func TestPutRelayPersistRequiresCloudDriverAndBase(t *testing.T) {
+	env := newHandlerEnv()
+
+	w := env.do(t, http.MethodPut, "/admin/settings/storage", map[string]any{"driver": "local", "relay_persist": true})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("local+persist: HTTP %d: %s", w.Code, w.Body.String())
+	}
+
+	noBase := putCOSBody(true)
+	noBase["cos"].(map[string]any)["public_base_url"] = ""
+	w = env.do(t, http.MethodPut, "/admin/settings/storage", noBase)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("cos without base: HTTP %d: %s", w.Code, w.Body.String())
+	}
+
+	// 齐全:先落一份带 base 的连接,再开开关也能过。
+	if w := env.do(t, http.MethodPut, "/admin/settings/storage", putCOSBody(false)); w.Code != http.StatusOK {
+		t.Fatalf("seed: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	w = env.do(t, http.MethodPut, "/admin/settings/storage", map[string]any{"driver": "cos", "relay_persist": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("cos with base: HTTP %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// PUT 不带 relay_persist 字段 = 沿用已存开关(一次只切驱动不顺手关转存)。
+func TestPutRelayPersistAbsentKeepsStored(t *testing.T) {
+	env := newHandlerEnv()
+
+	if w := env.do(t, http.MethodPut, "/admin/settings/storage", putCOSBody(true)); w.Code != http.StatusOK {
+		t.Fatalf("seed: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	storage := decodeStorage(t, env.do(t, http.MethodPut, "/admin/settings/storage", map[string]any{"driver": "cos"}))
+	if storage["relay_persist"] != true {
+		t.Fatalf("relay_persist = %v, want kept true", storage["relay_persist"])
+	}
+}
+
+// 切回 local(字段缺省、已存 true)自动关转存 —— 行不允许 local+persist,
+// 缺省继承不该把「切回本地卷」堵成 400;显式送 true 才拒绝(见上)。
+func TestPutLocalAutoDisablesInheritedRelayPersist(t *testing.T) {
+	env := newHandlerEnv()
+
+	if w := env.do(t, http.MethodPut, "/admin/settings/storage", putCOSBody(true)); w.Code != http.StatusOK {
+		t.Fatalf("seed: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	storage := decodeStorage(t, env.do(t, http.MethodPut, "/admin/settings/storage", map[string]any{"driver": "local"}))
+	if storage["driver"] != "local" || storage["relay_persist"] != false {
+		t.Fatalf("flip to local = %v/%v, want local/false", storage["driver"], storage["relay_persist"])
 	}
 }

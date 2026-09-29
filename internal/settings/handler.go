@@ -43,12 +43,26 @@ type ossJSON struct {
 	SecretHint    string `json:"secret_hint,omitempty"`
 }
 
+// cosJSON is the wire form of the COS block (23 号票):字段名沿用腾讯控制
+// 台词汇,密钥同款只写不读。
+type cosJSON struct {
+	Endpoint      string `json:"endpoint"`
+	Bucket        string `json:"bucket"`
+	PublicBaseURL string `json:"public_base_url"`
+	HasSecretID   bool   `json:"has_secret_id"`
+	SecretIDHint  string `json:"secret_id_hint,omitempty"`
+	HasSecretKey  bool   `json:"has_secret_key"`
+	SecretKeyHint string `json:"secret_key_hint,omitempty"`
+}
+
 // storageJSON is the wire form of the storage setting. updated_at is empty
 // when the row has never been saved (零配置起步的 GET 也能直接渲染表单).
 type storageJSON struct {
-	Driver    string  `json:"driver"`
-	OSS       ossJSON `json:"oss"`
-	UpdatedAt string  `json:"updated_at"`
+	Driver       string  `json:"driver"`
+	RelayPersist bool    `json:"relay_persist"`
+	OSS          ossJSON `json:"oss"`
+	COS          cosJSON `json:"cos"`
+	UpdatedAt    string  `json:"updated_at"`
 }
 
 // hintRunes is how many trailing runes of a stored credential the response
@@ -64,7 +78,7 @@ func tailHint(v string) string {
 }
 
 func toStorageJSON(cfg StorageConfig, updatedAt string) storageJSON {
-	out := storageJSON{Driver: cfg.Driver, UpdatedAt: updatedAt}
+	out := storageJSON{Driver: cfg.Driver, RelayPersist: cfg.RelayPersist, UpdatedAt: updatedAt}
 	if cfg.OSS != nil {
 		out.OSS.Endpoint = cfg.OSS.Endpoint
 		out.OSS.Bucket = cfg.OSS.Bucket
@@ -78,14 +92,30 @@ func toStorageJSON(cfg StorageConfig, updatedAt string) storageJSON {
 			out.OSS.SecretHint = tailHint(cfg.OSS.SecretKey)
 		}
 	}
+	if cfg.COS != nil {
+		out.COS.Endpoint = cfg.COS.Endpoint
+		out.COS.Bucket = cfg.COS.Bucket
+		out.COS.PublicBaseURL = cfg.COS.PublicBaseURL
+		if cfg.COS.SecretID != "" {
+			out.COS.HasSecretID = true
+			out.COS.SecretIDHint = tailHint(cfg.COS.SecretID)
+		}
+		if cfg.COS.SecretKey != "" {
+			out.COS.HasSecretKey = true
+			out.COS.SecretKeyHint = tailHint(cfg.COS.SecretKey)
+		}
+	}
 	return out
 }
 
 // storageInputJSON is the PUT body. Empty access_key/secret_key keep the
-// stored credentials; every other field replaces.
+// stored credentials; every other field replaces. relay_persist 缺省(nil)
+// 沿用已存值 —— 一次只切驱动的 PUT 不顺手关掉直连转存。
 type storageInputJSON struct {
-	Driver string           `json:"driver"`
-	OSS    *storageOSSInput `json:"oss"`
+	Driver       string           `json:"driver"`
+	RelayPersist *bool            `json:"relay_persist"`
+	OSS          *storageOSSInput `json:"oss"`
+	COS          *storageCOSInput `json:"cos"`
 }
 
 type storageOSSInput struct {
@@ -93,6 +123,14 @@ type storageOSSInput struct {
 	Bucket        string `json:"bucket"`
 	PublicBaseURL string `json:"public_base_url"`
 	AccessKey     string `json:"access_key"`
+	SecretKey     string `json:"secret_key"`
+}
+
+type storageCOSInput struct {
+	Endpoint      string `json:"endpoint"`
+	Bucket        string `json:"bucket"`
+	PublicBaseURL string `json:"public_base_url"`
+	SecretID      string `json:"secret_id"`
 	SecretKey     string `json:"secret_key"`
 }
 
@@ -122,7 +160,15 @@ func (h *Handlers) PutStorage(c *gin.Context) {
 		h.failInternal(c, err)
 		return
 	}
-	cfg := StorageConfig{Driver: raw.Driver}
+	cfg := StorageConfig{Driver: raw.Driver, RelayPersist: stored.RelayPersist}
+	if raw.RelayPersist != nil {
+		cfg.RelayPersist = *raw.RelayPersist
+	} else if cfg.Driver == DriverLocal && stored.RelayPersist {
+		// 缺省沿用撞上「行不允许 local+persist」:显式送 true 才 400,缺省
+		// 继承时自动关掉 —— 切回本地卷永远是一次 PUT 的事,不让管理员
+		// 卡在「先挑回云驱动取消勾选」的死胡同。
+		cfg.RelayPersist = false
+	}
 	if raw.OSS == nil {
 		// 不带 oss 块 = 只切驱动,连接原样 —— 靠已存连接把 local 切回
 		// oss 是一次 PUT 的事。
@@ -152,6 +198,34 @@ func (h *Handlers) PutStorage(c *gin.Context) {
 			if cfg.OSS.AccessKey == "" && cfg.OSS.SecretKey == "" {
 				cfg.OSS.AccessKey = stored.OSS.AccessKey
 				cfg.OSS.SecretKey = stored.OSS.SecretKey
+			}
+		}
+	}
+	if raw.COS == nil {
+		// cos 块同款:不带 = 连接原样。
+		cfg.COS = stored.COS
+	} else {
+		if (raw.COS.SecretID == "") != (raw.COS.SecretKey == "") {
+			apierr.InvalidRequest(c, "secret_id 与 secret_key 要么都填写,要么都留空沿用已存密钥")
+			return
+		}
+		cfg.COS = &COSConfig{
+			Endpoint:      raw.COS.Endpoint,
+			Bucket:        raw.COS.Bucket,
+			PublicBaseURL: raw.COS.PublicBaseURL,
+			SecretID:      raw.COS.SecretID,
+			SecretKey:     raw.COS.SecretKey,
+		}
+		if stored.COS != nil {
+			if cfg.COS.Endpoint == "" {
+				cfg.COS.Endpoint = stored.COS.Endpoint
+			}
+			if cfg.COS.Bucket == "" {
+				cfg.COS.Bucket = stored.COS.Bucket
+			}
+			if cfg.COS.SecretID == "" && cfg.COS.SecretKey == "" {
+				cfg.COS.SecretID = stored.COS.SecretID
+				cfg.COS.SecretKey = stored.COS.SecretKey
 			}
 		}
 	}

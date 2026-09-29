@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 )
 
@@ -45,36 +47,16 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 		hc = transferClient // handler.go 的共享下载 client,复用连接池
 	}
 
-	var payload io.Reader
+	var payload []byte
 	var contentType string
-	var size int64
 	if data, ct, ok := splitDataURI(url); ok {
-		payload = bytes.NewReader(data)
-		contentType = ct
-		size = int64(len(data))
+		payload, contentType = data, ct
 	} else {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		body, ct, err := fetchArtifact(ctx, hc, url)
 		if err != nil {
-			return Stored{}, fmt.Errorf("产物地址无效: %w", err)
+			return Stored{}, err
 		}
-		resp, err := hc.Do(req)
-		if err != nil {
-			return Stored{}, fmt.Errorf("产物下载失败: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return Stored{}, fmt.Errorf("产物下载失败: HTTP %d", resp.StatusCode)
-		}
-		contentType = mediatype(resp.Header.Get("Content-Type"))
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxTransferBytes+1))
-		if err != nil {
-			return Stored{}, fmt.Errorf("产物下载失败: %w", err)
-		}
-		if int64(len(body)) > maxTransferBytes {
-			return Stored{}, fmt.Errorf("产物超过转存上限(%d MiB)", maxTransferBytes>>20)
-		}
-		payload = bytes.NewReader(body) // 直接包住已读缓冲,不再整份复制一遍
-		size = int64(len(body))
+		payload, contentType = body, ct
 	}
 
 	// 厂商偶尔给 application/octet-stream:没有信息量,按产物种类回退
@@ -83,10 +65,67 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 		contentType = defaultContentType(kind)
 	}
 	key := ObjectKey(canvasID, taskID, kind, contentType)
-	if err := st.Put(ctx, key, payload, size, contentType); err != nil {
+	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
 		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
 	}
-	return Stored{Key: key, ContentType: contentType, SizeBytes: size}, nil
+	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload))}, nil
+}
+
+// TransferRelay archives one relay-delivered artifact (23 号票 relay_persist)
+// —— 直连 /v1/images 的产物按天归档,与画布产物(canvases/…)和用户上传
+// (uploads/…)三分归档语义。kind 恒为 image(视频直连任务转存另立票),
+// 厂商 Content-Type 缺失时按图回退。调用方负责 asset 行落库与失败回收。
+func TransferRelay(ctx context.Context, st objectstore.Store, hc *http.Client, url string) (Stored, error) {
+	if st == nil {
+		return Stored{}, errors.New("asset: object storage not configured")
+	}
+	if hc == nil {
+		hc = transferClient
+	}
+	payload, contentType, err := fetchArtifact(ctx, hc, url)
+	if err != nil {
+		return Stored{}, err
+	}
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = defaultContentType(KindImage)
+	}
+	key := relayKey(time.Now(), contentType)
+	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
+		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
+	}
+	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload))}, nil
+}
+
+// fetchArtifact downloads one http(s) artifact within the transfer bounds.
+// 转存双入口(画布任务、直连 relay)共用的下载与限额纪律。
+func fetchArtifact(ctx context.Context, hc *http.Client, url string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("产物地址无效: %w", err)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("产物下载失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("产物下载失败: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTransferBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("产物下载失败: %w", err)
+	}
+	if int64(len(body)) > maxTransferBytes {
+		return nil, "", fmt.Errorf("产物超过转存上限(%d MiB)", maxTransferBytes>>20)
+	}
+	return body, mediatype(resp.Header.Get("Content-Type")), nil
+}
+
+// relayKey lays one relay-delivered object under its delivery date:
+// relay/{yyyymmdd}/{uuid}.{ext} — 与 uploads 键同款按天归档(日期取 UTC,
+// 与用量日志按天汇总同一约定),uuid 防碰撞与猜测。
+func relayKey(now time.Time, contentType string) string {
+	return fmt.Sprintf("relay/%s/%s%s", now.UTC().Format("20060102"), uuid.NewString(), extensionOf(contentType))
 }
 
 // ObjectKey builds the archival key for one artifact:

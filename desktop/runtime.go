@@ -109,14 +109,18 @@ func NewDesktop() (*Desktop, error) {
 	}
 
 	// 产物对象存储:本地卷为缺省驱动,settings 的 storage 行(19 号票)
-	// 动态切 OSS;桌面装配无 OSS 诉求,行缺省即 local,零配置不受影响。
-	// 建不出来只影响素材转存,不拦启动(与服务器形态一致)。
+	// 动态切 OSS/COS(23 号票);桌面装配行缺省即 local,零配置不受影响。
+	// 建不出来只影响素材转存,不拦启动(与服务器形态一致)。dynamic 保留
+	// 具体类型喂网关的 relay 转存;canvas 侧收接口 —— 不可用时保持真 nil,
+	// 不让 typed-nil 骗过调用方的 nil 检查。
 	assetsDir := filepath.Join(dataDir, "assets")
 	var storage objectstore.Store
+	var dynamic *objectstore.Dynamic
 	if local, err := objectstore.NewFileSystem(assetsDir); err != nil {
 		log.Printf("WARNING: 素材对象存储不可用(%v),生成产物将无法转存", err)
 	} else {
-		storage = objectstore.NewDynamic(local, settings.NewStorageReader(settingsStore))
+		dynamic = objectstore.NewDynamic(local, settings.NewStorageReader(settingsStore))
+		storage = dynamic
 	}
 
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.GatewayPort)
@@ -153,6 +157,10 @@ func NewDesktop() (*Desktop, error) {
 			VideoTasks:      videoTasks,
 			PromptTemplates: templates,
 			Settings:        settingsStore,
+			// relay_persist(23 号票):桌面 SQLite 资产行 + 同一 Dynamic,
+			// dynamic 为 nil(本地卷建不出)时不装配,直连照旧透传。
+			Assets:  assets,
+			Storage: dynamic,
 		})
 	}, app.WithConfig(gcfg), app.WithDB(db), app.WithPingers(pingers),
 		app.WithHTTPHandler(func(h http.Handler) http.Handler {

@@ -6,17 +6,23 @@
 // 生成」一项,为后续视频/分析模式预留结构(ADR 0002)。
 import { computed, ref } from 'vue'
 
-import { MAX_COMPOSER_REFS, SIZE_PRESETS, type ComposerRef } from '../composer'
+import {
+  MAX_COMPOSER_REFS,
+  RATIO_PRESETS,
+  RESOLUTION_PRESETS,
+  type ComposerRef,
+} from '../composer'
 
 const props = defineProps<{
   /** 可用的按次计价生图模型(编辑器从 /image-models 拉取)。 */
   models: string[]
   /** 生效中的参考图列表(编辑器归并选中节点与上传条目)。 */
   refs: ComposerRef[]
-  /** 全局持久草稿:提示词/模型/尺寸,不随选中切换清空。 */
+  /** 全局持久草稿:提示词/模型/比例/分辨率,不随选中切换清空。 */
   prompt: string
   model: string
-  size: string
+  ratio: string
+  resolution: string
   /** 提交在途(编辑器级状态,防连点)。 */
   generating: boolean
   /** 参考图上传在途。 */
@@ -26,7 +32,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:prompt': [value: string]
   'update:model': [value: string]
-  'update:size': [value: string]
+  'update:ratio': [value: string]
+  'update:resolution': [value: string]
   'remove-ref': [index: number]
   upload: [file: File]
   send: []
@@ -103,13 +110,27 @@ function onFileChange(e: Event): void {
 
     <div class="controls">
       <select
-        :value="size"
-        class="size"
-        title="尺寸预设(默认 = 不传,由模型缺省裁决)"
-        @change="emit('update:size', ($event.target as HTMLSelectElement).value)"
+        :value="ratio"
+        class="ratio"
+        title="画面比例(自动 = 由模型缺省裁决;单选比例按 1K 兜底)"
+        @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
       >
         <option
-          v-for="p in SIZE_PRESETS"
+          v-for="p in RATIO_PRESETS"
+          :key="p.value"
+          :value="p.value"
+        >
+          {{ p.label }}
+        </option>
+      </select>
+      <select
+        :value="resolution"
+        class="resolution"
+        title="分辨率档位(自动 = 由模型缺省裁决;单选分辨率按 1:1 兜底)"
+        @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
+      >
+        <option
+          v-for="p in RESOLUTION_PRESETS"
           :key="p.value"
           :value="p.value"
         >
@@ -261,8 +282,10 @@ textarea:focus {
   max-width: 150px;
 }
 
-.controls .size {
+.controls .ratio,
+.controls .resolution {
   flex-shrink: 0;
+  max-width: 110px;
 }
 
 .controls .model {

@@ -69,11 +69,11 @@ Then open the admin console at `http://localhost:8090` and finish the init wizar
 1. Create the single admin account (the password is stored only as a bcrypt hash);
 2. Enter the first vendor channel (OpenAI-compatible BaseURL + key + optional model mapping; skippable).
 
-Afterwards, create a service-level key under "API Keys", put it into `CANVAS_SERVICE_KEY` in `.env`, and run `docker compose up -d` once more — canvas AI actions become available.
+Afterwards, create a **service-level key** under "API Keys" — the credential canvas/server uses to call the gateway for billed generation — put it into `CANVAS_SERVICE_KEY` in `.env`, and run `docker compose up -d canvas` (env changes need a container recreate; a plain restart won't pick them up). Canvas AI actions become available. Without this key, canvas generation is refused with `gateway_unconfigured`; with an empty quota, nodes report `insufficient_quota` (top up in the admin console). The key must come from the same gateway the canvas points at; issuing it via curl also works (`POST /admin/keys` after login, see [docs/api.md](docs/api.md) 4.2).
 
 For public/long-lived deployments: generate `JWT_SECRET` with `openssl rand -hex 32`, put it in `.env`, and set `JWT_SECRET_REQUIRED=true` (services refuse to start when the secret is missing). All settings and comments: [.env.example](.env.example).
 
-Frontend development can still use dev servers (hot reload): `pnpm install && make dev-admin` (:5173) / `make dev-canvas` (:5174), reaching 8080/8081 through the vite proxies.
+Frontend development can still use dev servers (hot reload): `pnpm install && make dev-admin` (:5173) / `make dev-canvas` (:5174), reaching 8080/8081 through the vite proxies. Running the backend directly (`go run ./canvas/server`) needs the same service key in the process environment — `export CANVAS_SERVICE_KEY=sk-…` before starting (add `CANVAS_GATEWAY_URL` when the gateway is not on the default `http://localhost:8080`) — otherwise canvas generation is refused with `gateway_unconfigured`.
 
 ## Desktop app
 

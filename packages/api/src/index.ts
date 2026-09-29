@@ -289,8 +289,9 @@ export interface ListAssetsParams {
 
 // ---- 网关管理:存储设置(挂 /admin/settings/storage,需 JWT 会话,19 号票)----
 
-/** 存储驱动:local = 本地卷(缺省),oss = 阿里云 OSS(原生 SDK)。 */
-export type StorageDriver = 'local' | 'oss'
+/** 存储驱动:local = 本地卷(缺省),oss = 阿里云 OSS,cos = 腾讯云 COS
+ * (23 号票,两者都是原生 SDK)。 */
+export type StorageDriver = 'local' | 'oss' | 'cos'
 
 /** GET 回答的 OSS 连接:密钥永不跨线,只有 has_* 与尾 4 位提示。 */
 export interface OSSStorageConfig {
@@ -303,22 +304,44 @@ export interface OSSStorageConfig {
   secret_hint?: string
 }
 
-/** 存储设置(19 号票):驱动与 OSS 连接,画布侧按请求读表即时生效。
- * updated_at 为空 = 行从未保存过(零配置起步)。 */
+/** GET 回答的 COS 连接:字段名沿用腾讯控制台词汇,密钥同款只写不读。 */
+export interface COSStorageConfig {
+  endpoint: string
+  bucket: string
+  public_base_url: string
+  has_secret_id: boolean
+  secret_id_hint?: string
+  has_secret_key: boolean
+  secret_key_hint?: string
+}
+
+/** 存储设置(19/23 号票):驱动、relay_persist 与两家云连接,画布侧按请求
+ * 读表即时生效。updated_at 为空 = 行从未保存过(零配置起步)。 */
 export interface StorageSettings {
   driver: StorageDriver
+  relay_persist: boolean
   oss: OSSStorageConfig
+  cos: COSStorageConfig
   updated_at: string
 }
 
-/** PUT 的请求体:空 access_key/secret_key = 保留已存密钥。 */
+/** PUT 的请求体:空密钥 = 保留已存密钥;不带某驱动的块 = 该连接原样;
+ * relay_persist 缺省 = 沿用已存开关。 */
 export interface StorageSettingsInput {
   driver: StorageDriver
+  relay_persist?: boolean
   oss?: {
     endpoint: string
     bucket: string
     public_base_url: string
     access_key: string
+    secret_key: string
+  }
+  cos?: {
+    endpoint: string
+    bucket: string
+    public_base_url: string
+    secret_id: string
     secret_key: string
   }
 }

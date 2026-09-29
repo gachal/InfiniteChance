@@ -20,10 +20,12 @@ import (
 // ErrNotFound reports a setting name that has no row.
 var ErrNotFound = errors.New("settings: not found")
 
-// Storage drivers (19 号票定案:local 为内置缺省,oss 走阿里云原生 SDK)。
+// Storage drivers (19 号票:local 内置缺省、oss 走阿里云原生 SDK;23 号票
+// 追加 cos 走腾讯官方 cos-go-sdk-v5 —— 原生 SDK × N 路线,每家一个驱动文件)。
 const (
 	DriverLocal = "local"
 	DriverOSS   = "oss"
+	DriverCOS   = "cos"
 )
 
 // NameStorage is the settings row that drives object storage.
@@ -51,13 +53,19 @@ type Store interface {
 }
 
 // StorageConfig is the decoded `storage` row: which driver new objects go
-// to, plus the OSS connection when that driver is selected. Empty Driver
-// (缺行/空文档)按 local 处理 —— 与桌面版零配置同一语义。
+// to, plus the cloud connections for when that driver is selected. Empty
+// Driver (缺行/空文档)按 local 处理 —— 与桌面版零配置同一语义。
 type StorageConfig struct {
-	// Driver is local|oss; anything else reads as local (defensive: 行由
+	// Driver is local|oss|cos; anything else reads as local (defensive: 行由
 	// 管理 API 严校验后才入库,这里兜住手改库的坏值)。
-	Driver string     `json:"driver"`
-	OSS    *OSSConfig `json:"oss,omitempty"`
+	Driver string `json:"driver"`
+	// RelayPersist archives relay-delivered image URLs into the active cloud
+	// bucket and rewrites data[].url to the durable public address (23 号票
+	// relay_persist)。开启由管理 API 强制要求活跃云驱动的 public_base_url
+	// 已配置;读侧不兜底 —— 关/未配置即透传厂商临时地址,与现状一致。
+	RelayPersist bool       `json:"relay_persist"`
+	OSS          *OSSConfig `json:"oss,omitempty"`
+	COS          *COSConfig `json:"cos,omitempty"`
 }
 
 // OSSConfig is the Aliyun OSS connection (19 号票:原生 SDK,不走 S3 兼容
@@ -79,13 +87,53 @@ func (c *OSSConfig) Complete() bool {
 		c.AccessKey != "" && c.SecretKey != ""
 }
 
-// EffectiveDriver answers the driver Dynamic should honor: oss only when
-// the row says so AND the connection is complete.
+// COSConfig is the Tencent COS connection (23 号票:官方 cos-go-sdk-v5,
+// 原生 SDK 路线与 OSS 同款哲学)。SecretID/SecretKey 只写不读 —— 管理
+// API 的响应仅带 has_* 提示与尾 4 位,渠道密钥同款;字段名沿用腾讯控制台
+// 词汇,与 20 号票 VOD 渠道 config 列的键名先例对齐。
+type COSConfig struct {
+	Endpoint      string `json:"endpoint"`
+	Bucket        string `json:"bucket"`
+	PublicBaseURL string `json:"public_base_url"`
+	SecretID      string `json:"secret_id"`
+	SecretKey     string `json:"secret_key"`
+}
+
+// Complete mirrors OSSConfig.Complete: bucket 名带 APPID 后缀是 COS 的
+// 命名规则(endpoint 地地域域名 + bucket 全名拼出 SDK 要的 bucket URL,
+// 拼装在驱动侧)。
+func (c *COSConfig) Complete() bool {
+	return c != nil && c.Endpoint != "" && c.Bucket != "" &&
+		c.SecretID != "" && c.SecretKey != ""
+}
+
+// EffectiveDriver answers the driver Dynamic should honor: the row's cloud
+// driver only when its connection is complete.
 func (c StorageConfig) EffectiveDriver() string {
-	if c.Driver == DriverOSS && c.OSS.Complete() {
-		return DriverOSS
+	switch c.Driver {
+	case DriverOSS:
+		if c.OSS.Complete() {
+			return DriverOSS
+		}
+	case DriverCOS:
+		if c.COS.Complete() {
+			return DriverCOS
+		}
 	}
 	return DriverLocal
+}
+
+// ActivePublicBase answers the public base URL of the driver the row
+// effectively selects (23 号票:每驱动块各自携带,读活跃块 —— 切驱动即切
+// 公网地址基座)。空串 = 未启用自有公网地址,18 号票解析链回落厂商原址。
+func (c StorageConfig) ActivePublicBase() string {
+	switch c.EffectiveDriver() {
+	case DriverOSS:
+		return strings.TrimSpace(c.OSS.PublicBaseURL)
+	case DriverCOS:
+		return strings.TrimSpace(c.COS.PublicBaseURL)
+	}
+	return ""
 }
 
 // DefaultStorageConfig is the zero-config shape: everything local, byte
@@ -115,17 +163,36 @@ func withDefaultDriver(cfg StorageConfig) StorageConfig {
 // NormalizeStorageConfig trims the editable fields in place and validates
 // the merged shape a fresh PUT must satisfy before it lands. Credentials
 // are checked for completeness, not truth —— 连通性由驱动使用时暴露。
-// 「留空 = 保留原密」由调用方先并进本结构,「启用 OSS 但没有可用连接」的
-// 行才进不了库;driver=local 时 oss 块是惰性配置(切回本地不必清空连接),
+// 「留空 = 保留原密」由调用方先并进本结构,「启用云驱动但没有可用连接」的
+// 行才进不了库;driver=local 时云块是惰性配置(切回本地不必清空连接),
 // 只校验 public_base_url 的形状。
 func NormalizeStorageConfig(c *StorageConfig) error {
 	c.Driver = strings.TrimSpace(c.Driver)
 	if c.Driver == "" {
 		return fmt.Errorf("driver 不能为空")
 	}
-	if c.Driver != DriverLocal && c.Driver != DriverOSS {
-		return fmt.Errorf("driver 必须是 local 或 oss")
+	if c.Driver != DriverLocal && c.Driver != DriverOSS && c.Driver != DriverCOS {
+		return fmt.Errorf("driver 必须是 local、oss 或 cos")
 	}
+	if err := normalizeOSSBlock(c); err != nil {
+		return err
+	}
+	if err := normalizeCOSBlock(c); err != nil {
+		return err
+	}
+	// relay_persist 的回写地址只能来自活跃云驱动的 public_base_url:
+	// 开着转存却无处回写 = 半配置,与半套密钥同款拒绝(23 号票)。
+	if c.RelayPersist {
+		if d := c.EffectiveDriver(); d == DriverLocal {
+			return fmt.Errorf("开启直连生图转存需要先启用云存储驱动(oss 或 cos)")
+		} else if c.ActivePublicBase() == "" {
+			return fmt.Errorf("开启直连生图转存需要 %s 驱动配置 public_base_url", d)
+		}
+	}
+	return nil
+}
+
+func normalizeOSSBlock(c *StorageConfig) error {
 	if c.OSS == nil {
 		if c.Driver == DriverOSS {
 			return fmt.Errorf("启用 OSS 需要连接配置(endpoint/bucket/AccessKey/SecretKey)")
@@ -144,6 +211,30 @@ func NormalizeStorageConfig(c *StorageConfig) error {
 	if c.OSS.PublicBaseURL != "" &&
 		!strings.HasPrefix(c.OSS.PublicBaseURL, "http://") &&
 		!strings.HasPrefix(c.OSS.PublicBaseURL, "https://") {
+		return fmt.Errorf("public_base_url 必须是 http(s) 地址")
+	}
+	return nil
+}
+
+func normalizeCOSBlock(c *StorageConfig) error {
+	if c.COS == nil {
+		if c.Driver == DriverCOS {
+			return fmt.Errorf("启用 COS 需要连接配置(endpoint/bucket/SecretId/SecretKey)")
+		}
+		return nil
+	}
+	c.COS.Endpoint = strings.TrimSpace(c.COS.Endpoint)
+	c.COS.Bucket = strings.TrimSpace(c.COS.Bucket)
+	c.COS.PublicBaseURL = strings.TrimSpace(c.COS.PublicBaseURL)
+	if c.Driver == DriverCOS && (c.COS.Endpoint == "" || c.COS.Bucket == "") {
+		return fmt.Errorf("启用 COS 需要 endpoint 与 bucket")
+	}
+	if c.Driver == DriverCOS && !c.COS.Complete() {
+		return fmt.Errorf("启用 COS 需要完整的 SecretId 与 SecretKey")
+	}
+	if c.COS.PublicBaseURL != "" &&
+		!strings.HasPrefix(c.COS.PublicBaseURL, "http://") &&
+		!strings.HasPrefix(c.COS.PublicBaseURL, "https://") {
 		return fmt.Errorf("public_base_url 必须是 http(s) 地址")
 	}
 	return nil
@@ -177,6 +268,8 @@ func NewStorageReader(s Store) StorageConfigReader {
 // PublicBaseURL adapts the `storage` row to the 18 号票 provider seam: the
 // public base of the object store, empty when unconfigured (解析链回落厂商
 // 原址,行为与升级前一致)。nil Store keeps the pre-19 号票 behavior.
+// 23 号票起读**活跃驱动**的块(此前只看 oss 块 —— 惰性配置的 oss 地址
+// 在 driver=local 时不再冒充自有公网地址)。
 func PublicBaseURL(s Store) func(ctx context.Context) string {
 	if s == nil {
 		return nil
@@ -188,9 +281,6 @@ func PublicBaseURL(s Store) func(ctx context.Context) string {
 			log.Printf("settings: read storage for public base: %v", err)
 			return ""
 		}
-		if cfg.OSS == nil {
-			return ""
-		}
-		return strings.TrimSpace(cfg.OSS.PublicBaseURL)
+		return cfg.ActivePublicBase()
 	}
 }

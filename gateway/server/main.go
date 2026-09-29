@@ -9,8 +9,10 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apikey"
 	"github.com/gachal/InfiniteChance/internal/app"
+	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 	"github.com/gachal/InfiniteChance/internal/settings"
@@ -55,6 +57,19 @@ func main() {
 		if err := settingsStore.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure settings schema: %v", err)
 		}
+		// 素材行 + 对象存储(23 号票 relay_persist):直连生图产物落库落桶
+		// 的依赖,asset 表与画布侧同库同表。本地卷只是 Dynamic 的缺省与
+		// 读回退;转存写入永远按 settings 落活跃云驱动。
+		assets := asset.NewMySQLStore(d.DB)
+		if err := assets.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure asset schema: %v", err)
+		}
+		var storage *objectstore.Dynamic
+		if local, err := objectstore.NewFileSystem(d.Config.AssetStorageDir); err != nil {
+			log.Printf("WARNING: 素材对象存储不可用(%v),直连生图转存将不可用", err)
+		} else {
+			storage = objectstore.NewDynamic(local, settings.NewStorageReader(settingsStore))
+		}
 
 		wiring.GatewayRoutes(r, d.Config, wiring.GatewayStores{
 			Auth:            store,
@@ -65,6 +80,8 @@ func main() {
 			VideoTasks:      videoTasks,
 			PromptTemplates: promptTemplates,
 			Settings:        settingsStore,
+			Assets:          assets,
+			Storage:         storage,
 		})
 	})
 }

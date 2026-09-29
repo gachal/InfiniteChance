@@ -29,6 +29,7 @@ import {
 import {
   appendComposerRef,
   composerImageUrls,
+  composeSize,
   isRelayableRef,
   type ComposerRef,
 } from '../composer'
@@ -60,7 +61,6 @@ const {
   onEdgesChange,
   onNodesChange,
   removeSelectedNodes,
-  screenToFlowCoordinate,
   setEdges,
   setNodes,
   toObject,
@@ -147,61 +147,68 @@ const generateError = ref('')
 const retryingNode = ref('')
 const cancelingNode = ref('')
 
-/** 图片任务的统一提交路径(10 号票纪律,21 号票对话框共用):结果节点
- * 与连线先入图并立即落库(autosave flush 跳过防抖),再提交任务 ——
- * 浏览器随后关闭,任务与节点都在服务端/图里,重开不丢。sourceNodeId
- * 给出时结果节点落其右侧并连线(迭代来源可见);无来源落视口中心。
- * imageUrls 非空 = 图生图(服务端按有无参考分流 generations/edits)。
- * 成功提交返回 true。 */
+/** 图片任务的统一提交路径(10 号票纪律;21 号票对话框与提示词节点共
+ * 用):结果节点与连线先入图并立即落库(autosave flush 跳过防抖),再
+ * 提交任务 —— 浏览器随后关闭,任务与节点都在服务端/图里,重开不丢。
+ * 21 号票修订:source 是空占位图片节点(无产物、无任务绑定)时直接作
+ * 为结果节点填入 —— 工具栏添加的图片节点即从零生成的锚点,不再新建;
+ * 有产物或任务历史的节点,结果落其右侧新节点并连线(自动选中,参考条
+ * 切到新产物,迭代链连续)。imageUrls 非空 = 图生图(服务端按有无参考
+ * 分流 generations/edits)。 */
 async function submitImageTask(payload: {
   prompt: string
   model: string
   size?: string
   imageUrls?: string[]
-  sourceNodeId?: string
+  sourceNodeId: string
 }): Promise<boolean> {
   if (generating.value) {
     return false
   }
-  const source = payload.sourceNodeId ? findNode(payload.sourceNodeId) : null
-  if (payload.sourceNodeId && !source) {
+  const source = findNode(payload.sourceNodeId)
+  if (!source) {
     return false
   }
+  const sourceData = source.data as MediaNodeData | undefined
+  const fillsSource =
+    source.type === 'image' &&
+    (sourceData?.url ?? '') === '' &&
+    !taskSync.byNode.get(source.id)
   generating.value = true
   generateError.value = ''
   try {
-    nodeSeq += 1
-    const nodeId = `image-${Date.now()}-${nodeSeq}`
-    const position = source
-      ? { x: source.position.x + 320, y: source.position.y }
-      : viewportCenterPosition()
-    // 新结果节点成为唯一选中(21 号票:发送后自动选中,参考条切到新
-    // 产物,迭代链在对话框里连续推进)。addNodes 的入参类型不带选中位,
-    // 落图后再用 store 的选区动作补上。
-    removeSelectedNodes(getSelectedNodes.value)
-    addNodes([
-      {
-        id: nodeId,
-        type: 'image',
-        position,
-        data: initialData('image'),
-      },
-    ])
-    const added = findNode(nodeId)
-    if (added) {
-      addSelectedNodes([added])
-    }
-    if (source) {
+    let targetNodeId = source.id
+    if (!fillsSource) {
+      nodeSeq += 1
+      targetNodeId = `image-${Date.now()}-${nodeSeq}`
+      // 新结果节点成为唯一选中(addNodes 的入参类型不带选中位,落图后
+      // 用 store 的选区动作补上)。
+      removeSelectedNodes(getSelectedNodes.value)
+      addNodes([
+        {
+          id: targetNodeId,
+          type: 'image',
+          position: { x: source.position.x + 320, y: source.position.y },
+          data: initialData('image'),
+        },
+      ])
+      const added = findNode(targetNodeId)
+      if (added) {
+        addSelectedNodes([added])
+      }
       addEdges([
         {
-          id: `e-${source.id}-${nodeId}`,
+          id: `e-${source.id}-${targetNodeId}`,
           source: source.id,
-          target: nodeId,
+          target: targetNodeId,
           sourceHandle: null,
           targetHandle: null,
         },
       ])
     }
+    // 填入路径同样要 flush:锚点节点多半还在防抖窗口里没落库,任务必须
+    // 等图持久化后再提交;已全部落库时多一次 markDirty 只是无变化的版本
+    // 推进,无实际代价(flush 在 idle 态返回 false,不能省掉 markDirty)。
     autosave.markDirty()
     const saved = await autosave.flush()
     if (!saved) {
@@ -209,7 +216,7 @@ async function submitImageTask(payload: {
       return false
     }
     const task = await client.createCanvasTask(canvasId, {
-      node_id: nodeId,
+      node_id: targetNodeId,
       kind: 'image',
       prompt: payload.prompt,
       model: payload.model,
@@ -224,17 +231,6 @@ async function submitImageTask(payload: {
   } finally {
     generating.value = false
   }
-}
-
-/** 无来源(未选中节点)时结果节点的落位:视口中心偏左上,避免落在
- * 对话框正后方。 */
-function viewportCenterPosition(): { x: number; y: number } {
-  const wrap = wrapEl.value
-  const rect = wrap?.getBoundingClientRect()
-  const center = rect
-    ? screenToFlowCoordinate({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-    : screenToFlowCoordinate({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  return { x: center.x - 140, y: center.y - 100 }
 }
 
 /** 提示词节点的生成动作(10 号票入口,保留):以节点文本提交文生图。 */
@@ -252,10 +248,12 @@ async function onGenerate(promptNodeId: string, payload: { model: string }): Pro
 
 const wrapEl = ref<HTMLDivElement | null>(null)
 
-// 全局持久草稿:提示词/模型/尺寸不随选中切换清空(ADR 0002)。
+// 全局持久草稿:提示词/模型/比例/分辨率不随选中切换清空(ADR 0002);
+// 比例 × 分辨率在发送时经 composeSize 组合成 size 串(双自动 = 不传)。
 const composerPrompt = ref('')
 const composerModel = ref('')
-const composerSize = ref('')
+const composerRatio = ref('')
+const composerResolution = ref('')
 // 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
 const uploadedRefs = ref<ComposerRef[]>([])
 // 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
@@ -302,13 +300,19 @@ const composerRefs = computed<ComposerRef[]>(() => {
   return list
 })
 
-/** 悬浮定位:选中时贴节点正下方(视口变换 + 节点尺寸换算成画布区坐
- * 标,拖动/缩放/图片加载都跟随),并 clamp 在画布区内;未选中停靠底
- * 部中央。 */
+/** 对话框只在选中图片节点时存在(21 号票修订:打开画布即常驻底部中央
+ * 的形态已按用户反馈移除);工具栏添加图片节点并选中它,对话框随之出现。 */
+const composerVisible = computed(
+  () => imageModels.value.length > 0 && composerNode.value !== null,
+)
+
+/** 悬浮定位:贴选中节点正下方(视口变换 + 节点尺寸换算成画布区坐标,
+ * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。 */
 const composerStyle = computed(() => {
   const node = composerNode.value
   if (!node) {
-    return { left: '50%', bottom: '20px', transform: 'translateX(-50%)' }
+    // v-if 已挡住渲染,这里只是类型兜底。
+    return { display: 'none' }
   }
   const vp = viewport.value
   const wrapW = wrapEl.value?.clientWidth ?? 0
@@ -357,19 +361,21 @@ async function onComposerUpload(file: File): Promise<void> {
 }
 
 /** 对话框发送:选中图片节点时其产物即参考图(可被拆下),有参考走图
- * 生图、无参考走文生图;成功后清空提示词(草稿的其余部分保留)。 */
+ * 生图、无参考走文生图(空占位锚点直接填入);比例×分辨率组合成 size;
+ * 成功后清空提示词(草稿的其余部分保留)。 */
 async function onComposerSend(): Promise<void> {
+  const node = composerNode.value
   const prompt = composerPrompt.value.trim()
-  if (prompt === '' || composerModel.value === '') {
+  if (!node || prompt === '' || composerModel.value === '') {
     return
   }
   const urls = composerImageUrls(composerRefs.value)
   const ok = await submitImageTask({
     prompt,
     model: composerModel.value,
-    size: composerSize.value || undefined,
+    size: composeSize(composerRatio.value, composerResolution.value) || undefined,
     imageUrls: urls.length > 0 ? urls : undefined,
-    sourceNodeId: composerNode.value?.id,
+    sourceNodeId: node.id,
   })
   if (ok) {
     composerPrompt.value = ''
@@ -1176,18 +1182,20 @@ function backToList(): void {
         </template>
       </VueFlow>
       <GenerationComposer
-        v-if="imageModels.length > 0"
+        v-if="composerVisible"
         :style="composerStyle"
         :models="imageModels"
         :refs="composerRefs"
         :prompt="composerPrompt"
         :model="composerModel"
-        :size="composerSize"
+        :ratio="composerRatio"
+        :resolution="composerResolution"
         :generating="generating"
         :uploading="refUploading"
         @update:prompt="composerPrompt = $event"
         @update:model="composerModel = $event"
-        @update:size="composerSize = $event"
+        @update:ratio="composerRatio = $event"
+        @update:resolution="composerResolution = $event"
         @remove-ref="onRemoveRef"
         @upload="onComposerUpload"
         @send="onComposerSend"

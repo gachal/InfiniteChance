@@ -38,6 +38,11 @@ type GatewayStores struct {
 	// Settings backs the admin storage-config CRUD (19 号票);canvas/server
 	// reads the same table.
 	Settings settings.Store
+	// Assets 与 Storage 支撑直连生图产物转存(23 号票 relay_persist):
+	// 落 assets 表行与 settings 驱动的云桶。任一为 nil = 不装配,直连
+	// 产物照旧透传厂商临时 URL。
+	Assets  asset.Store
+	Storage *objectstore.Dynamic
 }
 
 // GatewayRoutes mounts the gateway surface: /auth (public init/login),
@@ -63,6 +68,12 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 	usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: s.UsageLogs})
 
 	v1 := r.Group("/v1", apikey.RequireKey(s.Keys))
+	// relay_persist(23 号票):cloud store 与 asset 行都就位才装配;
+	// 未装配时 rewriteBody 根本不会被调用。
+	var persist *relay.ImagePersist
+	if s.Storage != nil && s.Assets != nil {
+		persist = &relay.ImagePersist{Cloud: s.Storage, Assets: s.Assets}
+	}
 	relay.RegisterRoutes(v1, &relay.Handlers{
 		Channels: s.Channels,
 		Keys:     s.Keys,
@@ -70,6 +81,7 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 		Usage:    s.UsageLogs,
 		Tasks:    s.VideoTasks,
 		CacheTTL: relay.DefaultCacheTTL,
+		Persist:  persist,
 	})
 }
 

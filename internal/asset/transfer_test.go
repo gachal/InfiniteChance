@@ -133,3 +133,47 @@ func TestObjectKeySanitizesArchiveShape(t *testing.T) {
 		t.Errorf("ObjectKey = %q", got)
 	}
 }
+
+// 23 号票:直连转存键落 relay/{今天}/{uuid}.{ext} —— 与画布产物、用户
+// 上传三分归档语义;缺 Content-Type 按图回退 image/png。
+func TestTransferRelayArchivesUnderRelayKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// octet-stream 无信息量:按直连生图回退 image/png。
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("pngbytes"))
+	}))
+	defer srv.Close()
+	store := newTransferStore(t)
+
+	stored, err := asset.TransferRelay(context.Background(), store, http.DefaultClient, srv.URL+"/a.png")
+	if err != nil {
+		t.Fatalf("TransferRelay: %v", err)
+	}
+	if !strings.HasPrefix(stored.Key, "relay/") || !strings.HasSuffix(stored.Key, ".png") {
+		t.Fatalf("key = %q, want relay/{yyyymmdd}/{uuid}.png", stored.Key)
+	}
+	// relay/ 后第一段是今天的 yyyymmdd(UTC)。
+	parts := strings.SplitN(strings.TrimPrefix(stored.Key, "relay/"), "/", 2)
+	if len(parts) != 2 || len(parts[0]) != 8 {
+		t.Fatalf("key date segment malformed: %q", stored.Key)
+	}
+	if stored.ContentType != "image/png" || stored.SizeBytes != int64(len("pngbytes")) {
+		t.Fatalf("stored = %+v", stored)
+	}
+	if got := readObject(t, store, stored.Key); got != "pngbytes" {
+		t.Fatalf("bytes = %q", got)
+	}
+}
+
+// 转存失败语义与画布链一致:非 200 直接报错,不落半截对象。
+func TestTransferRelayNon200IsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	store := newTransferStore(t)
+
+	if _, err := asset.TransferRelay(context.Background(), store, http.DefaultClient, srv.URL+"/gone.png"); err == nil {
+		t.Fatal("404 product should fail the transfer")
+	}
+}

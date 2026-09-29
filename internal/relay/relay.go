@@ -37,6 +37,10 @@ type Handlers struct {
 	Breaker  *channel.Breaker
 	Rand     *rand.Rand
 	CacheTTL time.Duration
+	// Persist archives relay-delivered image URLs into the configured
+	// bucket and rewrites them to the durable public address (23 号票
+	// relay_persist)。nil = 未装配,行为与透传现状一致。
+	Persist *ImagePersist
 
 	cache *relayCache
 }
