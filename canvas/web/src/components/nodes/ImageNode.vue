@@ -9,6 +9,7 @@ import { Handle, Position } from '@vue-flow/core'
 import type { CanvasTask } from '@infinitechance/api'
 
 import type { MediaNodeData } from '../../graph'
+import MediaPrompt from './MediaPrompt.vue'
 
 const props = defineProps<{
   id: string
@@ -134,6 +135,12 @@ function submitAnalyze(): void {
       <span>图片占位</span>
       <small>生成结果将出现在这里</small>
     </div>
+
+    <!-- 27 号票:产物/占位/失败态下方随身携带的提示词区,缺省不渲染。 -->
+    <MediaPrompt
+      :prompt="data.prompt"
+      :model="data.model"
+    />
 
     <div
       v-if="hasReference && chatModels.length > 0"

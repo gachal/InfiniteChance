@@ -34,7 +34,9 @@ import {
   composeSize,
   durationRangeFor,
   isRelayableRef,
+  mediaSyncPatch,
   parseDurationInput,
+  resultNodeData,
   rolesForKind,
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
@@ -113,33 +115,20 @@ const saveLabel = computed(() => {
 const imageModels = ref<string[]>([])
 const videoModels = ref<string[]>([])
 
-/** 任务产物地址:图片任务落 image_url,视频任务落 video_url。14 号票起
- * 产物在终态前转存自有对象存储,凡有素材引用一律走内容寻址路径 ——
- * 厂商临时地址(约 24h 过期)不再出现在节点里,跨画布引用也统一到素材
- * id 上。 */
-function taskUrlFor(task: CanvasTask): string {
-  if (task.asset_id > 0) {
-    return `/api/assets/${task.asset_id}/content`
-  }
-  return task.kind === 'video' ? task.video_url : task.image_url
-}
-
-/** 产物落位:成功任务的地址写进绑定节点;有变化才落一次盘。节点是否存在
- * 以图为准 —— 结果节点在提交任务前已先落库,这里不负责物化,也不复活
- * 被删除的节点;产物本体在素材库里,重开可查。asset_id 一并落进节点,
- * 跨画布复用与「素材已删显示占位」都以它为准。 */
+/** 产物落位与提示词回填:成功任务的补丁(对账逻辑在 composer.ts 的
+ * mediaSyncPatch)写进绑定节点;节点是否存在以图为准 —— 结果节点在提交
+ * 任务前已先落库,这里不负责物化,也不复活被删除的节点;产物本体在素
+ * 材库里,重开可查。27 号票:节点缺 prompt/model 而任务行有时一并补写,
+ * 旧产物重开画布轮询到任务行后自动长出提示词。 */
 function syncTaskToCanvas(task: CanvasTask): void {
-  if (task.status !== 'succeeded') {
-    return
-  }
-  const url = taskUrlFor(task)
-  if (url === '') {
-    return
-  }
   const node = findNode(task.node_id)
   const data = node?.data as MediaNodeData | undefined
-  if (node && data && (data.url !== url || data.asset_id !== task.asset_id)) {
-    updateNodeData(task.node_id, { url, asset_id: task.asset_id })
+  if (!node || !data) {
+    return
+  }
+  const patch = mediaSyncPatch(task, data)
+  if (patch) {
+    updateNodeData(task.node_id, patch)
     autosave.markDirty()
   }
 }
@@ -163,20 +152,21 @@ const cancelingNode = ref('')
  * 为结果节点填入 —— 工具栏添加的图片节点即从零生成的锚点,不再新建;
  * 有产物或任务历史的节点,结果落其右侧新节点并连线(自动选中,参考条
  * 切到新产物,迭代链连续)。imageUrls 非空 = 图生图(服务端按有无参考
- * 分流 generations/edits)。 */
+ * 分流 generations/edits)。27 号票:两条落点都把 prompt/model 写进结果
+ * 节点 —— 失败任务同样保留,重试时可见当时生成的是什么。 */
 async function submitImageTask(payload: {
   prompt: string
   model: string
   size?: string
   imageUrls?: string[]
   sourceNodeId: string
-}): Promise<boolean> {
+}): Promise<void> {
   if (generating.value) {
-    return false
+    return
   }
   const source = findNode(payload.sourceNodeId)
   if (!source) {
-    return false
+    return
   }
   const sourceData = source.data as MediaNodeData | undefined
   const fillsSource =
@@ -198,7 +188,7 @@ async function submitImageTask(payload: {
           id: targetNodeId,
           type: 'image',
           position: { x: source.position.x + 320, y: source.position.y },
-          data: initialData('image'),
+          data: resultNodeData(payload.prompt, payload.model),
         },
       ])
       const added = findNode(targetNodeId)
@@ -214,6 +204,8 @@ async function submitImageTask(payload: {
           targetHandle: null,
         },
       ])
+    } else {
+      updateNodeData(source.id, { prompt: payload.prompt, model: payload.model })
     }
     // 填入路径同样要 flush:锚点节点多半还在防抖窗口里没落库,任务必须
     // 等图持久化后再提交;已全部落库时多一次 markDirty 只是无变化的版本
@@ -222,7 +214,7 @@ async function submitImageTask(payload: {
     const saved = await autosave.flush()
     if (!saved) {
       generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
-      return false
+      return
     }
     const task = await client.createCanvasTask(canvasId, {
       node_id: targetNodeId,
@@ -233,10 +225,8 @@ async function submitImageTask(payload: {
       ...(payload.imageUrls && payload.imageUrls.length > 0 ? { image_urls: payload.imageUrls } : {}),
     })
     taskSync.track(task)
-    return true
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
-    return false
   } finally {
     generating.value = false
   }
@@ -556,7 +546,9 @@ function onDraftUpdate(
  * 下),有参考走图生图、无参考走文生图(空占位锚点直接填入),比例×分
  * 辨率组合成 size。视频模式 —— 参考组合交给 submitVideoTask(空参考 =
  * 文生视频),时长「自动」不传 seconds,分辨率档位串直接作 size,比例
- * 走 ratio。成功后清空对应模式的提示词(草稿其余部分保留)。 */
+ * 走 ratio。发送成功草稿全保留(27 号票,推翻 21/24 号票「成功后清空
+ * 提示词」定案):改一版直接重发即迭代链;提示词已随提交落到结果节点,
+ * 「清空防丢」的前提不复存在。 */
 async function onComposerSend(): Promise<void> {
   const node = composerNode.value
   if (!node || generating.value) {
@@ -574,7 +566,7 @@ async function onComposerSend(): Promise<void> {
       return
     }
     const refs = composerVideoRefs(videoComposerRefs.value)
-    const ok = await submitVideoTask({
+    await submitVideoTask({
       prompt,
       model: videoModel.value,
       seconds: parsed === '' ? undefined : parsed,
@@ -583,9 +575,6 @@ async function onComposerSend(): Promise<void> {
       videoRefs: refs.length > 0 ? refs : undefined,
       sourceNodeId: node.id,
     })
-    if (ok) {
-      videoPrompt.value = ''
-    }
     return
   }
   const prompt = composerPrompt.value.trim()
@@ -593,16 +582,13 @@ async function onComposerSend(): Promise<void> {
     return
   }
   const urls = composerImageUrls(composerRefs.value)
-  const ok = await submitImageTask({
+  await submitImageTask({
     prompt,
     model: composerModel.value,
     size: composeSize(composerRatio.value, composerResolution.value) || undefined,
     imageUrls: urls.length > 0 ? urls : undefined,
     sourceNodeId: node.id,
   })
-  if (ok) {
-    composerPrompt.value = ''
-  }
 }
 
 /** 失败任务的原地重试:同一任务回队,节点绑定不变。 */
@@ -646,7 +632,8 @@ async function onCancelVideo(nodeId: string): Promise<void> {
  * 视频节点发送落右侧新视频节点并连线(自动选中,参考条随之切换);图片
  * 节点上切视频模式发送恒落新视频节点(图片锚点装不下视频产物,连线表达
  * 迭代来源)。videoRefs 非空 = 结构化参考(空 = 文生视频),服务端解引
- * 用;seconds 缺省 = 自动(厂商缺省);分辨率档位串直接作 size。 */
+ * 用;seconds 缺省 = 自动(厂商缺省);分辨率档位串直接作 size。27 号
+ * 票:两条落点都把 prompt/model 写进结果视频节点。 */
 async function submitVideoTask(payload: {
   prompt: string
   model: string
@@ -655,13 +642,13 @@ async function submitVideoTask(payload: {
   seconds?: number
   videoRefs?: { url: string; kind: VideoRefKind; role: VideoRefRole }[]
   sourceNodeId: string
-}): Promise<boolean> {
+}): Promise<void> {
   if (generating.value) {
-    return false
+    return
   }
   const source = findNode(payload.sourceNodeId)
   if (!source) {
-    return false
+    return
   }
   const sourceData = source.data as MediaNodeData | undefined
   const fillsSource =
@@ -679,7 +666,7 @@ async function submitVideoTask(payload: {
           id: targetNodeId,
           type: 'video',
           position: { x: source.position.x + 320, y: source.position.y },
-          data: initialData('video'),
+          data: resultNodeData(payload.prompt, payload.model),
         },
       ])
       const added = findNode(targetNodeId)
@@ -695,12 +682,14 @@ async function submitVideoTask(payload: {
           targetHandle: null,
         },
       ])
+    } else {
+      updateNodeData(source.id, { prompt: payload.prompt, model: payload.model })
     }
     autosave.markDirty()
     const saved = await autosave.flush()
     if (!saved) {
       generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
-      return false
+      return
     }
     const task = await client.createCanvasTask(canvasId, {
       node_id: targetNodeId,
@@ -715,10 +704,8 @@ async function submitVideoTask(payload: {
         : {}),
     })
     taskSync.track(task)
-    return true
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
-    return false
   } finally {
     generating.value = false
   }

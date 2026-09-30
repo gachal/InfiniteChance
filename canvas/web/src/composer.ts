@@ -1,8 +1,10 @@
 /**
  * 生成对话框的纯逻辑(21 号票):参考图列表的收编规则与尺寸预设表。
  * 组件只做渲染与事件,这里集中可单测的判定 —— 参考图上限、去重、
- * 可进网关契约的地址形状。
+ * 可进网关契约的地址形状。27 号票追加提示词落节点的纯逻辑:提交时
+ * 结果节点的数据形状、终态任务对节点的对账补丁。
  */
+import type { MediaNodeData } from './graph'
 
 /** 对话框参考条上的一条参考图:素材引用或厂商地址。 */
 export interface ComposerRef {
@@ -250,3 +252,75 @@ export const VIDEO_RESOLUTION_PRESETS: PresetOption[] = [
   { label: '720p', value: '720p' },
   { label: '1080p', value: '1080p' },
 ]
+
+// ---- 提示词落节点(27 号票)----
+
+/** taskUrlFor / mediaSyncPatch 收的任务形状:@infinitechance/api 的
+ * CanvasTask 结构满足它;收窄到相关子集是为了让这里不依赖 api 包、测试
+ * 可自造轻量对象。 */
+export interface TaskForNodeSync {
+  kind: string
+  status: string
+  prompt: string
+  model: string
+  asset_id: number
+  image_url: string
+  video_url: string
+}
+
+/** 任务产物地址:有素材引用一律走内容寻址路径(14 号票纪律,厂商临时
+ * 地址约 24h 过期,不进节点);无素材行时按任务种类回落 image_url /
+ * video_url,两者皆空返回空串(调用方视作无可写回)。 */
+export function taskUrlFor(task: TaskForNodeSync): string {
+  if (task.asset_id > 0) {
+    return `/api/assets/${task.asset_id}/content`
+  }
+  return task.kind === 'video' ? task.video_url : task.image_url
+}
+
+/** 提交任务时新建结果节点的数据:占位 url/note + 随身携带 prompt/model
+ * —— 失败任务同样保留(重试时可见当时生成的是什么),全文入库不设硬
+ * 上限(与 canvas_tasks.prompt 同规),展示截断由卡片负责。 */
+export function resultNodeData(prompt: string, model: string): MediaNodeData {
+  return { url: '', note: '', prompt, model }
+}
+
+/** 终态任务对节点数据的对账补丁:url/asset_id 照旧写回;节点缺
+ * prompt/model 而任务行有时一并补写(任务行自 10 号票起就存)—— 27 号
+ * 票之前生成的旧产物,重开画布轮询到任务行后自动长出提示词,无需数据
+ * 迁移。节点已带的字段不覆盖;无可写内容返回 null(调用方据此不落盘)。 */
+export interface MediaNodeSyncPatch {
+  url: string
+  asset_id: number
+  prompt?: string
+  model?: string
+}
+
+export function mediaSyncPatch(
+  task: TaskForNodeSync,
+  data: MediaNodeData,
+): MediaNodeSyncPatch | null {
+  if (task.status !== 'succeeded') {
+    return null
+  }
+  const url = taskUrlFor(task)
+  if (url === '') {
+    return null
+  }
+  const patch: MediaNodeSyncPatch = { url, asset_id: task.asset_id }
+  if ((data.prompt ?? '') === '' && task.prompt !== '') {
+    patch.prompt = task.prompt
+  }
+  if ((data.model ?? '') === '' && task.model !== '') {
+    patch.model = task.model
+  }
+  if (
+    data.url === url &&
+    data.asset_id === task.asset_id &&
+    patch.prompt === undefined &&
+    patch.model === undefined
+  ) {
+    return null
+  }
+  return patch
+}

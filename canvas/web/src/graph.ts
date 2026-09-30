@@ -12,11 +12,15 @@ export interface PromptNodeData {
 /** 图片/视频节点数据:生成产物或占位;url 为空表示还没有产物。14 号票起
  * url 普遍为素材内容寻址路径(/api/assets/{id}/content),asset_id 是素材
  * 库引用 —— 跨画布复用同一素材 = 引用同一个 id,素材被删时节点据此显示
- * 占位而非报错。 */
+ * 占位而非报错。27 号票起 prompt/model 随身携带:提交任务时写入结果节点
+ * (失败任务同样保留),历史节点由任务行回填 —— 产物与生成它的提示词永久
+ * 配对;字段缺省的历史节点不显示提示词区,向后兼容。 */
 export interface MediaNodeData {
   url?: string
   asset_id?: number
   note?: string
+  prompt?: string
+  model?: string
 }
 
 /** 分析节点数据(17 号票):对来源媒体(视频/图片)的结构化理解,文本

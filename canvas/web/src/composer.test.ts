@@ -9,14 +9,18 @@ import {
   durationRangeFor,
   isRelayableRef,
   MAX_COMPOSER_REFS,
+  mediaSyncPatch,
   parseDurationInput,
+  resultNodeData,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
   rolesForKind,
+  taskUrlFor,
   VIDEO_RESOLUTION_PRESETS,
   videoPlaceholder,
   withVideoRefRole,
   type ComposerRef,
+  type TaskForNodeSync,
   type VideoComposerRef,
 } from './composer'
 
@@ -227,3 +231,92 @@ describe('durationRangeFor / parseDurationInput / 官方时长区间', () => {
     expect(parseDurationInput('abc', range)).toBeNull()
   })
 })
+
+// ---- 提示词落节点(27 号票)----
+
+describe('resultNodeData', () => {
+  it('builds placeholder media data carrying prompt and model verbatim', () => {
+    const data = resultNodeData('一只戴眼镜的柴犬', 'doubao-seedream-4-0')
+    expect(data).toEqual({
+      url: '',
+      note: '',
+      prompt: '一只戴眼镜的柴犬',
+      model: 'doubao-seedream-4-0',
+    })
+  })
+
+  it('keeps multi-thousand-character prompts whole (no truncation, no cap)', () => {
+    const long = '很长的提示词'.repeat(800)
+    expect(resultNodeData(long, 'm').prompt).toHaveLength(long.length)
+  })
+})
+
+describe('taskUrlFor', () => {
+  it('prefers the content-addressed asset path whenever the task has an asset row', () => {
+    const task = makeTask({ asset_id: 7, image_url: 'https://tmp.example/x.png' })
+    expect(taskUrlFor(task)).toBe('/api/assets/7/content')
+  })
+
+  it('falls back to the vendor url by task kind', () => {
+    expect(taskUrlFor(makeTask({ asset_id: 0, image_url: 'https://tmp.example/x.png' }))).toBe(
+      'https://tmp.example/x.png',
+    )
+    expect(taskUrlFor(makeTask({ asset_id: 0, kind: 'video', video_url: 'https://tmp.example/v.mp4' }))).toBe(
+      'https://tmp.example/v.mp4',
+    )
+    expect(taskUrlFor(makeTask({ asset_id: 0 }))).toBe('')
+  })
+})
+
+describe('mediaSyncPatch', () => {
+  it('returns null for non-succeeded tasks or tasks without a product url', () => {
+    const data = { url: '', note: '' }
+    expect(mediaSyncPatch(makeTask({ status: 'failed' }), data)).toBeNull()
+    expect(mediaSyncPatch(makeTask({ status: 'running' }), data)).toBeNull()
+    expect(mediaSyncPatch(makeTask({ asset_id: 0 }), data)).toBeNull()
+  })
+
+  it('writes url and asset_id for freshly succeeded tasks', () => {
+    const task = makeTask({ asset_id: 9, prompt: '夜色下的港口', model: 'm-a' })
+    const patch = mediaSyncPatch(task, resultNodeData('夜色下的港口', 'm-a'))
+    expect(patch).toEqual({ url: '/api/assets/9/content', asset_id: 9 })
+  })
+
+  it('backfills prompt/model onto legacy nodes that predate ticket 27', () => {
+    const task = makeTask({ asset_id: 9, prompt: '夜色下的港口', model: 'm-a' })
+    // 27 号票之前的旧产物:url/asset_id 已对上,但节点没有提示词。
+    const legacy = { url: '/api/assets/9/content', asset_id: 9, note: '' }
+    expect(mediaSyncPatch(task, legacy)).toEqual({
+      url: '/api/assets/9/content',
+      asset_id: 9,
+      prompt: '夜色下的港口',
+      model: 'm-a',
+    })
+  })
+
+  it('never overwrites prompt/model the node already carries', () => {
+    const task = makeTask({ asset_id: 0, image_url: 'https://tmp.example/x.png', prompt: '新', model: 'm-b' })
+    const data = { url: 'https://old.example/y.png', asset_id: 0, note: '', prompt: '旧', model: 'm-a' }
+    expect(mediaSyncPatch(task, data)).toEqual({ url: 'https://tmp.example/x.png', asset_id: 0 })
+  })
+
+  it('returns null when everything already matches', () => {
+    const task = makeTask({ asset_id: 9, prompt: '夜色下的港口', model: 'm-a' })
+    const data = { url: '/api/assets/9/content', asset_id: 9, note: '', prompt: '夜色下的港口', model: 'm-a' }
+    expect(mediaSyncPatch(task, data)).toBeNull()
+  })
+})
+
+/** 轻量任务对象:mediaSyncPatch / taskUrlFor 只看这几个字段。 */
+function makeTask(overrides: Partial<TaskForNodeSync> = {}): TaskForNodeSync {
+  return {
+    kind: 'image',
+    status: 'succeeded',
+    prompt: '默认提示词',
+    model: 'default-model',
+    asset_id: 1,
+    image_url: '',
+    video_url: '',
+    ...overrides,
+  }
+}
