@@ -3,6 +3,7 @@ package asset
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"strconv"
@@ -78,7 +79,9 @@ type listJSON struct {
 // 转存过的素材直接流出自有字节;历史行回退旧契约 —— http(s) 地址 302 重
 // 定向(厂商 CDN 交付字节),data: URI(厂商回 b64 的历史产物)解码内联,
 // 因为浏览器拒绝重定向到 data: 位置。?download=1 加 attachment 头,管理
-// 页与素材面板的下载按钮走同一入口。
+// 页与素材面板的下载按钮走同一入口。自有字节读不动但对象未必没了(26 号
+// 票读兜底,服务端出网坏的实证形态)时,回落行内 http(s) 地址:预览 302
+// 让浏览器直连,下载走代理。
 func (h *Handlers) Content(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id < 1 {
@@ -106,8 +109,19 @@ func (h *Handlers) Content(c *gin.Context) {
 	if a.ObjectKey != "" && h.Storage != nil {
 		obj, err := h.Storage.Open(c.Request.Context(), a.ObjectKey)
 		if err != nil {
-			// 行在而对象不在(手工清理/存储故障):按缺失回答,节点显示
-			// 占位而非报错。
+			// 26 号票读兜底:Open 的错不是「对象不存在」(传输/凭证/5xx
+			// 类,服务端出网坏的实证形态),且行内还留着 http(s) 出处时,
+			// 预览 302 直连行内地址、下载代理流出——浏览器走用户自己的
+			// 网络取字节,素材预览不随服务端出网瘫痪。
+			if !errors.Is(err, fs.ErrNotExist) && isHTTPURL(a.URL) {
+				log.Printf("asset: open object %q of asset %d failed, falling back to the row URL: %v",
+					a.ObjectKey, id, err)
+				h.serveRowURL(c, a, download)
+				return
+			}
+			// 行在而对象不在(手工清理/存储故障),或行内没有可回退的
+			// http(s) 地址:按缺失回答,节点显示占位而非报错——不把
+			// 「对象没了」伪装成「网络坏了」。
 			log.Printf("asset: open object %q of asset %d: %v", a.ObjectKey, id, err)
 			apierr.NotFound(c, "素材内容不可用")
 			return
@@ -128,13 +142,9 @@ func (h *Handlers) Content(c *gin.Context) {
 	}
 
 	if !strings.HasPrefix(a.URL, "data:") {
-		if download {
-			// 历史行没有自有字节,attachment 无法套在 302 上:下载入口
-			// 在这里退化为代理流出厂商字节。
-			h.proxyLegacy(c, a)
-			return
-		}
-		c.Redirect(http.StatusFound, a.URL)
+		// 历史行没有自有字节:预览 302 由厂商 CDN 交付,attachment 套不
+		// 上 302,下载入口退化为代理流出厂商字节。
+		h.serveRowURL(c, a, download)
 		return
 	}
 	payload, mimeType, ok := splitDataURI(a.URL)
@@ -145,6 +155,24 @@ func (h *Handlers) Content(c *gin.Context) {
 		return
 	}
 	c.Data(http.StatusOK, mimeType, payload)
+}
+
+// isHTTPURL reports whether u is an absolute http(s) address — the only
+// shape the 26 号票 read fallback may send a browser to.
+func isHTTPURL(u string) bool {
+	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
+}
+
+// serveRowURL delivers an asset by its stored http(s) URL: preview 302 lets
+// the browser fetch the bytes from its own network (vendor CDN for legacy
+// rows, direct line during a server-egress outage for the 26 号票 fallback),
+// download proxies them so the attachment header keeps one contract.
+func (h *Handlers) serveRowURL(c *gin.Context, a Asset, download bool) {
+	if download {
+		h.proxyLegacy(c, a)
+		return
+	}
+	c.Redirect(http.StatusFound, a.URL)
 }
 
 // proxyLegacy streams a legacy http(s) asset's remote bytes so the download

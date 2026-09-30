@@ -3,6 +3,9 @@ package asset_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -177,6 +180,110 @@ func TestContentMissingObjectAnswersNotFound(t *testing.T) {
 	w := env.do(t, http.MethodGet, idPath(created.ID, "/content"))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (节点显示占位而非报错)", w.Code)
+	}
+}
+
+// failingStorage is an objectstore.Store double whose Open always answers
+// openErr — the shape of a cloud read dying mid-transfer, 26 号票读兜底的
+// 触发条件。Put/Delete 是测试不会走到的占位。
+type failingStorage struct {
+	openErr error
+}
+
+func (f *failingStorage) Put(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
+
+func (f *failingStorage) Open(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, f.openErr
+}
+
+func (f *failingStorage) Delete(context.Context, string) error { return nil }
+
+// newFailingStorageEnv wires the routes over a store whose Open always
+// fails, mirroring newAssetEnv minus the real FileSystem.
+func newFailingStorageEnv(t *testing.T, openErr error) *assetEnv {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	store := newFakeStore()
+	h := &asset.Handlers{Store: store, Storage: &failingStorage{openErr: openErr}}
+	r := gin.New()
+	asset.RegisterContentRoutes(r.Group("/assets"), h)
+	asset.RegisterLibraryRoutes(r.Group("/assets"), h)
+	return &assetEnv{engine: r, store: store}
+}
+
+func TestContentOpenTransportErrorRedirectsToRowURL(t *testing.T) {
+	// 服务端出网坏的实证形态:Open EOF(非「不存在」),行内还有厂商
+	// 出处 —— 预览 302 直连,浏览器走用户自己的网络取字节。
+	env := newFailingStorageEnv(t, errors.New("net: connection reset by peer"))
+	created, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 1, URL: "https://img.example/vendored.png",
+		ObjectKey: "canvases/1/ct_net/image.png", ContentType: "image/png", SizeBytes: 4,
+	})
+
+	w := env.do(t, http.MethodGet, idPath(created.ID, "/content"))
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "https://img.example/vendored.png" {
+		t.Errorf("status = %d location = %q, want a 302 to the row URL",
+			w.Code, w.Header().Get("Location"))
+	}
+}
+
+func TestContentOpenTransportErrorDownloadProxiesRowURL(t *testing.T) {
+	// attachment 套不上 302:下载入口回退为代理流出,与历史行同款契约。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = io.WriteString(w, "vendored-bytes")
+	}))
+	defer srv.Close()
+
+	env := newFailingStorageEnv(t, errors.New("EOF"))
+	created, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 1, URL: srv.URL + "/old.png",
+		ObjectKey: "canvases/1/ct_net2/image.png", ContentType: "image/png", SizeBytes: 14,
+	})
+
+	w := env.do(t, http.MethodGet, idPath(created.ID, "/content?download=1"))
+	if w.Code != http.StatusOK || w.Body.String() != "vendored-bytes" {
+		t.Fatalf("status = %d body = %q, want the proxied bytes", w.Code, w.Body.String())
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Errorf("content disposition = %q, want an attachment", cd)
+	}
+}
+
+func TestContentOpenNotExistKeepsNotFound(t *testing.T) {
+	// 对象真没了不回退:即使行内还有 http(s) 地址,也不把「对象没了」
+	// 伪装成「网络坏了」——14 号票占位契约不变。
+	env := newFailingStorageEnv(t, fs.ErrNotExist)
+	created, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 1, URL: "https://img.example/still-listed.png",
+		ObjectKey: "canvases/1/ct_gone2/image.png", ContentType: "image/png",
+	})
+
+	w := env.do(t, http.MethodGet, idPath(created.ID, "/content"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (ErrNotExist 不回退)", w.Code)
+	}
+}
+
+func TestContentOpenTransportErrorWithoutHTTPURLKeepsNotFound(t *testing.T) {
+	// 行内没有可回退的 http(s) 地址(上传行的 url 留空、b64 历史行的
+	// data: URI):维持 404 现状路径。
+	env := newFailingStorageEnv(t, errors.New("net: connection reset by peer"))
+	uploaded, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 1, URL: "",
+		ObjectKey: "uploads/20260930/u1.png", ContentType: "image/png",
+	})
+	dataURI, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 1, URL: "data:image/png;base64,cG5n",
+		ObjectKey: "canvases/1/ct_b64/image.png", ContentType: "image/png",
+	})
+
+	for _, id := range []int64{uploaded.ID, dataURI.ID} {
+		if w := env.do(t, http.MethodGet, idPath(id, "/content")); w.Code != http.StatusNotFound {
+			t.Errorf("asset %d: status = %d, want 404 (无可回退地址)", id, w.Code)
+		}
 	}
 }
 
