@@ -179,6 +179,94 @@ describe('useCanvasTasks', () => {
   })
 })
 
+describe('useCanvasTasks 整表回调(28 号票生成记录面板)', () => {
+  it('每轮同步把整张任务表交给 onTasks(服务端新到旧,原样透传)', async () => {
+    const first = [
+      task({ id: 'ct_2', node_id: 'image-1-2', status: 'running' }),
+      task({ id: 'ct_1', node_id: 'image-1-1', status: 'succeeded' }),
+    ]
+    const second = [task({ id: 'ct_2', status: 'succeeded', image_url: 'u' })]
+    const fetchTasks = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    const onTasks = vi.fn()
+    const tasks = useCanvasTasks({
+      fetchTasks,
+      retryTask: noopOp,
+      cancelTask: noopOp,
+      onTask: vi.fn(),
+      onTasks,
+      intervalMs: INTERVAL,
+    })
+
+    await tasks.start()
+    expect(onTasks).toHaveBeenCalledTimes(1)
+    expect(onTasks).toHaveBeenNthCalledWith(1, first)
+
+    await vi.advanceTimersByTimeAsync(INTERVAL)
+    expect(onTasks).toHaveBeenCalledTimes(2)
+    expect(onTasks).toHaveBeenNthCalledWith(2, second)
+  })
+
+  it('track 提交的新任务即时进整表回调,面板不等下一轮拉取', async () => {
+    const fresh = task({ id: 'ct_new', status: 'queued' })
+    const onTasks = vi.fn()
+    const tasks = useCanvasTasks({
+      fetchTasks: vi.fn().mockResolvedValue([task({ id: 'ct_old', status: 'succeeded' })]),
+      retryTask: noopOp,
+      cancelTask: noopOp,
+      onTask: vi.fn(),
+      onTasks,
+      intervalMs: INTERVAL,
+    })
+
+    await tasks.start()
+    expect(onTasks).toHaveBeenCalledTimes(1)
+
+    tasks.track(fresh)
+    expect(onTasks).toHaveBeenCalledTimes(2)
+    const merged = onTasks.mock.calls[1][0] as CanvasTask[]
+    expect(merged[0].id).toBe('ct_new')
+    expect(merged.map((t) => t.id)).toContain('ct_old')
+  })
+
+  it('retry/cancel 的回队快照同样进整表回调(同 id 替换不重复)', async () => {
+    const retryTask = vi.fn().mockResolvedValue(task({ status: 'queued', attempts: 2 }))
+    const onTasks = vi.fn()
+    const tasks = useCanvasTasks({
+      fetchTasks: vi.fn().mockResolvedValue([task({ status: 'failed', error: 'boom' })]),
+      retryTask,
+      cancelTask: noopOp,
+      onTask: vi.fn(),
+      onTasks,
+      intervalMs: INTERVAL,
+    })
+
+    await tasks.start()
+    await tasks.retry('ct_abc')
+
+    const merged = onTasks.mock.calls.at(-1)![0] as CanvasTask[]
+    expect(merged).toHaveLength(1)
+    expect(merged[0].status).toBe('queued')
+    expect(merged[0].attempts).toBe(2)
+  })
+
+  it('单轮拉取失败不回调(面板保持上一次的表)', async () => {
+    const fetchTasks = vi.fn().mockResolvedValueOnce([task({ status: 'running' })]).mockRejectedValueOnce(new Error('down'))
+    const onTasks = vi.fn()
+    const tasks = useCanvasTasks({
+      fetchTasks,
+      retryTask: noopOp,
+      cancelTask: noopOp,
+      onTask: vi.fn(),
+      onTasks,
+      intervalMs: INTERVAL,
+    })
+
+    await tasks.start()
+    await vi.advanceTimersByTimeAsync(INTERVAL)
+    expect(onTasks).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('useCanvasTasks 取消(12 号票)', () => {
   it('cancel 采纳取消后的任务,终态后轮询停止', async () => {
     const cancelTask = vi

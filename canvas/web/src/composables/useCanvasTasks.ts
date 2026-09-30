@@ -17,17 +17,37 @@ export interface CanvasTasksOptions {
   cancelTask: (taskId: string) => Promise<CanvasTask>
   /** 每次任务状态更新后回调(编辑器据此把产物写进节点数据)。 */
   onTask: (task: CanvasTask) => void
+  /** 每张任务表的同步快照回调(28 号票生成记录面板的数据源):start 与每
+   * 轮轮询后收到整表(服务端新到旧),track/retry/cancel 的单条快照按同
+   * id 替换、新 id 置顶合并后同样回调 —— 面板开着时提交/重试/取消都不用
+   * 等下一轮拉取。拉取失败不回调,面板保持上一次的表。 */
+  onTasks?: (tasks: CanvasTask[]) => void
   /** 轮询间隔毫秒数(测试用)。 */
   intervalMs?: number
 }
 
 const DEFAULT_INTERVAL_MS = 1500
 
+/** 单条任务快照并进整表:同 id 原位替换(retry/cancel 不改变行的排位,
+ * 排位是 created_at 的事),新 id 置顶(新提交的任务就是最新的)。 */
+function mergeAdopted(list: CanvasTask[], task: CanvasTask): CanvasTask[] {
+  const idx = list.findIndex((t) => t.id === task.id)
+  if (idx >= 0) {
+    const next = [...list]
+    next[idx] = task
+    return next
+  }
+  return [task, ...list]
+}
+
 export function useCanvasTasks(options: CanvasTasksOptions) {
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS
 
   /** node_id → 最新任务快照:节点组件按它渲染排队/生成中/失败与重试。 */
   const byNode = reactive(new Map<string, CanvasTask>())
+
+  /** 最近一张任务表(新到旧):onTasks 的合并基底。 */
+  let lastTasks: CanvasTask[] = []
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let polling = false
@@ -47,6 +67,8 @@ export function useCanvasTasks(options: CanvasTasksOptions) {
       byNode.set(task.node_id, task)
       options.onTask(task)
     }
+    lastTasks = tasks
+    options.onTasks?.(tasks)
   }
 
   function schedule(): void {
@@ -100,6 +122,8 @@ export function useCanvasTasks(options: CanvasTasksOptions) {
   function adopt(task: CanvasTask): void {
     byNode.set(task.node_id, task)
     options.onTask(task)
+    lastTasks = mergeAdopted(lastTasks, task)
+    options.onTasks?.(lastTasks)
     polling = true
     schedule()
   }

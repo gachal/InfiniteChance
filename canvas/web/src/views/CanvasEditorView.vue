@@ -38,6 +38,7 @@ import {
   parseDurationInput,
   resultNodeData,
   rolesForKind,
+  taskUrlFor,
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
   type ComposerRef,
@@ -47,8 +48,10 @@ import {
 } from '../composer'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
+import { canInsertRecord } from '../records'
 import AssetPanel from '../components/AssetPanel.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
+import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PromptNode from '../components/nodes/PromptNode.vue'
@@ -133,11 +136,19 @@ function syncTaskToCanvas(task: CanvasTask): void {
   }
 }
 
+/** 生成记录面板的数据源(28 号票):useCanvasTasks 每张任务表的同步快照
+ * (新到旧,与节点轮询同拍)—— 面板开着时新任务完成,行内状态随之翻成
+ * 终态;提交/重试/取消的单条快照即时合并,不等下一轮拉取。 */
+const taskRecords = ref<CanvasTask[]>([])
+
 const taskSync = useCanvasTasks({
   fetchTasks: () => client.listCanvasTasks(canvasId),
   retryTask: (taskId) => client.retryCanvasTask(canvasId, taskId),
   cancelTask: (taskId) => client.cancelCanvasTask(canvasId, taskId),
   onTask: syncTaskToCanvas,
+  onTasks: (tasks) => {
+    taskRecords.value = tasks
+  },
 })
 
 const generating = ref(false)
@@ -1006,28 +1017,74 @@ function addNode(type: CanvasNodeType): void {
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
 }
 
-// ---- 素材库面板(14 号票)----
+// ---- 素材库面板(14 号票)与生成记录面板(28 号票)----
 
 const assetPanelOpen = ref(false)
+const recordsPanelOpen = ref(false)
 
-/** 素材插入:从素材库把历史产物放进当前画布 —— 节点持有素材的内容寻
- * 址引用(asset_id + content_url),不复制字节,跨画布复用同一素材。音
- * 频素材没有对应节点类型,不落画布(参考音频经对话框上传入口进条)。 */
-function insertAsset(a: AssetRecord): void {
-  if (a.kind === 'audio') {
-    return
+// 两个面板同占画布右缘,互斥打开。
+function toggleAssetPanel(): void {
+  assetPanelOpen.value = !assetPanelOpen.value
+  if (assetPanelOpen.value) {
+    recordsPanelOpen.value = false
   }
+}
+
+function toggleRecordsPanel(): void {
+  recordsPanelOpen.value = !recordsPanelOpen.value
+  if (recordsPanelOpen.value) {
+    assetPanelOpen.value = false
+  }
+}
+
+/** 素材引用落画布的公共落点(素材面板插入、生成记录插入共用,28 号票):
+ * 节点持有素材的内容寻址引用(asset_id + content_url),不复制字节,跨画布
+ * 复用同一素材。 */
+function insertAssetRef(kind: 'image' | 'video', assetId: number, contentUrl: string): void {
   nodeSeq += 1
-  const type: CanvasNodeType = a.kind === 'video' ? 'video' : 'image'
+  const type: CanvasNodeType = kind === 'video' ? 'video' : 'image'
   const step = (toObject().nodes.length % 8) * 48
   addNodes([
     {
       id: `${type}-${Date.now()}-${nodeSeq}`,
       type,
       position: { x: 140 + step, y: 120 + step },
-      data: { url: a.content_url, asset_id: a.id, note: '' } satisfies MediaNodeData,
+      data: { url: contentUrl, asset_id: assetId, note: '' } satisfies MediaNodeData,
     },
   ])
+}
+
+/** 素材插入:从素材库把历史产物放进当前画布。音频素材没有对应节点类型,
+ * 不落画布(参考音频经对话框上传入口进条)。 */
+function insertAsset(a: AssetRecord): void {
+  if (a.kind === 'audio') {
+    return
+  }
+  insertAssetRef(a.kind === 'video' ? 'video' : 'image', a.id, a.content_url)
+}
+
+// ---- 生成记录面板的动作(28 号票)----
+
+/** 点记录行:画布平移定位并选中绑定节点;节点已被删(node_id 悬空)时静默
+ * 降级为无操作,不报错。 */
+function locateRecordTask(task: CanvasTask): void {
+  const node = findNode(task.node_id)
+  if (!node) {
+    return
+  }
+  removeSelectedNodes(getSelectedNodes.value)
+  addSelectedNodes([node])
+  void fitView({ nodes: [task.node_id], padding: 1, maxZoom: 1.2, duration: 300 })
+}
+
+/** 记录行「插入画布」:成功节点已删或想再放一份时,以素材内容寻址引用落
+ * 新节点 —— 与素材面板插入同一语义(守卫复用 canInsertRecord 的判定,
+ * taskUrlFor 在 asset_id > 0 时恒为内容寻址路径)。 */
+function insertRecordTask(task: CanvasTask): void {
+  if (!canInsertRecord(task)) {
+    return
+  }
+  insertAssetRef(task.kind === 'video' ? 'video' : 'image', task.asset_id, taskUrlFor(task))
 }
 
 // ---- 本机素材上传(18 号票)----
@@ -1458,6 +1515,12 @@ function backToList(): void {
         v-if="assetPanelOpen"
         @insert="insertAsset"
       />
+      <GenerationRecordsPanel
+        v-if="recordsPanelOpen"
+        :tasks="taskRecords"
+        @locate="locateRecordTask"
+        @insert="insertRecordTask"
+      />
     </div>
 
     <footer class="toolbar">
@@ -1476,9 +1539,17 @@ function backToList(): void {
           class="add-asset"
           type="button"
           :title="assetPanelOpen ? '关闭素材库面板' : '打开素材库:浏览历史素材并插入画布'"
-          @click="assetPanelOpen = !assetPanelOpen"
+          @click="toggleAssetPanel"
         >
           {{ assetPanelOpen ? '收起素材库' : '素材库' }}
+        </button>
+        <button
+          class="add-records"
+          type="button"
+          :title="recordsPanelOpen ? '关闭生成记录面板' : '打开生成记录:本画布的任务流水(最近 200 条)'"
+          @click="toggleRecordsPanel"
+        >
+          {{ recordsPanelOpen ? '收起记录' : '生成记录' }}
         </button>
         <button
           class="add-upload"
@@ -1734,6 +1805,11 @@ function backToList(): void {
 .add-asset {
   background: rgba(165, 180, 252, 0.16);
   color: #a5b4fc;
+}
+
+.add-records {
+  background: rgba(251, 146, 60, 0.14);
+  color: #fdba74;
 }
 
 .add-upload {
