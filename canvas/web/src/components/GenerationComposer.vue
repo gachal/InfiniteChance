@@ -8,10 +8,10 @@
 import { computed, ref } from 'vue'
 
 import {
-  DURATION_PRESETS,
   MAX_COMPOSER_REFS,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
+  durationRangeFor,
   rolesForKind,
   VIDEO_RESOLUTION_PRESETS,
   VIDEO_ROLE_CAPS,
@@ -65,6 +65,24 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 const isVideo = computed(() => props.mode === 'video')
 const activeModels = computed(() => (isVideo.value ? props.videoModels : props.imageModels))
+
+/** 时长区间随所选模型收敛(官方校准:seedance 2.0 = 4–15,2.5 = 4–30;
+ * 未知模型保守 4–15)。留空 = 自动(不传 seconds)。 */
+const durationRange = computed(() => durationRangeFor(props.model))
+
+/** 失焦时把输入夹紧回区间(整数):留空保持自动,越界/小数就地归位。 */
+function onDurationBlur(e: Event): void {
+  const raw = (e.target as HTMLInputElement).value.trim()
+  if (raw === '') {
+    return
+  }
+  const n = Number(raw)
+  if (Number.isInteger(n) && n >= durationRange.value.min && n <= durationRange.value.max) {
+    return
+  }
+  const clamped = Math.min(Math.max(Math.round(n) || durationRange.value.min, durationRange.value.min), durationRange.value.max)
+  emit('update:duration', String(clamped))
+}
 
 const canSend = computed(
   () => props.prompt.trim().length > 0 && props.model !== '' && !props.generating,
@@ -243,21 +261,19 @@ function onFileChange(e: Event): void {
           视频生成
         </option>
       </select>
-      <select
+      <input
         v-if="isVideo"
         :value="duration"
+        type="number"
         class="duration"
-        title="时长(自动 = 不传 seconds,由厂商缺省裁决)"
-        @change="emit('update:duration', ($event.target as HTMLSelectElement).value)"
+        :min="durationRange.min"
+        :max="durationRange.max"
+        step="1"
+        placeholder="自动"
+        :title="`时长(秒):留空 = 自动由模型裁决;本模型支持 ${durationRange.min}–${durationRange.max} 秒`"
+        @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
+        @blur="onDurationBlur"
       >
-        <option
-          v-for="p in DURATION_PRESETS"
-          :key="p.value"
-          :value="p.value"
-        >
-          {{ p.label }}
-        </option>
-      </select>
       <select
         :value="ratio"
         class="ratio"
@@ -501,6 +517,18 @@ textarea:focus {
 .controls .resolution {
   flex-shrink: 0;
   max-width: 110px;
+}
+
+/* 时长数字输入比下拉窄,单位(秒)缀在 placeholder 语义里。 */
+.controls input.duration {
+  width: 64px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
 }
 
 .controls .model {

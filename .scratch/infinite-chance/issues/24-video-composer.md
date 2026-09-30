@@ -24,3 +24,7 @@ Status: approved（2026-09-30 grilling 定案,待实现）
 7. **验证点**:Seedance 2.5 对各角色参考的实际数量上限(自限 4/1/1 保守,上游超限 4xx 透出即可,节点可见可重试);视频/音频参考在 Ark 侧的 API 形态(25 号票验证点,前端不依赖具体形态);30s 生成 vs 15min 轮询上限。
 
 8. **产出面**:`canvas/web`(GenerationComposer 模式化、编辑器状态与提交路径、graph 数据、ImageNode 表单移除、composer.ts 纯逻辑与单测)、`internal/canvastask`(handler/worker/store 双方言)、`internal/asset`(嗅探 + kind)、`packages/api` 类型;CONTEXT.md「生成对话框」「视频节点」「画布任务」「素材」词条随实现回写。
+
+## 修订(2026-09-30,官方校准)
+
+第 3 点「时长预设 自动/5/10/15/20/30s、不做自由数字输入」的前提经官方文档核实推翻:Seedance 的 `duration` 是整数区间 —— 2.0 = 4–15(默认 5,另有 -1 自动),2.5 = 4–30(-1 自动)。落地改为:区间内自由整数输入,留空 = 自动(不传 seconds);区间按所选模型收敛(2.5 → 4–30,2.0 与未知模型 → 保守 4–15),失焦夹紧、发送校验拦截越界。原文保留作出处。

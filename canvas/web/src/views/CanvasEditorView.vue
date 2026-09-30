@@ -32,7 +32,9 @@ import {
   composerImageUrls,
   composerVideoRefs,
   composeSize,
+  durationRangeFor,
   isRelayableRef,
+  parseDurationInput,
   rolesForKind,
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
@@ -565,11 +567,17 @@ async function onComposerSend(): Promise<void> {
     if (prompt === '' || videoModel.value === '') {
       return
     }
+    const vRange = durationRangeFor(videoModel.value)
+    const parsed = parseDurationInput(videoDuration.value, vRange)
+    if (parsed === null) {
+      generateError.value = `时长需为 ${vRange.min} 到 ${vRange.max} 之间的整数,留空表示自动`
+      return
+    }
     const refs = composerVideoRefs(videoComposerRefs.value)
     const ok = await submitVideoTask({
       prompt,
       model: videoModel.value,
-      seconds: videoDuration.value === '' ? undefined : Number(videoDuration.value),
+      seconds: parsed === '' ? undefined : parsed,
       size: videoResolution.value === '' ? undefined : videoResolution.value,
       ratio: videoRatio.value === '' ? undefined : videoRatio.value,
       videoRefs: refs.length > 0 ? refs : undefined,

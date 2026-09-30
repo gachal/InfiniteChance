@@ -6,9 +6,10 @@ import {
   composerImageUrls,
   composerVideoRefs,
   composeSize,
-  DURATION_PRESETS,
+  durationRangeFor,
   isRelayableRef,
   MAX_COMPOSER_REFS,
+  parseDurationInput,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
   rolesForKind,
@@ -199,8 +200,30 @@ describe('videoPlaceholder / 视频预设', () => {
     expect(videoPlaceholder([{ url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' }])).toContain('参考视频')
   })
 
-  it('duration and video resolution presets carry auto first and tier strings', () => {
-    expect(DURATION_PRESETS.map((p) => p.value)).toEqual(['', '5', '10', '15', '20', '30'])
+  it('video resolution presets carry auto first and tier strings', () => {
     expect(VIDEO_RESOLUTION_PRESETS.map((p) => p.value)).toEqual(['', '480p', '720p', '1080p'])
+  })
+})
+
+describe('durationRangeFor / parseDurationInput / 官方时长区间', () => {
+  it('maps seedance generations onto their official integer ranges', () => {
+    expect(durationRangeFor('doubao-seedance-2-5-260628')).toEqual({ min: 4, max: 30 })
+    expect(durationRangeFor('doubao-seedance-2-0-260128')).toEqual({ min: 4, max: 15 })
+    expect(durationRangeFor('wan-video')).toEqual({ min: 4, max: 15 })
+  })
+
+  it('parses empty as auto and in-range integers as seconds', () => {
+    const range = durationRangeFor('doubao-seedance-2-5-260628')
+    expect(parseDurationInput('', range)).toBe('')
+    expect(parseDurationInput(' 7 ', range)).toBe(7)
+    expect(parseDurationInput('30', range)).toBe(30)
+  })
+
+  it('rejects decimals, out-of-range values and junk', () => {
+    const range = durationRangeFor('doubao-seedance-2-0-260128')
+    expect(parseDurationInput('7.5', range)).toBeNull()
+    expect(parseDurationInput('20', range)).toBeNull()
+    expect(parseDurationInput('3', range)).toBeNull()
+    expect(parseDurationInput('abc', range)).toBeNull()
   })
 })

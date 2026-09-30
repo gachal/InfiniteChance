@@ -206,16 +206,41 @@ export function videoPlaceholder(refs: VideoComposerRef[]): string {
   return '描述要生成的画面与镜头(参考视频/音频)…'
 }
 
-/** 视频时长预设(24 号票):「自动」= 不传 seconds 维持厂商缺省;不做自由
- * 数字输入 —— duration 是厂商枚举,自由值多半 4xx,档位实测校准。 */
-export const DURATION_PRESETS: PresetOption[] = [
-  { label: '自动时长', value: '' },
-  { label: '5 秒', value: '5' },
-  { label: '10 秒', value: '10' },
-  { label: '15 秒', value: '15' },
-  { label: '20 秒', value: '20' },
-  { label: '30 秒', value: '30' },
-]
+/** 视频时长(24 号票,官方校准):Seedance 的 duration 是整数区间而非
+ * 5 秒枚举 —— 2.0 支持 4–15 任意整数、2.5 支持 4–30,均可传 -1 由模型
+ * 自动裁决。输入留空 = 自动(不传 seconds,维持厂商缺省);区间按所选
+ * 模型收敛,未知模型落保守档(4–15)。 */
+export interface DurationRange {
+  min: number
+  max: number
+}
+
+export function durationRangeFor(model: string): DurationRange {
+  if (model.includes('seedance-2-5')) {
+    return { min: 4, max: 30 }
+  }
+  if (model.includes('seedance-2-0')) {
+    return { min: 4, max: 15 }
+  }
+  return { min: 4, max: 15 }
+}
+
+/** 解析时长输入:空 = 自动('');区间内的整数有效;其余(小数、越界、
+ * 乱码)返回 null,由调用方拦下发送。 */
+export function parseDurationInput(
+  value: string,
+  range: DurationRange,
+): number | '' | null {
+  const trimmed = value.trim()
+  if (trimmed === '') {
+    return ''
+  }
+  const n = Number(trimmed)
+  if (!Number.isInteger(n) || n < range.min || n > range.max) {
+    return null
+  }
+  return n
+}
 
 /** 视频分辨率预设:选中档位串直接作为 size 上送(second 轨计价系数表与
  * token 轨估算表都以这些字符串为键,契约零新增)。 */
