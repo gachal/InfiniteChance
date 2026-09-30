@@ -2,6 +2,7 @@ package pricing
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -271,5 +272,92 @@ func TestPriceModelNameBound(t *testing.T) {
 	}
 	if _, err := long.Normalize(); err == nil {
 		t.Errorf("over-long model name accepted")
+	}
+}
+
+// TestEstimateVideoTokens pins the token track's submit-time guess (25 号票):
+// the size's configured per-second rate wins, an absent or unconfigured size
+// falls to the default scalar, and a price with no table at all (every chat
+// token row) estimates 0. Rounding is up — 预扣不低估.
+func TestEstimateVideoTokens(t *testing.T) {
+	p := TokenPrice{
+		SizeTokensPerSecond:    map[string]float64{"720p": 24_000, "1080p": 53_665.5},
+		DefaultTokensPerSecond: 12_000,
+	}
+	for _, tc := range []struct {
+		size    string
+		seconds int64
+		want    int64
+	}{
+		{"720p", 5, 120_000},
+		{"1080p", 5, 268_328}, // 53665.5 × 5 = 268327.5 → ceil
+		{"480p", 5, 60_000},   // 档位未配 → default 12000
+		{"", 10, 120_000},     // size 未传 → default
+		{"720p", 0, 0},
+		{"720p", -3, 0},
+	} {
+		if got := p.EstimateVideoTokens(tc.size, tc.seconds); got != tc.want {
+			t.Errorf("EstimateVideoTokens(%q, %d) = %d, want %d", tc.size, tc.seconds, got, tc.want)
+		}
+	}
+	if got := (TokenPrice{}).EstimateVideoTokens("720p", 5); got != 0 {
+		t.Errorf("empty table estimates %d, want 0", got)
+	}
+	if got := (TokenPrice{DefaultTokensPerSecond: 99.9}).EstimateVideoTokens("720p", 3); got != 300 {
+		t.Errorf("fractional default estimates %d, want 300 (ceil)", got)
+	}
+}
+
+// TestTokenPriceNormalizeVideoTable pins the conversion table's validation
+// (25 号票): entry count, blank/oversized tier names, out-of-bound rates,
+// and the default scalar's bound. Zero rates fold away — an empty table
+// never reaches the store.
+func TestTokenPriceNormalizeVideoTable(t *testing.T) {
+	base := func(table map[string]float64) Price {
+		return Price{PublicModel: "seedance", Unit: UnitToken, Token: &TokenPrice{
+			InputMicrosPerMTokens: 0, OutputMicrosPerMTokens: 2_000_000, RatioMicros: 1_000_000,
+			SizeTokensPerSecond: table,
+		}}
+	}
+	if _, err := base(map[string]float64{"720p": 24_000}).Normalize(); err != nil {
+		t.Fatalf("valid table rejected: %v", err)
+	}
+	oversized := map[string]float64{}
+	for i := range 101 {
+		oversized[fmt.Sprintf("tier%d", i)] = 100
+	}
+	blank := base(map[string]float64{"  ": 100})
+	badTier := base(map[string]float64{strings.Repeat("t", 65): 100})
+	negative := base(map[string]float64{"720p": -1})
+	huge := base(map[string]float64{"720p": MaxTokensPerSecond + 0.5})
+	for _, tc := range []struct {
+		name  string
+		price Price
+	}{
+		{"too many entries", Price{PublicModel: "m", Unit: UnitToken, Token: &TokenPrice{SizeTokensPerSecond: oversized}}},
+		{"blank tier name", blank},
+		{"tier name too long", badTier},
+		{"negative rate", negative},
+		{"rate over shield", huge},
+		{"default over shield", Price{PublicModel: "m", Unit: UnitToken, Token: &TokenPrice{DefaultTokensPerSecond: MaxTokensPerSecond + 1}}},
+		{"negative default", Price{PublicModel: "m", Unit: UnitToken, Token: &TokenPrice{DefaultTokensPerSecond: -1}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.price.Normalize(); err == nil {
+				t.Fatal("Normalize = nil error, want rejection")
+			}
+		})
+	}
+
+	// 零折算与未配同义:折叠掉,空表不落库。
+	folded, err := base(map[string]float64{"720p": 24_000, "480p": 0}).Normalize()
+	if err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	if _, kept := folded.Token.SizeTokensPerSecond["480p"]; kept {
+		t.Errorf("zero rate kept: %v", folded.Token.SizeTokensPerSecond)
+	}
+	if len(folded.Token.SizeTokensPerSecond) != 1 {
+		t.Errorf("folded table = %v, want only 720p", folded.Token.SizeTokensPerSecond)
 	}
 }

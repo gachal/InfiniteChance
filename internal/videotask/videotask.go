@@ -46,6 +46,9 @@ func Terminal(s Status) bool {
 // DashScope PENDING/UNKNOWN, Runway THROTTLED, …), matched
 // case-insensitively: throttled states read as queued (排队语义), unknown
 // and unrecognized states read as failed (未知态归并 failed,08 号票定案).
+// Ark's vocabulary (25 号票复核) already lands right: queued/running/
+// succeeded/cancelled hit their branches, failed and the task-timeout state
+// expired fall through to failed — 超时任务未交付,按失败退款。
 func MergeStatus(raw string) Status {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "queued", "pending", "submitted", "created", "queueing", "in_queue", "preparing", "throttled":

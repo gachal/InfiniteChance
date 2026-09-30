@@ -107,16 +107,24 @@ func tooLarge(c *gin.Context) {
 // the pooled transport, one instance serves every channel of the type.
 var vodAdaptorInstance = newVODAdaptor()
 
+// arkAdaptorInstance is the shared volcengine-ark seam (25 号票) — same
+// shape: stateless apart from the pooled transport.
+var arkAdaptorInstance = newArkAdaptor()
+
 // adaptorFor returns the vendor seam serving one channel's type (20 号票起
 // 渠道类型不再只有 openai):注入的 Adaptor 仍是测试/单缝覆盖的赢家;
 // 生产分发按类型 —— OpenAI 兼容上游共用 OpenAI adaptor,tencent-vod 走
-// TC3 签名的 VOD adaptor,新厂商类型在这里各加一行。
+// TC3 签名的 VOD adaptor,volcengine-ark 走 Ark 任务面 adaptor,新厂商
+// 类型在这里各加一行。
 func (h *Handlers) adaptorFor(ch channel.Channel) Adaptor {
 	if h.Adaptor != nil {
 		return h.Adaptor
 	}
 	if ch.Type == channel.TypeTencentVod {
 		return vodAdaptorInstance
+	}
+	if ch.Type == channel.TypeVolcengineArk {
+		return arkAdaptorInstance
 	}
 	return NewOpenAIAdaptor()
 }

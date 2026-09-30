@@ -44,6 +44,7 @@ type fakeVideoVendor struct {
 	cancels int
 	models  []string
 	auths   []string
+	bodies  []string // 提交端点收到的请求体原文(透传断言用)
 }
 
 func newFakeVideoVendor(t *testing.T) *fakeVideoVendor {
@@ -63,6 +64,7 @@ func newFakeVideoVendor(t *testing.T) *fakeVideoVendor {
 		case r.Method == http.MethodPost && r.URL.Path == "/videos/generations":
 			v.submits++
 			v.models = append(v.models, body.Model)
+			v.bodies = append(v.bodies, string(raw))
 			w.Header().Set("Content-Type", "application/json")
 			if v.submitStatus != 0 && v.submitStatus != http.StatusOK {
 				w.WriteHeader(v.submitStatus)
@@ -129,6 +131,17 @@ func (v *fakeVideoVendor) lastModelAndAuth() (string, string) {
 		return "", ""
 	}
 	return v.models[len(v.models)-1], v.auths[len(v.auths)-1]
+}
+
+// submittedBody returns the most recent submit body verbatim.
+func (v *fakeVideoVendor) submittedBody(t *testing.T) string {
+	t.Helper()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.bodies) == 0 {
+		t.Fatal("no submit reached the vendor")
+	}
+	return v.bodies[len(v.bodies)-1]
 }
 
 // seedVideoChannel inserts one enabled channel with explicit capabilities

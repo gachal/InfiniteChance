@@ -40,13 +40,84 @@ const maxImageURLRunes = 4096
 
 // videoRequest is the slice of the submit body the gateway itself needs;
 // everything else rides through to the vendor untouched(JSON 全量透传,
-// 仅 model 换名;image 是图生视频的可选参考)。
+// 仅 model 换名)。image 是图生视频的可选首帧;last_image / references /
+// ratio 是 25 号票的契约扩展:尾帧、多模态参考(图/视频/音频,≤9 条)与
+// 显式宽高比 —— openai 形渠道对新参数全量透传不剥离,ark 形渠道在
+// adaptor 内翻译。
 type videoRequest struct {
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Seconds *int64 `json:"seconds"`
-	Size    string `json:"size"`
-	Image   string `json:"image"`
+	Model      string           `json:"model"`
+	Prompt     string           `json:"prompt"`
+	Seconds    *int64           `json:"seconds"`
+	Size       string           `json:"size"`
+	Ratio      string           `json:"ratio"`
+	Image      string           `json:"image"`
+	LastImage  string           `json:"last_image"`
+	References []videoReference `json:"references"`
+}
+
+// 视频参考的 kind 枚举(网关自己的契约,不是上游枚举):上游档位交上游裁,
+// 这三种是网关愿意翻译的媒体类型。
+const (
+	refKindImage = "image"
+	refKindVideo = "video"
+	refKindAudio = "audio"
+)
+
+// maxVideoReferences bounds the references array (对齐生图参考配额,25 号票
+// 定案 ≤9 条);超出在计费与拨号之前拒绝,比厂商的不可读错误便宜。
+const maxVideoReferences = 9
+
+// videoReference is one entry of the references array: a media URL plus its
+// kind. http(s) only — inline data: URIs are the shape 12 号票 already banned
+// from gateway media contracts (校验在 prepareVideo)。
+type videoReference struct {
+	URL  string `json:"url"`
+	Kind string `json:"kind"`
+}
+
+// checkVideoMediaURL enforces the gateway media contract on one optional
+// media reference: http(s) URL the vendor can fetch (内联 data: 400)plus
+// the shared length bound. Empty passes — the field is optional.
+func checkVideoMediaURL(field, raw string) error {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return nil
+	}
+	if len([]rune(u)) > maxImageURLRunes {
+		return fmt.Errorf("The '%s' parameter is too long.", field)
+	}
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return fmt.Errorf("The '%s' parameter must be an http(s) URL the vendor can fetch (inline data: URIs are not supported).", field)
+	}
+	return nil
+}
+
+// validateVideoMedia checks the three media fields of the extended contract
+// (image 逐字节兼容既有请求,校验口径与 last_image/references 统一收紧到
+// http(s))。nil = 全部合规;错误消息是英文(中转面错误文案是英文)。
+func validateVideoMedia(req videoRequest) error {
+	for _, f := range []struct{ field, url string }{
+		{"image", req.Image},
+		{"last_image", req.LastImage},
+	} {
+		if err := checkVideoMediaURL(f.field, f.url); err != nil {
+			return err
+		}
+	}
+	if len(req.References) > maxVideoReferences {
+		return fmt.Errorf("'references' supports at most %d entries, got %d.", maxVideoReferences, len(req.References))
+	}
+	for i, r := range req.References {
+		switch strings.TrimSpace(r.Kind) {
+		case refKindImage, refKindVideo, refKindAudio:
+		default:
+			return fmt.Errorf("references[%d].kind must be one of image, video, audio.", i)
+		}
+		if err := checkVideoMediaURL(fmt.Sprintf("references[%d].url", i), r.URL); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // videoTaskJSON is the external task object: submit answers it fresh from
@@ -182,9 +253,13 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 			"The 'size' parameter is too long.")
 		return nil
 	}
-	if len([]rune(strings.TrimSpace(req.Image))) > maxImageURLRunes {
+	if len([]rune(strings.TrimSpace(req.Ratio))) > pricing.MaxSizeRunes {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
-			"The 'image' parameter is too long.")
+			"The 'ratio' parameter is too long.")
+		return nil
+	}
+	if err := validateVideoMedia(req); err != nil {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, err.Error())
 		return nil
 	}
 
@@ -209,9 +284,25 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 		h.failInternal(c, err)
 		return nil
 	}
-	if price.Unit != pricing.UnitSecond || price.Call == nil {
+	// 计价校验(25 号票放宽):视频按模型所配轨道结算 —— second 轨照旧
+	// 「单价 × 系数 × 秒」预扣,token 轨按估算表折算预扣(实报 tokens
+	// 终态多退少补);其余轨道仍 model_not_priced。
+	switch price.Unit {
+	case pricing.UnitSecond:
+		if price.Call == nil {
+			apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
+				"The model '"+req.Model+"' is not priced for per-second video billing.")
+			return nil
+		}
+	case pricing.UnitToken:
+		if price.Token == nil {
+			apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
+				"The model '"+req.Model+"' is not priced for token billing.")
+			return nil
+		}
+	default:
 		apierr.OpenAI(c, http.StatusBadRequest, CodeModelNotPriced, TypeInvalidRequestError,
-			"The model '"+req.Model+"' is not priced for per-second video billing.")
+			"The model '"+req.Model+"' is not priced for video billing.")
 		return nil
 	}
 
@@ -222,8 +313,24 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 		return nil
 	}
 
-	// 按秒预扣:单价 × 分辨率系数 × 秒数。免费模型估算为 0,跳过账务。
-	reserved := price.Call.ChargeMicros(size, seconds)
+	// 预扣。second 轨:单价 × 分辨率系数 × 秒。token 轨:输出单价 × 估算
+	// tokens(估算表按 size 档折算,缺省标量兜底;终态按厂商实报多退少
+	// 补)。免费模型估算为 0,跳过账务。
+	var reserved int64
+	var snapshot []byte
+	if price.Unit == pricing.UnitToken {
+		estTokens := price.Token.EstimateVideoTokens(size, seconds)
+		reserved = price.Token.ChargeMicros(0, estTokens)
+		snapshot, err = videoTokenSnapshot(price, size, seconds, estTokens)
+	} else {
+		reserved = price.Call.ChargeMicros(size, seconds)
+		snapshot, err = price.CallSnapshot(size, seconds)
+	}
+	if err != nil {
+		// 轨道守卫已保证单位,这里只可能是编码失败;快照留空要留痕。
+		log.Printf("relay: price snapshot for %s: %v", price.PublicModel, err)
+		snapshot = nil
+	}
 	if reserved > 0 {
 		if _, err := h.Keys.Reserve(ctx, key.ID, reserved, apikey.ReasonEstimate); err != nil {
 			h.reserveFailed(c, key, err)
@@ -231,14 +338,8 @@ func (h *Handlers) prepareVideo(c *gin.Context, key apikey.Key) *prepared {
 		}
 	}
 
-	// 审计快照记下价格与请求事实(size、seconds):按次扣费缺请求事实
-	// 无法重算。
-	snapshot, err := price.CallSnapshot(size, seconds)
-	if err != nil {
-		// second 轨守卫保证了单位,这里只可能是编码失败;快照留空要留痕。
-		log.Printf("relay: price snapshot for %s: %v", price.PublicModel, err)
-		snapshot = nil
-	}
+	// 审计快照记下价格与请求事实(second 轨:size、seconds;token 轨:
+	// size、seconds、估算 tokens):扣费缺请求事实无法重算。
 
 	return &prepared{
 		publicModel: req.Model,
@@ -334,7 +435,7 @@ func (h *Handlers) GetVideoTask(c *gin.Context) {
 			"Upstream task query failed: "+summary)
 		return
 	}
-	rawStatus, videoURL, vendorErr, perr := parseVideoQuery(upstream.Body)
+	rawStatus, videoURL, vendorErr, reportedTokens, perr := parseVideoQuery(upstream.Body)
 	if perr != nil {
 		// 响应体不可解析同样是暂态上游故障,不能据此推进状态。
 		apierr.OpenAI(c, http.StatusBadGateway, CodeUpstreamError, CodeUpstreamError,
@@ -376,7 +477,19 @@ func (h *Handlers) GetVideoTask(c *gin.Context) {
 			})
 			return
 		}
+		// 终态结算按任务所配轨道分叉(25 号票):second 轨定格实扣(实扣
+		// 即预扣,差额恒零);token 轨按厂商实报 completion_tokens 多退少
+		// 补,厂商未报 usage 时回退按预扣估算定格实结并留痕(任务已跑完
+		// 不退款,也不虚记)。
 		charge := task.ReservedMicros
+		var note string
+		if unit, token := videoBillingTrack(task); unit == pricing.UnitToken {
+			if reportedTokens > 0 && token != nil {
+				charge = token.ChargeMicros(0, reportedTokens)
+			} else {
+				note = "usage missing, billed estimate"
+			}
+		}
 		fresh, won, err := h.Tasks.Update(billing, task.ID, videotask.ActiveStatuses, videotask.Patch{
 			Status: videotask.StatusSucceeded, UpstreamStatus: &rawStatus,
 			VideoURL: &videoURL, ChargeMicros: &charge,
@@ -386,8 +499,9 @@ func (h *Handlers) GetVideoTask(c *gin.Context) {
 			return
 		}
 		if won {
-			// 实扣即预扣:差额为零不动账(不落 settle 流水),落成功留痕。
-			h.recordUsage(billing, h.videoUsageEntry(fresh, usage.StatusSuccess, charge))
+			// 多退少补:差额为零不动账(不落 settle 流水),落成功留痕。
+			h.adjustBalance(billing, task.KeyID, task.ReservedMicros-charge, apikey.ReasonSettle)
+			h.recordUsage(billing, h.videoUsageEntry(fresh, usage.StatusSuccess, charge, reportedTokens, note))
 		}
 		c.JSON(http.StatusOK, videoTaskBody(fresh))
 	case videotask.StatusCanceled:
@@ -457,7 +571,7 @@ func (h *Handlers) CancelVideoTask(c *gin.Context) {
 	}
 	if won {
 		h.adjustBalance(billing, task.KeyID, task.ReservedMicros, apikey.ReasonRefund)
-		h.recordUsage(billing, h.videoUsageEntry(fresh, usage.StatusUpstreamError, 0))
+		h.recordUsage(billing, h.videoUsageEntry(fresh, usage.StatusUpstreamError, 0, 0, ""))
 	}
 	c.JSON(http.StatusOK, videoTaskBody(fresh))
 }
@@ -475,25 +589,44 @@ func (h *Handlers) failVideoTask(c *gin.Context, billing context.Context, task v
 	}
 	if won {
 		h.adjustBalance(billing, task.KeyID, task.ReservedMicros, apikey.ReasonRefund)
-		h.recordUsage(billing, h.videoUsageEntry(fresh, usage.StatusUpstreamError, 0))
+		h.recordUsage(billing, h.videoUsageEntry(fresh, usage.StatusUpstreamError, 0, 0, ""))
 	}
 	c.JSON(http.StatusOK, videoTaskBody(fresh))
 }
 
 // videoUsageEntry builds the trail row for a task's terminal transition:
 // the pinned channel facts live on the task row, the lifetime is wall-clock
-// since submit, and the unit is the second track the submit required. The
-// row's upstream_error column carries the task's accumulated history —
-// submit-time failover first, then the closing summary.
-func (h *Handlers) videoUsageEntry(task videotask.Task, status string, charge int64) usage.Log {
-	return usage.Log{
+// since submit, and the unit follows the track the task settled on (the
+// task's own snapshot decides — 25 号票起视频也可能是 token 轨:行上
+// completion_tokens 记视频 token 数,快照带上实报与留痕). The row's
+// upstream_error column carries the task's accumulated history — submit-time
+// failover first, then the closing summary.
+func (h *Handlers) videoUsageEntry(task videotask.Task, status string, charge, reportedTokens int64, note string) usage.Log {
+	unit, _ := videoBillingTrack(task)
+	entry := usage.Log{
 		KeyID: task.KeyID, ChannelID: task.ChannelID, ChannelName: task.ChannelName,
 		PublicModel: task.PublicModel, UpstreamModel: task.UpstreamModel,
-		Unit:       string(pricing.UnitSecond),
+		Unit:       string(unit),
 		DurationMS: time.Since(task.CreatedAt).Milliseconds(),
 		Status:     status, ChargeMicros: charge, PriceSnapshot: task.PriceSnapshot,
 		UpstreamError: task.Error,
 	}
+	if unit == pricing.UnitToken {
+		entry.CompletionTokens = reportedTokens
+		if status == usage.StatusSuccess {
+			if snap := videoSettleSnapshot(task, reportedTokens, note); snap != nil {
+				entry.PriceSnapshot = snap
+			}
+		}
+	}
+	if note != "" {
+		if entry.UpstreamError == "" {
+			entry.UpstreamError = note
+		} else {
+			entry.UpstreamError += "; " + note
+		}
+	}
+	return entry
 }
 
 // ownedVideoTask loads the task and checks the caller owns it; a missing or
@@ -530,24 +663,109 @@ func parseVideoSubmit(body []byte) (string, error) {
 }
 
 // parseVideoQuery reads the vendor poll body: the raw status string (the
-// caller merges it), the deliverable URL when succeeded, and the vendor's
-// failure message when failed. A body that does not parse is a transient
+// caller merges it), the deliverable URL when succeeded, the vendor's
+// failure message when failed, and the vendor-reported video tokens when it
+// chose to report usage (25 号票:token 轨终态按 completion_tokens 结算;
+// 缺报由调用方按预扣定格)。A body that does not parse is a transient
 // upstream fault — the caller must not advance the task on it.
-func parseVideoQuery(body []byte) (rawStatus, videoURL, failMessage string, err error) {
+func parseVideoQuery(body []byte) (rawStatus, videoURL, failMessage string, completionTokens int64, err error) {
 	var r struct {
 		TaskStatus string `json:"task_status"`
 		VideoURL   string `json:"video_url"`
 		Error      *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Usage *struct {
+			CompletionTokens int64 `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &r); err != nil {
-		return "", "", "", fmt.Errorf("upstream task body is not a JSON object: %w", err)
+		return "", "", "", 0, fmt.Errorf("upstream task body is not a JSON object: %w", err)
 	}
 	if r.Error != nil {
 		failMessage = r.Error.Message
 	}
-	return r.TaskStatus, strings.TrimSpace(r.VideoURL), strings.TrimSpace(failMessage), nil
+	if r.Usage != nil {
+		completionTokens = max(r.Usage.CompletionTokens, 0)
+	}
+	return r.TaskStatus, strings.TrimSpace(r.VideoURL), strings.TrimSpace(failMessage), completionTokens, nil
+}
+
+// videoSnapshot is the shape of a video task's submit-time price snapshot:
+// the second track stores pricing.CallSnapshot's {unit, call, request{size,
+// n}}; the token track (25 号票) stores {unit, token, request{size,
+// seconds, est_tokens}} plus, on the settle row, a settle section with the
+// vendor-reported tokens and any billing note. Both shapes unmarshal here —
+// audits recompute from the usage row's snapshot, not the task row.
+type videoSnapshot struct {
+	Unit    pricing.Unit        `json:"unit"`
+	Token   *pricing.TokenPrice `json:"token,omitempty"`
+	Call    *pricing.CallPrice  `json:"call,omitempty"`
+	Request *videoSnapRequest   `json:"request,omitempty"`
+	Settle  *videoSnapSettle    `json:"settle,omitempty"`
+}
+
+// videoSnapRequest carries the request facts the charge derives from: the
+// shared size key, the second track's billed quantity n (= seconds), the
+// token track's seconds and estimated tokens.
+type videoSnapRequest struct {
+	Size      string `json:"size"`
+	N         int64  `json:"n,omitempty"`
+	Seconds   int64  `json:"seconds,omitempty"`
+	EstTokens int64  `json:"est_tokens,omitempty"`
+}
+
+// videoSnapSettle carries the settle facts of a token-track success row: the
+// vendor-reported video tokens and any billing note (e.g. the
+// usage-missing fallback).
+type videoSnapSettle struct {
+	CompletionTokens int64  `json:"completion_tokens"`
+	Note             string `json:"note,omitempty"`
+}
+
+// videoTokenSnapshot renders the token-track video snapshot at submit time:
+// the price in force plus the request facts the estimate derives from.
+func videoTokenSnapshot(price pricing.Price, size string, seconds, estTokens int64) ([]byte, error) {
+	if price.Unit != pricing.UnitToken || price.Token == nil {
+		return nil, fmt.Errorf("pricing: token snapshot of a %s-track price", price.Unit)
+	}
+	s := videoSnapshot{Unit: price.Unit, Token: price.Token,
+		Request: &videoSnapRequest{Size: size, Seconds: seconds, EstTokens: estTokens}}
+	return json.Marshal(s)
+}
+
+// videoBillingTrack reads the billing facts back from the task row's
+// submit-time snapshot: which track the task settles on and, for the token
+// track, the price to settle with. A snapshot that does not parse settles on
+// the second track — the shape every pre-25 task row carries.
+func videoBillingTrack(task videotask.Task) (pricing.Unit, *pricing.TokenPrice) {
+	var snap videoSnapshot
+	if len(task.PriceSnapshot) == 0 {
+		return pricing.UnitSecond, nil
+	}
+	if err := json.Unmarshal(task.PriceSnapshot, &snap); err != nil {
+		return pricing.UnitSecond, nil
+	}
+	if snap.Unit == pricing.UnitToken {
+		return pricing.UnitToken, snap.Token
+	}
+	return pricing.UnitSecond, nil
+}
+
+// videoSettleSnapshot re-renders the token-track snapshot with the settle
+// facts: the vendor-reported tokens and any billing note. The usage row's
+// snapshot must let an audit recompute the charge without the task row.
+func videoSettleSnapshot(task videotask.Task, reported int64, note string) []byte {
+	var snap videoSnapshot
+	if err := json.Unmarshal(task.PriceSnapshot, &snap); err != nil {
+		return nil // 快照坏了:用量行留任务行原快照,账面事实不丢
+	}
+	snap.Settle = &videoSnapSettle{CompletionTokens: reported, Note: note}
+	out, err := json.Marshal(snap)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 func strPtr(s string) *string { return &s }

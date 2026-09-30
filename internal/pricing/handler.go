@@ -35,17 +35,21 @@ func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 
 // priceJSON is the wire form: human units at the edge. Which fields are
 // meaningful follows unit — token rows use the per-mtoken/ratio fields, call
-// rows use usd_per_call/size_factors.
+// rows use usd_per_call/size_factors; video token rows (25 号票) additionally
+// carry the per-second conversion table in native token counts (no unit
+// conversion applies).
 type priceJSON struct {
-	PublicModel         string             `json:"public_model"`
-	Unit                Unit               `json:"unit"`
-	InputUSDPerMTokens  float64            `json:"input_usd_per_mtokens"`
-	OutputUSDPerMTokens float64            `json:"output_usd_per_mtokens"`
-	Ratio               float64            `json:"ratio"`
-	USDPerCall          float64            `json:"usd_per_call"`
-	SizeFactors         map[string]float64 `json:"size_factors,omitempty"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
+	PublicModel            string             `json:"public_model"`
+	Unit                   Unit               `json:"unit"`
+	InputUSDPerMTokens     float64            `json:"input_usd_per_mtokens"`
+	OutputUSDPerMTokens    float64            `json:"output_usd_per_mtokens"`
+	Ratio                  float64            `json:"ratio"`
+	SizeTokensPerSecond    map[string]float64 `json:"size_tokens_per_second,omitempty"`
+	DefaultTokensPerSecond float64            `json:"default_tokens_per_second,omitempty"`
+	USDPerCall             float64            `json:"usd_per_call"`
+	SizeFactors            map[string]float64 `json:"size_factors,omitempty"`
+	CreatedAt              time.Time          `json:"created_at"`
+	UpdatedAt              time.Time          `json:"updated_at"`
 }
 
 func toPriceJSON(p Price) priceJSON {
@@ -61,6 +65,10 @@ func toPriceJSON(p Price) priceJSON {
 			body.InputUSDPerMTokens = MicrosToUSDPerMTokens(p.Token.InputMicrosPerMTokens)
 			body.OutputUSDPerMTokens = MicrosToUSDPerMTokens(p.Token.OutputMicrosPerMTokens)
 			body.Ratio = MicrosToRatio(p.Token.RatioMicros)
+			if len(p.Token.SizeTokensPerSecond) > 0 {
+				body.SizeTokensPerSecond = p.Token.SizeTokensPerSecond
+			}
+			body.DefaultTokensPerSecond = p.Token.DefaultTokensPerSecond
 		} else {
 			body.Ratio = 1
 		}
@@ -122,13 +130,15 @@ func MicrosToFactor(micros int64) float64 {
 }
 
 type priceInputJSON struct {
-	PublicModel         string             `json:"public_model"`
-	Unit                Unit               `json:"unit"`
-	InputUSDPerMTokens  float64            `json:"input_usd_per_mtokens"`
-	OutputUSDPerMTokens float64            `json:"output_usd_per_mtokens"`
-	Ratio               *float64           `json:"ratio"`
-	USDPerCall          float64            `json:"usd_per_call"`
-	SizeFactors         map[string]float64 `json:"size_factors"`
+	PublicModel            string             `json:"public_model"`
+	Unit                   Unit               `json:"unit"`
+	InputUSDPerMTokens     float64            `json:"input_usd_per_mtokens"`
+	OutputUSDPerMTokens    float64            `json:"output_usd_per_mtokens"`
+	Ratio                  *float64           `json:"ratio"`
+	SizeTokensPerSecond    map[string]float64 `json:"size_tokens_per_second"`
+	DefaultTokensPerSecond float64            `json:"default_tokens_per_second"`
+	USDPerCall             float64            `json:"usd_per_call"`
+	SizeFactors            map[string]float64 `json:"size_factors"`
 }
 
 type listResponse struct {
@@ -165,6 +175,8 @@ func (h *Handlers) Upsert(c *gin.Context) {
 			InputMicrosPerMTokens:  usdPerMTokensToMicros(raw.InputUSDPerMTokens),
 			OutputMicrosPerMTokens: usdPerMTokensToMicros(raw.OutputUSDPerMTokens),
 			RatioMicros:            ratioToMicros(ratio),
+			SizeTokensPerSecond:    raw.SizeTokensPerSecond,
+			DefaultTokensPerSecond: raw.DefaultTokensPerSecond,
 		}
 	case UnitCall, UnitSecond:
 		factors := make(map[string]int64, len(raw.SizeFactors))

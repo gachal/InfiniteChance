@@ -34,8 +34,16 @@ export interface AdminIdentity {
   expires_at: string
 }
 
+/** Channel types this build can relay and probe (25 号票起三种):
+ * openai = OpenAI 兼容 Bearer;tencent-vod = 腾讯云 VOD AIGC(TC3 凭据在
+ * config);volcengine-ark = 火山方舟 Seedance(单 Bearer key、MVP 仅
+ * videos 能力)。 */
+export const CHANNEL_TYPES = ['openai', 'tencent-vod', 'volcengine-ark'] as const
+export type ChannelType = (typeof CHANNEL_TYPES)[number]
+
 /** A vendor channel as answered by the admin gateway APIs. The vendor
  * secret never crosses the wire — only has_key and its last-4 hint. */
+
 export interface Channel {
   id: number
   name: string

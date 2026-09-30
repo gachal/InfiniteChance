@@ -32,6 +32,13 @@ const TypeOpenAI = "openai"
 // channel's config map, the APIKey field stays empty.
 const TypeTencentVod = "tencent-vod"
 
+// TypeVolcengineArk marks Volcengine Ark (25 号票): Bearer-key async video
+// tasks under {base}/contents/generations/tasks. The single API key rides the
+// channel's own APIKey column (no re-signing, no config credentials); BaseURL
+// is required and carries the version path plus region (e.g.
+// https://ark.cn-beijing.volcengine.com/api/v3 — 换 region 即换 BaseURL).
+const TypeVolcengineArk = "volcengine-ark"
+
 // Capability marks what a channel may relay. Scheduling only ever selects a
 // channel whose capabilities cover the request kind, so a chat-only vendor
 // never receives a mapped image model by accident (07 号票).
@@ -47,7 +54,7 @@ const (
 var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos}
 
 // SupportedTypes lists the channel types this build can relay and probe.
-var SupportedTypes = []string{TypeOpenAI, TypeTencentVod}
+var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk}
 
 // SupportedType reports whether t is a channel type this build understands.
 func SupportedType(t string) bool {

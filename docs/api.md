@@ -152,16 +152,26 @@ curl -X POST $GATEWAY/v1/images/edits \
 ### 3.7 生视频(异步任务:提交 → 轮询 → 取消)
 
 ```bash
-# 提交(按秒计价:每秒单价 × 分辨率系数 × 秒数预扣,仅成功计费)
+# 提交(计费按模型所配轨道:second 轨 = 每秒单价 × 分辨率系数 × 秒数预扣;
+# token 轨 = 输出单价 × 估算 tokens 预扣,成功按厂商实报 completion_tokens
+# 多退少补;均仅成功计费)
 curl -X POST $GATEWAY/v1/videos/generations \
   -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
   -d '{
-    "model": "wan-video",          # 须是 second 轨计价的公开模型
+    "model": "seedance-2.5",      # 须是 second 或 token 轨计价的公开模型
     "prompt": "一只猫从月光下跑过雪地",
     "seconds": 5,                  # 缺省 5,范围 1-100
-    "size": "720p"                 # 分辨率(计价系数用)
+    "size": "720p",                # 分辨率档位串(second 轨系数 / token 轨估算表用)
+    "ratio": "16:9",               # 显式宽高比,可选,不校验枚举交上游裁
+    "image": "https://…/first.png",       # 可选首帧(http(s) 直链;data: 400 拒)
+    "last_image": "https://…/last.png",   # 可选尾帧
+    "references": [                       # 可选多模态参考,≤9 条
+      {"url": "https://…/ref.png", "kind": "image"},
+      {"url": "https://…/clip.mp4", "kind": "video"},
+      {"url": "https://…/voice.mp3", "kind": "audio"}
+    ]
   }'
-# → {"task_id":"vt_1a2b3c","status":"queued","model":"wan-video",
+# → {"task_id":"vt_1a2b3c","status":"queued","model":"seedance-2.5",
 #    "created_at":1759142400,"seconds":5,"size":"720p"}
 
 # 轮询(五态:queued/running/succeeded/failed/canceled)
@@ -171,6 +181,15 @@ curl $GATEWAY/v1/videos/tasks/vt_1a2b3c -H "Authorization: Bearer $GWKEY"
 
 # 取消(网关本地取消并全额退预扣;幂等,终态后回放账本事实)
 curl -X POST $GATEWAY/v1/videos/tasks/vt_1a2b3c/cancel -H "Authorization: Bearer $GWKEY"
+
+# 配价示例:Seedance 视频走 token 轨(折算率按火山公布的每秒 token 数填)
+curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "public_model":"seedance-2.5","unit":"token",
+    "input_usd_per_mtokens":0, "output_usd_per_mtokens":0.28, "ratio":1.0,
+    "size_tokens_per_second":{"480p":8664,"720p":21465,"1080p":48299},
+    "default_tokens_per_second":21465
+  }'
 ```
 
 ## 四、管理面(/admin,JWT)

@@ -53,6 +53,11 @@ const (
 	// MaxCallItems bounds how many items one request may bill for — the
 	// relay enforces it on the client's n, here it shields the arithmetic.
 	MaxCallItems = 100
+	// MaxTokensPerSecond bounds one per-second token conversion rate in the
+	// video token track's estimate table (25 号票) — a typo shield, not a
+	// business rule. 100k tokens/s is orders above any vendor's published
+	// conversion.
+	MaxTokensPerSecond = 100_000
 )
 
 // ChargeMicros' division denominators: prices are per million tokens and
@@ -68,10 +73,37 @@ const (
 // TokenPrice is the token-track price of one public model. Costs are the
 // upstream's micro-USD per million tokens; the key is charged
 // upstream cost × ratio (RatioMicros = 1e6 means ×1.0, at cost).
+//
+// 视频模型也可配 token 轨(25 号票):实际消耗体现在 output tokens(厂商
+// 实报 completion_tokens)。提交时的预扣按估算表折算 —— 键 = size 档位串
+// (如 "720p"),值 = 该档每秒 token 数(取值按火山公布的折算填,如
+// 720p ≈ 1248×704×25/1024 ≈ 21,465);size 未传或档位未配落
+// DefaultTokensPerSecond 兜底。聊天 token 价两者皆空,估算为 0。
 type TokenPrice struct {
-	InputMicrosPerMTokens  int64 `json:"input_micros_per_mtokens"`
-	OutputMicrosPerMTokens int64 `json:"output_micros_per_mtokens"`
-	RatioMicros            int64 `json:"ratio_micros"`
+	InputMicrosPerMTokens  int64              `json:"input_micros_per_mtokens"`
+	OutputMicrosPerMTokens int64              `json:"output_micros_per_mtokens"`
+	RatioMicros            int64              `json:"ratio_micros"`
+	SizeTokensPerSecond    map[string]float64 `json:"size_tokens_per_second,omitempty"` // size 档位 → 每秒 token 数(视频轨预扣估算)
+	DefaultTokensPerSecond float64            `json:"default_tokens_per_second,omitempty"`
+}
+
+// EstimateVideoTokens produces the video token track's submit-time guess:
+// the per-second conversion rate for the requested size (default scalar
+// when the size is absent or unconfigured) times the seconds, rounded up —
+// the pre-deduction never underestimates. A price with no conversion table
+// at all (every chat token row) estimates 0.
+func (t TokenPrice) EstimateVideoTokens(size string, seconds int64) int64 {
+	if seconds < 1 {
+		return 0
+	}
+	rate := t.DefaultTokensPerSecond
+	if r, ok := t.SizeTokensPerSecond[size]; ok && r > 0 {
+		rate = r
+	}
+	if rate <= 0 {
+		return 0
+	}
+	return int64(math.Ceil(rate * float64(seconds)))
 }
 
 // CallPrice is the call-track price of one public model: a USD unit price
@@ -220,6 +252,30 @@ func (p Price) Normalize() (Price, error) {
 		}
 		if t.RatioMicros < 0 || t.RatioMicros > MaxRatio*ratioDenom {
 			return p, fmt.Errorf("倍率需在 0 到 %g 之间", float64(MaxRatio))
+		}
+		// 视频轨的预扣估算表(25 号票):聊天 token 价可整表留空。
+		if len(t.SizeTokensPerSecond) > maxFactorEntries {
+			return p, fmt.Errorf("秒折算表最多 %d 条", maxFactorEntries)
+		}
+		rates := make(map[string]float64, len(t.SizeTokensPerSecond))
+		for size, r := range t.SizeTokensPerSecond {
+			size = strings.TrimSpace(size)
+			if size == "" {
+				return p, fmt.Errorf("秒折算表的档位名不能为空")
+			}
+			if utf8.RuneCountInString(size) > MaxSizeRunes {
+				return p, fmt.Errorf("档位名最多 %d 个字符", MaxSizeRunes)
+			}
+			if r < 0 || r > MaxTokensPerSecond {
+				return p, fmt.Errorf("秒折算率需在 0 到 %d 之间", MaxTokensPerSecond)
+			}
+			if r > 0 {
+				rates[size] = r // 0 折算与未配同义,折叠掉,空表不落库
+			}
+		}
+		t.SizeTokensPerSecond = rates
+		if t.DefaultTokensPerSecond < 0 || t.DefaultTokensPerSecond > MaxTokensPerSecond {
+			return p, fmt.Errorf("缺省折算率需在 0 到 %d 之间", MaxTokensPerSecond)
 		}
 		p.Token = &t
 	case UnitCall, UnitSecond:

@@ -62,6 +62,10 @@ function blankForm(): ChannelForm {
 
 const isVod = computed(() => form.type === 'tencent-vod')
 
+// volcengine-ark(25 号票):单 Bearer key 存「厂商密钥」字段,BaseURL 必填
+// 含版本路径;MVP 仅实现 videos 能力(表单上提示,不强制改勾选)。
+const isArk = computed(() => form.type === 'volcengine-ark')
+
 const form = reactive<ChannelForm>(blankForm())
 
 // 编辑 tencent-vod 渠道时展示已存敏感键的尾号提示(值本身只写不读)。
@@ -303,6 +307,7 @@ function modelMapSummary(ch: Channel): string {
           <select v-model="form.type">
             <option value="openai">OpenAI 兼容</option>
             <option value="tencent-vod">腾讯云 VOD AIGC</option>
+            <option value="volcengine-ark">火山方舟 Ark(Seedance)</option>
           </select>
         </label>
         <label class="wide">
@@ -311,7 +316,7 @@ function modelMapSummary(ch: Channel): string {
             v-model="form.baseUrl"
             type="text"
             :required="!isVod"
-            :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : 'https://api.openai.com/v1'"
+            :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : 'https://api.openai.com/v1')"
           >
         </label>
         <label
@@ -412,6 +417,12 @@ function modelMapSummary(ch: Channel): string {
 
         <fieldset class="wide">
           <legend>能力(该渠道可转发的请求;不勾任何项按仅聊天处理)</legend>
+          <p
+            v-if="isArk"
+            class="muted"
+          >
+            volcengine-ark 当前仅实现生视频(videos);勾选其他能力不会被转发。
+          </p>
           <div class="cap-row">
             <label class="check">
               <input
