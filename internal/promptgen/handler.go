@@ -609,7 +609,8 @@ func (h *ModelHandlers) List(c *gin.Context) {
 	}
 	models := make([]string, 0, len(prices))
 	for _, p := range prices {
-		if p.Unit == pricing.UnitToken && p.Token != nil {
+		// 带折算表的是视频 token 价(25 号票),不进聊天目录。
+		if p.Unit == pricing.UnitToken && p.Token != nil && !p.Token.HasVideoRates() {
 			models = append(models, p.PublicModel)
 		}
 	}

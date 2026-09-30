@@ -87,6 +87,14 @@ type TokenPrice struct {
 	DefaultTokensPerSecond float64            `json:"default_tokens_per_second,omitempty"`
 }
 
+// HasVideoRates reports whether this token price carries the video
+// conversion table — the discriminator between a chat token row (whole
+// table empty) and a video token row (25 号票). Editor catalogs use it to
+// route token-track models to the right directory.
+func (t TokenPrice) HasVideoRates() bool {
+	return len(t.SizeTokensPerSecond) > 0 || t.DefaultTokensPerSecond > 0
+}
+
 // EstimateVideoTokens produces the video token track's submit-time guess:
 // the per-second conversion rate for the requested size (default scalar
 // when the size is absent or unconfigured) times the seconds, rounded up —

@@ -341,9 +341,12 @@ func (h *Handlers) Create(c *gin.Context) {
 			return
 		}
 	case KindVideo:
-		if price.Unit != pricing.UnitSecond || price.Call == nil {
+		// 视频按模型所配轨道结算(25 号票):second 或 token 皆收,其余
+		// 轨道照旧拒绝 —— 与网关 /v1/videos 的计价校验同款放宽。
+		if (price.Unit != pricing.UnitSecond || price.Call == nil) &&
+			(price.Unit != pricing.UnitToken || price.Token == nil) {
 			apierr.Write(c, http.StatusBadRequest, "model_not_priced",
-				"模型 "+model+" 不是按秒计价的视频模型")
+				"模型 "+model+" 不是按秒或按 token 计价的视频模型")
 			return
 		}
 	}
@@ -709,7 +712,26 @@ func (h *ModelHandlers) List(c *gin.Context) {
 }
 
 func (h *ModelHandlers) ListVideos(c *gin.Context) {
-	h.listTrack(c, pricing.UnitSecond)
+	// second 轨全部 + 带折算表的 token 轨(25 号票视频 token 价;聊天
+	// token 价整表为空,TokenPrice.HasVideoRates 判别不歧义)。
+	prices, err := h.Prices.List(c.Request.Context())
+	if err != nil {
+		log.Printf("canvastask: list prices: %v", err)
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return
+	}
+	models := make([]string, 0, len(prices))
+	for _, p := range prices {
+		switch {
+		case p.Unit == pricing.UnitSecond && p.Call != nil:
+		case p.Unit == pricing.UnitToken && p.Token != nil && p.Token.HasVideoRates():
+		default:
+			continue
+		}
+		models = append(models, p.PublicModel)
+	}
+	sort.Strings(models)
+	c.JSON(http.StatusOK, gin.H{"models": models})
 }
 
 // listTrack answers the public model names priced on one item track, sorted

@@ -198,6 +198,10 @@ func (fakePrices) ByModel(_ context.Context, model string) (pricing.Price, error
 	case "chat-m":
 		return pricing.Price{PublicModel: model, Unit: pricing.UnitToken,
 			Token: &pricing.TokenPrice{}}, nil
+	case "sd-m":
+		return pricing.Price{PublicModel: model, Unit: pricing.UnitToken,
+			Token: &pricing.TokenPrice{OutputMicrosPerMTokens: 280_000,
+				DefaultTokensPerSecond: 21_465}}, nil
 	default:
 		return pricing.Price{}, pricing.ErrNotFound
 	}
@@ -206,6 +210,7 @@ func (fakePrices) ByModel(_ context.Context, model string) (pricing.Price, error
 func (fakePrices) List(_ context.Context) ([]pricing.Price, error) {
 	return []pricing.Price{
 		{PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
+		{PublicModel: "sd-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{DefaultTokensPerSecond: 21_465}},
 		{PublicModel: "zeta-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
 		{PublicModel: "alpha-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
 		{PublicModel: "vid-m", Unit: pricing.UnitSecond, Call: &pricing.CallPrice{}},
@@ -707,7 +712,7 @@ func TestHandlerCancelQueuedTaskSkipsGatewayCancel(t *testing.T) {
 	}
 }
 
-func TestHandlerVideoModelsListsSecondTrackOnly(t *testing.T) {
+func TestHandlerVideoModelsListsSecondAndVideoTokenTracks(t *testing.T) {
 	env := newHandlerEnv(&okGateway{url: "x"})
 	w := env.do(t, http.MethodGet, "/video-models", "")
 	if w.Code != http.StatusOK {
@@ -719,8 +724,20 @@ func TestHandlerVideoModelsListsSecondTrackOnly(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("not JSON: %v", err)
 	}
-	if len(resp.Models) != 2 || resp.Models[0] != "vid-m" || resp.Models[1] != "zed-vid" {
-		t.Errorf("models = %v, want the two second-track models sorted", resp.Models)
+	// second 轨全部 + 带折算表的 token 轨(25 号票);聊天 token 价(chat-m)
+	// 不进视频目录。
+	if len(resp.Models) != 3 || resp.Models[0] != "sd-m" || resp.Models[1] != "vid-m" || resp.Models[2] != "zed-vid" {
+		t.Errorf("models = %v, want [sd-m vid-m zed-vid]", resp.Models)
+	}
+}
+
+// TestHandlerVideoSubmitAcceptsTokenTrackModel:25 号票后画布视频任务对
+// token 轨计价的视频模型照常受理(网关双轨皆收,画布侧同款放宽)。
+func TestHandlerVideoSubmitAcceptsTokenTrackModel(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "x"})
+	w := env.postTask(t, `{"node_id":"video-9-1","kind":"video","prompt":"p","model":"sd-m","seconds":5,"size":"720p"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("submit = %d body %s, want 201 (token-track video model accepted)", w.Code, w.Body.String())
 	}
 }
 
