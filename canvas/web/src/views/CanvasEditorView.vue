@@ -991,14 +991,23 @@ let nodeSeq = 0
 function addNode(type: CanvasNodeType): void {
   nodeSeq += 1
   const step = (toObject().nodes.length % 8) * 48
+  const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([
     {
-      id: `${type}-${Date.now()}-${nodeSeq}`,
+      id,
       type,
       position: { x: 140 + step, y: 120 + step },
       data: initialData(type),
     },
   ])
+  // 新节点成为唯一选中:空图片/视频占位节点即从零生成的锚点(24 号票),
+  // 添加后对话框随即贴上(模式按节点类型自动定),不再要求用户多点一下。
+  // 提示词/分析节点选中也无害 —— 对话框只认图片/视频节点。
+  removeSelectedNodes(getSelectedNodes.value)
+  const added = findNode(id)
+  if (added) {
+    addSelectedNodes([added])
+  }
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
 }
 
