@@ -174,7 +174,8 @@ export type CanvasTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | '
 
 /** 服务端编排的生成任务。node_id 绑定到编辑器里展示结果的节点;
  * image_url / video_url 是产物地址(成功时与素材行同值),asset_id 是
- * 素材库引用;seconds 只属于视频任务。 */
+ * 素材库引用;seconds 只属于视频任务(0 = 自动,不传维持厂商缺省),
+ * ratio 是视频任务的显式宽高比串(空 = 不传)。 */
 export interface CanvasTask {
   id: string
   canvas_id: number
@@ -183,6 +184,7 @@ export interface CanvasTask {
   prompt: string
   model: string
   size: string
+  ratio: string
   seconds: number
   status: CanvasTaskStatus
   attempts: number
@@ -194,18 +196,32 @@ export interface CanvasTask {
   updated_at: string
 }
 
+/** 视频任务的结构化参考(24 号票):url 接受厂商 http(s) 地址或素材内容
+ * 寻址路径(服务端解出真实地址并校验素材种类与角色相符);kind/role 的
+ * 合法组合 —— 首帧/尾帧/参考图必须 image、参考视频必须 video、参考音频
+ * 必须 audio,数量上限首帧/尾帧/参考视频/参考音频各 1、参考图 4。 */
+export interface CanvasVideoRef {
+  url: string
+  kind: 'image' | 'video' | 'audio'
+  role: 'first_frame' | 'last_frame' | 'reference_image' | 'reference_video' | 'reference_audio'
+}
+
 /** 提交生成任务的请求体。kind=image 为文生图/图生图(image_urls 带参考
  * 图列表,≤4 条:厂商 http(s) 地址或素材内容寻址路径,服务端逐条解引用,
- * 21 号票);kind=video 为图生视频,需要 image_url(参考图片)并可带
- * seconds(期望时长,缺省 5 秒)。 */
+ * 21 号票);kind=video 为视频生成(24 号票对话框范式):video_refs 带全
+ * 模态参考(空/缺省 = 文生视频;12 号票的单串 image_url 仍兼容),
+ * seconds 可选(缺省 = 自动,厂商缺省时长),size 为分辨率档位串
+ * (480p/720p/1080p),ratio 为显式宽高比。 */
 export interface CreateCanvasTaskInput {
   node_id: string
   kind: 'image' | 'video'
   prompt: string
   model: string
   size?: string
+  ratio?: string
   image_url?: string
   image_urls?: string[]
+  video_refs?: CanvasVideoRef[]
   seconds?: number
 }
 
@@ -266,7 +282,7 @@ export interface AnalyzeResult {
  * 仅排障时关心。canvas_name 来自来源画布,画布已删时为空。 */
 export interface AssetRecord {
   id: number
-  kind: 'image' | 'video'
+  kind: 'image' | 'video' | 'audio'
   canvas_id: number
   canvas_name: string
   task_id: string
@@ -281,7 +297,7 @@ export interface AssetRecord {
 
 /** 素材列表的过滤与分页:全部缺省 = 不过滤,后端默认一页 50 条。 */
 export interface ListAssetsParams {
-  kind?: 'image' | 'video'
+  kind?: 'image' | 'video' | 'audio'
   canvas_id?: number
   limit?: number
   offset?: number
@@ -732,10 +748,11 @@ export class ApiClient {
     await this.request<void>(`/assets/${id}`, { method: 'DELETE' })
   }
 
-  /** 上传素材(18 号票):multipart 把本机图片/视频送进素材库,响应即新
-   * 素材行 —— content_url 可直接落媒体节点(与素材面板插入同语义)。
-   * kind 声明意图,服务端按魔数嗅探裁决真实类型。 */
-  uploadAsset(file: File, kind: 'image' | 'video'): Promise<AssetRecord> {
+  /** 上传素材(18 号票;24 号票追加音频):multipart 把本机图片/视频/
+   * 音频送进素材库,响应即新素材行 —— content_url 可直接落媒体节点或进
+   * 对话框参考条(与素材面板插入同语义)。kind 声明意图,服务端按魔数
+   * 嗅探裁决真实类型。 */
+  uploadAsset(file: File, kind: 'image' | 'video' | 'audio'): Promise<AssetRecord> {
     const form = new FormData()
     form.set('kind', kind)
     form.set('file', file)

@@ -15,7 +15,7 @@ const emit = defineEmits<{
 const { client } = useAuth()
 
 const assets = ref<AssetRecord[]>([])
-const kind = ref<'' | 'image' | 'video'>('')
+const kind = ref<'' | 'image' | 'video' | 'audio'>('')
 const loading = ref(false)
 const error = ref('')
 
@@ -60,9 +60,13 @@ async function loadMore(): Promise<void> {
   }
 }
 
-function setKind(k: '' | 'image' | 'video'): void {
+function setKind(k: '' | 'image' | 'video' | 'audio'): void {
   kind.value = k
   void refresh()
+}
+
+function kindLabel(k: 'image' | 'video' | 'audio'): string {
+  return k === 'image' ? '图片' : k === 'video' ? '视频' : '音频'
 }
 
 function downloadURL(a: AssetRecord): string {
@@ -81,13 +85,13 @@ onMounted(refresh)
       <h3>素材库</h3>
       <div class="kind-filter">
         <button
-          v-for="k in (['', 'image', 'video'] as const)"
+          v-for="k in (['', 'image', 'video', 'audio'] as const)"
           :key="k"
           type="button"
           :class="{ active: kind === k }"
           @click="setKind(k)"
         >
-          {{ k === '' ? '全部' : k === 'image' ? '图片' : '视频' }}
+          {{ k === '' ? '全部' : kindLabel(k) }}
         </button>
       </div>
     </header>
@@ -126,11 +130,20 @@ onMounted(refresh)
           alt="素材缩略图"
         >
         <video
-          v-else
+          v-else-if="a.kind === 'video'"
           :src="a.content_url"
           class="thumb"
           muted
           preload="metadata"
+        />
+        <!-- 音频没有缩略图:面板内直接给 <audio> 试听(24 号票),插入
+             画布的入口不出现(音频没有节点类型,参考音频经对话框上传)。 -->
+        <audio
+          v-else
+          :src="a.content_url"
+          class="audio-thumb"
+          controls
+          preload="none"
         />
         <div class="meta">
           <span class="model">{{ a.model || '未记录模型' }}</span>
@@ -139,12 +152,13 @@ onMounted(refresh)
             :title="a.prompt"
           >{{ a.prompt || '(无提示词)' }}</span>
           <span class="origin">
-            {{ a.kind === 'image' ? '图片' : '视频' }}
+            {{ kindLabel(a.kind) }}
             <template v-if="a.canvas_name">· 来自「{{ a.canvas_name }}」</template>
           </span>
         </div>
         <div class="actions">
           <button
+            v-if="a.kind !== 'audio'"
             type="button"
             class="insert"
             title="插入当前画布(跨画布复用同一素材)"
@@ -260,6 +274,14 @@ onMounted(refresh)
   object-fit: cover;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
+}
+
+/* 音频卡片:试听条占缩略位,下方照常给元信息。 */
+.audio-thumb {
+  grid-row: span 2;
+  width: 100%;
+  height: 36px;
+  align-self: center;
 }
 
 .meta {

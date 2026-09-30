@@ -194,8 +194,8 @@ func (h *Handlers) setDisposition(c *gin.Context, a Asset) {
 		"attachment; filename=\"asset-"+strconv.FormatInt(a.ID, 10)+"-"+a.Kind+extensionOf(ct)+"\"")
 }
 
-// List answers the library, newest first. kind 过滤取 image/video 之外的
-// 值一律空结果而非报错 —— 前端的下拉里不会有别的值,宽度留给将来.
+// List answers the library, newest first. kind 过滤取 image/video/audio
+// 之外的值一律空结果而非报错 —— 前端的下拉里不会有别的值,宽度留给将来.
 func (h *Handlers) List(c *gin.Context) {
 	f := Filter{
 		Kind:  strings.TrimSpace(c.Query("kind")),

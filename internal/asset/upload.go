@@ -44,7 +44,8 @@ const sniffHeadBytes = 512
 // uploads/{yyyymmdd}/{uuid}.{ext} (与任务产物键 canvases/… 区分归档语义:
 // 用户上传独立于任何画布/任务), and the row keeps url empty — 该列的语义
 // 是「厂商 http(s) 原地址」,上传素材没有厂商出处。kind 声明意图(image/
-// video),真正的类型由魔数嗅探裁决,客户端声明一律不受信。
+// video/audio,24 号票追加音频),真正的类型由魔数嗅探裁决,客户端声明
+// 一律不受信。
 func (h *Handlers) Upload(c *gin.Context) {
 	if h.Storage == nil {
 		apierr.Write(c, http.StatusServiceUnavailable, "storage_unconfigured",
@@ -68,8 +69,8 @@ func (h *Handlers) Upload(c *gin.Context) {
 	}
 
 	kind := strings.TrimSpace(c.PostForm("kind"))
-	if kind != KindImage && kind != KindVideo {
-		apierr.InvalidRequest(c, "kind 必须是 image 或 video")
+	if kind != KindImage && kind != KindVideo && kind != KindAudio {
+		apierr.InvalidRequest(c, "kind 必须是 image、video 或 audio")
 		return
 	}
 
@@ -155,7 +156,7 @@ func sniffUploadedFile(f multipart.File, filename, kind string) (string, error) 
 
 	contentType, ok := sniffMagic(head)
 	if !ok {
-		return "", errors.New("无法识别的文件类型,支持 png/jpeg/webp/gif 图片与 mp4/webm/mov/avi 视频")
+		return "", errors.New("无法识别的文件类型,支持 png/jpeg/webp/gif 图片、mp4/webm/mov/avi 视频与 mp3/wav/m4a/ogg/flac 音频")
 	}
 	if extType, ok := extensionContentType(filepath.Ext(filename)); ok && extType != contentType {
 		return "", fmt.Errorf("文件扩展名与实际内容不符(扩展名是 %s,内容是 %s)", filepath.Ext(filename), contentType)
@@ -170,7 +171,8 @@ func sniffUploadedFile(f multipart.File, filename, kind string) (string, error) 
 // sniffMagic maps leading magic bytes to the media types uploads accept.
 // 刻意自家实现而不是 http.DetectContentType:它认不全 ISO-BMFF 的品牌
 // (qt/avc1/dash 等都漏)也不分 webp/avi 的 RIFF 载荷,上传白名单要的是
-// 精确裁决。
+// 精确裁决。音频(24 号票):ID3 头或 MPEG 帧同步(11 个置位比特)判
+// mp3 —— 帧同步是所有签名里最宽松的,放在最后判,防误伤更具体的格式。
 func sniffMagic(head []byte) (string, bool) {
 	switch {
 	case bytes.HasPrefix(head, []byte("\x89PNG\r\n\x1a\n")):
@@ -181,6 +183,12 @@ func sniffMagic(head []byte) (string, bool) {
 		return "image/gif", true
 	case bytes.HasPrefix(head, []byte("\x1a\x45\xdf\xa3")):
 		return "video/webm", true
+	case bytes.HasPrefix(head, []byte("fLaC")):
+		return "audio/flac", true
+	case bytes.HasPrefix(head, []byte("OggS")):
+		return "audio/ogg", true
+	case bytes.HasPrefix(head, []byte("ID3")):
+		return "audio/mpeg", true
 	}
 	if bytes.HasPrefix(head, []byte("RIFF")) && len(head) >= 12 {
 		switch string(head[8:12]) {
@@ -188,15 +196,28 @@ func sniffMagic(head []byte) (string, bool) {
 			return "image/webp", true
 		case "AVI ":
 			return "video/x-msvideo", true
+		case "WAVE":
+			return "audio/wav", true
 		}
 	}
-	// ISO-BMFF(mp4/mov):[4:8] 是 "ftyp",[8:12] 是品牌;qt 系品牌落
-	// quicktime,其余品牌(isom/mp41/mp42/avc1/dash/…)统一按 mp4。
+	// ISO-BMFF(mp4/mov/m4a):[4:8] 是 "ftyp",[8:12] 是品牌;qt 系品牌落
+	// quicktime,M4A 品牌是音频,其余品牌(isom/mp41/mp42/avc1/dash/…)
+	// 统一按 mp4。
 	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
-		if brand := string(head[8:12]); strings.HasPrefix(brand, "qt") {
+		brand := string(head[8:12])
+		switch {
+		case strings.HasPrefix(brand, "qt"):
 			return "video/quicktime", true
+		case brand == "M4A " || brand == "M4B " || brand == "M4P ":
+			return "audio/mp4", true
 		}
 		return "video/mp4", true
+	}
+	// MPEG 音频帧同步:0xFF + 11 置位比特(0xE0 掩码),ID3 之外的裸
+	// mp3 都从这里进来;第二字节 0xFF 不会出现在合法帧头(版本位全 1
+	// 保留),排除掉降低误报。
+	if len(head) >= 2 && head[0] == 0xff && head[1]&0xe0 == 0xe0 && head[1] != 0xff {
+		return "audio/mpeg", true
 	}
 	return "", false
 }
@@ -219,6 +240,11 @@ var uploadableMedia = []struct {
 	{".webm", "video/webm"},
 	{".mov", "video/quicktime"},
 	{".avi", "video/x-msvideo"},
+	{".mp3", "audio/mpeg"},
+	{".wav", "audio/wav"},
+	{".m4a", "audio/mp4"},
+	{".ogg", "audio/ogg"},
+	{".flac", "audio/flac"},
 }
 
 var uploadableByExt = func() map[string]string {
@@ -237,10 +263,14 @@ func extensionContentType(ext string) (string, bool) {
 	return t, ok
 }
 
-// familyOf answers whether a media type is the image or the video family.
+// familyOf answers which family a media type belongs to (image / video /
+// audio); anything else reads as image, matching the historical default.
 func familyOf(contentType string) string {
 	if strings.HasPrefix(contentType, "video/") {
 		return KindVideo
+	}
+	if strings.HasPrefix(contentType, "audio/") {
+		return KindAudio
 	}
 	return KindImage
 }

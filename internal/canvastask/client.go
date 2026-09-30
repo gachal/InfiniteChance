@@ -332,14 +332,29 @@ func truncateRunes(s string, n int) string {
 
 // ---- 网关视频异步契约(08 号票;12 号票的图生视频从这里走)----
 
-// VideoRequest is one image-to-video generation the worker submits. Image is
-// the reference picture's http(s) address; empty means plain text-to-video.
+// VideoRequest is one video generation the worker submits (24 号票起支持
+// 全模态参考)。Image 是首帧、LastImage 是尾帧(各自单个 http(s) 地址,
+// 空串 = 无);References 是其余参考(参考图/参考视频/参考音频,kind
+// 区分),对齐网关 /v1/videos 的契约扩展(25 号票定形,24 号票先上送 ——
+// openai 形渠道对未知字段全量透传,上游不识别 4xx 透回)。Seconds 0 =
+// 自动(不传,厂商缺省裁决);Size/Ratio 为档位串直传。
 type VideoRequest struct {
-	Model   string
-	Prompt  string
-	Seconds int64
-	Image   string
-	Source  string
+	Model      string
+	Prompt     string
+	Seconds    int64
+	Size       string
+	Ratio      string
+	Image      string
+	LastImage  string
+	References []VideoRefRequest
+	Source     string
+}
+
+// VideoRefRequest is one generic reference on the wire: {url, kind},kind ∈
+// image|video|audio。首尾帧不进这个列表(契约上是独立单串字段)。
+type VideoRefRequest struct {
+	URL  string `json:"url"`
+	Kind string `json:"kind"`
 }
 
 // VideoSubmitResult carries the gateway's task handle (vt_…): the worker
@@ -361,14 +376,24 @@ type VideoPoll struct {
 // SubmitVideo calls POST /v1/videos/generations and returns the task handle.
 // A gateway rejection (OpenAI error object) is an error carrying the reason
 // for the task row — the gateway refunds its own pre-deduction on any
-// rejected submit, so nothing is owed on this path.
+// rejected submit, so nothing is owed on this path. The body carries only
+// what the task row set: empty seconds/size/ratio/reference fields stay off
+// the wire (seconds 缺省由网关补 5 计费、厂商缺省裁决时长).
 func (c *Client) SubmitVideo(ctx context.Context, req VideoRequest) (VideoSubmitResult, error) {
 	body := struct {
-		Model   string `json:"model"`
-		Prompt  string `json:"prompt"`
-		Seconds int64  `json:"seconds"`
-		Image   string `json:"image,omitempty"`
-	}{Model: req.Model, Prompt: req.Prompt, Seconds: req.Seconds, Image: req.Image}
+		Model      string            `json:"model"`
+		Prompt     string            `json:"prompt"`
+		Seconds    int64             `json:"seconds,omitempty"`
+		Size       string            `json:"size,omitempty"`
+		Ratio      string            `json:"ratio,omitempty"`
+		Image      string            `json:"image,omitempty"`
+		LastImage  string            `json:"last_image,omitempty"`
+		References []VideoRefRequest `json:"references,omitempty"`
+	}{
+		Model: req.Model, Prompt: req.Prompt, Seconds: req.Seconds,
+		Size: req.Size, Ratio: req.Ratio,
+		Image: req.Image, LastImage: req.LastImage, References: req.References,
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return VideoSubmitResult{}, err

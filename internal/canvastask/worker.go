@@ -270,6 +270,34 @@ func (w *Worker) fail(ctx context.Context, id, reason string) {
 	}
 }
 
+// videoRequestFor translates one video task row into the gateway submit
+// (24 号票):结构化参考按角色落位 —— first_frame → image、last_frame →
+// last_image、reference_* 按 kind 进 references;ratio/size/seconds 直传
+// (seconds 0 = 自动,client 侧不落线)。12 号票的单串 ImageRef 旧形态在
+// 没有结构化参考时兜底为首帧,在途旧任务升级后照跑。
+func videoRequestFor(t Task) VideoRequest {
+	req := VideoRequest{
+		Model:   t.Model,
+		Prompt:  t.Prompt,
+		Seconds: t.Seconds,
+		Size:    t.Size,
+		Ratio:   t.Ratio,
+		Image:   t.ImageRef,
+		Source:  fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID),
+	}
+	for _, r := range t.VideoRefs {
+		switch r.Role {
+		case RoleFirstFrame:
+			req.Image = r.URL
+		case RoleLastFrame:
+			req.LastImage = r.URL
+		default:
+			req.References = append(req.References, VideoRefRequest{URL: r.URL, Kind: r.Kind})
+		}
+	}
+	return req
+}
+
 // runVideo drives one image-to-video task through the gateway's async
 // contract (12 号票): submit → persist the remote handle → poll until the
 // gateway reaches a terminal state or the task deadline hits. The user's
@@ -292,13 +320,7 @@ func (w *Worker) runVideo(parent context.Context, t Task) {
 
 	w.logger.Printf("canvastask: running %s (canvas %d, node %s, kind video, attempt %d)",
 		t.ID, t.CanvasID, t.NodeID, t.Attempts)
-	ref, err := w.gateway.SubmitVideo(ctx, VideoRequest{
-		Model:   t.Model,
-		Prompt:  t.Prompt,
-		Seconds: t.Seconds,
-		Image:   t.ImageRef,
-		Source:  fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID),
-	})
+	ref, err := w.gateway.SubmitVideo(ctx, videoRequestFor(t))
 	if err != nil {
 		w.fail(bookkeeping, t.ID, err.Error())
 		return

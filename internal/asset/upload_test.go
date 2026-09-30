@@ -26,6 +26,15 @@ var (
 	pngBytes = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x42}, 64)...)
 	mp4Bytes = append([]byte("\x00\x00\x00\x20ftypisom"), bytes.Repeat([]byte{0x55}, 48)...)
 	movBytes = append([]byte("\x00\x00\x00\x14ftypqt  "), bytes.Repeat([]byte{0x66}, 32)...)
+
+	// 24 号票的音频样本:ID3 头 mp3、裸帧同步 mp3、RIFF/WAVE、fLaC、
+	// OggS、ftyp M4A。
+	mp3ID3Bytes  = append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), bytes.Repeat([]byte{0x33}, 32)...)
+	mp3SyncBytes = append([]byte{0xff, 0xfb, 0x90, 0x00}, bytes.Repeat([]byte{0x44}, 32)...)
+	wavBytes     = append([]byte("RIFF\x24\x08\x00\x00WAVEfmt "), bytes.Repeat([]byte{0x77}, 32)...)
+	flacBytes    = append([]byte("fLaC\x00\x00\x00\x22"), bytes.Repeat([]byte{0x88}, 32)...)
+	oggBytes     = append([]byte("OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"), bytes.Repeat([]byte{0x99}, 32)...)
+	m4aBytes     = append([]byte("\x00\x00\x00\x20ftypM4A "), bytes.Repeat([]byte{0xaa}, 48)...)
 )
 
 // postUpload 按编辑器的请求形状构造一次 multipart 上传。
@@ -140,6 +149,35 @@ func TestUploadVideoSniffsMP4AndQuicktime(t *testing.T) {
 	}
 }
 
+func TestUploadAudioSniffsAllWhitelistedFormats(t *testing.T) {
+	for _, tc := range []struct {
+		name, filename, wantType, wantExt string
+		payload                           []byte
+	}{
+		{"mp3 with ID3 header", "voice.mp3", "audio/mpeg", ".mp3", mp3ID3Bytes},
+		{"mp3 bare frame sync", "voice.mp3", "audio/mpeg", ".mp3", mp3SyncBytes},
+		{"wav", "voice.wav", "audio/wav", ".wav", wavBytes},
+		{"flac", "voice.flac", "audio/flac", ".flac", flacBytes},
+		{"ogg", "voice.ogg", "audio/ogg", ".ogg", oggBytes},
+		{"m4a", "voice.m4a", "audio/mp4", ".m4a", m4aBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newAssetEnv(t)
+			w := postUpload(t, env.engine, tc.filename, "audio", tc.payload)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+			}
+			a := decodeUpload(t, w)
+			if a.Kind != "audio" || a.ContentType != tc.wantType {
+				t.Errorf("kind/content_type = %q/%q, want audio/%q", a.Kind, a.ContentType, tc.wantType)
+			}
+			if ext := filepath.Ext(env.store.assets[a.ID].ObjectKey); ext != tc.wantExt {
+				t.Errorf("object key ext = %q, want %q", ext, tc.wantExt)
+			}
+		})
+	}
+}
+
 func TestUploadUnknownExtensionStillSniffedByMagic(t *testing.T) {
 	// 魔数是权威:无扩展名的 PNG 照常入库,不因名字定罪。
 	env := newAssetEnv(t)
@@ -163,7 +201,8 @@ func TestUploadRejections(t *testing.T) {
 		{"unknown magic", "note.txt", "image", bytes.Repeat([]byte("just text"), 8), "file_type_mismatch"},
 		{"extension disagrees with magic", "clip.mp4", "image", pngBytes, "file_type_mismatch"},
 		{"kind disagrees with content", "photo.png", "video", pngBytes, "file_type_mismatch"},
-		{"bad kind value", "photo.png", "audio", pngBytes, "invalid_request"},
+		{"audio kind on an image file", "photo.png", "audio", pngBytes, "file_type_mismatch"},
+		{"bad kind value", "photo.png", "music", pngBytes, "invalid_request"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -39,9 +39,11 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	prompt         TEXT    NOT NULL,
 	model          TEXT    NOT NULL,
 	size           TEXT    NOT NULL DEFAULT '',
+	ratio          TEXT    NOT NULL DEFAULT '',
 	seconds        INTEGER NOT NULL DEFAULT 0,
 	image_ref      TEXT    NULL,
 	image_refs     TEXT    NULL,
+	video_refs     TEXT    NULL,
 	status         TEXT    NOT NULL,
 	attempts       INTEGER NOT NULL DEFAULT 0,
 	error          TEXT    NULL,
@@ -66,6 +68,8 @@ var sqliteIndexes = []string{
 // 是因为当时桌面尚无存量;如今有,就照同一条幂等路走。Idempotent.
 var sqliteMigrations = []struct{ column, ddl string }{
 	{"image_refs", "ALTER TABLE canvas_tasks ADD COLUMN image_refs TEXT NULL"},
+	{"video_refs", "ALTER TABLE canvas_tasks ADD COLUMN video_refs TEXT NULL"},
+	{"ratio", "ALTER TABLE canvas_tasks ADD COLUMN ratio TEXT NOT NULL DEFAULT ''"},
 }
 
 // EnsureSchema creates the canvas_tasks table and its indexes when missing,
@@ -119,10 +123,10 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, seconds, image_ref, image_refs, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size,
-		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), t.Status, now, now)
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, seconds, image_ref, image_refs, video_refs, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio,
+		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs), t.Status, now, now)
 	if err != nil {
 		return Task{}, err
 	}
@@ -391,11 +395,11 @@ func (s *SQLiteStore) ResetForRetry(ctx context.Context, id string, canvasID int
 // 读出转回 time.Time,保持与 MySQL 版相同的 Go 返回类型。
 func scanSQLiteTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef, imageRefs sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs sql.NullString
 	var createdAt, updatedAt string
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Seconds, &imageRef, &imageRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Seconds, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &createdAt, &updatedAt); err != nil {
 		return Task{}, err
 	}
@@ -405,6 +409,7 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	t.VideoURL = videoURL.String
 	t.ImageRef = imageRef.String
 	t.ImageRefs = decodeImageRefs(imageRefs.String)
+	t.VideoRefs = decodeVideoRefs(videoRefs.String)
 	var err error
 	if t.CreatedAt, err = sqlitedb.ParseTime(createdAt); err != nil {
 		return Task{}, err

@@ -184,6 +184,40 @@ func TestClientSubmitVideoSendsContractBody(t *testing.T) {
 	}
 }
 
+// TestClientSubmitVideoSendsExtendedBody 覆盖 24 号票的扩展线体:尾帧、
+// 参考列表与显式比例随提交上送;seconds 0(自动)不落线,维持厂商缺省。
+func TestClientSubmitVideoSendsExtendedBody(t *testing.T) {
+	g := &fakeGateway{status: http.StatusOK, body: `{"task_id":"vt_ext"}`}
+	server := newGatewayServer(t, g)
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+
+	if _, err := client.SubmitVideo(context.Background(), canvastask.VideoRequest{
+		Model: "vid-m", Prompt: "p", Seconds: 0, Size: "720p", Ratio: "9:16",
+		Image:     "https://img.example/first.png",
+		LastImage: "https://img.example/last.png",
+		References: []canvastask.VideoRefRequest{
+			{URL: "https://img.example/style.png", Kind: "image"},
+			{URL: "https://img.example/voice.mp3", Kind: "audio"},
+		},
+	}); err != nil {
+		t.Fatalf("SubmitVideo: %v", err)
+	}
+	if g.requestBody["last_image"] != "https://img.example/last.png" ||
+		g.requestBody["ratio"] != "9:16" || g.requestBody["size"] != "720p" {
+		t.Errorf("body = %v, want last_image/ratio/size on the wire", g.requestBody)
+	}
+	refs, ok := g.requestBody["references"].([]any)
+	if !ok || len(refs) != 2 {
+		t.Fatalf("references = %v, want two entries", g.requestBody["references"])
+	}
+	if refs[0].(map[string]any)["kind"] != "image" || refs[1].(map[string]any)["kind"] != "audio" {
+		t.Errorf("references = %v, want kinds carried", refs)
+	}
+	if _, present := g.requestBody["seconds"]; present {
+		t.Errorf("seconds present on the wire for auto (0), want omitted")
+	}
+}
+
 func TestClientSubmitVideoRejectsMissingTaskID(t *testing.T) {
 	g := &fakeGateway{status: http.StatusOK, body: `{"created":true}`}
 	server := newGatewayServer(t, g)

@@ -90,3 +90,138 @@ export function composeSize(ratio: string, resolution: string): string {
   const res = resolution === '' ? DEFAULT_RESOLUTION : resolution
   return SIZE_TABLE[r]?.[res] ?? ''
 }
+
+// ---- 视频模式(24 号票):全模态参考条 + 时长/分辨率档位 ----
+
+/** 视频参考的媒体种类;与素材域的 kind 同词表(image/video/audio)。 */
+export type VideoRefKind = 'image' | 'video' | 'audio'
+
+/** 视频参考的角色:首帧/尾帧/参考图承载图片,参考视频/参考音频各归其位
+ * (对齐即梦「全能参考」,方案 A 单条参考条 + 角色标记,不上 tab)。 */
+export type VideoRefRole =
+  | 'first_frame'
+  | 'last_frame'
+  | 'reference_image'
+  | 'reference_video'
+  | 'reference_audio'
+
+/** 对话框视频参考条上的一条参考。 */
+export interface VideoComposerRef {
+  url: string
+  kind: VideoRefKind
+  role: VideoRefRole
+  asset_id?: number
+}
+
+/** 每个角色的数量上限(与 canvas 后端 maxVideoRefsByRole 同值;上游真实
+ * 上限是验证点,自限保守值,超限 4xx 透出即可)。 */
+export const VIDEO_ROLE_CAPS: Record<VideoRefRole, number> = {
+  first_frame: 1,
+  last_frame: 1,
+  reference_image: 4,
+  reference_video: 1,
+  reference_audio: 1,
+}
+
+export const VIDEO_ROLE_LABEL: Record<VideoRefRole, string> = {
+  first_frame: '首帧',
+  last_frame: '尾帧',
+  reference_image: '参考图',
+  reference_video: '参考视频',
+  reference_audio: '参考音频',
+}
+
+/** 某媒体种类可扮演的角色(角色在 chip 上切换,候选按种类收敛)。 */
+export function rolesForKind(kind: VideoRefKind): VideoRefRole[] {
+  switch (kind) {
+    case 'image':
+      return ['first_frame', 'last_frame', 'reference_image']
+    case 'video':
+      return ['reference_video']
+    case 'audio':
+      return ['reference_audio']
+  }
+}
+
+/** 追加一条视频参考:地址形状不对、角色与种类不符、URL 重复、角色满员都
+ * 整条拒收(返回原数组)—— 与 appendComposerRef 同款纪律。 */
+export function appendVideoRef(list: VideoComposerRef[], ref: VideoComposerRef): VideoComposerRef[] {
+  if (!isRelayableRef(ref.url)) {
+    return list
+  }
+  if (!rolesForKind(ref.kind).includes(ref.role)) {
+    return list
+  }
+  if (list.some((r) => r.url === ref.url)) {
+    return list
+  }
+  const held = list.filter((r) => r.role === ref.role).length
+  if (held >= VIDEO_ROLE_CAPS[ref.role]) {
+    return list
+  }
+  return [...list, ref]
+}
+
+/** 切换一条参考的角色:目标角色不属于该媒体或已满员则原样返回。 */
+export function withVideoRefRole(
+  list: VideoComposerRef[],
+  index: number,
+  role: VideoRefRole,
+): VideoComposerRef[] {
+  const ref = list[index]
+  if (!ref || ref.role === role || !rolesForKind(ref.kind).includes(role)) {
+    return list
+  }
+  const held = list.filter((r, i) => i !== index && r.role === role).length
+  if (held >= VIDEO_ROLE_CAPS[role]) {
+    return list
+  }
+  return list.map((r, i) => (i === index ? { ...r, role } : r))
+}
+
+/** 对话框发出的 video_refs:{url, kind, role} 原样上送,服务端解引用。 */
+export function composerVideoRefs(
+  refs: VideoComposerRef[],
+): { url: string; kind: VideoRefKind; role: VideoRefRole }[] {
+  return refs.map((r) => ({ url: r.url, kind: r.kind, role: r.role }))
+}
+
+/** 提示词占位随参考组合变化:空 = 文生视频,有首帧 = 图生视频,
+ * 首帧+尾帧 = 首尾帧,仅参考图 = 多图参考(参考组合自然成模式,无显式
+ * 模式 tab)。 */
+export function videoPlaceholder(refs: VideoComposerRef[]): string {
+  const roles = new Set(refs.map((r) => r.role))
+  if (roles.size === 0) {
+    return '描述要生成的画面与镜头(文生视频)…'
+  }
+  if (roles.has('first_frame') && roles.has('last_frame')) {
+    return '描述首尾帧之间的镜头如何运动(首尾帧)…'
+  }
+  if (roles.has('first_frame')) {
+    return '描述画面如何运动、镜头怎么走(图生视频)…'
+  }
+  if (roles.has('reference_image')) {
+    return '描述画面,参考图提供风格与内容(多图参考)…'
+  }
+  return '描述要生成的画面与镜头(参考视频/音频)…'
+}
+
+/** 视频时长预设(24 号票):「自动」= 不传 seconds 维持厂商缺省;不做自由
+ * 数字输入 —— duration 是厂商枚举,自由值多半 4xx,档位实测校准。 */
+export const DURATION_PRESETS: PresetOption[] = [
+  { label: '自动时长', value: '' },
+  { label: '5 秒', value: '5' },
+  { label: '10 秒', value: '10' },
+  { label: '15 秒', value: '15' },
+  { label: '20 秒', value: '20' },
+  { label: '30 秒', value: '30' },
+]
+
+/** 视频分辨率预设:选中档位串直接作为 size 上送(second 轨计价系数表与
+ * token 轨估算表都以这些字符串为键,契约零新增)。 */
+export const VIDEO_RESOLUTION_PRESETS: PresetOption[] = [
+  { label: '自动分辨率', value: '' },
+  { label: '480p', value: '480p' },
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
+]

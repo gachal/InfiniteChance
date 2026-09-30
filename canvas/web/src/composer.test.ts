@@ -2,13 +2,21 @@ import { describe, expect, it } from 'vitest'
 
 import {
   appendComposerRef,
+  appendVideoRef,
   composerImageUrls,
+  composerVideoRefs,
   composeSize,
+  DURATION_PRESETS,
   isRelayableRef,
   MAX_COMPOSER_REFS,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
+  rolesForKind,
+  VIDEO_RESOLUTION_PRESETS,
+  videoPlaceholder,
+  withVideoRefRole,
   type ComposerRef,
+  type VideoComposerRef,
 } from './composer'
 
 describe('isRelayableRef', () => {
@@ -96,5 +104,103 @@ describe('composeSize / 预设', () => {
 
   it('unknown combinations degrade to no size instead of inventing one', () => {
     expect(composeSize('21:9', '1k')).toBe('')
+  })
+})
+
+// ---- 视频模式(24 号票)----
+
+describe('rolesForKind', () => {
+  it('maps each media kind onto its playable roles', () => {
+    expect(rolesForKind('image')).toEqual(['first_frame', 'last_frame', 'reference_image'])
+    expect(rolesForKind('video')).toEqual(['reference_video'])
+    expect(rolesForKind('audio')).toEqual(['reference_audio'])
+  })
+})
+
+describe('appendVideoRef', () => {
+  const img = (url: string, role: VideoComposerRef['role'] = 'first_frame'): VideoComposerRef => ({
+    url,
+    kind: 'image',
+    role,
+  })
+
+  it('appends structured refs and keeps order', () => {
+    let list = appendVideoRef([], img('https://a/1.png'))
+    list = appendVideoRef(list, { url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' })
+    expect(list.map((r) => r.role)).toEqual(['first_frame', 'reference_video'])
+  })
+
+  it('rejects role/kind mismatches, inline data and junk URLs', () => {
+    expect(appendVideoRef([], { url: 'https://a/v.mp4', kind: 'video', role: 'first_frame' })).toHaveLength(0)
+    expect(appendVideoRef([], img('data:image/png;base64,AAAA'))).toHaveLength(0)
+    expect(appendVideoRef([], img(''))).toHaveLength(0)
+  })
+
+  it('dedupes by url without mutating the input', () => {
+    const first = appendVideoRef([], img('https://a/1.png'))
+    expect(appendVideoRef(first, img('https://a/1.png', 'last_frame'))).toBe(first)
+  })
+
+  it('caps each role at its limit', () => {
+    let list: VideoComposerRef[] = []
+    for (let i = 0; i < 6; i += 1) {
+      list = appendVideoRef(list, img(`https://a/${i}.png`, 'reference_image'))
+    }
+    expect(list).toHaveLength(4)
+    list = appendVideoRef(list, img('https://a/first.png'))
+    list = appendVideoRef(list, img('https://a/first2.png'))
+    expect(list.filter((r) => r.role === 'first_frame')).toHaveLength(1)
+  })
+})
+
+describe('withVideoRefRole', () => {
+  it('switches an image ref between its roles', () => {
+    const list: VideoComposerRef[] = [{ url: 'https://a/1.png', kind: 'image', role: 'first_frame' }]
+    const switched = withVideoRefRole(list, 0, 'last_frame')
+    expect(switched[0].role).toBe('last_frame')
+  })
+
+  it('refuses roles the kind cannot play and full roles', () => {
+    const list: VideoComposerRef[] = [{ url: 'https://a/1.png', kind: 'video', role: 'reference_video' }]
+    expect(withVideoRefRole(list, 0, 'first_frame')).toBe(list)
+    const two: VideoComposerRef[] = [
+      { url: 'https://a/1.png', kind: 'image', role: 'first_frame' },
+      { url: 'https://a/2.png', kind: 'image', role: 'reference_image' },
+    ]
+    expect(withVideoRefRole(two, 1, 'first_frame')).toBe(two)
+  })
+})
+
+describe('composerVideoRefs', () => {
+  it('maps refs onto the wire list verbatim', () => {
+    expect(
+      composerVideoRefs([
+        { url: '/api/assets/5/content', kind: 'image', role: 'first_frame' },
+        { url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' },
+      ]),
+    ).toEqual([
+      { url: '/api/assets/5/content', kind: 'image', role: 'first_frame' },
+      { url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' },
+    ])
+  })
+})
+
+describe('videoPlaceholder / 视频预设', () => {
+  it('describes the mode the reference combination implies', () => {
+    expect(videoPlaceholder([])).toContain('文生视频')
+    expect(videoPlaceholder([{ url: 'https://a/1.png', kind: 'image', role: 'first_frame' }])).toContain('图生视频')
+    expect(
+      videoPlaceholder([
+        { url: 'https://a/1.png', kind: 'image', role: 'first_frame' },
+        { url: 'https://a/2.png', kind: 'image', role: 'last_frame' },
+      ]),
+    ).toContain('首尾帧')
+    expect(videoPlaceholder([{ url: 'https://a/1.png', kind: 'image', role: 'reference_image' }])).toContain('多图参考')
+    expect(videoPlaceholder([{ url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' }])).toContain('参考视频')
+  })
+
+  it('duration and video resolution presets carry auto first and tier strings', () => {
+    expect(DURATION_PRESETS.map((p) => p.value)).toEqual(['', '5', '10', '15', '20', '30'])
+    expect(VIDEO_RESOLUTION_PRESETS.map((p) => p.value)).toEqual(['', '480p', '720p', '1080p'])
   })
 })

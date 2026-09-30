@@ -14,7 +14,7 @@ const { canvasClient } = useAuth()
 
 const assets = ref<AssetRecord[]>([])
 const canvases = ref<CanvasSummary[]>([])
-const kindFilter = ref<'' | 'image' | 'video'>('')
+const kindFilter = ref<'' | 'image' | 'video' | 'audio'>('')
 const canvasFilter = ref<number | ''>('')
 const loading = ref(false)
 const error = ref('')
@@ -70,9 +70,13 @@ async function loadMore(): Promise<void> {
 
 const hasMore = () => assets.value.length >= pageSize && assets.value.length % pageSize === 0
 
-function setKind(k: '' | 'image' | 'video'): void {
+function setKind(k: '' | 'image' | 'video' | 'audio'): void {
   kindFilter.value = k
   void refresh()
+}
+
+function kindLabel(k: 'image' | 'video' | 'audio'): string {
+  return k === 'image' ? '图片' : k === 'video' ? '视频' : '音频'
 }
 
 function setCanvasId(v: string): void {
@@ -90,7 +94,7 @@ function downloadURL(a: AssetRecord): string {
 }
 
 async function remove(a: AssetRecord): Promise<void> {
-  if (!window.confirm(`确定删除这条${a.kind === 'image' ? '图片' : '视频'}素材?对象文件会被一并清除,引用它的画布节点将显示占位。`)) {
+  if (!window.confirm(`确定删除这条${kindLabel(a.kind)}素材?对象文件会被一并清除,引用它的画布节点将显示占位。`)) {
     return
   }
   deletingId.value = a.id
@@ -153,13 +157,13 @@ onBeforeUnmount(() => {
       <div class="filters">
         <div class="kind-filter">
           <button
-            v-for="k in (['', 'image', 'video'] as const)"
+            v-for="k in (['', 'image', 'video', 'audio'] as const)"
             :key="k"
             type="button"
             :class="{ active: kindFilter === k }"
             @click="setKind(k)"
           >
-            {{ k === '' ? '全部类型' : k === 'image' ? '图片' : '视频' }}
+            {{ k === '' ? '全部类型' : kindLabel(k) }}
           </button>
         </div>
         <select
@@ -230,16 +234,22 @@ onBeforeUnmount(() => {
             loading="lazy"
           >
           <video
-            v-else
+            v-else-if="a.kind === 'video'"
             :src="contentURL(a)"
             muted
             preload="metadata"
           />
+          <!-- 音频缩略位给 ♪ 占位,点开灯箱试听(24 号票)。 -->
+          <span
+            v-else
+            class="audio-thumb"
+            aria-hidden="true"
+          >♪</span>
         </button>
         <dl class="fields">
           <div>
             <dt>类型</dt>
-            <dd>{{ a.kind === 'image' ? '图片' : '视频' }}</dd>
+            <dd>{{ kindLabel(a.kind) }}</dd>
           </div>
           <div>
             <dt>来源画布</dt>
@@ -306,13 +316,19 @@ onBeforeUnmount(() => {
           :alt="`素材 ${preview.id}`"
         >
         <video
+          v-else-if="preview.kind === 'video'"
+          :src="contentURL(preview)"
+          controls
+          autoplay
+        />
+        <audio
           v-else
           :src="contentURL(preview)"
           controls
           autoplay
         />
         <figcaption>
-          {{ preview.kind === 'image' ? '图片' : '视频' }} #{{ preview.id }}
+          {{ kindLabel(preview.kind) }} #{{ preview.id }}
           · {{ canvasName(preview.canvas_id) || `画布 #${preview.canvas_id}` }}
           <a
             :href="downloadURL(preview)"
@@ -406,6 +422,21 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 160px;
   object-fit: cover;
+}
+
+/* 音频缩略位:♪ 居中占位,与图片/视频同尺寸网格。 */
+.thumb-btn .audio-thumb {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 160px;
+  font-size: 34px;
+  color: #8b91a7;
+}
+
+/* 灯箱里的音频试听条不撑满整个宽度。 */
+.lightbox audio {
+  width: min(480px, 80vw);
 }
 
 .prompt {

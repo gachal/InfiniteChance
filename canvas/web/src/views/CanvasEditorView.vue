@@ -28,10 +28,18 @@ import {
 } from '../graph'
 import {
   appendComposerRef,
+  appendVideoRef,
   composerImageUrls,
+  composerVideoRefs,
   composeSize,
   isRelayableRef,
+  rolesForKind,
+  VIDEO_ROLE_CAPS,
+  withVideoRefRole,
   type ComposerRef,
+  type VideoComposerRef,
+  type VideoRefKind,
+  type VideoRefRole,
 } from '../composer'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
@@ -142,7 +150,6 @@ const taskSync = useCanvasTasks({
 })
 
 const generating = ref(false)
-const videoGenerating = ref(false)
 const generateError = ref('')
 const retryingNode = ref('')
 const cancelingNode = ref('')
@@ -244,12 +251,17 @@ async function onGenerate(promptNodeId: string, payload: { model: string }): Pro
   await submitImageTask({ prompt: text, model: payload.model, sourceNodeId: promptNodeId })
 }
 
-// ---- 生成对话框(21 号票)----
+// ---- 生成对话框(21 号票图片模式;24 号票视频模式)----
 
 const wrapEl = ref<HTMLDivElement | null>(null)
 
-// 全局持久草稿:提示词/模型/比例/分辨率不随选中切换清空(ADR 0002);
-// 比例 × 分辨率在发送时经 composeSize 组合成 size 串(双自动 = 不传)。
+// 模式:选中视频节点时锁定视频生成,选中图片节点默认图片模式、可切视频
+// (切过去时节点产物自动进参考条、默认角色「首帧」)。两套草稿按模式独立
+// 存放,互不清空(ADR 0002)。
+const composerMode = ref<'image' | 'video'>('image')
+
+// 图片模式草稿:提示词/模型/比例/分辨率不随选中切换清空;比例 × 分辨率
+// 在发送时经 composeSize 组合成 size 串(双自动 = 不传)。
 const composerPrompt = ref('')
 const composerModel = ref('')
 const composerRatio = ref('')
@@ -261,17 +273,33 @@ const uploadedRefs = ref<ComposerRef[]>([])
 const detachedFromSelection = ref(false)
 const refUploading = ref(false)
 
-/** 对话框的上下文 = 最近选中的图片节点(多选时取数组末位);空 =
- * 停靠底部中央的从零文生图。 */
+// 视频模式草稿(24 号票):提示词/模型/时长/分辨率/比例/参考条独立一套。
+const videoPrompt = ref('')
+const videoModel = ref('')
+const videoDuration = ref('')
+const videoRatio = ref('')
+const videoResolution = ref('')
+const uploadedVideoRefs = ref<VideoComposerRef[]>([])
+const detachedVideoFromSelection = ref(false)
+
+/** 对话框的上下文 = 最近选中的图片或视频节点(多选时取数组末位);空 =
+ * 未选中(对话框不出现,提示词/分析节点不唤起 —— 维持现状)。 */
 const composerNode = computed(() => {
-  const selected = getSelectedNodes.value.filter((n) => n.type === 'image')
+  const selected = getSelectedNodes.value.filter(
+    (n) => n.type === 'image' || n.type === 'video',
+  )
   return selected.length > 0 ? selected[selected.length - 1] : null
 })
+
+/** 视频节点锁定视频模式;图片节点默认图片模式。 */
+const composerModeLocked = computed(() => composerNode.value?.type === 'video')
 
 watch(
   () => composerNode.value?.id ?? '',
   () => {
     detachedFromSelection.value = false
+    detachedVideoFromSelection.value = false
+    composerMode.value = composerModeLocked.value ? 'video' : 'image'
   },
 )
 
@@ -280,6 +308,16 @@ watch(
   (list) => {
     if (!list.includes(composerModel.value)) {
       composerModel.value = list.length > 0 ? list[0] : ''
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => videoModels.value,
+  (list) => {
+    if (!list.includes(videoModel.value)) {
+      videoModel.value = list.length > 0 ? list[0] : ''
     }
   },
   { immediate: true },
@@ -300,11 +338,33 @@ const composerRefs = computed<ComposerRef[]>(() => {
   return list
 })
 
-/** 对话框只在选中图片节点时存在(21 号票修订:打开画布即常驻底部中央
- * 的形态已按用户反馈移除);工具栏添加图片节点并选中它,对话框随之出现。 */
-const composerVisible = computed(
-  () => imageModels.value.length > 0 && composerNode.value !== null,
-)
+/** 视频参考条(24 号票):选中节点产物按种类落默认角色 —— 图片产物 →
+ * 首帧(12 号票图生视频语义平移)、视频产物 → 参考视频;上传条目按上传
+ * 时定下的角色进条。收编规则走 appendVideoRef(角色上限、去重)。 */
+const videoComposerRefs = computed<VideoComposerRef[]>(() => {
+  const node = composerNode.value
+  const data = node?.data as MediaNodeData | undefined
+  let list: VideoComposerRef[] = []
+  if (!detachedVideoFromSelection.value && node && data?.url && isRelayableRef(data.url)) {
+    const kind: VideoRefKind = node.type === 'video' ? 'video' : 'image'
+    const role: VideoRefRole = node.type === 'video' ? 'reference_video' : 'first_frame'
+    list = appendVideoRef(list, { url: data.url, kind, role, asset_id: data.asset_id })
+  }
+  for (const up of uploadedVideoRefs.value) {
+    list = appendVideoRef(list, up)
+  }
+  return list
+})
+
+/** 对话框只在选中图片/视频节点、且当前模式有可用模型时存在(21 号票修订:
+ * 打开画布即常驻底部中央的形态已按用户反馈移除);工具栏添加节点并选中
+ * 它,对话框随之出现 —— 空视频占位节点即纯文生视频的锚点。 */
+const composerVisible = computed(() => {
+  if (!composerNode.value) {
+    return false
+  }
+  return composerMode.value === 'video' ? videoModels.value.length > 0 : imageModels.value.length > 0
+})
 
 /** 悬浮定位:贴选中节点正下方(视口变换 + 节点尺寸换算成画布区坐标,
  * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。 */
@@ -327,8 +387,8 @@ const composerStyle = computed(() => {
   return { left: `${clampedLeft}px`, top: `${clampedTop}px`, transform: 'translateX(-50%)' }
 })
 
-/** 参考条移除:第 0 位且来自选中节点 = 拆下产物 chip(发送退化为文生
- * 图,连线仍建立);其余按上传列表移除。 */
+/** 参考条移除(图片模式):第 0 位且来自选中节点 = 拆下产物 chip(发送
+ * 退化为文生图,连线仍建立);其余按上传列表移除。 */
 function onRemoveRef(index: number): void {
   const node = composerNode.value
   const data = node?.data as MediaNodeData | undefined
@@ -342,10 +402,62 @@ function onRemoveRef(index: number): void {
   uploadedRefs.value = uploadedRefs.value.filter((_, i) => i !== uploadIndex)
 }
 
-/** 参考图上传:复用 18 号票素材入库,内容寻址引用进列表(与素材面板
- * 插入同语义),顺带获得转存与跨画布复用。 */
+/** 参考条移除(视频模式):同款纪律,拆下的是当前选中节点的产物 chip。 */
+function onRemoveVideoRef(index: number): void {
+  const node = composerNode.value
+  const data = node?.data as MediaNodeData | undefined
+  const hasSelectionChip =
+    !detachedVideoFromSelection.value && !!(node && data?.url && isRelayableRef(data.url))
+  if (hasSelectionChip && index === 0) {
+    detachedVideoFromSelection.value = true
+    return
+  }
+  const uploadIndex = hasSelectionChip ? index - 1 : index
+  uploadedVideoRefs.value = uploadedVideoRefs.value.filter((_, i) => i !== uploadIndex)
+}
+
+/** 视频参考条上切换角色(24 号票):图片 chip 可在首帧/尾帧/参考图间切。
+ * 选中节点的产物 chip 是计算值,改角色 = 物化进上传列表(原位拆下,新位
+ * 按 appendVideoRef 的上限纪律收编);同一 URL 已在上传列表里时(先上传
+ * 过、又选中了同款产物)物化会被去重挡下,回退为改既有上传条目的角色,
+ * 让切换总是生效。上传 chip 用 withVideoRefRole 原地换角色。 */
+function onSetVideoRefRole(index: number, role: VideoRefRole): void {
+  const node = composerNode.value
+  const data = node?.data as MediaNodeData | undefined
+  const hasSelectionChip =
+    !detachedVideoFromSelection.value && !!(node && data?.url && isRelayableRef(data.url))
+  if (hasSelectionChip && index === 0) {
+    const url = data!.url!
+    const next = appendVideoRef(uploadedVideoRefs.value, {
+      url,
+      kind: 'image',
+      role,
+      asset_id: data!.asset_id,
+    })
+    if (next !== uploadedVideoRefs.value) {
+      uploadedVideoRefs.value = next
+      detachedVideoFromSelection.value = true
+      return
+    }
+    const existing = uploadedVideoRefs.value.findIndex((r) => r.url === url)
+    if (existing >= 0) {
+      uploadedVideoRefs.value = withVideoRefRole(uploadedVideoRefs.value, existing, role)
+      detachedVideoFromSelection.value = true
+    }
+    return
+  }
+  const uploadIndex = hasSelectionChip ? index - 1 : index
+  uploadedVideoRefs.value = withVideoRefRole(uploadedVideoRefs.value, uploadIndex, role)
+}
+
+/** 参考图上传(图片模式):复用 18 号票素材入库,内容寻址引用进列表(与
+ * 素材面板插入同语义),顺带获得转存与跨画布复用。 */
 async function onComposerUpload(file: File): Promise<void> {
   if (refUploading.value) {
+    return
+  }
+  if (composerMode.value === 'video') {
+    await onComposerUploadVideo(file)
     return
   }
   refUploading.value = true
@@ -360,13 +472,116 @@ async function onComposerUpload(file: File): Promise<void> {
   }
 }
 
-/** 对话框发送:选中图片节点时其产物即参考图(可被拆下),有参考走图
- * 生图、无参考走文生图(空占位锚点直接填入);比例×分辨率组合成 size;
- * 成功后清空提示词(草稿的其余部分保留)。 */
+/** 视频参考的种类按浏览器 MIME 判断,缺失时按扩展名兜底;服务端按魔数
+ * 嗅探最终裁决,这里的判断只为选对 kind 字段与立即反馈。 */
+function videoUploadKindOf(file: File): VideoRefKind {
+  if (file.type.startsWith('video/')) {
+    return 'video'
+  }
+  if (file.type.startsWith('audio/')) {
+    return 'audio'
+  }
+  if (file.type.startsWith('image/')) {
+    return 'image'
+  }
+  if (/\.(mp4|m4v|webm|mov|avi)$/i.test(file.name)) {
+    return 'video'
+  }
+  if (/\.(mp3|wav|m4a|ogg|flac)$/i.test(file.name)) {
+    return 'audio'
+  }
+  return 'image'
+}
+
+/** 参考上传(视频模式):图片/视频/音频入库后按默认角色进条 —— 图片在
+ * 首帧空缺时默认首帧(与选中图片节点产物同款默认),否则参考图;视频/
+ * 音频角色固定。上传前先按种类预检空位:该种类已无任何可扮角色可收时
+ * 直接报错不传字节,免得上传成素材却在参考条上拒收(留下孤儿素材行)。 */
+async function onComposerUploadVideo(file: File): Promise<void> {
+  if (refUploading.value) {
+    return
+  }
+  const kind = videoUploadKindOf(file)
+  const roles = rolesForKind(kind)
+  const vacant = roles.some((role) =>
+    videoComposerRefs.value.filter((r) => r.role === role).length < VIDEO_ROLE_CAPS[role],
+  )
+  if (!vacant) {
+    generateError.value =
+      kind === 'image' ? '图片参考已满员(首帧/尾帧各 1,参考图最多 4)' : `${kind === 'video' ? '视频' : '音频'}参考已满员`
+    return
+  }
+  refUploading.value = true
+  generateError.value = ''
+  try {
+    const a = await client.uploadAsset(file, kind)
+    const role: VideoRefRole =
+      kind === 'video'
+        ? 'reference_video'
+        : kind === 'audio'
+          ? 'reference_audio'
+          : videoComposerRefs.value.some((r) => r.role === 'first_frame')
+            ? 'reference_image'
+            : 'first_frame'
+    uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, {
+      url: a.content_url,
+      kind,
+      role,
+      asset_id: a.id,
+    })
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
+  } finally {
+    refUploading.value = false
+  }
+}
+
+/** 草稿更新的模式分发:video 分支写视频草稿,image 分支写图片草稿
+ * (两套草稿独立,切换不清空)。 */
+function onDraftUpdate(
+  videoSet: (v: string) => void,
+  imageSet: (v: string) => void,
+  value: string,
+): void {
+  if (composerMode.value === 'video') {
+    videoSet(value)
+  } else {
+    imageSet(value)
+  }
+}
+
+/** 对话框发送:按模式分流。图片模式 —— 选中图片节点产物即参考图(可拆
+ * 下),有参考走图生图、无参考走文生图(空占位锚点直接填入),比例×分
+ * 辨率组合成 size。视频模式 —— 参考组合交给 submitVideoTask(空参考 =
+ * 文生视频),时长「自动」不传 seconds,分辨率档位串直接作 size,比例
+ * 走 ratio。成功后清空对应模式的提示词(草稿其余部分保留)。 */
 async function onComposerSend(): Promise<void> {
   const node = composerNode.value
+  if (!node || generating.value) {
+    return
+  }
+  if (composerMode.value === 'video') {
+    const prompt = videoPrompt.value.trim()
+    if (prompt === '' || videoModel.value === '') {
+      return
+    }
+    const refs = composerVideoRefs(videoComposerRefs.value)
+    const ok = await submitVideoTask({
+      prompt,
+      model: videoModel.value,
+      seconds: videoDuration.value === '' ? undefined : Number(videoDuration.value),
+      size: videoResolution.value === '' ? undefined : videoResolution.value,
+      ratio: videoRatio.value === '' ? undefined : videoRatio.value,
+      videoRefs: refs.length > 0 ? refs : undefined,
+      sourceNodeId: node.id,
+    })
+    if (ok) {
+      videoPrompt.value = ''
+    }
+    return
+  }
   const prompt = composerPrompt.value.trim()
-  if (!node || prompt === '' || composerModel.value === '') {
+  if (prompt === '' || composerModel.value === '') {
     return
   }
   const urls = composerImageUrls(composerRefs.value)
@@ -416,62 +631,88 @@ async function onCancelVideo(nodeId: string): Promise<void> {
   }
 }
 
-/** 图生视频动作(12 号票):以图片节点的产物为参考图,结果视频节点与
- * 连线先入图并落库,再提交任务 —— 与文生图同一纪律。 */
-async function onGenerateVideo(
-  imageNodeId: string,
-  payload: { model: string; prompt: string; seconds: number },
-): Promise<void> {
-  if (videoGenerating.value) {
-    return
+/** 视频任务的统一提交路径(24 号票对话框视频模式;发送落点与图片模式
+ * 同款纪律):结果视频节点与连线先入图并立即落库(autosave flush 跳过
+ * 防抖),再提交任务。空视频占位锚点(工具栏「+视频」,无产物、无任务
+ * 绑定)发送直接填入本节点 —— 纯文生视频由此落脚;有产物或任务绑定的
+ * 视频节点发送落右侧新视频节点并连线(自动选中,参考条随之切换);图片
+ * 节点上切视频模式发送恒落新视频节点(图片锚点装不下视频产物,连线表达
+ * 迭代来源)。videoRefs 非空 = 结构化参考(空 = 文生视频),服务端解引
+ * 用;seconds 缺省 = 自动(厂商缺省);分辨率档位串直接作 size。 */
+async function submitVideoTask(payload: {
+  prompt: string
+  model: string
+  size?: string
+  ratio?: string
+  seconds?: number
+  videoRefs?: { url: string; kind: VideoRefKind; role: VideoRefRole }[]
+  sourceNodeId: string
+}): Promise<boolean> {
+  if (generating.value) {
+    return false
   }
-  const imageNode = findNode(imageNodeId)
-  const data = imageNode?.data as MediaNodeData | undefined
-  const refUrl = data?.url ?? ''
-  if (!imageNode || !refUrl.startsWith('http') || payload.model === '' || payload.prompt === '') {
-    return
+  const source = findNode(payload.sourceNodeId)
+  if (!source) {
+    return false
   }
-  videoGenerating.value = true
+  const sourceData = source.data as MediaNodeData | undefined
+  const fillsSource =
+    source.type === 'video' && (sourceData?.url ?? '') === '' && !taskSync.byNode.get(source.id)
+  generating.value = true
   generateError.value = ''
   try {
-    nodeSeq += 1
-    const nodeId = `video-${Date.now()}-${nodeSeq}`
-    addNodes([
-      {
-        id: nodeId,
-        type: 'video',
-        position: { x: imageNode.position.x + 260, y: imageNode.position.y },
-        data: initialData('video'),
-      },
-    ])
-    addEdges([
-      {
-        id: `e-${imageNodeId}-${nodeId}`,
-        source: imageNodeId,
-        target: nodeId,
-        sourceHandle: null,
-        targetHandle: null,
-      },
-    ])
+    let targetNodeId = source.id
+    if (!fillsSource) {
+      nodeSeq += 1
+      targetNodeId = `video-${Date.now()}-${nodeSeq}`
+      removeSelectedNodes(getSelectedNodes.value)
+      addNodes([
+        {
+          id: targetNodeId,
+          type: 'video',
+          position: { x: source.position.x + 320, y: source.position.y },
+          data: initialData('video'),
+        },
+      ])
+      const added = findNode(targetNodeId)
+      if (added) {
+        addSelectedNodes([added])
+      }
+      addEdges([
+        {
+          id: `e-${source.id}-${targetNodeId}`,
+          source: source.id,
+          target: targetNodeId,
+          sourceHandle: null,
+          targetHandle: null,
+        },
+      ])
+    }
     autosave.markDirty()
     const saved = await autosave.flush()
     if (!saved) {
       generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
-      return
+      return false
     }
     const task = await client.createCanvasTask(canvasId, {
-      node_id: nodeId,
+      node_id: targetNodeId,
       kind: 'video',
       prompt: payload.prompt,
       model: payload.model,
-      seconds: payload.seconds,
-      image_url: refUrl,
+      ...(payload.size ? { size: payload.size } : {}),
+      ...(payload.ratio ? { ratio: payload.ratio } : {}),
+      ...(payload.seconds !== undefined ? { seconds: payload.seconds } : {}),
+      ...(payload.videoRefs && payload.videoRefs.length > 0
+        ? { video_refs: payload.videoRefs }
+        : {}),
     })
     taskSync.track(task)
+    return true
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
+    return false
   } finally {
-    videoGenerating.value = false
+    generating.value = false
   }
 }
 
@@ -766,8 +1007,12 @@ function addNode(type: CanvasNodeType): void {
 const assetPanelOpen = ref(false)
 
 /** 素材插入:从素材库把历史产物放进当前画布 —— 节点持有素材的内容寻
- * 址引用(asset_id + content_url),不复制字节,跨画布复用同一素材。 */
+ * 址引用(asset_id + content_url),不复制字节,跨画布复用同一素材。音
+ * 频素材没有对应节点类型,不落画布(参考音频经对话框上传入口进条)。 */
 function insertAsset(a: AssetRecord): void {
+  if (a.kind === 'audio') {
+    return
+  }
   nodeSeq += 1
   const type: CanvasNodeType = a.kind === 'video' ? 'video' : 'image'
   const step = (toObject().nodes.length % 8) * 48
@@ -1144,12 +1389,9 @@ function backToList(): void {
             :data="nodeProps.data"
             :task="taskSync.byNode.get(nodeProps.id) ?? null"
             :retrying="retryingNode === nodeProps.id"
-            :video-models="videoModels"
-            :video-generating="videoGenerating"
             :chat-models="promptModels"
             :analyzing="analyzingNode !== ''"
             @retry="onRetry(nodeProps.id)"
-            @generate-video="onGenerateVideo(nodeProps.id, $event)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
           />
         </template>
@@ -1184,19 +1426,27 @@ function backToList(): void {
       <GenerationComposer
         v-if="composerVisible"
         :style="composerStyle"
-        :models="imageModels"
+        :mode="composerMode"
+        :mode-locked="composerModeLocked"
+        :image-models="imageModels"
+        :video-models="videoModels"
         :refs="composerRefs"
-        :prompt="composerPrompt"
-        :model="composerModel"
-        :ratio="composerRatio"
-        :resolution="composerResolution"
+        :video-refs="videoComposerRefs"
+        :prompt="composerMode === 'video' ? videoPrompt : composerPrompt"
+        :model="composerMode === 'video' ? videoModel : composerModel"
+        :ratio="composerMode === 'video' ? videoRatio : composerRatio"
+        :resolution="composerMode === 'video' ? videoResolution : composerResolution"
+        :duration="videoDuration"
         :generating="generating"
         :uploading="refUploading"
-        @update:prompt="composerPrompt = $event"
-        @update:model="composerModel = $event"
-        @update:ratio="composerRatio = $event"
-        @update:resolution="composerResolution = $event"
-        @remove-ref="onRemoveRef"
+        @update:mode="composerMode = $event"
+        @update:prompt="onDraftUpdate(($v) => (videoPrompt = $v), ($v) => (composerPrompt = $v), $event)"
+        @update:model="onDraftUpdate(($v) => (videoModel = $v), ($v) => (composerModel = $v), $event)"
+        @update:ratio="onDraftUpdate(($v) => (videoRatio = $v), ($v) => (composerRatio = $v), $event)"
+        @update:resolution="onDraftUpdate(($v) => (videoResolution = $v), ($v) => (composerResolution = $v), $event)"
+        @update:duration="videoDuration = $event"
+        @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
+        @set-ref-role="onSetVideoRefRole"
         @upload="onComposerUpload"
         @send="onComposerSend"
       />

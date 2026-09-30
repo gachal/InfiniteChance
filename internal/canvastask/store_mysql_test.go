@@ -344,13 +344,41 @@ func TestMySQLCanvasTaskVideoFieldsRoundTrip(t *testing.T) {
 		t.Errorf("got = %+v, want the video facts preserved", got)
 	}
 
+	// 24 号票的结构化参考与比例列:JSON 列保真回读,空 = NULL/空串。
+	structuredID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	refs := []canvastask.VideoRef{
+		{URL: "https://img.example/first.png", Kind: "image", Role: canvastask.RoleFirstFrame},
+		{URL: "https://img.example/voice.mp3", Kind: "audio", Role: canvastask.RoleReferenceAud},
+	}
+	structured, err := store.Create(ctx, canvastask.Task{
+		ID: structuredID, CanvasID: 7, NodeID: "video-1-2", Kind: canvastask.KindVideo,
+		Prompt: "p", Model: "vid-m", Seconds: 0, Size: "480p", Ratio: "9:16",
+		VideoRefs: refs, Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create structured: %v", err)
+	}
+	got, err = store.Get(ctx, structured.ID)
+	if err != nil {
+		t.Fatalf("Get structured: %v", err)
+	}
+	if len(got.VideoRefs) != 2 || got.VideoRefs[0] != refs[0] || got.VideoRefs[1] != refs[1] {
+		t.Errorf("video_refs = %v, want both refs in order", got.VideoRefs)
+	}
+	if got.Ratio != "9:16" || got.Size != "480p" || got.Seconds != 0 {
+		t.Errorf("ratio/size/seconds = %q/%q/%d, want verbatim and 0 (auto)", got.Ratio, got.Size, got.Seconds)
+	}
+
 	// 图片任务不受影响:video 专属列为零值。
 	imageTask := seedTask(t, store, 7, "image-1-1", canvastask.StatusQueued)
 	got, err = store.Get(ctx, imageTask.ID)
 	if err != nil {
 		t.Fatalf("Get image task: %v", err)
 	}
-	if got.Seconds != 0 || got.ImageRef != "" || got.VideoURL != "" {
+	if got.Seconds != 0 || got.ImageRef != "" || got.VideoURL != "" || got.VideoRefs != nil || got.Ratio != "" {
 		t.Errorf("image task = %+v, want zero-valued video columns", got)
 	}
 }

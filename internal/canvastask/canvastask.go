@@ -59,6 +59,30 @@ const (
 	KindVideo = "video"
 )
 
+// 视频参考的角色集(24 号票,对齐即梦「全能参考」):首帧/尾帧/参考图是
+// 图片,参考视频/参考音频各自一种媒体。角色决定网关侧的落位 —— worker
+// 翻译 first_frame → image、last_frame → last_image,其余按 kind 进
+// references(25 号票契约)。
+const (
+	RoleFirstFrame   = "first_frame"
+	RoleLastFrame    = "last_frame"
+	RoleReferenceImg = "reference_image"
+	RoleReferenceVid = "reference_video"
+	RoleReferenceAud = "reference_audio"
+)
+
+// VideoRef is one structured video reference (24 号票):the address the
+// vendor fetches (resolved at submit time), the media kind it carries, and
+// the role it plays in the generation. Roles map onto kinds one way —
+// first_frame/last_frame/reference_image carry images, reference_video
+// videos, reference_audio audio — enforced on both the wire input and the
+// asset rows referenced through it.
+type VideoRef struct {
+	URL  string `json:"url"`
+	Kind string `json:"kind"`
+	Role string `json:"role"`
+}
+
 // idPrefix marks canvas-server-issued task ids; idBytes double to 32 hex
 // chars, keeping the full id at 35 — same shape as the gateway's vt_ ids.
 const (
@@ -83,7 +107,11 @@ func NewID() (string, error) {
 // address; the image product column stays image-only. Image tasks with
 // references (21 号票的图生图) carry the resolved vendor addresses in
 // ImageRefs — resolved at submit time so the row is self-sufficient across
-// retries and restarts.
+// retries and restarts. Video tasks with structured references (24 号票)
+// carry them in VideoRefs the same way — resolved, kind-checked, capped;
+// ImageRef remains the single-string legacy shape old rows keep, and Seconds
+// 0 means "auto" (omit seconds on the wire, vendor default applies).
+// Ratio/Size carry the aspect-ratio and resolution tier strings verbatim.
 type Task struct {
 	ID           string
 	CanvasID     int64
@@ -92,9 +120,11 @@ type Task struct {
 	Prompt       string
 	Model        string
 	Size         string
-	Seconds      int64    // video: 期望时长(秒);image 恒 0
-	ImageRef     string   // video: 图生视频的参考图片地址
-	ImageRefs    []string // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
+	Ratio        string     // video: 显式宽高比串(如 16:9);空 = 不传
+	Seconds      int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);image 恒 0
+	ImageRef     string     // video: 图生视频的单串参考图(12 号票旧形态)
+	VideoRefs    []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频
+	ImageRefs    []string   // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
 	Status       Status
 	Attempts     int64
 	Error        string // failed 的原因摘要;重试入队时清空
@@ -104,6 +134,33 @@ type Task struct {
 	RemoteTaskID string // 网关侧任务 id(vt_…),提交受理后回填
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// encodeVideoRefs serializes the structured reference list for its column;
+// an empty list lands as NULL. Marshaling cannot fail, so the error branch
+// exists only to keep the signature honest.
+func encodeVideoRefs(refs []VideoRef) any {
+	if len(refs) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(refs)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// decodeVideoRefs parses the column back; anything unreadable reads as no
+// references (文生视频) — a corrupt column must not take the worker down.
+func decodeVideoRefs(s string) []VideoRef {
+	if s == "" {
+		return nil
+	}
+	var refs []VideoRef
+	if err := json.Unmarshal([]byte(s), &refs); err != nil {
+		return nil
+	}
+	return refs
 }
 
 // encodeImageRefs serializes the reference list for its TEXT column; an

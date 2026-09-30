@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// 图片节点:文生图任务的展示面(10 号票)。任务在途时显示排队/生成中,
-// 失败显示原因与原地重试,产物落位后直接呈现图片;有产物时提供图生视频
-// 动作入口(12 号票)与分析入口(17 号票)—— 前者以本节点产物为参考图
-// 落新视频节点,后者经网关多模态聊天理解产物、落新分析节点。
+// 图片节点:文生图/图生图任务的展示面(10/21 号票)。任务在途时显示排队/
+// 生成中,失败显示原因与原地重试,产物落位后直接呈现图片。图生视频表单
+// 已收编进生成对话框的视频模式(24 号票,对话框是其超集);「分析」入口
+// (17 号票)保留 —— 经网关多模态聊天理解产物、落新分析节点。
 import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
@@ -18,10 +18,6 @@ const props = defineProps<{
   task?: CanvasTask | null
   /** 重试请求在途时禁用重试按钮。 */
   retrying: boolean
-  /** 可用的按秒计价视频模型(编辑器从 /video-models 拉取)。 */
-  videoModels: string[]
-  /** 图生视频提交在途(编辑器级状态,防止连点开多个任务)。 */
-  videoGenerating: boolean
   /** 可用的 token 轨聊天模型(编辑器从 /prompt-models 拉取)。 */
   chatModels: string[]
   /** 画布分析的在途标记(编辑器级状态,任一分析在途即禁用)。 */
@@ -30,29 +26,25 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   retry: []
-  'generate-video': [payload: { model: string; prompt: string; seconds: number }]
   analyze: [payload: { model: string }]
 }>()
 
 const status = computed(() => props.task?.status)
 
-const videoModel = ref('')
+const analyzeModel = ref('')
 watch(
-  () => props.videoModels,
+  () => props.chatModels,
   (list) => {
-    if (!list.includes(videoModel.value)) {
-      videoModel.value = list.length > 0 ? list[0] : ''
+    if (!list.includes(analyzeModel.value)) {
+      analyzeModel.value = list.length > 0 ? list[0] : ''
     }
   },
   { immediate: true },
 )
 
-const videoPrompt = ref('')
-const videoSeconds = ref(5)
-
-// 图生视频的参考图:厂商 http(s) 地址原样透传;素材内容寻址引用
+// 分析入口的地址判断:厂商 http(s) 地址原样透传;素材内容寻址引用
 // (/api/assets/{id}/content,14 号票起节点普遍持有)由服务端解出素材行
-// 的厂商地址。data: URI 进不了网关的参考图契约,入口不出现。
+// 的厂商地址。data: URI 进不了网关的媒体契约,入口不出现。
 const hasReference = computed(() => {
   const url = props.data.url ?? ''
   return url.startsWith('http') || url.startsWith('/api/assets/')
@@ -69,38 +61,6 @@ watch(
   },
 )
 
-const canGenerateVideo = computed(
-  () =>
-    hasReference.value &&
-    videoModel.value !== '' &&
-    videoPrompt.value.trim().length > 0 &&
-    !props.videoGenerating,
-)
-
-function submitGenerateVideo(): void {
-  if (!canGenerateVideo.value) {
-    return
-  }
-  emit('generate-video', {
-    model: videoModel.value,
-    prompt: videoPrompt.value.trim(),
-    seconds: videoSeconds.value,
-  })
-}
-
-const analyzeModel = ref('')
-watch(
-  () => props.chatModels,
-  (list) => {
-    if (!list.includes(analyzeModel.value)) {
-      analyzeModel.value = list.length > 0 ? list[0] : ''
-    }
-  },
-  { immediate: true },
-)
-
-// 分析与图生视频共用 hasReference 的地址判断:data URI 节点在服务端
-// 也会被拒,入口直接不出现。
 const canAnalyze = computed(
   () => hasReference.value && analyzeModel.value !== '' && !props.analyzing,
 )
@@ -176,50 +136,6 @@ function submitAnalyze(): void {
     </div>
 
     <div
-      v-if="hasReference && videoModels.length > 0"
-      class="video-gen"
-    >
-      <select
-        v-model="videoModel"
-        title="视频模型"
-      >
-        <option
-          v-for="m in videoModels"
-          :key="m"
-          :value="m"
-        >
-          {{ m }}
-        </option>
-      </select>
-      <textarea
-        v-model="videoPrompt"
-        placeholder="视频内容与镜头描述…"
-        rows="2"
-      />
-      <div class="video-gen-row">
-        <select
-          v-model.number="videoSeconds"
-          title="时长"
-        >
-          <option :value="5">
-            5 秒
-          </option>
-          <option :value="10">
-            10 秒
-          </option>
-        </select>
-        <button
-          class="video-gen-btn"
-          type="button"
-          :disabled="!canGenerateVideo"
-          title="以本图片为参考生成视频"
-          @click="submitGenerateVideo"
-        >
-          {{ videoGenerating ? '提交中…' : '生成视频' }}
-        </button>
-      </div>
-    </div>
-    <div
       v-if="hasReference && chatModels.length > 0"
       class="analyze"
     >
@@ -259,8 +175,8 @@ function submitAnalyze(): void {
 </template>
 
 <style scoped>
-/* 21 号票的媒体卡片:更宽、大图圆角;图生视频/分析表单暂留卡片底部
- * (后续视频票收进对话框)。 */
+/* 21 号票的媒体卡片:更宽、大图圆角;图生视频表单已收编进生成对话框的
+ * 视频模式(24 号票),分析入口留在卡片底部。 */
 .node {
   width: 280px;
   background: rgba(20, 26, 43, 0.92);
@@ -289,7 +205,7 @@ function submitAnalyze(): void {
 }
 
 /* vue-flow 把选中态标在节点包装层(本组件根的祖先),作用域样式以
- * 前置 :global 够到它 —— 编译为 .vue-flow__node.selected .media-frame[data-v]。 */
+   前置 :global 够到它 —— 编译为 .vue-flow__node.selected .media-frame[data-v]。 */
 :global(.vue-flow__node.selected) .media-frame {
   outline: 2px solid rgba(122, 162, 247, 0.8);
   outline-offset: 2px;
@@ -404,56 +320,6 @@ function submitAnalyze(): void {
 }
 
 .retry:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.video-gen {
-  display: grid;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.16);
-}
-
-.video-gen select,
-.video-gen textarea {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  padding: 5px 6px;
-  color: inherit;
-  font-size: 12px;
-  box-sizing: border-box;
-}
-
-.video-gen textarea {
-  resize: vertical;
-}
-
-.video-gen-row {
-  display: flex;
-  gap: 6px;
-}
-
-.video-gen-row select {
-  flex: 0 0 auto;
-}
-
-.video-gen-btn {
-  flex: 1;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  background: rgba(250, 204, 21, 0.16);
-  color: #facc15;
-}
-
-.video-gen-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

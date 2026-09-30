@@ -68,6 +68,51 @@ func TestSQLiteCanvasTaskImageRefsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSQLiteCanvasTaskVideoRefsRoundTrip 覆盖 24 号票的结构化参考与比例列:
+// video_refs JSON 原样回读、空列表落 NULL、ratio 串保真。
+func TestSQLiteCanvasTaskVideoRefsRoundTrip(t *testing.T) {
+	s := newSQLiteStore(t)
+	ctx := context.Background()
+
+	refs := []VideoRef{
+		{URL: "https://img.example/first.png", Kind: "image", Role: RoleFirstFrame},
+		{URL: "/api/assets/9/content", Kind: "audio", Role: RoleReferenceAud},
+	}
+	task, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 1, NodeID: "video-5-1", Kind: KindVideo,
+		Prompt: "p", Model: "vid-m", Seconds: 0, Size: "1080p", Ratio: "16:9",
+		VideoRefs: refs,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.VideoRefs) != 2 || got.VideoRefs[0] != refs[0] || got.VideoRefs[1] != refs[1] {
+		t.Fatalf("video_refs = %v, want both refs in order", got.VideoRefs)
+	}
+	if got.Ratio != "16:9" || got.Size != "1080p" || got.Seconds != 0 {
+		t.Errorf("ratio/size/seconds = %q/%q/%d, want verbatim and 0 (auto)", got.Ratio, got.Size, got.Seconds)
+	}
+
+	plain, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 1, NodeID: "video-5-2", Kind: KindVideo,
+		Prompt: "p", Model: "vid-m",
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = s.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.VideoRefs != nil || got.Ratio != "" {
+		t.Errorf("plain video task = %+v, want nil refs and empty ratio", got)
+	}
+}
+
 // 存量桌面库由旧建表创建(没有 image_refs 列):EnsureSchema 必须原地加列
 // 而不是要求重建 —— 与 MySQL 侧的迁移语义对齐(21 号票起桌面库也有存量)。
 func TestSQLiteCanvasTaskSchemaMigratesOldTable(t *testing.T) {

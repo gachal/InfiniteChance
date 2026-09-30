@@ -34,11 +34,10 @@ const (
 	// multipart 整体上限 32MiB,四张参考图连同表单余量必须落在其内,前端
 	// 同款常量拦在入口。
 	maxImageRefs = 4
+	// maxRatioRunes 对齐网关生图 ratio 的短串形状(22 号票):值不校验枚举,
+	// 交上游裁 —— 档位串("16:9" 等)远小于此,只拦异常长串。
+	maxRatioRunes = 32
 )
-
-// defaultVideoSeconds matches the gateway's own default clip length
-// (Kling/万相/Veo 都以 5s 档起步)。
-const defaultVideoSeconds = int64(5)
 
 // CanvasGetter is the slice of the canvas store the handlers need: a task
 // may only be created on an existing canvas.
@@ -106,6 +105,7 @@ type taskJSON struct {
 	Prompt    string    `json:"prompt"`
 	Model     string    `json:"model"`
 	Size      string    `json:"size"`
+	Ratio     string    `json:"ratio"`
 	Seconds   int64     `json:"seconds"`
 	Status    Status    `json:"status"`
 	Attempts  int64     `json:"attempts"`
@@ -120,7 +120,7 @@ type taskJSON struct {
 func toTaskJSON(t Task) taskJSON {
 	return taskJSON{
 		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, Kind: t.Kind,
-		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Seconds: t.Seconds,
+		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio, Seconds: t.Seconds,
 		Status: t.Status, Attempts: t.Attempts, Error: t.Error, AssetID: t.AssetID,
 		ImageURL: t.ImageURL, VideoURL: t.VideoURL,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
@@ -128,14 +128,47 @@ func toTaskJSON(t Task) taskJSON {
 }
 
 type createInput struct {
-	NodeID    string   `json:"node_id"`
-	Kind      string   `json:"kind"`
-	Prompt    string   `json:"prompt"`
-	Model     string   `json:"model"`
-	Size      string   `json:"size"`
-	Seconds   *int64   `json:"seconds"`
-	ImageURL  string   `json:"image_url"`
-	ImageURLs []string `json:"image_urls"`
+	NodeID    string       `json:"node_id"`
+	Kind      string       `json:"kind"`
+	Prompt    string       `json:"prompt"`
+	Model     string       `json:"model"`
+	Size      string       `json:"size"`
+	Ratio     string       `json:"ratio"`
+	Seconds   *int64       `json:"seconds"`
+	ImageURL  string       `json:"image_url"`
+	ImageURLs []string     `json:"image_urls"`
+	VideoRefs []videoRefIn `json:"video_refs"`
+}
+
+// videoRefIn is one wire-form video reference (24 号票):{url, kind, role}。
+// url 接受厂商 http(s) 地址或素材内容寻址路径;kind/role 的合法组合与
+// 数量上限见 videoRefRoleKind / maxVideoRefsByRole。
+type videoRefIn struct {
+	URL  string `json:"url"`
+	Kind string `json:"kind"`
+	Role string `json:"role"`
+}
+
+// videoRefRoleKind 是角色 → 媒体种类的正典映射:首帧/尾帧/参考图必为
+// 图片,参考视频/参考音频各归其位。kind 声明与角色不符直接拒 —— 一条
+// 「首帧视频」是客户端的 bug,不是上游该裁的语义。
+var videoRefRoleKind = map[string]string{
+	RoleFirstFrame:   asset.KindImage,
+	RoleLastFrame:    asset.KindImage,
+	RoleReferenceImg: asset.KindImage,
+	RoleReferenceVid: asset.KindVideo,
+	RoleReferenceAud: asset.KindAudio,
+}
+
+// maxVideoRefsByRole 是每个角色的数量上限(24 号票自限,前端同款纪律;
+// 上游真实上限是验证点,超限 4xx 透出即可):首帧/尾帧各 1,参考图 4,
+// 参考视频/参考音频各 1。
+var maxVideoRefsByRole = map[string]int{
+	RoleFirstFrame:   1,
+	RoleLastFrame:    1,
+	RoleReferenceImg: maxImageRefs,
+	RoleReferenceVid: 1,
+	RoleReferenceAud: 1,
 }
 
 // Create accepts one generation for the canvas. The task row lands queued —
@@ -176,11 +209,16 @@ func (h *Handlers) Create(c *gin.Context) {
 		apierr.InvalidRequest(c, "kind 只支持 image(文生图)或 video(图生视频)")
 		return
 	}
-	// 图生视频的专属入参:参考图片与时长。图片任务上两者无意义,不收。
+	// 视频任务的专属入参(24 号票对话框范式):结构化参考 video_refs、
+	// 显式比例 ratio、时长 seconds(缺省 = 自动,不传维持厂商缺省)。
+	// 12 号票的单串 image_url 照常兼容(落 image_ref 列,worker 两种形
+	// 态都认);video_refs 与 image_url 同时出现时以 video_refs 为准。
+	// 无任何参考 = 文生视频,合法提交。
 	var seconds int64
 	var imageRef string
+	var videoRefs []VideoRef
+	var ratio string
 	if kind == KindVideo {
-		seconds = defaultVideoSeconds
 		if in.Seconds != nil {
 			if *in.Seconds < 1 || *in.Seconds > int64(pricing.MaxCallItems) {
 				apierr.InvalidRequest(c, "seconds 需在 1 到 "+
@@ -189,20 +227,50 @@ func (h *Handlers) Create(c *gin.Context) {
 			}
 			seconds = *in.Seconds
 		}
-		imageRef = strings.TrimSpace(in.ImageURL)
-		// 参考图片的两种引用:厂商能拉取的 http(s) 地址原样透传;素材
-		// 内容寻址路径(14 号票起图片节点普遍持有素材引用)由服务端解出
-		// 素材行的厂商地址。内联 data: URI 在这里就拒掉,不落成注定失败
-		// 的任务行。
-		resolved, err := h.resolveImageRef(c.Request.Context(), imageRef)
-		if err != nil {
-			h.failImageRef(c, err)
+		ratio = strings.TrimSpace(in.Ratio)
+		if utf8.RuneCountInString(ratio) > maxRatioRunes {
+			apierr.InvalidRequest(c, "ratio 最多 32 个字符")
 			return
 		}
-		imageRef = resolved
-		if utf8.RuneCountInString(imageRef) > maxImageRefRunes {
-			apierr.InvalidRequest(c, "image_url 最多 4096 个字符")
-			return
+		if len(in.VideoRefs) > 0 {
+			if strings.TrimSpace(in.ImageURL) != "" {
+				apierr.InvalidRequest(c, "video_refs 与 image_url 不能同时提供(image_url 是 12 号票的单串旧形态)")
+				return
+			}
+			counts := make(map[string]int, len(maxVideoRefsByRole))
+			for _, raw := range in.VideoRefs {
+				resolved, err := h.resolveVideoRef(c.Request.Context(), raw)
+				if err != nil {
+					h.failVideoRef(c, err)
+					return
+				}
+				// 角色数量上限在前端同款纪律拒收(超限整条不收);素材
+				// 去重不在此做 —— 同一素材扮两种角色对上游也有语义。
+				if counts[resolved.Role]+1 > maxVideoRefsByRole[resolved.Role] {
+					apierr.InvalidRequest(c, errVideoRefTooMany.Error())
+					return
+				}
+				counts[resolved.Role]++
+				videoRefs = append(videoRefs, resolved)
+			}
+		} else {
+			// 单串参考图(12 号票旧形态):参考图片的两种引用 —— 厂商能拉
+			// 取的 http(s) 地址原样透传;素材内容寻址路径(14 号票起图片节
+			// 点普遍持有素材引用)由服务端解出素材行的厂商地址。内联 data:
+			// URI 在这里就拒掉,不落成注定失败的任务行。
+			imageRef = strings.TrimSpace(in.ImageURL)
+			if imageRef != "" {
+				resolved, err := h.resolveImageRef(c.Request.Context(), imageRef)
+				if err != nil {
+					h.failImageRef(c, err)
+					return
+				}
+				imageRef = resolved
+				if utf8.RuneCountInString(imageRef) > maxImageRefRunes {
+					apierr.InvalidRequest(c, "image_url 最多 4096 个字符")
+					return
+				}
+			}
 		}
 	}
 	// 图生图的专属入参(21 号票):参考图片列表。逐条走与视频同一个解引
@@ -287,8 +355,8 @@ func (h *Handlers) Create(c *gin.Context) {
 	}
 	task, err := h.Tasks.Create(c.Request.Context(), Task{
 		ID: id, CanvasID: canvasID, NodeID: nodeID, Kind: kind,
-		Prompt: prompt, Model: model, Size: size,
-		Seconds: seconds, ImageRef: imageRef, ImageRefs: imageRefs,
+		Prompt: prompt, Model: model, Size: size, Ratio: ratio,
+		Seconds: seconds, ImageRef: imageRef, VideoRefs: videoRefs, ImageRefs: imageRefs,
 	})
 	if err != nil {
 		h.failStore(c, err)
@@ -416,10 +484,18 @@ func (h *Handlers) Cancel(c *gin.Context) {
 // 文案对两种任务通用(21 号票起列表条目走同一条解析)。
 var (
 	errImageRefEmpty     = errors.New("缺少参考图片地址(image_url)")
+	errImageRefTooLong   = errors.New("参考地址最多 4096 个字符")
 	errImageRefMalformed = errors.New("参考图必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
 	errImageRefInline    = errors.New("内联 base64 参考图不受支持,请使用带 http(s) 地址的图片素材")
 	errImageAssetMissing = errors.New("素材不存在或已被删除")
 	errImageAssetNoURL   = errors.New("该素材没有可用的 http(s) 原始地址,无法作为参考图")
+
+	// 视频参考(24 号票)的专属失败形状:角色/种类不符、单角色超限是客
+	// 户端的结构错误;地址解析失败复用 image 侧同款哨兵。
+	errVideoRefEmpty   = errors.New("video_refs 条目缺少 url")
+	errVideoRefBadRole = errors.New("video_refs 的 role 必须是 first_frame/last_frame/reference_image/reference_video/reference_audio 之一,且 kind 与角色相符")
+	errVideoRefTooMany = errors.New("video_refs 角色数量超限(首帧/尾帧/参考视频/参考音频各 1,参考图最多 4)")
+	errVideoAssetKind  = errors.New("素材种类与参考角色不符(首帧/尾帧/参考图须为图片素材,参考视频须为视频素材,参考音频须为音频素材)")
 )
 
 // assetContentPrefix 是素材内容寻址路径的形状(10 号票定案):14 号票起
@@ -427,48 +503,57 @@ var (
 // 厂商地址供网关与上游拉取。
 const assetContentPrefix = "/api/assets/"
 
-// resolveImageRef maps the editor's reference image to the address the
-// vendor fetches: an http(s) URL passes through untouched; a content-
-// addressed asset resolves through the store with 18 号票的顺序 — 自有存储
-// 公网地址(object_key 拼 public_base_url,永久)优先,厂商原址(约 24h
-// 过期)回落;inline data: URIs — carried directly or stored in the asset
-// row — are refused before an unworkable task row lands.
-func (h *Handlers) resolveImageRef(ctx context.Context, ref string) (string, error) {
-	if ref == "" {
-		return "", errImageRefEmpty
-	}
+// resolveMediaURL maps one media reference to the address the vendor fetches
+// —— 图生图参考图与视频参考(24 号票)共用的解引用:http(s) 原样透传
+// (素材行 kind 答 "",无从查证);素材内容寻址路径经素材表按 18 号票顺序
+// 解出(自有存储公网地址优先、厂商原址约 24h 回落),并顺带回答素材行的
+// kind 供角色校验;内联 data: URI(直带或落过素材行的)都拒 —— 12 号票
+// 「data URI 进不了网关媒体契约」。空串由调用方各自拒(两种契约的空值
+// 语义不同),长度上限同样由调用方在解出的地址上统一把关。
+func (h *Handlers) resolveMediaURL(ctx context.Context, ref string) (addr, assetKind string, err error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
-		return ref, nil
+		return ref, "", nil
 	}
 	if strings.HasPrefix(ref, "data:") {
-		return "", errImageRefInline
+		return "", "", errImageRefInline
 	}
 	rest, ok := strings.CutPrefix(ref, assetContentPrefix)
 	if !ok || !strings.HasSuffix(rest, "/content") {
-		return "", errImageRefMalformed
+		return "", "", errImageRefMalformed
 	}
 	rest = strings.TrimSuffix(rest, "/content")
 	id, err := strconv.ParseInt(rest, 10, 64)
 	if err != nil || id < 1 {
-		return "", errImageRefMalformed
+		return "", "", errImageRefMalformed
 	}
 	if h.Assets == nil {
-		return "", errImageAssetMissing
+		return "", "", errImageAssetMissing
 	}
 	a, err := h.Assets.Get(ctx, id)
 	if errors.Is(err, asset.ErrNotFound) {
-		return "", errImageAssetMissing
+		return "", "", errImageAssetMissing
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if addr, ok := asset.PublicAddress(a, h.publicBaseURL(ctx)); ok {
-		return addr, nil
+		return addr, a.Kind, nil
 	}
 	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
-		return "", errImageAssetNoURL
+		return "", "", errImageAssetNoURL
 	}
-	return a.URL, nil
+	return a.URL, a.Kind, nil
+}
+
+// resolveImageRef maps the editor's reference image to the address the
+// vendor fetches(图生视频单串/图生图列表共用):解引用与 kind 回答见
+// resolveMediaURL,这里只多拒空串。
+func (h *Handlers) resolveImageRef(ctx context.Context, ref string) (string, error) {
+	if ref == "" {
+		return "", errImageRefEmpty
+	}
+	addr, _, err := h.resolveMediaURL(ctx, ref)
+	return addr, err
 }
 
 // publicBaseURL reads the configured public base through the optional
@@ -480,12 +565,57 @@ func (h *Handlers) publicBaseURL(ctx context.Context) string {
 	return h.PublicBaseURL(ctx)
 }
 
+// resolveVideoRef maps one wire-form video reference (24 号票) onto the
+// resolved row form: the role must be known and its declared kind must
+// match; the address dereferences through resolveMediaURL, and a content-
+// addressed asset must carry the kind the role demands —— 首帧给了视频素
+// 材这类结构错误在落任务行之前就拒掉(http(s) 地址无从查证,声明 kind
+// 已与角色对齐)。角色数量上限由调用方在组装列表时按 maxVideoRefsByRole
+// 计数把关(这里只看单条形状)。
+func (h *Handlers) resolveVideoRef(ctx context.Context, in videoRefIn) (VideoRef, error) {
+	url := strings.TrimSpace(in.URL)
+	role := strings.TrimSpace(in.Role)
+	kind := strings.TrimSpace(in.Kind)
+	if url == "" {
+		return VideoRef{}, errVideoRefEmpty
+	}
+	wantKind, ok := videoRefRoleKind[role]
+	if !ok || kind != wantKind {
+		return VideoRef{}, errVideoRefBadRole
+	}
+	addr, assetKind, err := h.resolveMediaURL(ctx, url)
+	if err != nil {
+		return VideoRef{}, err
+	}
+	if utf8.RuneCountInString(addr) > maxImageRefRunes {
+		return VideoRef{}, errImageRefTooLong
+	}
+	if assetKind != "" && assetKind != wantKind {
+		return VideoRef{}, errVideoAssetKind
+	}
+	return VideoRef{URL: addr, Kind: kind, Role: role}, nil
+}
+
+// failVideoRef maps resolveVideoRef's sentinels onto their wire responses;
+// the shared address sentinels answer the same shapes as failImageRef.
+func (h *Handlers) failVideoRef(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errVideoRefEmpty),
+		errors.Is(err, errVideoRefBadRole),
+		errors.Is(err, errVideoAssetKind):
+		apierr.InvalidRequest(c, err.Error())
+	default:
+		h.failImageRef(c, err)
+	}
+}
+
 // failImageRef maps resolveImageRef's sentinels onto their wire responses.
 func (h *Handlers) failImageRef(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errImageAssetMissing):
 		apierr.NotFound(c, err.Error())
 	case errors.Is(err, errImageRefEmpty),
+		errors.Is(err, errImageRefTooLong),
 		errors.Is(err, errImageRefMalformed),
 		errors.Is(err, errImageRefInline),
 		errors.Is(err, errImageAssetNoURL):

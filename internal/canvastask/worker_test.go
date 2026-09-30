@@ -408,6 +408,65 @@ func TestWorkerVideoTaskReachesSuccessAndAsset(t *testing.T) {
 	}
 }
 
+// TestWorkerVideoTaskTranslatesStructuredRefs 覆盖 24 号票的提交翻译:
+// video_refs 按角色落位(first_frame → image、last_frame → last_image、
+// reference_* 进 references),ratio/size 直传,seconds 0(自动)原样交给
+// client 收线。
+func TestWorkerVideoTaskTranslatesStructuredRefs(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	gateway := &stubGateway{
+		submitFn: func(_ context.Context, _ canvastask.VideoRequest) (canvastask.VideoSubmitResult, error) {
+			return canvastask.VideoSubmitResult{TaskID: "vt_structured"}, nil
+		},
+		pollFn: func(_ int) (canvastask.VideoPoll, error) {
+			return canvastask.VideoPoll{Status: "succeeded", VideoURL: "https://vid.example/out.mp4"}, nil
+		},
+	}
+	runWorker(t, newTestWorker(store, gateway))
+
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	if _, err := store.Create(context.Background(), canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "video-2-1", Kind: canvastask.KindVideo,
+		Prompt: "首尾帧之间推进", Model: "vid-m", Seconds: 0,
+		Size: "720p", Ratio: "16:9",
+		VideoRefs: []canvastask.VideoRef{
+			{URL: "https://img.example/first.png", Kind: "image", Role: canvastask.RoleFirstFrame},
+			{URL: "https://img.example/last.png", Kind: "image", Role: canvastask.RoleLastFrame},
+			{URL: "https://img.example/style.png", Kind: "image", Role: canvastask.RoleReferenceImg},
+			{URL: "https://img.example/motion.mp4", Kind: "video", Role: canvastask.RoleReferenceVid},
+			{URL: "https://img.example/voice.mp3", Kind: "audio", Role: canvastask.RoleReferenceAud},
+		},
+		Status: canvastask.StatusQueued,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitTask(t, store, id)
+
+	subs := gateway.seenVideoSubmits()
+	if len(subs) != 1 {
+		t.Fatalf("video submits = %d, want 1", len(subs))
+	}
+	sub := subs[0]
+	if sub.Image != "https://img.example/first.png" {
+		t.Errorf("image = %q, want the first_frame ref", sub.Image)
+	}
+	if sub.LastImage != "https://img.example/last.png" {
+		t.Errorf("last_image = %q, want the last_frame ref", sub.LastImage)
+	}
+	if len(sub.References) != 3 ||
+		sub.References[0] != (canvastask.VideoRefRequest{URL: "https://img.example/style.png", Kind: "image"}) ||
+		sub.References[1] != (canvastask.VideoRefRequest{URL: "https://img.example/motion.mp4", Kind: "video"}) ||
+		sub.References[2] != (canvastask.VideoRefRequest{URL: "https://img.example/voice.mp3", Kind: "audio"}) {
+		t.Errorf("references = %+v, want the three generic refs with kinds", sub.References)
+	}
+	if sub.Seconds != 0 || sub.Size != "720p" || sub.Ratio != "16:9" {
+		t.Errorf("seconds/size/ratio = %d/%q/%q, want 0(auto)/720p/16:9 verbatim", sub.Seconds, sub.Size, sub.Ratio)
+	}
+}
+
 func TestWorkerVideoTaskFailsWithUpstreamReason(t *testing.T) {
 	store, _ := openTaskTestDB(t)
 	gateway := &stubGateway{

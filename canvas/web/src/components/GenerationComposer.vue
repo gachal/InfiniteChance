@@ -1,45 +1,70 @@
 <script setup lang="ts">
-// 生成对话框(21 号票):画布图片生成的统一入口,单实例悬浮层 —— 选中
-// 图片节点时由编辑器贴其正下方,未选中时停靠画布底部中央。组件只做
-// 渲染与事件:草稿(提示词/模型/尺寸)与参考图列表由编辑器持有(选中
-// 切换不清空),发送语义 = 提交画布任务。底栏的模式下拉本票仅「图片
-// 生成」一项,为后续视频/分析模式预留结构(ADR 0002)。
+// 生成对话框(21 号票图片模式;24 号票视频模式):画布生成的统一对话框,
+// 单实例悬浮层(范式见 ADR 0002)。组件只做渲染与事件:草稿(提示词/
+// 模型/尺寸/时长/参考条)由编辑器按模式独立持有(切换不清空),发送语义
+// = 提交画布任务。视频模式 = 文生视频/图生视频/首尾帧/多参考的组合形态,
+// 参考组合自然成模式,无显式模式 tab;选中视频节点时模式锁定视频(视频
+// 产物不能当生图参考),底栏模式下拉的「图片生成」禁选。
 import { computed, ref } from 'vue'
 
 import {
+  DURATION_PRESETS,
   MAX_COMPOSER_REFS,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
+  rolesForKind,
+  VIDEO_RESOLUTION_PRESETS,
+  VIDEO_ROLE_CAPS,
+  VIDEO_ROLE_LABEL,
+  videoPlaceholder,
   type ComposerRef,
+  type VideoComposerRef,
+  type VideoRefRole,
 } from '../composer'
 
 const props = defineProps<{
+  /** 当前模式:图片生成或视频生成(编辑器持有,切换不清空两套草稿)。 */
+  mode: 'image' | 'video'
+  /** 模式锁定(选中视频节点):模式下拉的图片生成禁选。 */
+  modeLocked: boolean
   /** 可用的按次计价生图模型(编辑器从 /image-models 拉取)。 */
-  models: string[]
-  /** 生效中的参考图列表(编辑器归并选中节点与上传条目)。 */
+  imageModels: string[]
+  /** 可用的按秒计价视频模型(编辑器从 /video-models 拉取)。 */
+  videoModels: string[]
+  /** 图片模式的生效参考图列表。 */
   refs: ComposerRef[]
-  /** 全局持久草稿:提示词/模型/比例/分辨率,不随选中切换清空。 */
+  /** 视频模式的全模态参考条(角色在 chip 上切换)。 */
+  videoRefs: VideoComposerRef[]
+  /** 当前模式的草稿:提示词/模型/比例/分辨率(视频分辨率为档位串)。 */
   prompt: string
   model: string
   ratio: string
   resolution: string
+  /** 视频模式草稿:时长档('' = 自动,不传 seconds)。 */
+  duration: string
   /** 提交在途(编辑器级状态,防连点)。 */
   generating: boolean
-  /** 参考图上传在途。 */
+  /** 参考上传在途。 */
   uploading: boolean
 }>()
 
 const emit = defineEmits<{
+  'update:mode': [value: 'image' | 'video']
   'update:prompt': [value: string]
   'update:model': [value: string]
   'update:ratio': [value: string]
   'update:resolution': [value: string]
+  'update:duration': [value: string]
   'remove-ref': [index: number]
+  'set-ref-role': [index: number, role: VideoRefRole]
   upload: [file: File]
   send: []
 }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
+
+const isVideo = computed(() => props.mode === 'video')
+const activeModels = computed(() => (isVideo.value ? props.videoModels : props.imageModels))
 
 const canSend = computed(
   () => props.prompt.trim().length > 0 && props.model !== '' && !props.generating,
@@ -47,7 +72,29 @@ const canSend = computed(
 
 const refsFull = computed(() => props.refs.length >= MAX_COMPOSER_REFS)
 
-/** 参考图上传的 kind 恒 image(18 号票入口),服务端按魔数最终裁决。 */
+/** 视频参考条还有空位:任一角色未满即可再收(appendVideoRef 会按角色
+ * 最终裁决,这里只决定加号按钮的可用态与提示)。 */
+const videoRefsVacant = computed(() =>
+  (Object.keys(VIDEO_ROLE_CAPS) as VideoRefRole[]).some(
+    (role) => props.videoRefs.filter((r) => r.role === role).length < VIDEO_ROLE_CAPS[role],
+  ),
+)
+
+const placeholder = computed(() =>
+  isVideo.value ? videoPlaceholder(props.videoRefs) : '描述画面,或对选中图片说明要改什么…',
+)
+
+const uploadAccept = computed(() => (isVideo.value ? 'image/*,video/*,audio/*' : 'image/*'))
+
+const uploadTitle = computed(() => {
+  if (isVideo.value) {
+    return videoRefsVacant.value ? '上传本机图片/视频/音频作为参考' : '各角色参考已满员'
+  }
+  return refsFull.value ? `最多 ${MAX_COMPOSER_REFS} 张参考图` : '上传本机图片作为参考图'
+})
+
+/** 参考上传:kind 由编辑器按文件 MIME/扩展名判断(图片模式下恒 image),
+ * 服务端按魔数最终裁决。 */
 function onFileChange(e: Event): void {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
@@ -64,7 +111,11 @@ function onFileChange(e: Event): void {
     class="composer"
     aria-label="生成对话框"
   >
-    <div class="ref-strip">
+    <!-- 图片模式:参考图缩略条 -->
+    <div
+      v-if="!isVideo"
+      class="ref-strip"
+    >
       <div
         v-for="(r, i) in refs"
         :key="r.url"
@@ -87,7 +138,7 @@ function onFileChange(e: Event): void {
         class="ref-add"
         type="button"
         :disabled="uploading || refsFull"
-        :title="refsFull ? `最多 ${MAX_COMPOSER_REFS} 张参考图` : '上传本机图片作为参考图'"
+        :title="uploadTitle"
         @click="fileInput?.click()"
       >
         {{ uploading ? '…' : '+' }}
@@ -101,18 +152,116 @@ function onFileChange(e: Event): void {
       >
     </div>
 
+    <!-- 视频模式:全模态参考条,角色标在 chip 上(图缩略,视频/音频图标
+         占位,不做波形与抽帧);图片 chip 的角色可切换。 -->
+    <div
+      v-else
+      class="ref-strip"
+    >
+      <div
+        v-for="(r, i) in videoRefs"
+        :key="r.url"
+        class="vref-chip"
+        :data-kind="r.kind"
+      >
+        <img
+          v-if="r.kind === 'image'"
+          :src="r.url"
+          alt="参考图"
+        >
+        <span
+          v-else
+          class="vref-icon"
+        >{{ r.kind === 'video' ? '▶' : '♪' }}</span>
+        <select
+          v-if="r.kind === 'image'"
+          class="vref-role"
+          :value="r.role"
+          :title="`角色(${VIDEO_ROLE_LABEL[r.role]})`"
+          @change="emit('set-ref-role', i, ($event.target as HTMLSelectElement).value as VideoRefRole)"
+        >
+          <option
+            v-for="role in rolesForKind('image')"
+            :key="role"
+            :value="role"
+          >
+            {{ VIDEO_ROLE_LABEL[role] }}
+          </option>
+        </select>
+        <span
+          v-else
+          class="vref-role fixed"
+        >{{ VIDEO_ROLE_LABEL[r.role] }}</span>
+        <button
+          class="ref-remove"
+          type="button"
+          title="移除该参考"
+          @click="emit('remove-ref', i)"
+        >
+          ×
+        </button>
+      </div>
+      <button
+        class="ref-add"
+        type="button"
+        :disabled="uploading || !videoRefsVacant"
+        :title="uploadTitle"
+        @click="fileInput?.click()"
+      >
+        {{ uploading ? '…' : '+' }}
+      </button>
+      <input
+        ref="fileInput"
+        type="file"
+        :accept="uploadAccept"
+        class="ref-file"
+        @change="onFileChange"
+      >
+    </div>
+
     <textarea
       :value="prompt"
-      placeholder="描述画面,或对选中图片说明要改什么…"
+      :placeholder="placeholder"
       rows="3"
       @input="emit('update:prompt', ($event.target as HTMLTextAreaElement).value)"
     />
 
     <div class="controls">
       <select
+        :value="mode"
+        class="mode"
+        title="生成模式(选中视频节点时锁定视频生成)"
+        @change="emit('update:mode', ($event.target as HTMLSelectElement).value as 'image' | 'video')"
+      >
+        <option
+          value="image"
+          :disabled="modeLocked"
+        >
+          图片生成
+        </option>
+        <option value="video">
+          视频生成
+        </option>
+      </select>
+      <select
+        v-if="isVideo"
+        :value="duration"
+        class="duration"
+        title="时长(自动 = 不传 seconds,由厂商缺省裁决)"
+        @change="emit('update:duration', ($event.target as HTMLSelectElement).value)"
+      >
+        <option
+          v-for="p in DURATION_PRESETS"
+          :key="p.value"
+          :value="p.value"
+        >
+          {{ p.label }}
+        </option>
+      </select>
+      <select
         :value="ratio"
         class="ratio"
-        title="画面比例(自动 = 由模型缺省裁决;单选比例按 1K 兜底)"
+        title="画面比例(自动 = 由模型缺省裁决)"
         @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
       >
         <option
@@ -124,6 +273,22 @@ function onFileChange(e: Event): void {
         </option>
       </select>
       <select
+        v-if="isVideo"
+        :value="resolution"
+        class="resolution"
+        title="分辨率档位(自动 = 由模型缺省裁决;档位串直传上游)"
+        @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
+      >
+        <option
+          v-for="p in VIDEO_RESOLUTION_PRESETS"
+          :key="p.value"
+          :value="p.value"
+        >
+          {{ p.label }}
+        </option>
+      </select>
+      <select
+        v-else
         :value="resolution"
         class="resolution"
         title="分辨率档位(自动 = 由模型缺省裁决;单选分辨率按 1:1 兜底)"
@@ -140,21 +305,17 @@ function onFileChange(e: Event): void {
       <select
         :value="model"
         class="model"
-        title="生图模型"
+        :title="isVideo ? '视频模型' : '生图模型'"
         @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
       >
         <option
-          v-for="m in models"
+          v-for="m in activeModels"
           :key="m"
           :value="m"
         >
           {{ m }}
         </option>
       </select>
-      <span
-        class="mode"
-        title="本票仅图片生成;视频/分析模式留待后续票"
-      >图片生成</span>
       <button
         class="send"
         type="button"
@@ -187,8 +348,9 @@ function onFileChange(e: Event): void {
 .ref-strip {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
   min-height: 48px;
+  flex-wrap: wrap;
 }
 
 .ref-chip {
@@ -205,6 +367,56 @@ function onFileChange(e: Event): void {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   display: block;
+}
+
+/* 视频参考 chip:图片缩略或图标占位,角色标记贴在底部。 */
+.vref-chip {
+  position: relative;
+  width: 64px;
+  flex-shrink: 0;
+  display: grid;
+  gap: 2px;
+  justify-items: stretch;
+}
+
+.vref-chip img {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  display: block;
+}
+
+.vref-icon {
+  width: 64px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: #aab1c5;
+  font-size: 18px;
+}
+
+.vref-role {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: inherit;
+  font-size: 10px;
+  padding: 1px 2px;
+}
+
+.vref-role.fixed {
+  text-align: center;
+  color: #8b91a7;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ref-remove {
@@ -270,6 +482,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .controls select {
@@ -282,7 +495,9 @@ textarea:focus {
   max-width: 150px;
 }
 
+.controls .mode,
 .controls .ratio,
+.controls .duration,
 .controls .resolution {
   flex-shrink: 0;
   max-width: 110px;
@@ -290,16 +505,7 @@ textarea:focus {
 
 .controls .model {
   flex: 1;
-  min-width: 0;
-}
-
-.mode {
-  flex-shrink: 0;
-  color: #8b91a7;
-  font-size: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 6px 10px;
+  min-width: 120px;
 }
 
 .send {

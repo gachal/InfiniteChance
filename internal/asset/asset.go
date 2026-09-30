@@ -14,10 +14,12 @@ import (
 	"time"
 )
 
-// Artifact kinds. 10 号票落了图片;12 号票的图生视频产物追加 video。
+// Artifact kinds. 10 号票落了图片;12 号票的图生视频产物追加 video;
+// 24 号票的视频参考音频追加 audio(上传素材进入,生成产物不产出音频)。
 const (
 	KindImage = "image"
 	KindVideo = "video"
+	KindAudio = "audio"
 )
 
 // ErrNotFound reports an asset id that has no row.

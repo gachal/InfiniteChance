@@ -117,7 +117,7 @@ curl -X POST $GATEWAY/v1/images/generations \
 #   恒返 url(VOD 产物即 FileUrl);内部「提交+轮询」同步封装,最长 10 分钟。
 ```
 
-带 `image`(参考图 URL,单个字符串或数组)即图生图(21 号票);`ratio` 显式宽高比优先于 `size` 推导:
+带 `image`(参考图 URL,单个字符串或数组)即图生图(22 号票);`ratio` 显式宽高比优先于 `size` 推导:
 
 ```bash
 curl -X POST $GATEWAY/v1/images/generations \
@@ -350,7 +350,7 @@ curl -X PUT $CANVAS/canvases/1/graph -H "Authorization: Bearer $TOKEN" \
 curl -X DELETE $CANVAS/canvases/1 -H "Authorization: Bearer $TOKEN"
 ```
 
-### 5.2 画布任务(文生图 / 图生视频)
+### 5.2 画布任务(文生图 / 图生图 / 视频生成)
 
 ```bash
 # 文生图
@@ -359,16 +359,24 @@ curl -X POST $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN" \
   -d '{"node_id":"n_image_1","kind":"image","prompt":"月光下奔跑的猫",
        "model":"og-image-2.5","size":"1024x1024"}'
 # → {"id":"ct_1a2b3c","canvas_id":1,"node_id":"n_image_1","kind":"image",
-#    "prompt":"...","model":"...","size":"1024x1024","seconds":0,
+#    "prompt":"...","model":"...","size":"1024x1024","ratio":"","seconds":0,
 #    "status":"queued","attempts":1,"asset_id":0,"image_url":"","video_url":"",
 #    "error":"","created_at":"..."}
 
-# 图生视频(参考图须是 http(s) 地址;seconds 1-100 缺省 5;模型须按秒计价)
+# 视频生成(24 号票对话框范式):video_refs 结构化参考,元素 {url,kind,role};
+#   role ∈ first_frame/last_frame/reference_image/reference_video/reference_audio,
+#   首帧/尾帧/参考图须 image、参考视频须 video、参考音频须 audio(素材引用按
+#   素材行 kind 校验),数量上限 1/1/4/1/1;seconds 缺省 = 自动(不传,厂商
+#   缺省;1-100 显式可传);size 为分辨率档位串(480p/720p/1080p);ratio 显式
+#   宽高比。无参考 = 文生视频;单串 image_url(12 号票旧形态)仍兼容。
 curl -X POST $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"node_id":"n_video_1","kind":"video","prompt":"猫向镜头跑来",
-       "model":"wan-video","seconds":5,
-       "image_url":"http://localhost:8081/assets/3/content"}'
+       "model":"wan-video","seconds":5,"size":"720p","ratio":"16:9",
+       "video_refs":[
+         {"url":"http://localhost:8081/assets/3/content","kind":"image","role":"first_frame"},
+         {"url":"https://cdn.example/ref.png","kind":"image","role":"reference_image"},
+         {"url":"http://localhost:8081/assets/9/content","kind":"audio","role":"reference_audio"}]}'
 
 # 列表 / 单查 / 重试(失败任务原地回队)/ 取消(仅视频)
 curl $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN"

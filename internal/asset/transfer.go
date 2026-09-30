@@ -151,14 +151,18 @@ func mediatype(v string) string {
 
 // extensionOf maps the mediatypes generated media actually arrives in to a
 // stable extension; unknown types file as .bin (预览不依赖扩展名,Content
-// 路由回给的是 content_type).
+// 路由回给的是 content_type)。audio/mp4 是例外:子类型 "mp4" 会落 .mp4,
+// 但音频惯例是 .m4a,按全类型先判。
 func extensionOf(contentType string) string {
+	if contentType == "audio/mp4" {
+		return ".m4a"
+	}
 	sub := contentType
 	if i := strings.Index(sub, "/"); i >= 0 {
 		sub = sub[i+1:]
 	}
 	switch sub {
-	case "png", "jpeg", "webp", "gif", "mp4", "webm", "mov":
+	case "png", "jpeg", "webp", "gif", "mp4", "webm", "mov", "flac", "ogg":
 		return "." + sub
 	case "jpg":
 		return ".jpeg"
@@ -166,16 +170,24 @@ func extensionOf(contentType string) string {
 		return ".mov"
 	case "x-msvideo":
 		return ".avi"
+	case "mpeg":
+		return ".mp3"
+	case "wav", "x-wav":
+		return ".wav"
 	default:
 		return ".bin"
 	}
 }
 
 func defaultContentType(kind string) string {
-	if kind == KindVideo {
+	switch kind {
+	case KindVideo:
 		return "video/mp4"
+	case KindAudio:
+		return "audio/mpeg"
+	default:
+		return "image/png"
 	}
-	return "image/png"
 }
 
 // splitDataURI decodes `data:<mime>;base64,<payload>` into its parts.

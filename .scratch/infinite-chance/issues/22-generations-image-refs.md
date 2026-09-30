@@ -1,4 +1,4 @@
-# 21 生图参考图:generations 的 image[] URL 形态与 ratio 参数
+# 22 生图参考图:generations 的 image[] URL 形态与 ratio 参数
 
 Type: grilling
 Status: implemented（2026-09-29 按草案实现:`internal/relay/vod.go` 扩展——`image` 参数(自定义 UnmarshalJSON 同时接受字符串与数组)、http(s) 校验/data: 拒绝/≤9 张 400、`ratio` 显式优先于 size 推导的 AspectRatio、Url 型 FileInfos 构造、Resolution 改长边 ≥2048 判 2K;relay 骨架与 edits 零改动(openai 渠道全量透传自然携带 image/ratio)。测试:单串/数组形态、约束四例、ratio 优先、长边尺寸表(2048x1152/1152x2048)、端到端 JSON+image[] 断言 FileInfos 与结算,go 17 包全绿;docs/api.md 3.5 增图生图示例。待补:画布素材参考图公网地址联动、网关代下载 Base64 回落）

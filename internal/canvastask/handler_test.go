@@ -3,6 +3,7 @@ package canvastask_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -339,7 +340,6 @@ func TestHandlerCreateTaskValidations(t *testing.T) {
 		{"未知画布", http.StatusNotFound, `{"node_id":"n","prompt":"p","model":"img-m"}`, "/canvases/99/tasks"},
 		{"缺 node_id", http.StatusBadRequest, `{"prompt":"p","model":"img-m"}`, "/canvases/7/tasks"},
 		{"未知 kind", http.StatusBadRequest, `{"node_id":"n","prompt":"p","model":"img-m","kind":"audio"}`, "/canvases/7/tasks"},
-		{"video 缺参考图", http.StatusBadRequest, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video"}`, "/canvases/7/tasks"},
 		{"video 参考图非 http", http.StatusBadRequest, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"data:image/png;base64,AAAA"}`, "/canvases/7/tasks"},
 		{"video 秒数越界", http.StatusBadRequest, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"https://img.example/a.png","seconds":101}`, "/canvases/7/tasks"},
 		{"video 秒数为零", http.StatusBadRequest, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"https://img.example/a.png","seconds":0}`, "/canvases/7/tasks"},
@@ -497,13 +497,13 @@ func TestHandlerCreateVideoTaskQueuesWork(t *testing.T) {
 	}
 	task := resp.Task
 	if !strings.HasPrefix(task.ID, "ct_") || task.Kind != "video" ||
-		task.Status != "queued" || task.Seconds != 5 {
-		t.Fatalf("task = %+v, want a queued video task defaulting to 5s", task)
+		task.Status != "queued" || task.Seconds != 0 {
+		t.Fatalf("task = %+v, want a queued video task with auto seconds (0)", task)
 	}
 	// 参考图与秒数落库(worker 提交网关时要用);参考图不进任务 JSON。
 	stored := env.tasks.tasks[task.ID]
-	if stored.ImageRef != "https://img.example/cat.png" || stored.Seconds != 5 {
-		t.Errorf("stored = %+v, want the reference image and clip length on the row", stored)
+	if stored.ImageRef != "https://img.example/cat.png" || stored.Seconds != 0 {
+		t.Errorf("stored = %+v, want the reference image on the row and seconds 0 (auto)", stored)
 	}
 
 	// 显式秒数生效。
@@ -516,6 +516,125 @@ func TestHandlerCreateVideoTaskQueuesWork(t *testing.T) {
 	}
 	if resp.Task.Seconds != 10 {
 		t.Errorf("seconds = %d, want 10", resp.Task.Seconds)
+	}
+}
+
+// TestHandlerCreateVideoTaskRefs 覆盖 24 号票的结构化参考:文生视频(无参考
+// 合法)、http(s) 透传、素材解引用与 kind 校验、角色数量上限、ratio/size
+// 直传;单串 image_url 旧形态照常兼容。
+func TestHandlerCreateVideoTaskRefs(t *testing.T) {
+	assets := fakeAssets{override: map[int64]asset.Asset{
+		8: {ID: 8, Kind: asset.KindVideo, URL: "https://img.example/clip.mp4"},
+		9: {ID: 9, Kind: asset.KindAudio, URL: "https://img.example/voice.mp3",
+			ObjectKey: "uploads/20260930/a.mp3"},
+	}}
+	env := newHandlerEnvWith(&okGateway{url: "x"}, assets, "")
+
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/canvases/7/tasks", strings.NewReader(body))
+		env.engine.ServeHTTP(w, req)
+		return w
+	}
+
+	// 文生视频:无任何参考、无 seconds,合法入队。
+	w := post(`{"node_id":"video-9-1","kind":"video","prompt":"p","model":"vid-m","ratio":"16:9","size":"720p"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("text-to-video status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID     string `json:"id"`
+			Ratio  string `json:"ratio"`
+			Size   string `json:"size"`
+			Second int64  `json:"seconds"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored := env.tasks.tasks[resp.Task.ID]
+	if len(stored.VideoRefs) != 0 || stored.ImageRef != "" ||
+		stored.Ratio != "16:9" || stored.Size != "720p" || stored.Seconds != 0 {
+		t.Errorf("text-to-video stored = %+v, want no refs, ratio/size verbatim, seconds 0", stored)
+	}
+	if resp.Task.Ratio != "16:9" {
+		t.Errorf("ratio echo = %q, want verbatim", resp.Task.Ratio)
+	}
+
+	// 结构化参考:http(s) 原样透传,素材内容寻址解出真实地址并校验 kind。
+	w = post(`{"node_id":"video-9-2","kind":"video","prompt":"p","model":"vid-m","seconds":5,"video_refs":[` +
+		`{"url":"https://img.example/first.png","kind":"image","role":"first_frame"},` +
+		`{"url":"/api/assets/5/content","kind":"image","role":"last_frame"},` +
+		`{"url":"/api/assets/8/content","kind":"video","role":"reference_video"},` +
+		`{"url":"https://img.example/extra.png","kind":"image","role":"reference_image"}]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("structured refs status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored = env.tasks.tasks[resp.Task.ID]
+	if len(stored.VideoRefs) != 4 {
+		t.Fatalf("stored refs = %+v, want 4", stored.VideoRefs)
+	}
+	// 顺序保留:第 2 条解析到素材 5 的厂商地址,第 3 条到视频素材 8。
+	if stored.VideoRefs[0].URL != "https://img.example/first.png" ||
+		stored.VideoRefs[1].URL != "https://img.example/ref.png" ||
+		stored.VideoRefs[2].URL != "https://img.example/clip.mp4" ||
+		stored.VideoRefs[3].URL != "https://img.example/extra.png" {
+		t.Errorf("resolved refs = %+v, want asset rows dereferenced in order", stored.VideoRefs)
+	}
+
+	// 角色与 kind 不符:首帧给了视频 kind。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[{"url":"https://a/b.mp4","kind":"video","role":"first_frame"}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "role") {
+		t.Errorf("role/kind mismatch = %d %s, want 400 naming the role", w.Code, w.Body.String())
+	}
+	// 素材 kind 与角色不符:图片素材当参考视频。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[{"url":"/api/assets/5/content","kind":"video","role":"reference_video"}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "种类") {
+		t.Errorf("asset kind mismatch = %d %s, want 400 naming the kind", w.Code, w.Body.String())
+	}
+	// 素材不存在:404。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[{"url":"/api/assets/404/content","kind":"image","role":"first_frame"}]}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("missing asset = %d, want 404", w.Code)
+	}
+	// 双首帧:超限拒收。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[` +
+		`{"url":"https://a/1.png","kind":"image","role":"first_frame"},` +
+		`{"url":"https://a/2.png","kind":"image","role":"first_frame"}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "超限") {
+		t.Errorf("double first frame = %d %s, want 400 cap rejection", w.Code, w.Body.String())
+	}
+	// 第五张参考图:超限拒收。
+	tooMany := `{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[`
+	for i := 0; i < 5; i++ {
+		if i > 0 {
+			tooMany += ","
+		}
+		tooMany += fmt.Sprintf(`{"url":"https://a/%d.png","kind":"image","role":"reference_image"}`, i)
+	}
+	tooMany += `]}`
+	w = post(tooMany)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("five reference images = %d, want 400", w.Code)
+	}
+	// data: URI 进不了参考契约。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[{"url":"data:image/png;base64,AAAA","kind":"image","role":"first_frame"}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "内联") {
+		t.Errorf("inline ref = %d %s, want 400 inline rejection", w.Code, w.Body.String())
+	}
+	// video_refs 与 image_url 同送:显式 400(两种形态混用是客户端 bug)。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","image_url":"https://a/1.png","video_refs":[{"url":"https://a/2.png","kind":"image","role":"first_frame"}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "不能同时") {
+		t.Errorf("both ref forms = %d %s, want 400", w.Code, w.Body.String())
+	}
+	// ratio 超长。
+	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","ratio":"` + strings.Repeat("1", 33) + `"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("long ratio = %d, want 400", w.Code)
 	}
 }
 
