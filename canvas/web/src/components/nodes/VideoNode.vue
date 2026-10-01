@@ -10,6 +10,8 @@ import { Handle, Position } from '@vue-flow/core'
 import type { CanvasTask } from '@infinitechance/api'
 
 import type { MediaNodeData } from '../../graph'
+import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import NodePorts from './NodePorts.vue'
 import MediaPrompt from './MediaPrompt.vue'
 
 const props = defineProps<{
@@ -28,6 +30,8 @@ const props = defineProps<{
   reverseGenerating: boolean
   /** 画布分析的在途标记(编辑器级状态,任一分析在途即禁用)。 */
   analyzing: boolean
+  /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
+  connectState?: ConnectState
 }>()
 
 const emit = defineEmits<{
@@ -35,6 +39,8 @@ const emit = defineEmits<{
   cancel: []
   'reverse-prompt': [payload: { model: string }]
   analyze: [payload: { model: string }]
+  /** 左右 + 按钮点击(30 号票两击连线):side 决定本节点作 source 还是 target。 */
+  'connect-start': [side: ConnectSide]
 }>()
 
 const status = computed(() => props.task?.status)
@@ -86,6 +92,7 @@ function submitAnalyze(): void {
 <template>
   <div
     class="node media video"
+    :class="connectState ? `connect-${connectState}` : undefined"
     :data-task="status ?? 'none'"
   >
     <header>视频</header>
@@ -193,6 +200,13 @@ function submitAnalyze(): void {
         </button>
       </div>
     </div>
+    <!-- 30 号票:左右常驻 + 按钮,两击连线的唯一入口;Handle 已视觉
+         隐藏,仅作边端点锚点。 -->
+    <NodePorts
+      :sides="['left', 'right']"
+      @start="emit('connect-start', $event)"
+    />
+
     <Handle
       type="source"
       :position="Position.Right"

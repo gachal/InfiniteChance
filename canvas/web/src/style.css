@@ -19,3 +19,69 @@ body {
   background: radial-gradient(1200px 800px at 80% -10%, #14284b 0%, #0d1524 55%, #090c14 100%);
   color: #e8eaf2;
 }
+
+/* ---- 两击连线(30 号票)----
+
+   Handle 拖拽连线移除:元素保留作 vue-flow 边端点锚点(opacity:0 保持
+   布局,边的左右锚点仍落在节点两侧),不响应任何指针;连线唯一入口 =
+   节点旁常驻 + 按钮。本文件在 main.ts 里晚于 vue-flow 样式导入,同权
+   重选择器按序覆盖。 */
+
+.vue-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* + 按钮锚定在节点根(vue-flow 包装层即节点包围盒),悬浮在节点左右
+   边缘外半枚;样式全局一份,四个节点组件共用。 */
+.vue-flow__node .node {
+  position: relative;
+}
+
+.port {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(13, 21, 36, 0.92);
+  color: #aab1c5;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.port:hover {
+  border-color: rgba(122, 162, 247, 0.85);
+  color: #fff;
+}
+
+.port-left {
+  left: -13px;
+}
+
+.port-right {
+  right: -13px;
+}
+
+/* 连接态:原点与合法目标描边高亮,非法目标置灰(不可作为连线终点)。 */
+.vue-flow__node .node.connect-origin {
+  border-color: rgba(122, 162, 247, 0.9);
+  box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.45);
+}
+
+.vue-flow__node .node.connect-valid {
+  border-color: rgba(74, 222, 128, 0.9);
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.4);
+}
+
+.vue-flow__node .node.connect-dimmed {
+  opacity: 0.3;
+}
+

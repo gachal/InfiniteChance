@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 画布编辑器:vue-flow 四类节点(Agent/图片/视频,17 号票起加分析;
-// 29 号票提示词节点升级为 Agent 并就地迁移)、自由拖拽连线、整图防抖
-// 自动保存与版本冲突处理(09 号票);文生图任务编排的客户端侧(10 号票):
-// 生成动作 → 结果节点先落库再提交 → 轮询任务 → 产物写回节点。
+// 29 号票提示词节点升级为 Agent 并就地迁移)、节点旁 + 按钮的两击连线
+// (30 号票)、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
+// 编排的客户端侧(10 号票):生成动作 → 结果节点先落库再提交 → 轮询
+// 任务 → 产物写回节点。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
@@ -50,6 +51,7 @@ import {
 } from '../composer'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
+import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
 import AssetPanel from '../components/AssetPanel.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
@@ -78,7 +80,9 @@ const {
   nodes: flowNodes,
   onConnect,
   onEdgesChange,
+  onNodeClick,
   onNodesChange,
+  onPaneClick,
   removeSelectedNodes,
   setEdges,
   setNodes,
@@ -115,6 +119,20 @@ const saveLabel = computed(() => {
       return '所有更改已保存'
   }
 })
+
+/** 程序化连线与两击连线(30 号票)共用的落边形状:id 形制
+ * `e-{source}-{target}`,Handle 锚点缺省(null)= 节点左右缘中点。 */
+function connectNodes(source: string, target: string): void {
+  addEdges([
+    {
+      id: `e-${source}-${target}`,
+      source,
+      target,
+      sourceHandle: null,
+      targetHandle: null,
+    },
+  ])
+}
 
 // ---- 生成任务(10 号票文生图,12 号票图生视频)----
 
@@ -209,15 +227,7 @@ async function submitImageTask(payload: {
       if (added) {
         addSelectedNodes([added])
       }
-      addEdges([
-        {
-          id: `e-${source.id}-${targetNodeId}`,
-          source: source.id,
-          target: targetNodeId,
-          sourceHandle: null,
-          targetHandle: null,
-        },
-      ])
+      connectNodes(source.id, targetNodeId)
     } else {
       updateNodeData(source.id, { prompt: payload.prompt, model: payload.model })
     }
@@ -676,15 +686,7 @@ async function submitVideoTask(payload: {
       if (added) {
         addSelectedNodes([added])
       }
-      addEdges([
-        {
-          id: `e-${source.id}-${targetNodeId}`,
-          source: source.id,
-          target: targetNodeId,
-          sourceHandle: null,
-          targetHandle: null,
-        },
-      ])
+      connectNodes(source.id, targetNodeId)
     } else {
       updateNodeData(source.id, { prompt: payload.prompt, model: payload.model })
     }
@@ -858,15 +860,7 @@ function landAgentNode(sourceNodeId: string, text: string): void {
       data: { text } satisfies AgentNodeData,
     },
   ])
-  addEdges([
-    {
-      id: `e-${sourceNodeId}-${newId}`,
-      source: sourceNodeId,
-      target: newId,
-      sourceHandle: null,
-      targetHandle: null,
-    },
-  ])
+  connectNodes(sourceNodeId, newId)
 }
 
 /** 视频反推提示词(13 号票):以视频节点持有的地址为输入,经网关多模态
@@ -965,15 +959,7 @@ async function onAnalyzeAction(
       data: initialData('analysis'),
     },
   ])
-  addEdges([
-    {
-      id: `e-${sourceNodeId}-${analysisId}`,
-      source: sourceNodeId,
-      target: analysisId,
-      sourceHandle: null,
-      targetHandle: null,
-    },
-  ])
+  connectNodes(sourceNodeId, analysisId)
   autosave.markDirty()
   const saved = await autosave.flush()
   if (!saved) {
@@ -996,6 +982,76 @@ async function onReanalyze(
     return
   }
   await runAnalysis(sourceId, analysisNodeId, payload)
+}
+
+// ---- 两击连线(30 号票)----
+
+// 连线唯一入口 = 节点旁常驻 + 按钮:点击进入连接态,预连线跟随鼠标,点
+// 目标节点完成(方向按 + 在左/右自动定),Esc/点空白/点非法节点取消。
+// 合法矩阵见 connection.ts;历史已存边不清洗不校验,程序化连线(反推落
+// 节点、对话框发送、分析动作)不经此路径照常直连。
+const connection = useConnection({
+  nodes: () => flowNodes.value,
+  onCommit: ({ source, target }) => {
+    // 同向边已存在时不重复建(id 形制与程序化连线一致,重复会串 id);
+    // 意图已表达,连接态照常退出。
+    const exists = flowEdges.value.some((e) => e.source === source && e.target === target)
+    if (!exists) {
+      connectNodes(source, target)
+    }
+  },
+})
+const connecting = computed(() => connection.active.value)
+
+/** 预连线起点:+ 所在节点在「连下游」时锚右缘中点、「接上游」时锚左缘
+ * 中点(画布区屏幕坐标,随视口缩放平移跟随 —— 与对话框悬浮同一换算)。 */
+const previewAnchor = computed(() => {
+  const p = connection.pending.value
+  if (!p) {
+    return null
+  }
+  const node = findNode(p.nodeId)
+  if (!node) {
+    return null
+  }
+  const vp = viewport.value
+  const w = node.dimensions?.width ?? 200
+  const h = node.dimensions?.height ?? 160
+  return {
+    x: vp.x + (node.position.x + (p.side === 'right' ? w : 0)) * vp.zoom,
+    y: vp.y + (node.position.y + h / 2) * vp.zoom,
+  }
+})
+
+// 连接态下点击节点只表达连线意图:暂关选区(elements-selectable),点击
+// 经 onNodeClick 进状态机;点空白经 onPaneClick 取消(vue-flow 自带的
+// 清空选区与其不冲突)。框选/拖动节点手势保持原样,不与连接态抢语义。
+onNodeClick(({ node }) => {
+  if (connection.pending.value) {
+    connection.clickNode(node.id)
+  }
+})
+onPaneClick(() => {
+  connection.cancel()
+})
+
+/** 预连线跟随:画布区屏幕坐标(与预连线 overlay 同一坐标系)。 */
+function onCanvasMouseMove(e: MouseEvent): void {
+  if (!connection.pending.value) {
+    return
+  }
+  const rect = wrapEl.value?.getBoundingClientRect()
+  if (!rect) {
+    return
+  }
+  connection.moveTo({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+}
+
+/** Esc 取消连接态(窗口级监听,连接态外按下无副作用)。 */
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    connection.cancel()
+  }
 }
 
 // 持久化文档:只保留语义字段,vue-flow 的内部装饰不落库。
@@ -1322,10 +1378,12 @@ onMounted(() => {
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('beforeunload', beforeUnload)
+  window.addEventListener('keydown', onGlobalKeydown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
+  window.removeEventListener('keydown', onGlobalKeydown)
   taskSync.stop()
 })
 
@@ -1473,6 +1531,7 @@ function backToList(): void {
     <div
       ref="wrapEl"
       class="canvas-wrap"
+      @mousemove="onCanvasMouseMove"
     >
       <div
         v-if="loading"
@@ -1484,6 +1543,8 @@ function backToList(): void {
         class="flow"
         :min-zoom="0.2"
         :max-zoom="2"
+        :nodes-connectable="false"
+        :elements-selectable="!connecting"
       >
         <Background :gap="24" />
         <template #node-agent="nodeProps">
@@ -1495,10 +1556,12 @@ function backToList(): void {
             :chat-models="promptModels"
             :prompt-generating="promptGenerating"
             :has-downstream="downstreamHasMedia.has(nodeProps.id)"
+            :connect-state="connection.stateOf(nodeProps.id)"
             @text-change="onTextChange(nodeProps.id, $event)"
             @send="onGeneratePrompt(nodeProps.id, $event)"
             @skill-change="onSkillChange(nodeProps.id, $event)"
             @deliver="onDeliver(nodeProps.id)"
+            @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
         <template #node-image="nodeProps">
@@ -1510,8 +1573,10 @@ function backToList(): void {
             :retrying="retryingNode === nodeProps.id"
             :chat-models="promptModels"
             :analyzing="analyzingNode !== ''"
+            :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
+            @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
         <template #node-video="nodeProps">
@@ -1525,10 +1590,12 @@ function backToList(): void {
             :chat-models="promptModels"
             :reverse-generating="videoReverseGenerating"
             :analyzing="analyzingNode !== ''"
+            :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @cancel="onCancelVideo(nodeProps.id)"
             @reverse-prompt="onReversePrompt(nodeProps.id, $event)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
+            @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
         <template #node-analysis="nodeProps">
@@ -1538,10 +1605,30 @@ function backToList(): void {
             :data="nodeProps.data"
             :chat-models="promptModels"
             :analyzing="analyzingNode === nodeProps.id"
+            :connect-state="connection.stateOf(nodeProps.id)"
             @analyze="onReanalyze(nodeProps.id, $event)"
+            @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
       </VueFlow>
+      <!-- 30 号票:连接态预连线(画布区屏幕坐标;pointer-events none,
+           不挡任何底层交互)。 -->
+      <svg
+        v-if="connecting && previewAnchor && connection.pointer.value"
+        class="connect-preview"
+      >
+        <line
+          :x1="previewAnchor.x"
+          :y1="previewAnchor.y"
+          :x2="connection.pointer.value.x"
+          :y2="connection.pointer.value.y"
+        />
+        <circle
+          :cx="connection.pointer.value.x"
+          :cy="connection.pointer.value.y"
+          r="5"
+        />
+      </svg>
       <GenerationComposer
         v-if="composerVisible"
         :style="composerStyle"
@@ -1582,7 +1669,7 @@ function backToList(): void {
     </div>
 
     <footer class="toolbar">
-      <span class="hint">拖拽节点排布,拖动端口连线。</span>
+      <span class="hint">拖拽节点排布,点节点旁 + 号连线(左接上游、右连下游)。</span>
       <span class="add-group">
         <button
           v-for="t in (['agent', 'image', 'video'] as const)"
@@ -1791,6 +1878,26 @@ function backToList(): void {
 .flow {
   width: 100%;
   height: 100%;
+}
+
+/* 30 号票:连接态预连线,盖在画布上但不接收任何指针事件。 */
+.connect-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.connect-preview line {
+  stroke: #7aa2f7;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.connect-preview circle {
+  fill: rgba(122, 162, 247, 0.9);
 }
 
 .primary {

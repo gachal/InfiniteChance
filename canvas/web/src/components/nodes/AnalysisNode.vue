@@ -8,6 +8,8 @@ import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
 import type { AnalysisNodeData } from '../../graph'
+import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import NodePorts from './NodePorts.vue'
 
 const props = defineProps<{
   id: string
@@ -17,10 +19,15 @@ const props = defineProps<{
   chatModels: string[]
   /** 本节点的分析请求在途(编辑器级状态)。 */
   analyzing: boolean
+  /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
+  connectState?: ConnectState
 }>()
 
 const emit = defineEmits<{
   analyze: [payload: { model: string }]
+  /** 左 + 按钮点击(30 号票两击连线):analysis 只接上游,不作连线源,
+   * 不渲染右 +。 */
+  'connect-start': [side: ConnectSide]
 }>()
 
 const hasText = computed(() => props.data.text.trim().length > 0)
@@ -69,6 +76,7 @@ async function copyText(): Promise<void> {
 <template>
   <div
     class="node analysis"
+    :class="connectState ? `connect-${connectState}` : undefined"
     :data-state="analyzing ? 'working' : hasText ? 'done' : 'empty'"
   >
     <header>分析</header>
@@ -133,6 +141,13 @@ async function copyText(): Promise<void> {
         暂无可用聊天模型
       </small>
     </div>
+    <!-- 30 号票:只渲染左 + —— 合法矩阵里 analysis 不作任何连线的源
+         (仅作为媒体节点的分析目标);Handle 已视觉隐藏,仅作边端点锚点。 -->
+    <NodePorts
+      :sides="['left']"
+      @start="emit('connect-start', $event)"
+    />
+
     <Handle
       type="source"
       :position="Position.Right"

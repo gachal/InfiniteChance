@@ -11,11 +11,9 @@ import { Handle, Position } from '@vue-flow/core'
 
 import type { PromptTemplateOption, SkillTarget } from '@infinitechance/api'
 
-import {
-  type AgentChatMessage,
-  type AgentNodeData,
-  agentRoundCount,
-} from '../../graph'
+import { type AgentChatMessage, type AgentNodeData, agentRoundCount } from '../../graph'
+import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import NodePorts from './NodePorts.vue'
 
 const props = defineProps<{
   id: string
@@ -29,6 +27,8 @@ const props = defineProps<{
   promptGenerating: boolean
   /** 本节点下游连线上是否存在媒体节点(决定「投递」是否可用)。 */
   hasDownstream: boolean
+  /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
+  connectState?: ConnectState
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +36,8 @@ const emit = defineEmits<{
   send: [payload: { template_id?: number; topic: string; model: string; history: AgentChatMessage[] }]
   'skill-change': [skillId: number | null]
   deliver: []
+  /** 左右 + 按钮点击(30 号票两击连线):side 决定本节点作 source 还是 target。 */
+  'connect-start': [side: ConnectSide]
 }>()
 
 const TARGET_LABEL: Record<SkillTarget, string> = {
@@ -204,7 +206,10 @@ function onDeliver(): void {
 </script>
 
 <template>
-  <div class="node agent">
+  <div
+    class="node agent"
+    :class="connectState ? `connect-${connectState}` : undefined"
+  >
     <header>Agent</header>
     <textarea
       :value="data.text"
@@ -346,6 +351,13 @@ function onDeliver(): void {
         </ul>
       </div>
     </div>
+
+    <!-- 30 号票:左右常驻 + 按钮,两击连线的唯一入口;Handle 已视觉
+         隐藏,仅作边端点锚点。 -->
+    <NodePorts
+      :sides="['left', 'right']"
+      @start="emit('connect-start', $event)"
+    />
 
     <Handle
       type="source"
