@@ -39,20 +39,28 @@ func NewClient(baseURL, key string) *Client {
 	}
 }
 
-// ChatRequest is one prompt generation: the fully rendered message (template
-// with the topic filled in) and the public chat model to run it on.
-// VideoURL / ImageURL make the call multimodal (13 号票视频反推、17 号票
-// 画布分析):the message carries the media ahead of the text as a
-// video_url / image_url content part — the OpenAI-compatible convention
-// vendors serving vision models accept. Both empty keeps the plain text
-// shape of the template-driven generation.
+// ChatMessage is one plain-text conversation turn (29 号票 Agent 多轮会话):
+// role ∈ user|assistant,content 即该轮文本。
+type ChatMessage struct {
+	Role    string
+	Content string
+}
+
+// ChatRequest is one chat call through the gateway. Two shapes share the
+// struct: the single-turn form (11/13/17 号票) carries Content as the
+// instruction text with VideoURL / ImageURL attaching a multimodal content
+// part ahead of the text; the multi-turn form (29 号票 Agent 会话) carries
+// the complete Conversation (plain text) and takes precedence when non-empty.
 // Source is the canvas origin mark (X-InfiniteChance-Source 值).
 type ChatRequest struct {
-	Model    string
+	Model  string
+	Source string
+	// 单轮形态:指令文本与可选媒体分节。
 	Content  string
 	VideoURL string
 	ImageURL string
-	Source   string
+	// 多轮形态:完整 messages 列表(纯文本),非空时优先于单轮形态。
+	Conversation []ChatMessage
 }
 
 // ChatResult is the model's answer, whitespace-trimmed.
@@ -65,13 +73,21 @@ type ChatResult struct {
 // A gateway rejection (OpenAI error object) or an empty answer is an error
 // carrying the reason back to the editor.
 func (c *Client) GenerateChat(ctx context.Context, req ChatRequest) (ChatResult, error) {
+	messages := make([]chatMessage, 0, len(req.Conversation)+1)
+	if len(req.Conversation) > 0 {
+		for _, m := range req.Conversation {
+			messages = append(messages, chatMessage{Role: m.Role, Content: m.Content})
+		}
+	} else {
+		messages = append(messages, userMessage(req))
+	}
 	body := struct {
 		Model    string        `json:"model"`
 		Messages []chatMessage `json:"messages"`
 		Stream   bool          `json:"stream"`
 	}{
 		Model:    req.Model,
-		Messages: []chatMessage{userMessage(req)},
+		Messages: messages,
 		Stream:   false,
 	}
 	payload, err := json.Marshal(body)

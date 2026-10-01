@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// 画布编辑器:vue-flow 四类节点(提示词/图片/视频,17 号票起加分析)、
-// 自由拖拽连线、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
-// 编排的客户端侧(10 号票):生成动作 → 结果节点先落库再提交 → 轮询
-// 任务 → 产物写回节点。
+// 画布编辑器:vue-flow 四类节点(Agent/图片/视频,17 号票起加分析;
+// 29 号票提示词节点升级为 Agent 并就地迁移)、自由拖拽连线、整图防抖
+// 自动保存与版本冲突处理(09 号票);文生图任务编排的客户端侧(10 号票):
+// 生成动作 → 结果节点先落库再提交 → 轮询任务 → 产物写回节点。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
@@ -18,13 +18,15 @@ import {
 
 import { useAuth } from '../auth'
 import {
+  type AgentChatMessage,
+  type AgentNodeData,
+  appendAgentTurn,
   initialData,
-  isCanvasNodeType,
   NODE_TYPE_LABEL,
+  normalizeNodeType,
   type CanvasNodeData,
   type CanvasNodeType,
   type MediaNodeData,
-  type PromptNodeData,
 } from '../graph'
 import {
   appendComposerRef,
@@ -52,9 +54,9 @@ import { canInsertRecord } from '../records'
 import AssetPanel from '../components/AssetPanel.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
+import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
-import PromptNode from '../components/nodes/PromptNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 
 const route = useRoute()
@@ -69,9 +71,11 @@ const {
   addEdges,
   addNodes,
   addSelectedNodes,
+  edges: flowEdges,
   findNode,
   fitView,
   getSelectedNodes,
+  nodes: flowNodes,
   onConnect,
   onEdgesChange,
   onNodesChange,
@@ -156,8 +160,7 @@ const generateError = ref('')
 const retryingNode = ref('')
 const cancelingNode = ref('')
 
-/** 图片任务的统一提交路径(10 号票纪律;21 号票对话框与提示词节点共
- * 用):结果节点与连线先入图并立即落库(autosave flush 跳过防抖),再
+/** 图片任务的统一提交路径(10 号票纪律;21 号票起对话框发送走这里):结果节点与连线先入图并立即落库(autosave flush 跳过防抖),再
  * 提交任务 —— 浏览器随后关闭,任务与节点都在服务端/图里,重开不丢。
  * 21 号票修订:source 是空占位图片节点(无产物、无任务绑定)时直接作
  * 为结果节点填入 —— 工具栏添加的图片节点即从零生成的锚点,不再新建;
@@ -243,17 +246,6 @@ async function submitImageTask(payload: {
   }
 }
 
-/** 提示词节点的生成动作(10 号票入口,保留):以节点文本提交文生图。 */
-async function onGenerate(promptNodeId: string, payload: { model: string }): Promise<void> {
-  const promptNode = findNode(promptNodeId)
-  const data = promptNode?.data as PromptNodeData | undefined
-  const text = data?.text.trim() ?? ''
-  if (!promptNode || text === '' || payload.model === '') {
-    return
-  }
-  await submitImageTask({ prompt: text, model: payload.model, sourceNodeId: promptNodeId })
-}
-
 // ---- 生成对话框(21 号票图片模式;24 号票视频模式)----
 
 const wrapEl = ref<HTMLDivElement | null>(null)
@@ -286,7 +278,7 @@ const uploadedVideoRefs = ref<VideoComposerRef[]>([])
 const detachedVideoFromSelection = ref(false)
 
 /** 对话框的上下文 = 最近选中的图片或视频节点(多选时取数组末位);空 =
- * 未选中(对话框不出现,提示词/分析节点不唤起 —— 维持现状)。 */
+ * 未选中(对话框不出现,Agent/分析节点不唤起 —— 维持现状)。 */
 const composerNode = computed(() => {
   const selected = getSelectedNodes.value.filter(
     (n) => n.type === 'image' || n.type === 'video',
@@ -722,11 +714,11 @@ async function submitVideoTask(payload: {
   }
 }
 
-// ---- 提示词生成(11 号票)与视频反推(13 号票)----
+// ---- Agent 会话(29 号票)与视频反推(13 号票)----
 
-// 模板与聊天模型目录。服务端按请求读表,管理端的增删改即刻生效;
+// 技能与聊天模型目录。服务端按请求读表,管理端的增删改即刻生效;
 // 这里负责前端目录的新鲜度:窗口重新聚焦时刷新(管理端常在另一窗口
-// 操作),模板失效导致生成失败时也立即刷新,让失效选项当场消失。
+// 操作),技能失效导致生成失败时也立即刷新,让失效 chip 当场收回。
 const promptTemplates = ref<PromptTemplateOption[]>([])
 const promptModels = ref<string[]>([])
 const promptGenerating = ref(false)
@@ -752,12 +744,13 @@ async function refreshCatalogs(): Promise<void> {
   }
 }
 
-/** 生成提示词:主题按模板经网关聊天生成,同步返回文本。结果落位 ——
- * 当前节点为空 → 直接写回本节点;已有内容 → 落为新提示词节点并连线
- * (派生关系可见)。文本落图后由自动保存收尾,无需先 flush。 */
+/** Agent 会话的一轮(29 号票):输入作本轮主题/修改意见,服务端把技能
+ * 渲染文本作首条指令、拼历史与本轮输入经网关聊天生成。结果写回本节点
+ * 文本区并追加进对话历史(20 轮上限截断最旧),随后沿连线自动投递。
+ * 技能刚被删/停用时立刻刷新目录,悬空 chip 当场收回。 */
 async function onGeneratePrompt(
   nodeId: string,
-  payload: { template_id: number; topic: string; model: string },
+  payload: { template_id?: number; topic: string; model: string; history: AgentChatMessage[] },
 ): Promise<void> {
   if (promptGenerating.value) {
     return
@@ -771,20 +764,18 @@ async function onGeneratePrompt(
   try {
     const result = await client.generatePrompt(canvasId, {
       node_id: nodeId,
-      template_id: payload.template_id,
+      ...(payload.template_id != null ? { template_id: payload.template_id } : {}),
       topic: payload.topic,
       model: payload.model,
+      ...(payload.history.length > 0 ? { history: payload.history } : {}),
     })
-    const data = node.data as PromptNodeData | undefined
-    if (data && data.text.trim() === '') {
-      updateNodeData(nodeId, { text: result.text })
-      autosave.markDirty()
-      return
-    }
-    landPromptNode(nodeId, result.text)
+    const messages = appendAgentTurn(payload.history, payload.topic, result.text)
+    updateNodeData(nodeId, { text: result.text, messages })
+    autosave.markDirty()
+    deliverPromptFrom(nodeId)
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '提示词生成失败,请稍后再试'
-    // 模板刚被删除/停用时本地目录已过期:立刻刷新,失效选项当场消失。
+    // 技能刚被删除/停用时本地目录已过期:立刻刷新,悬空 chip 当场收回。
     if (e instanceof ApiError && (e.status === 404 || e.code === 'template_disabled')) {
       void refreshCatalogs()
     }
@@ -793,21 +784,78 @@ async function onGeneratePrompt(
   }
 }
 
-/** 反推/派生的落图纪律(11/13 号票共用):生成的提示词恒落为新提示词
- * 节点,与来源节点连线(派生关系可见),图由自动保存收尾。 */
-function landPromptNode(sourceNodeId: string, text: string): void {
+/** 技能变更(选中/移除/悬空收回)= 开新会话:写 skill_id 并清空对话
+ * 历史(换技能清历史重算);文本草稿保留,已投递文本不受影响。 */
+function onSkillChange(nodeId: string, skillId: number | null): void {
+  updateNodeData(nodeId, {
+    ...(skillId != null ? { skill_id: skillId } : { skill_id: undefined }),
+    messages: [],
+  })
+  autosave.markDirty()
+}
+
+/** 投递(29 号票推模式):把 Agent 节点当前文本写进所有下游连线上的媒体
+ * 节点 prompt 字段(产物 url/asset_id 不动,仅覆盖 prompt;下游含分析
+ * 节点时只投媒体节点);无下游媒体节点时结果只留本节点。生成成功自动
+ * 投递一次,手改后可点「投递」重推。 */
+function deliverPromptFrom(agentNodeId: string): number {
+  const node = findNode(agentNodeId)
+  const data = node?.data as AgentNodeData | undefined
+  const text = data?.text.trim() ?? ''
+  if (!node || text === '') {
+    return 0
+  }
+  let delivered = 0
+  for (const edge of toObject().edges) {
+    if (edge.source !== agentNodeId) {
+      continue
+    }
+    const target = findNode(edge.target)
+    if (target && (target.type === 'image' || target.type === 'video')) {
+      updateNodeData(target.id, { prompt: text })
+      delivered += 1
+    }
+  }
+  if (delivered > 0) {
+    autosave.markDirty()
+  }
+  return delivered
+}
+
+function onDeliver(agentNodeId: string): void {
+  deliverPromptFrom(agentNodeId)
+}
+
+/** Agent 节点的「投递」按钮可用性 = 下游连线上存在媒体节点(按连线源
+ * 汇总,供节点禁用态)。 */
+const downstreamHasMedia = computed(() => {
+  const isMedia = new Set<string>()
+  const typeOf = (id: string) => flowNodes.value.find((n) => n.id === id)?.type
+  for (const edge of flowEdges.value) {
+    const t = typeOf(edge.target)
+    if (t === 'image' || t === 'video') {
+      isMedia.add(edge.source)
+    }
+  }
+  return isMedia
+})
+
+/** 反推/派生的落图纪律(11/13 号票共用,29 号票落点改 Agent):生成的
+ * 提示词恒落为新 Agent 节点,与来源节点连线(派生关系可见),图由自动
+ * 保存收尾;新会话无历史,文本可手编后投递下游媒体节点。 */
+function landAgentNode(sourceNodeId: string, text: string): void {
   const node = findNode(sourceNodeId)
   if (!node) {
     return
   }
   nodeSeq += 1
-  const newId = `prompt-${Date.now()}-${nodeSeq}`
+  const newId = `agent-${Date.now()}-${nodeSeq}`
   addNodes([
     {
       id: newId,
-      type: 'prompt',
+      type: 'agent',
       position: { x: node.position.x + 260, y: node.position.y },
-      data: { text },
+      data: { text } satisfies AgentNodeData,
     },
   ])
   addEdges([
@@ -822,8 +870,8 @@ function landPromptNode(sourceNodeId: string, text: string): void {
 }
 
 /** 视频反推提示词(13 号票):以视频节点持有的地址为输入,经网关多模态
- * 聊天同步分析;结果恒落为新提示词节点并与视频节点连线(派生关系可见,
- * 随后可直接从该节点发起生图/生视频形成闭环)。 */
+ * 聊天同步分析;结果恒落为新 Agent 节点并与视频节点连线(29 号票,原为
+ * 「新提示词节点」;连线不变),可手编后投递下游媒体节点形成闭环。 */
 async function onReversePrompt(
   videoNodeId: string,
   payload: { model: string },
@@ -844,7 +892,7 @@ async function onReversePrompt(
       video_url: data.url,
       model: payload.model,
     })
-    landPromptNode(videoNodeId, result.text)
+    landAgentNode(videoNodeId, result.text)
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '视频反推失败,请稍后再试'
   } finally {
@@ -985,7 +1033,7 @@ onConnect((params: Connection) => {
   addEdges([{ ...params }])
 })
 
-// 节点内容编辑(提示词文本)不产生变更事件:由节点上抛,这里落到
+// 节点内容编辑(Agent 文本草稿)不产生变更事件:由节点上抛,这里落到
 // flow 状态并标记脏。
 function onTextChange(nodeId: string, text: string): void {
   updateNodeData(nodeId, { text })
@@ -1008,7 +1056,7 @@ function addNode(type: CanvasNodeType): void {
   ])
   // 新节点成为唯一选中:空图片/视频占位节点即从零生成的锚点(24 号票),
   // 添加后对话框随即贴上(模式按节点类型自动定),不再要求用户多点一下。
-  // 提示词/分析节点选中也无害 —— 对话框只认图片/视频节点。
+  // Agent/分析节点选中也无害 —— 对话框只认图片/视频节点。
   removeSelectedNodes(getSelectedNodes.value)
   const added = findNode(id)
   if (added) {
@@ -1156,6 +1204,14 @@ async function applyServerGraph(detail: CanvasDetail): Promise<void> {
   await nextTick()
   // 水合触发的同步变更事件先落地,再认版本,避免把加载当成编辑。
   autosave.setVersion(detail.version)
+  // 读旧图的就地迁移(29 号票):存在 prompt 等旧类型值时立即触发一次
+  // 保存,让 agent 新值落库,而不是等下一次用户编辑才持久化。
+  const hasLegacyType = detail.graph.nodes.some(
+    (raw) => normalizeNodeType((raw as { type?: string }).type) !== (raw as { type?: string }).type,
+  )
+  if (hasLegacyType) {
+    autosave.markDirty()
+  }
   void fitView({ padding: 0.2, maxZoom: 1.2, duration: 120 })
 }
 
@@ -1167,7 +1223,9 @@ function normalizeNodes(detail: CanvasDetail) {
       position: { x: number; y: number }
       data?: CanvasNodeData
     }
-    const type = isCanvasNodeType(node.type) ? node.type : 'prompt'
+    // 读图归一(29 号票):类型值 prompt 就地映射为 agent,自动保存后
+    // 落库为新值;历史连线不清洗。
+    const type = normalizeNodeType(node.type)
     return {
       id: node.id,
       type,
@@ -1428,19 +1486,19 @@ function backToList(): void {
         :max-zoom="2"
       >
         <Background :gap="24" />
-        <template #node-prompt="nodeProps">
-          <PromptNode
+        <template #node-agent="nodeProps">
+          <AgentNode
             :id="nodeProps.id"
             :type="nodeProps.type"
             :data="nodeProps.data"
-            :models="imageModels"
-            :generating="generating"
-            :templates="promptTemplates"
+            :skills="promptTemplates"
             :chat-models="promptModels"
             :prompt-generating="promptGenerating"
+            :has-downstream="downstreamHasMedia.has(nodeProps.id)"
             @text-change="onTextChange(nodeProps.id, $event)"
-            @generate="onGenerate(nodeProps.id, $event)"
-            @generate-prompt="onGeneratePrompt(nodeProps.id, $event)"
+            @send="onGeneratePrompt(nodeProps.id, $event)"
+            @skill-change="onSkillChange(nodeProps.id, $event)"
+            @deliver="onDeliver(nodeProps.id)"
           />
         </template>
         <template #node-image="nodeProps">
@@ -1527,7 +1585,7 @@ function backToList(): void {
       <span class="hint">拖拽节点排布,拖动端口连线。</span>
       <span class="add-group">
         <button
-          v-for="t in (['prompt', 'image', 'video'] as const)"
+          v-for="t in (['agent', 'image', 'video'] as const)"
           :key="t"
           :class="`add-${t}`"
           type="button"
@@ -1787,7 +1845,7 @@ function backToList(): void {
   cursor: pointer;
 }
 
-.add-prompt {
+.add-agent {
   background: rgba(122, 162, 247, 0.2);
   color: #7aa2f7;
 }

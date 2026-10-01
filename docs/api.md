@@ -294,13 +294,14 @@ curl $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN"
 curl -X DELETE $GATEWAY/admin/prices/gpt-4o -H "Authorization: Bearer $TOKEN"
 ```
 
-### 4.4 提示词模板
+### 4.4 技能(原提示词模板,29 号票;API 路径不动)
 
 ```bash
 curl -X POST $GATEWAY/admin/prompt-templates -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"产品文案","template":"围绕主题 {topic} 写一条小红书文案","enabled":true}'
-# template 必须含 {topic} 占位符,否则拒绝。
+  -d '{"name":"产品文案","description":"围绕主题写一条小红书文案","template":"围绕主题 {topic} 写一条小红书文案","target":"any","enabled":true}'
+# template 必须含 {topic} 占位符,否则拒绝;description 可空,target ∈ image|video|any
+# (缺省 any,纯展示 + 画布技能浮层筛选,后端零行为)。
 curl $GATEWAY/admin/prompt-templates -H "Authorization: Bearer $TOKEN"
 curl -X PUT $GATEWAY/admin/prompt-templates/1 -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -408,13 +409,19 @@ curl -X POST $CANVAS/canvases/1/tasks/ct_1a2b3c/cancel -H "Authorization: Bearer
 ### 5.3 同步动作(不进任务队列)
 
 ```bash
-# 生成提示词(模板 + 主题 → 聊天模型;结果落为提示词节点)
+# 生成提示词(Agent 会话,29 号票:template_id 可选,缺省用内置通用
+# 「提示词书写」指令;history 为此前的对话轮次,不含本轮 topic ——
+# 服务端最终 messages = 技能渲染的首条指令 + 历史 + 本轮输入;
+# 结果写回 Agent 节点文本区并沿连线投递下游媒体节点)
 curl -X POST $CANVAS/canvases/1/generate-prompt -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"node_id":"n_prompt_1","template_id":1,"topic":"智能家居","model":"gpt-4o"}'
+  -d '{"node_id":"n_agent_1","template_id":1,"topic":"把色调改暖","model":"gpt-4o",
+       "history":[{"role":"user","content":"智能家居"},
+                  {"role":"assistant","content":"...上一轮提示词..."}]}'
 # → {"text":"..."}
 
-# 视频反推提示词(video_url 接受厂商 http(s) 地址或素材内容寻址路径)
+# 视频反推提示词(video_url 接受厂商 http(s) 地址或素材内容寻址路径;
+# 结果落为新 Agent 节点并与视频节点连线)
 curl -X POST $CANVAS/canvases/1/reverse-prompt -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"node_id":"n_v1","video_url":"/assets/5/content","model":"qwen-vl-max"}'
@@ -428,12 +435,12 @@ curl -X POST $CANVAS/canvases/1/analyze -H "Authorization: Bearer $TOKEN" \
 # → {"text":"..."}
 ```
 
-### 5.4 模型与模板目录(编辑器下拉用)
+### 5.4 模型与技能目录(编辑器下拉/浮层用)
 
 ```bash
 curl $CANVAS/image-models     -H "Authorization: Bearer $TOKEN"   # 次轨(call)模型
 curl $CANVAS/video-models     -H "Authorization: Bearer $TOKEN"   # 秒轨(second)模型
-curl $CANVAS/prompt-templates -H "Authorization: Bearer $TOKEN"   # 启用中的模板
+curl $CANVAS/prompt-templates -H "Authorization: Bearer $TOKEN"   # 启用中的技能(带 description/target)
 curl $CANVAS/prompt-models    -H "Authorization: Bearer $TOKEN"   # token 轨聊天模型
 ```
 

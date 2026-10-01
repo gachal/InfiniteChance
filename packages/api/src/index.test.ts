@@ -444,7 +444,9 @@ describe('ApiClient prompt templates (admin)', () => {
   const template: PromptTemplate = {
     id: 3,
     name: '文生图-中文',
+    description: '按主题写英文生图提示词',
     template: '请为主题「{topic}」写一段英文文生图提示词,只输出提示词本身。',
+    target: 'image',
     enabled: true,
     created_at: '2026-09-03T08:00:00Z',
     updated_at: '2026-09-03T08:00:00Z',
@@ -493,7 +495,9 @@ describe('ApiClient prompt templates (admin)', () => {
 
 describe('ApiClient prompt generation (canvas)', () => {
   it('listPromptTemplateCatalog unwraps the catalog envelope', async () => {
-    const options: PromptTemplateOption[] = [{ id: 3, name: '文生图-中文' }]
+    const options: PromptTemplateOption[] = [
+      { id: 3, name: '文生图-中文', description: '按主题写英文生图提示词', target: 'image' },
+    ]
     const fetchImpl = stubFetch(200, { templates: options })
     const client = clientWithBase(fetchImpl)
 
@@ -514,10 +518,14 @@ describe('ApiClient prompt generation (canvas)', () => {
     const client = clientWithBase(fetchImpl)
 
     const input: GeneratePromptInput = {
-      node_id: 'prompt-1-1',
+      node_id: 'agent-1-1',
       template_id: 3,
-      topic: '赛博朋克城市',
+      topic: '把色调改暖',
       model: 'chat-m',
+      history: [
+        { role: 'user', content: '赛博朋克城市' },
+        { role: 'assistant', content: 'a neon cyberpunk city' },
+      ],
     }
     await expect(client.generatePrompt(7, input)).resolves.toEqual({ text: 'a neon city at dusk' })
     const [url, init] = fetchImpl.mock.calls[0]

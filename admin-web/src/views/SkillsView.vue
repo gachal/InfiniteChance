@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// 提示词模板:画布「生成提示词」动作的底稿管理(11 号票)。
-// 模板内容须包含 {topic} 占位符,生成时替换为用户输入的主题;
-// 画布侧每次即时读库,这里的增删改立即生效。
+// 技能:Agent 节点经 `/` 调用的提示词底稿管理(11 号票建;29 号票由
+// 「提示词模板」更名演进)。template 须包含 {topic} 占位符,会话首条指令
+// 以主题替换;description/target 是技能卡的副标题与目标徽章(target 纯
+// 展示 + 浮层筛选,后端零行为);画布侧每次即时读库,这里的增删改立即生效。
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { ApiError, type PromptTemplate } from '@infinitechance/api'
+import { ApiError, type PromptTemplate, type SkillTarget } from '@infinitechance/api'
 
 import { authErrorMessage, useAuth } from '../auth'
 import AdminShell from '../components/AdminShell.vue'
@@ -20,19 +21,33 @@ const editingId = ref<number | null>(null)
 const saving = ref(false)
 const formError = ref('')
 
-interface TemplateForm {
+interface SkillForm {
   name: string
+  description: string
   template: string
+  target: SkillTarget
   enabled: boolean
 }
 
-function blankForm(): TemplateForm {
-  return { name: '', template: '', enabled: true }
+function blankForm(): SkillForm {
+  return { name: '', description: '', template: '', target: 'any', enabled: true }
 }
 
-const form = reactive<TemplateForm>(blankForm())
+const form = reactive<SkillForm>(blankForm())
 
-const formTitle = computed(() => (editingId.value === null ? '新建模板' : '编辑模板'))
+const formTitle = computed(() => (editingId.value === null ? '新建技能' : '编辑技能'))
+
+const TARGET_OPTIONS: { value: SkillTarget; label: string }[] = [
+  { value: 'any', label: '通用(图/视频皆可)' },
+  { value: 'image', label: '图片' },
+  { value: 'video', label: '视频' },
+]
+
+const TARGET_LABEL: Record<SkillTarget, string> = {
+  any: '通用',
+  image: '图',
+  video: '视频',
+}
 
 async function refresh(): Promise<void> {
   loading.value = true
@@ -57,7 +72,13 @@ function openCreate(): void {
 
 function openEdit(t: PromptTemplate): void {
   editingId.value = t.id
-  Object.assign(form, { name: t.name, template: t.template, enabled: t.enabled } satisfies TemplateForm)
+  Object.assign(form, {
+    name: t.name,
+    description: t.description,
+    template: t.template,
+    target: t.target,
+    enabled: t.enabled,
+  } satisfies SkillForm)
   formError.value = ''
   showForm.value = true
 }
@@ -71,7 +92,9 @@ function closeForm(): void {
 function buildInput() {
   return {
     name: form.name.trim(),
+    description: form.description.trim(),
     template: form.template.trim(),
+    target: form.target,
     enabled: form.enabled,
   }
 }
@@ -102,7 +125,9 @@ async function toggleEnabled(t: PromptTemplate): Promise<void> {
   try {
     await auth.client.updatePromptTemplate(t.id, {
       name: t.name,
+      description: t.description,
       template: t.template,
+      target: t.target,
       enabled: !t.enabled,
     })
     await refresh()
@@ -112,7 +137,7 @@ async function toggleEnabled(t: PromptTemplate): Promise<void> {
 }
 
 async function remove(t: PromptTemplate): Promise<void> {
-  if (!window.confirm(`确定删除模板「${t.name}」?该操作不可恢复。`)) {
+  if (!window.confirm(`确定删除技能「${t.name}」?该操作不可恢复。`)) {
     return
   }
   error.value = ''
@@ -133,15 +158,20 @@ function templateSummary(t: PromptTemplate): string {
 <template>
   <AdminShell>
     <div class="toolbar">
-      <h2>提示词模板</h2>
+      <h2>技能</h2>
       <button
         type="button"
         class="primary"
         @click="openCreate"
       >
-        新建模板
+        新建技能
       </button>
     </div>
+
+    <p class="muted">
+      技能是画布 Agent 节点经 <code>/</code> 调用的提示词底稿:名称与描述出现在技能卡上,
+      生成时模板内容中的 <code>{topic}</code> 占位符替换为用户输入的主题。
+    </p>
 
     <p
       v-if="error"
@@ -177,8 +207,29 @@ function templateSummary(t: PromptTemplate): string {
             type="text"
             required
             maxlength="128"
-            placeholder="例如 文生图-中文"
+            placeholder="例如 英文生图提示词"
           >
+        </label>
+        <label>
+          <span>描述(技能卡副标题,可空)</span>
+          <input
+            v-model="form.description"
+            type="text"
+            maxlength="200"
+            placeholder="例如 按主题写一段英文文生图提示词"
+          >
+        </label>
+        <label>
+          <span>目标(纯展示,供画布技能浮层筛选)</span>
+          <select v-model="form.target">
+            <option
+              v-for="o in TARGET_OPTIONS"
+              :key="o.value"
+              :value="o.value"
+            >
+              {{ o.label }}
+            </option>
+          </select>
         </label>
         <label class="check">
           <input
@@ -189,7 +240,7 @@ function templateSummary(t: PromptTemplate): string {
         </label>
 
         <label class="wide">
-          <span>模板内容(必须包含 {topic} 占位符,生成时替换为主题)</span>
+          <span>指令内容(必须包含 {topic} 占位符,生成时替换为主题)</span>
           <textarea
             v-model="form.template"
             rows="8"
@@ -223,13 +274,13 @@ function templateSummary(t: PromptTemplate): string {
       v-if="loading"
       class="muted"
     >
-      正在加载模板…
+      正在加载技能…
     </p>
     <p
       v-else-if="templates.length === 0"
       class="muted"
     >
-      还没有模板。点击「新建模板」给画布的提示词生成写底稿。
+      还没有技能。点击「新建技能」给画布的 Agent 节点写提示词底稿。
     </p>
 
     <section
@@ -240,6 +291,10 @@ function templateSummary(t: PromptTemplate): string {
       <div class="card-head">
         <h3>
           {{ t.name }}
+          <span
+            class="badge target"
+            :data-target="t.target"
+          >{{ TARGET_LABEL[t.target] ?? t.target }}</span>
           <span
             class="badge"
             :class="t.enabled ? 'ok' : 'off'"
@@ -271,8 +326,15 @@ function templateSummary(t: PromptTemplate): string {
       </div>
 
       <dl class="fields">
+        <div
+          v-if="t.description"
+          class="wide"
+        >
+          <dt>描述</dt>
+          <dd>{{ t.description }}</dd>
+        </div>
         <div class="wide">
-          <dt>模板内容</dt>
+          <dt>指令内容</dt>
           <dd>
             <code class="template-body">{{ templateSummary(t) }}</code>
           </dd>
@@ -289,9 +351,24 @@ function templateSummary(t: PromptTemplate): string {
 <style scoped src="../components/admin-ui.css"></style>
 
 <style scoped>
-/* 模板视图私有样式:模板内容预览。 */
+/* 技能视图私有样式:指令内容预览与目标徽章。 */
 .template-body {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.badge.target {
+  background: rgba(122, 162, 247, 0.16);
+  color: #7aa2f7;
+}
+
+.badge.target[data-target='video'] {
+  background: rgba(250, 204, 21, 0.14);
+  color: #facc15;
+}
+
+.badge.target[data-target='image'] {
+  background: rgba(74, 222, 128, 0.14);
+  color: #4ade80;
 }
 </style>

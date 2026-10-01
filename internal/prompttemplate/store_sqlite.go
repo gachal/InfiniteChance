@@ -21,25 +21,68 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore { return &SQLiteStore{DB: db} }
 
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS prompt_templates (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	name       TEXT      NOT NULL,
-	template   TEXT      NOT NULL,
-	enabled    INTEGER   NOT NULL DEFAULT 1,
-	created_at TEXT      NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-	updated_at TEXT      NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT      NOT NULL,
+	description TEXT      NOT NULL DEFAULT '',
+	template    TEXT      NOT NULL,
+	target      TEXT      NOT NULL DEFAULT 'any',
+	enabled     INTEGER   NOT NULL DEFAULT 1,
+	created_at  TEXT      NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+	updated_at  TEXT      NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
 
-// EnsureSchema creates the prompt_templates table when missing. 桌面库从零
-// 建起,MySQL 侧没有要迁移的老形态。幂等。
+// sqliteMigrations widens tables created by earlier desktop builds in place
+// (21 号票起与 MySQL 侧同款决策:CREATE TABLE IF NOT EXISTS 不会加宽已存在
+// 的表,存量 app.db 靠 PRAGMA table_info 检查后 ALTER)。Idempotent.
+var sqliteMigrations = []struct{ column, ddl string }{
+	{"description", "ALTER TABLE prompt_templates ADD COLUMN description TEXT NOT NULL DEFAULT ''"},
+	{"target", "ALTER TABLE prompt_templates ADD COLUMN target TEXT NOT NULL DEFAULT 'any'"},
+}
+
+// EnsureSchema creates the prompt_templates table when missing and widens an
+// existing one in place. 幂等。
 func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, sqliteSchema)
-	return err
+	if _, err := s.DB.ExecContext(ctx, sqliteSchema); err != nil {
+		return err
+	}
+	for _, m := range sqliteMigrations {
+		rows, err := s.DB.QueryContext(ctx, `PRAGMA table_info(prompt_templates)`)
+		if err != nil {
+			return err
+		}
+		found := false
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notNull, pk int
+			var dfltValue any
+			if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == m.column {
+				found = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if found {
+			continue
+		}
+		if _, err := s.DB.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func scanSQLiteRow(scan rowScanner) (Template, error) {
 	var t Template
 	var createdAt, updatedAt string
-	err := scan.Scan(&t.ID, &t.Name, &t.Template, &t.Enabled, &createdAt, &updatedAt)
+	err := scan.Scan(&t.ID, &t.Name, &t.Description, &t.Template, &t.Target, &t.Enabled, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Template{}, ErrNotFound
 	}
@@ -99,9 +142,9 @@ func (s *SQLiteStore) Create(ctx context.Context, t Template) (Template, error) 
 	// FormatTime 显式写入(创建时两个时间戳同值)。
 	stamped := sqlitedb.FormatTime(time.Now())
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO prompt_templates (name, template, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		t.Name, t.Template, t.Enabled, stamped, stamped)
+		`INSERT INTO prompt_templates (name, description, template, target, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Description, t.Template, t.Target, t.Enabled, stamped, stamped)
 	if err != nil {
 		return Template{}, err
 	}
@@ -114,8 +157,8 @@ func (s *SQLiteStore) Create(ctx context.Context, t Template) (Template, error) 
 
 func (s *SQLiteStore) Update(ctx context.Context, t Template) (Template, error) {
 	if _, err := s.DB.ExecContext(ctx,
-		`UPDATE prompt_templates SET name = ?, template = ?, enabled = ? WHERE id = ?`,
-		t.Name, t.Template, t.Enabled, t.ID); err != nil {
+		`UPDATE prompt_templates SET name = ?, description = ?, template = ?, target = ?, enabled = ? WHERE id = ?`,
+		t.Name, t.Description, t.Template, t.Target, t.Enabled, t.ID); err != nil {
 		return Template{}, err
 	}
 	// SQLite 计「WHERE 命中」的行,affected=0 即行不存在;但与 MySQL 版

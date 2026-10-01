@@ -34,27 +34,33 @@ func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 // templateJSON is the wire form of a template. The full instruction text is
 // admin-facing data — it round-trips so the edit form can show it.
 type templateJSON struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Template  string    `json:"template"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Template    string    `json:"template"`
+	Target      string    `json:"target"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func toTemplateJSON(t Template) templateJSON {
 	return templateJSON{
-		ID: t.ID, Name: t.Name, Template: t.Template, Enabled: t.Enabled,
+		ID: t.ID, Name: t.Name, Description: t.Description, Template: t.Template,
+		Target: t.Target, Enabled: t.Enabled,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }
 
 // templateInputJSON projects the wire body. enabled 缺省按启用处理:
-// 新建模板的预期状态就是可用,显式 false 才停用。
+// 新建模板的预期状态就是可用,显式 false 才停用;target 缺省 any(29 号票
+// 的展示字段,不给即无目标之分);description 缺省空串。
 type templateInputJSON struct {
-	Name     string `json:"name"`
-	Template string `json:"template"`
-	Enabled  *bool  `json:"enabled"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Template    string `json:"template"`
+	Target      string `json:"target"`
+	Enabled     *bool  `json:"enabled"`
 }
 
 func (raw templateInputJSON) input() Input {
@@ -62,11 +68,17 @@ func (raw templateInputJSON) input() Input {
 	if raw.Enabled != nil {
 		enabled = *raw.Enabled
 	}
-	return Input{Name: raw.Name, Template: raw.Template, Enabled: enabled}
+	return Input{
+		Name: raw.Name, Description: raw.Description, Template: raw.Template,
+		Target: raw.Target, Enabled: enabled,
+	}
 }
 
 func (in Input) row(id int64) Template {
-	return Template{ID: id, Name: in.Name, Template: in.Template, Enabled: in.Enabled}
+	return Template{
+		ID: id, Name: in.Name, Description: in.Description, Template: in.Template,
+		Target: in.Target, Enabled: in.Enabled,
+	}
 }
 
 type listResponse struct {

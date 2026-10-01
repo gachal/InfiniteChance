@@ -84,7 +84,7 @@ type Handlers struct {
 // RegisterRoutes mounts (relative to the group, which the binary mounts at
 // /canvases behind the JWT middleware, alongside the canvas CRUD routes):
 //
-//	POST /:id/generate-prompt — {node_id?, template_id, topic, model} → text
+//	POST /:id/generate-prompt — {node_id?, template_id?, topic, model, history?} → text
 //	POST /:id/reverse-prompt  — {node_id?, video_url, model} → text
 //	POST /:id/analyze         — {node_id?, media_url, media_kind, model} → text
 func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
@@ -94,10 +94,83 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 }
 
 type generateInput struct {
-	NodeID     string `json:"node_id"`
-	TemplateID int64  `json:"template_id"`
-	Topic      string `json:"topic"`
-	Model      string `json:"model"`
+	NodeID string `json:"node_id"`
+	// TemplateID 可选(29 号票技能改为可选):0/缺省 = 未选技能,用内置
+	// 通用「提示词书写」指令作首条;> 0 按技能目录裁决存在与启用。
+	TemplateID int64        `json:"template_id"`
+	Topic      string       `json:"topic"`
+	Model      string       `json:"model"`
+	History    []chatTurnIn `json:"history"`
+}
+
+// chatTurnIn is one history turn of the Agent node's multi-round conversation
+// (29 号票):role+content,user/assistant 交替,由编辑器随节点 data 持久化。
+type chatTurnIn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// agentHistoryMaxMessages 是服务端收下的历史消息条数上限:与前端「20 轮
+// 上限、超出截断最旧」的纪律同宽(一轮 = 一条 user + 一条 assistant),
+// 超限整单拒绝 —— 历史裁剪是编辑器的职责,服务端只挡明显失控的请求。
+const agentHistoryMaxMessages = 40
+
+// builtinPromptInstruction 是未选技能时的通用「提示词书写」首条指令(29
+// 号票,反推/分析固定指令先例):与技能同形带 {topic} 占位,渲染后作会话
+// 首条 user 消息。多轮里它钉住首轮主题,后续输入作为追加的 user 消息表达
+// 修改意见。
+const builtinPromptInstruction = "你是提示词工程师。本次对话的主题是「{topic}」:请据此写一段可直接用于 AI 生图或生视频模型的提示词," +
+	"覆盖主体与场景、构图与镜头、光影与色调、风格质感;" +
+	"主题之后的输入都是对当前提示词的修改意见,请在已有提示词的基础上按意见改写,保持前后连贯。" +
+	"只输出提示词本身,不要任何解释、前缀或分点,用一段连贯的文字完成。"
+
+// normalizeHistory validates the conversation history: 每轮 role 必须是
+// user|assistant、内容非空且与 topic 同宽,总轮数不超上限。
+func normalizeHistory(raw []chatTurnIn) ([]chatTurnIn, error) {
+	turns := make([]chatTurnIn, 0, len(raw))
+	for _, t := range raw {
+		role := strings.TrimSpace(t.Role)
+		content := strings.TrimSpace(t.Content)
+		if role != "user" && role != "assistant" {
+			return nil, fmt.Errorf("history 的 role 必须是 user 或 assistant")
+		}
+		if content == "" {
+			return nil, fmt.Errorf("history 的 content 不能为空")
+		}
+		if utf8.RuneCountInString(content) > maxTopicRunes {
+			return nil, fmt.Errorf("history 单条内容最多 %d 个字符", maxTopicRunes)
+		}
+		turns = append(turns, chatTurnIn{Role: role, Content: content})
+	}
+	if len(turns) > agentHistoryMaxMessages {
+		return nil, fmt.Errorf("history 最多 %d 条(20 轮),请在编辑器里开新会话", agentHistoryMaxMessages)
+	}
+	return turns, nil
+}
+
+// conversationMessages renders the final chat messages (29 号票验证点的
+// 形状):首条指令(技能渲染文本,技能可选)+ 历史 + 本轮输入。首轮主题
+// 取历史里最早一条 user 消息 —— 会话中指令钉住首轮主题,本轮输入只作为
+// 最后一条 user 消息表达修改意见;首轮(无历史)时指令即本轮输入,与
+// 11 号票的单次生成形状逐字节同形。
+func conversationMessages(instructionText string, history []chatTurnIn, topic string) []ChatMessage {
+	firstTopic := topic
+	for _, t := range history {
+		if t.Role == "user" {
+			firstTopic = t.Content
+			break
+		}
+	}
+	instruction := strings.ReplaceAll(instructionText, prompttemplate.TopicPlaceholder, firstTopic)
+	msgs := make([]ChatMessage, 0, len(history)+2)
+	msgs = append(msgs, ChatMessage{Role: "user", Content: instruction})
+	if len(history) > 0 {
+		for _, t := range history {
+			msgs = append(msgs, ChatMessage{Role: t.Role, Content: t.Content})
+		}
+		msgs = append(msgs, ChatMessage{Role: "user", Content: topic})
+	}
+	return msgs
 }
 
 // Generate renders the chosen template with the topic and relays it through
@@ -119,7 +192,7 @@ func (h *Handlers) Generate(c *gin.Context) {
 
 	var in generateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		apierr.InvalidRequest(c, "请求体必须是 {template_id, topic, model} JSON")
+		apierr.InvalidRequest(c, "请求体必须是 {template_id?, topic, model} JSON")
 		return
 	}
 	nodeID := strings.TrimSpace(in.NodeID)
@@ -127,8 +200,8 @@ func (h *Handlers) Generate(c *gin.Context) {
 		apierr.InvalidRequest(c, "node_id 最多 128 个字符")
 		return
 	}
-	if in.TemplateID < 1 {
-		apierr.InvalidRequest(c, "template_id 必须是正整数")
+	if in.TemplateID < 0 {
+		apierr.InvalidRequest(c, "template_id 必须是非负整数,0 表示不选技能")
 		return
 	}
 	topic := strings.TrimSpace(in.Topic)
@@ -149,19 +222,30 @@ func (h *Handlers) Generate(c *gin.Context) {
 		apierr.InvalidRequest(c, "model 名最多 200 个字符")
 		return
 	}
-
-	tpl, err := h.Templates.Get(c.Request.Context(), in.TemplateID)
-	if errors.Is(err, prompttemplate.ErrNotFound) {
-		apierr.NotFound(c, "提示词模板不存在或已被删除")
-		return
-	}
+	history, err := normalizeHistory(in.History)
 	if err != nil {
-		h.failStore(c, err)
+		apierr.InvalidRequest(c, err.Error())
 		return
 	}
-	if !tpl.Enabled {
-		apierr.Write(c, http.StatusBadRequest, "template_disabled", "提示词模板已停用")
-		return
+
+	// 技能可选(29 号票):未选技能时首条指令用内置通用「提示词书写」,
+	// 不查模板目录 —— 会话没有技能依赖,换技能才开新会话是编辑器语义。
+	instructionText := builtinPromptInstruction
+	if in.TemplateID > 0 {
+		tpl, err := h.Templates.Get(c.Request.Context(), in.TemplateID)
+		if errors.Is(err, prompttemplate.ErrNotFound) {
+			apierr.NotFound(c, "技能不存在或已被删除")
+			return
+		}
+		if err != nil {
+			h.failStore(c, err)
+			return
+		}
+		if !tpl.Enabled {
+			apierr.Write(c, http.StatusBadRequest, "template_disabled", "技能已停用")
+			return
+		}
+		instructionText = tpl.Template
 	}
 
 	// 发起前先看价:模型没有按 token 计价时,聊天注定被网关拒绝 ——
@@ -171,9 +255,9 @@ func (h *Handlers) Generate(c *gin.Context) {
 	}
 
 	result, err := h.Gateway.GenerateChat(c.Request.Context(), ChatRequest{
-		Model:   model,
-		Content: tpl.Render(topic),
-		Source:  canvasSource(canvasID, nodeID, "prompt"),
+		Model:        model,
+		Conversation: conversationMessages(instructionText, history, topic),
+		Source:       canvasSource(canvasID, nodeID, "prompt"),
 	})
 	if err != nil {
 		// 上游失败原样透出:额度不足、模型不可用等都是用户可行动的信息,
@@ -552,8 +636,9 @@ func (h *Handlers) failStore(c *gin.Context, err error) {
 	apierr.Internal(c, "服务内部错误,请稍后再试")
 }
 
-// CatalogHandlers serves the editor's template catalog: enabled templates
-// only, read from the store per request so admin edits land immediately.
+// CatalogHandlers serves the editor's skill catalog (29 号票 UI 改名,路径
+// 不动): enabled templates only, read from the store per request so admin
+// edits land immediately.
 type CatalogHandlers struct {
 	Templates TemplateSource
 }
@@ -561,14 +646,16 @@ type CatalogHandlers struct {
 // RegisterCatalogRoutes mounts (relative to the group, mounted at
 // /prompt-templates behind the JWT middleware):
 //
-//	GET / — enabled templates as {id, name} options
+//	GET / — enabled skills as {id, name, description, target} options
 func RegisterCatalogRoutes(group *gin.RouterGroup, h *CatalogHandlers) {
 	group.GET("", h.List)
 }
 
 type templateOptionJSON struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Target      string `json:"target"`
 }
 
 func (h *CatalogHandlers) List(c *gin.Context) {
@@ -580,7 +667,9 @@ func (h *CatalogHandlers) List(c *gin.Context) {
 	}
 	options := make([]templateOptionJSON, 0, len(templates))
 	for _, t := range templates {
-		options = append(options, templateOptionJSON{ID: t.ID, Name: t.Name})
+		options = append(options, templateOptionJSON{
+			ID: t.ID, Name: t.Name, Description: t.Description, Target: t.Target,
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{"templates": options})
 }

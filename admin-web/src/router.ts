@@ -41,9 +41,9 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/prompt-templates',
-      name: 'prompt-templates',
-      component: () => import('./views/PromptTemplatesView.vue'),
+      path: '/skills',
+      name: 'skills',
+      component: () => import('./views/SkillsView.vue'),
       meta: { requiresAuth: true },
     },
     {

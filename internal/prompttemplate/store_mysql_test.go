@@ -86,7 +86,13 @@ func TestMySQLPromptTemplateCreateGetRoundTrip(t *testing.T) {
 	store, _ := openTemplateTestDB(t)
 	ctx := context.Background()
 
-	created := seedTemplate(t, store, "文生图-中文", true)
+	created, err := store.Create(ctx, prompttemplate.Template{
+		Name: "文生图-中文", Description: "按主题写英文提示词", Target: prompttemplate.TargetImage,
+		Template: "为「" + prompttemplate.TopicPlaceholder + "」写提示词", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	if created.ID == 0 {
 		t.Fatal("created.ID = 0, want assigned")
 	}
@@ -103,6 +109,10 @@ func TestMySQLPromptTemplateCreateGetRoundTrip(t *testing.T) {
 	}
 	if got.Template != "为「{topic}」写提示词" {
 		t.Errorf("template = %q", got.Template)
+	}
+	// 29 号票技能列:描述与目标随行落库、原样读回。
+	if got.Description != "按主题写英文提示词" || got.Target != prompttemplate.TargetImage {
+		t.Errorf("skill fields = %q/%q, want carried round-trip", got.Description, got.Target)
 	}
 }
 

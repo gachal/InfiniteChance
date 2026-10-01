@@ -134,6 +134,39 @@ func TestGenerateChatPostsChatCompletionsWithServiceKeyAndSource(t *testing.T) {
 	}
 }
 
+// TestGenerateChatSendsConversationVerbatim 验证多轮形态(29 号票):
+// Conversation 非空时按原样作为 messages 上送,优先于单轮 Content。
+func TestGenerateChatSendsConversationVerbatim(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, chatCompletion("改后的提示词"))
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	if _, err := client.GenerateChat(context.Background(), promptgen.ChatRequest{
+		Model:  "chat-m",
+		Source: "canvas=7 node=agent-1-1 gen=prompt",
+		Conversation: []promptgen.ChatMessage{
+			{Role: "user", Content: "为主题「赛博朋克城市」写提示词"},
+			{Role: "assistant", Content: "a neon cyberpunk city"},
+			{Role: "user", Content: "把色调改暖"},
+		},
+	}); err != nil {
+		t.Fatalf("GenerateChat: %v", err)
+	}
+
+	messages, _ := gateway.last.Body["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %v, want the three conversation turns", gateway.last.Body["messages"])
+	}
+	first, _ := messages[0].(map[string]any)
+	if first["role"] != "user" || first["content"] != "为主题「赛博朋克城市」写提示词" {
+		t.Errorf("messages[0] = %v, want the instruction turn", first)
+	}
+	last, _ := messages[2].(map[string]any)
+	if last["role"] != "user" || last["content"] != "把色调改暖" {
+		t.Errorf("messages[2] = %v, want the current input turn", last)
+	}
+}
+
 func TestGenerateChatWithVideoSendsMultimodalContentParts(t *testing.T) {
 	gateway := newFakeGateway(http.StatusOK, chatCompletion("提示词"))
 	server := newGatewayServer(t, gateway)

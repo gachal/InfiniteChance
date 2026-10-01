@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -125,7 +126,7 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 
 	params := &envParams{
 		templates: fakeTemplates{byID: map[int64]prompttemplate.Template{
-			1: {ID: 1, Name: "文生图-中文", Template: "请为主题「{topic}」写一段英文文生图提示词,只输出提示词本身。", Enabled: true},
+			1: {ID: 1, Name: "文生图-中文", Description: "按主题写英文生图提示词", Template: "请为主题「{topic}」写一段英文文生图提示词,只输出提示词本身。", Target: prompttemplate.TargetImage, Enabled: true},
 			2: {ID: 2, Name: "已停用模板", Template: "{topic}", Enabled: false},
 		}},
 		assets: fakeAssets{byID: map[int64]asset.Asset{
@@ -240,12 +241,112 @@ func TestGenerateRendersTemplateAndRelaysThroughGateway(t *testing.T) {
 	if req.Model != "chat-m" {
 		t.Errorf("model = %q", req.Model)
 	}
-	// 模板改动即时生效的依据:内容按当次请求的模板渲染。
-	if req.Content != "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。" {
-		t.Errorf("content = %q, want topic filled into the template", req.Content)
+	// 模板改动即时生效的依据:内容按当次请求的模板渲染;首轮(无历史)
+	// 与 11 号票的单次生成同形 —— 指令即唯一一条消息。
+	want := []promptgen.ChatMessage{
+		{Role: "user", Content: "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。"},
+	}
+	if !reflect.DeepEqual(req.Conversation, want) {
+		t.Errorf("conversation = %+v, want %+v", req.Conversation, want)
 	}
 	if req.Source != "canvas=7 node=prompt-1-1 gen=prompt" {
 		t.Errorf("source = %q, want canvas origin mark", req.Source)
+	}
+}
+
+// TestGenerateWithoutSkillUsesBuiltinInstruction 验证技能可选(29 号票):
+// template_id 缺省时首条指令为内置通用「提示词书写」,同样渲染 {topic}。
+func TestGenerateWithoutSkillUsesBuiltinInstruction(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"topic": "海边的日落", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if len(req.Conversation) != 1 {
+		t.Fatalf("conversation = %+v, want a single instruction message", req.Conversation)
+	}
+	instruction := req.Conversation[0]
+	if instruction.Role != "user" {
+		t.Errorf("role = %q, want user", instruction.Role)
+	}
+	if !strings.Contains(instruction.Content, "海边的日落") ||
+		!strings.Contains(instruction.Content, "提示词") {
+		t.Errorf("content = %q, want the builtin prompt-writing brief with the topic", instruction.Content)
+	}
+	if strings.Contains(instruction.Content, "{topic}") {
+		t.Errorf("content = %q, want the placeholder rendered", instruction.Content)
+	}
+}
+
+// TestGenerateMultiRoundConversationShape 验证 29 号票验证点的最终 messages
+// 形状:首条指令(钉住首轮主题)+ 历史 + 本轮输入。
+func TestGenerateMultiRoundConversationShape(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id": 1,
+		"topic":       "把色调改暖",
+		"model":       "chat-m",
+		"history": []map[string]string{
+			{"role": "user", "content": "赛博朋克城市"},
+			{"role": "assistant", "content": "a neon cyberpunk city"},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	want := []promptgen.ChatMessage{
+		{Role: "user", Content: "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。"},
+		{Role: "user", Content: "赛博朋克城市"},
+		{Role: "assistant", Content: "a neon cyberpunk city"},
+		{Role: "user", Content: "把色调改暖"},
+	}
+	if !reflect.DeepEqual(req.Conversation, want) {
+		t.Errorf("conversation = %+v, want instruction + history + current input", req.Conversation)
+	}
+}
+
+func TestGenerateHistoryValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		history []map[string]string
+	}{
+		{"bad role", []map[string]string{{"role": "system", "content": "任意"}}},
+		{"empty content", []map[string]string{{"role": "user", "content": "  "}}},
+		{"oversized content", []map[string]string{{"role": "user", "content": strings.Repeat("长", 4001)}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+				"template_id": 1, "topic": "任意", "model": "chat-m", "history": tc.history,
+			})
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func TestGenerateHistoryOverCapAnswers400(t *testing.T) {
+	// 21 轮 = 42 条,超出服务端收下的 40 条上限;裁剪最旧是编辑器的职责。
+	history := make([]map[string]string, 0, 42)
+	for i := 0; i < 21; i++ {
+		history = append(history,
+			map[string]string{"role": "user", "content": fmt.Sprintf("主题 %d", i)},
+			map[string]string{"role": "assistant", "content": fmt.Sprintf("提示词 %d", i)})
+	}
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id": 1, "topic": "任意", "model": "chat-m", "history": history,
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
 	}
 }
 
@@ -333,7 +434,7 @@ func TestGenerateValidation(t *testing.T) {
 		body map[string]any
 	}{
 		{"missing topic", map[string]any{"template_id": 1, "model": "chat-m"}},
-		{"missing template_id", map[string]any{"topic": "任意", "model": "chat-m"}},
+		{"negative template_id", map[string]any{"template_id": -1, "topic": "任意", "model": "chat-m"}},
 		{"missing model", map[string]any{"template_id": 1, "topic": "任意"}},
 		{"oversized node_id", map[string]any{"template_id": 1, "topic": "任意", "model": "chat-m", "node_id": strings.Repeat("x", 200)}},
 	}
@@ -383,15 +484,18 @@ func TestGenerateSurfacesGatewayFailureAsUpstreamError(t *testing.T) {
 func TestTemplateCatalogListsEnabledOnlyAndReflectsAdminEdits(t *testing.T) {
 	env := newHandlerEnv(t, nil)
 
-	// 初始:启用中的模板可见,停用的不可见。
+	// 初始:启用中的技能可见,停用的不可见;目录项带描述与目标徽章字段
+	// (29 号票)。
 	res, raw := env.do(t, http.MethodGet, "/prompt-templates", nil)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
 	var got struct {
 		Templates []struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Target      string `json:"target"`
 		} `json:"templates"`
 	}
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
@@ -399,6 +503,9 @@ func TestTemplateCatalogListsEnabledOnlyAndReflectsAdminEdits(t *testing.T) {
 	}
 	if len(got.Templates) != 1 || got.Templates[0].ID != 1 {
 		t.Fatalf("templates = %+v, want only template 1", got.Templates)
+	}
+	if got.Templates[0].Description != "按主题写英文生图提示词" || got.Templates[0].Target != "image" {
+		t.Errorf("catalog item = %+v, want description and target carried", got.Templates[0])
 	}
 
 	// 管理端新建 → 画布侧下一次请求即见。

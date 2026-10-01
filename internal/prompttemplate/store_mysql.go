@@ -16,21 +16,49 @@ func NewMySQLStore(db *sql.DB) *MySQLStore { return &MySQLStore{DB: db} }
 
 const schema = `
 CREATE TABLE IF NOT EXISTS prompt_templates (
-	id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-	name       VARCHAR(128)  NOT NULL,
-	template   MEDIUMTEXT    NOT NULL,
-	enabled    TINYINT(1)    NOT NULL DEFAULT 1,
-	created_at TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-	updated_at TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+	id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+	name        VARCHAR(128)  NOT NULL,
+	description VARCHAR(200)  NOT NULL DEFAULT '',
+	template    MEDIUMTEXT    NOT NULL,
+	target      VARCHAR(16)   NOT NULL DEFAULT 'any',
+	enabled     TINYINT(1)    NOT NULL DEFAULT 1,
+	created_at  TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+	updated_at  TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
-// EnsureSchema creates the prompt_templates table when missing. Idempotent.
-func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, schema)
-	return err
+// migrations adds the 29 号票技能列 in place:CREATE TABLE IF NOT EXISTS
+// never widens an existing table, an already-deployed gateway DB must
+// upgrade without a rebuild. Idempotent.
+var migrations = []struct{ column, ddl string }{
+	{"description", "ALTER TABLE prompt_templates ADD COLUMN description VARCHAR(200) NOT NULL DEFAULT ''"},
+	{"target", "ALTER TABLE prompt_templates ADD COLUMN target VARCHAR(16) NOT NULL DEFAULT 'any'"},
 }
 
-const templateColumns = `id, name, template, enabled, created_at, updated_at`
+// EnsureSchema creates the prompt_templates table when missing and widens an
+// existing one in place. Idempotent.
+func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
+	if _, err := s.DB.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	for _, m := range migrations {
+		var count int
+		if err := s.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM information_schema.COLUMNS
+			 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'prompt_templates' AND COLUMN_NAME = ?`,
+			m.column).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := s.DB.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const templateColumns = `id, name, description, template, target, enabled, created_at, updated_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -38,7 +66,7 @@ type rowScanner interface {
 
 func scanRow(scan rowScanner) (Template, error) {
 	var t Template
-	err := scan.Scan(&t.ID, &t.Name, &t.Template, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
+	err := scan.Scan(&t.ID, &t.Name, &t.Description, &t.Template, &t.Target, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Template{}, ErrNotFound
 	}
@@ -88,8 +116,8 @@ func (s *MySQLStore) Get(ctx context.Context, id int64) (Template, error) {
 
 func (s *MySQLStore) Create(ctx context.Context, t Template) (Template, error) {
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO prompt_templates (name, template, enabled) VALUES (?, ?, ?)`,
-		t.Name, t.Template, t.Enabled)
+		`INSERT INTO prompt_templates (name, description, template, target, enabled) VALUES (?, ?, ?, ?, ?)`,
+		t.Name, t.Description, t.Template, t.Target, t.Enabled)
 	if err != nil {
 		return Template{}, err
 	}
@@ -102,8 +130,8 @@ func (s *MySQLStore) Create(ctx context.Context, t Template) (Template, error) {
 
 func (s *MySQLStore) Update(ctx context.Context, t Template) (Template, error) {
 	if _, err := s.DB.ExecContext(ctx,
-		`UPDATE prompt_templates SET name = ?, template = ?, enabled = ? WHERE id = ?`,
-		t.Name, t.Template, t.Enabled, t.ID); err != nil {
+		`UPDATE prompt_templates SET name = ?, description = ?, template = ?, target = ?, enabled = ? WHERE id = ?`,
+		t.Name, t.Description, t.Template, t.Target, t.Enabled, t.ID); err != nil {
 		return Template{}, err
 	}
 	// MySQL 只计「被更改」的行:affected=0 可能是行不存在,

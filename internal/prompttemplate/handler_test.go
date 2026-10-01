@@ -183,6 +183,11 @@ func TestCreateTemplateValidation(t *testing.T) {
 			body:    map[string]any{"name": "无占位", "template": "写一段风景提示词"},
 			wantMsg: "模板内容必须包含 {topic} 占位符,生成时会替换为输入的主题",
 		},
+		{
+			name:    "unknown target",
+			body:    map[string]any{"name": "错目标", "template": "{topic}", "target": "audio"},
+			wantMsg: "目标必须是 image、video 或 any",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,6 +201,51 @@ func TestCreateTemplateValidation(t *testing.T) {
 				t.Errorf("message = %q, want %q", message, tc.wantMsg)
 			}
 		})
+	}
+}
+
+// TestCreateTemplateCarriesDescriptionAndTarget 验证 29 号票技能字段:
+// description/target 随建随读,target 缺省 any。
+func TestCreateTemplateCarriesDescriptionAndTarget(t *testing.T) {
+	env := newHandlerEnv()
+	w := env.do(t, http.MethodPost, "/admin/prompt-templates", map[string]any{
+		"name":        "分镜技能",
+		"description": "  把主题拆成视频分镜提示词  ",
+		"template":    "为主题「{topic}」写视频提示词",
+		"target":      "video",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Description string `json:"description"`
+		Target      string `json:"target"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if created.Description != "把主题拆成视频分镜提示词" {
+		t.Errorf("description = %q, want trimmed", created.Description)
+	}
+	if created.Target != "video" {
+		t.Errorf("target = %q, want video", created.Target)
+	}
+
+	// target 缺省 → any。
+	w = env.do(t, http.MethodPost, "/admin/prompt-templates", map[string]any{
+		"name": "无目标", "template": "{topic}",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("default-target create: status = %d, want 201", w.Code)
+	}
+	var fallback struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &fallback); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if fallback.Target != "any" {
+		t.Errorf("target = %q, want any default", fallback.Target)
 	}
 }
 

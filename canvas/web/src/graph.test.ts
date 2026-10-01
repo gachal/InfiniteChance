@@ -1,0 +1,86 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  AGENT_MAX_HISTORY_MESSAGES,
+  type AgentChatMessage,
+  agentRoundCount,
+  appendAgentTurn,
+  initialData,
+  isCanvasNodeType,
+  normalizeNodeType,
+} from './graph'
+
+describe('normalizeNodeType', () => {
+  it('maps the legacy prompt type to agent in place', () => {
+    // 29 号票就地迁移:历史 prompt 节点的 text 直接成为 Agent 节点文本区
+    // 内容,无迁移损失。
+    expect(normalizeNodeType('prompt')).toBe('agent')
+  })
+
+  it('keeps the known types untouched', () => {
+    expect(normalizeNodeType('agent')).toBe('agent')
+    expect(normalizeNodeType('image')).toBe('image')
+    expect(normalizeNodeType('video')).toBe('video')
+    expect(normalizeNodeType('analysis')).toBe('analysis')
+  })
+
+  it('falls back to agent for unknown types', () => {
+    expect(normalizeNodeType('mystery')).toBe('agent')
+    expect(normalizeNodeType(undefined)).toBe('agent')
+  })
+})
+
+describe('isCanvasNodeType / initialData', () => {
+  it('accepts agent and rejects prompt', () => {
+    expect(isCanvasNodeType('agent')).toBe(true)
+    expect(isCanvasNodeType('prompt')).toBe(false)
+  })
+
+  it('seeds agent nodes with an empty text draft', () => {
+    expect(initialData('agent')).toEqual({ text: '' })
+    expect(initialData('image')).toEqual({ url: '', note: '' })
+  })
+})
+
+describe('appendAgentTurn', () => {
+  it('appends the user input and the assistant answer as one round', () => {
+    const next = appendAgentTurn([], '赛博朋克城市', 'a neon cyberpunk city')
+    expect(next).toEqual([
+      { role: 'user', content: '赛博朋克城市' },
+      { role: 'assistant', content: 'a neon cyberpunk city' },
+    ])
+  })
+
+  it('keeps alternation across rounds without mutating the input', () => {
+    const seed: AgentChatMessage[] = [{ role: 'user', content: '主题' }]
+    const next = appendAgentTurn(seed, '把色调改暖', 'warmer tones')
+    expect(seed).toEqual([{ role: 'user', content: '主题' }])
+    // 悬空的 user 消息保留,新轮按 user+assistant 追加。
+    expect(next.map((m) => m.role)).toEqual(['user', 'user', 'assistant'])
+  })
+
+  it('truncates the oldest messages beyond the 20-round cap', () => {
+    let history: AgentChatMessage[] = []
+    for (let i = 0; i < 25; i++) {
+      history = appendAgentTurn(history, `主题 ${i}`, `提示词 ${i}`)
+    }
+    expect(history.length).toBe(AGENT_MAX_HISTORY_MESSAGES)
+    // 最旧的 5 轮被截掉:剩余首轮是第 5 轮的 user 消息。
+    expect(history[0]).toEqual({ role: 'user', content: '主题 5' })
+    expect(history[history.length - 1]).toEqual({ role: 'assistant', content: '提示词 24' })
+  })
+})
+
+describe('agentRoundCount', () => {
+  it('counts user messages as rounds', () => {
+    expect(agentRoundCount([])).toBe(0)
+    expect(
+      agentRoundCount([
+        { role: 'user', content: 'a' },
+        { role: 'assistant', content: 'b' },
+        { role: 'user', content: 'c' },
+        { role: 'assistant', content: 'd' },
+      ]),
+    ).toBe(2)
+  })
+})

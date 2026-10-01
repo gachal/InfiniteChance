@@ -126,14 +126,22 @@ export interface QuotaEntry {
   created_at: string
 }
 
-// ---- 网关管理:提示词模板(挂 /admin/prompt-templates,需 JWT 会话)----
+// ---- 网关管理:技能(挂 /admin/prompt-templates,需 JWT 会话)----
 
-/** 一条提示词模板:template 内含 {topic} 占位符,画布生成提示词时以
- * 输入的主题替换;画布侧动作每次即时读库,增删改立即生效(11 号票)。 */
+/** 技能目标徽章(29 号票):纯展示与 `/` 浮层筛选,后端零行为、投递不
+ * 校验;any = 无目标之分(缺省)。 */
+export type SkillTarget = 'image' | 'video' | 'any'
+
+/** 一条技能(原「提示词模板」,29 号票更名;表名与 API 路径不动):
+ * template 内含 {topic} 占位符,Agent 会话首条指令以主题替换;画布侧动作
+ * 每次即时读库,增删改立即生效(11 号票)。description 是技能卡副标题
+ * (可空),target 是目标徽章。 */
 export interface PromptTemplate {
   id: number
   name: string
+  description: string
   template: string
+  target: SkillTarget
   enabled: boolean
   created_at: string
   updated_at: string
@@ -141,7 +149,10 @@ export interface PromptTemplate {
 
 export interface PromptTemplateInput {
   name: string
+  description?: string
   template: string
+  /** 缺省 any。 */
+  target?: SkillTarget
   /** 缺省视为启用;显式 false 停用。 */
   enabled?: boolean
 }
@@ -233,22 +244,35 @@ export interface CreateCanvasTaskInput {
   seconds?: number
 }
 
-/** 画布侧提示词模板目录项(仅启用中的模板,只带 id 与名字)。 */
+/** 画布侧技能目录项(仅启用中的技能;29 号票带描述与目标徽章)。 */
 export interface PromptTemplateOption {
   id: number
   name: string
+  description: string
+  target: SkillTarget
 }
 
-/** 生成提示词的请求体:template_id 选模板,topic 为输入的主题,
- * model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
+/** Agent 节点多轮对话的一轮(29 号票):role+content 随节点 data 持久化
+ * (整图 JSON),20 轮上限超出截断最旧。 */
+export interface AgentChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/** 生成提示词的请求体(29 号票 Agent 会话):template_id 可选 —— 缺省/
+ * 0 = 未选技能,服务端用内置通用「提示词书写」指令作首条;topic 为本轮
+ * 输入(主题或修改意见);history 为此前的对话轮次(不含本轮,不含首条
+ * 指令 —— 那由服务端按技能即时渲染);model 是 token 轨聊天模型;
+ * node_id 可选,用于用量归因。 */
 export interface GeneratePromptInput {
   node_id?: string
-  template_id: number
+  template_id?: number
   topic: string
   model: string
+  history?: AgentChatMessage[]
 }
 
-/** 生成提示词的响应:文本由编辑器写入当前节点或新建提示词节点。 */
+/** 生成提示词的响应:文本由编辑器写入 Agent 节点文本区并沿连线投递。 */
 export interface GeneratePromptResult {
   text: string
 }
@@ -262,7 +286,7 @@ export interface ReversePromptInput {
   model: string
 }
 
-/** 视频反推提示词的响应:文本由编辑器落为新的提示词节点。 */
+/** 视频反推提示词的响应:文本由编辑器落为新的 Agent 节点(29 号票)。 */
 export interface ReversePromptResult {
   text: string
 }
@@ -691,7 +715,7 @@ export class ApiClient {
     return body.models
   }
 
-  /** 可用于提示词生成的模板目录(仅启用,画布侧每次即时读库)。 */
+  /** 可用于 Agent 会话的技能目录(仅启用,画布侧每次即时读库)。 */
   async listPromptTemplateCatalog(): Promise<PromptTemplateOption[]> {
     const body = await this.request<{ templates: PromptTemplateOption[] }>('/prompt-templates')
     return body.templates
@@ -703,7 +727,8 @@ export class ApiClient {
     return body.models
   }
 
-  /** 生成提示词:canvas/server 经网关聊天接口按模板渲染,同步返回文本。 */
+  /** 生成提示词(Agent 会话,29 号票):canvas/server 把技能渲染文本作
+   * 首条指令、拼历史与本轮输入经网关聊天接口生成,同步返回文本。 */
   generatePrompt(canvasId: number, input: GeneratePromptInput): Promise<GeneratePromptResult> {
     return this.request<GeneratePromptResult>(`/canvases/${canvasId}/generate-prompt`, {
       method: 'POST',

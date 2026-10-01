@@ -20,17 +20,17 @@
 
 - vue-flow 编辑器:提示词/图片/视频节点 + 连线,整图 JSON 乐观锁自动保存;画布列表与 CRUD。
 - 文生图与图生视频:canvas/server worker 编排(FIFO 认领、并发上限、失败重试、取消、重启孤儿回队恢复),浏览器关掉任务照跑;产物落素材库并写回节点,视频支持参考图与时长。
-- 生成提示词与视频反推提示词:同步聊天调用、按 token 计费;管理端维护的提示词模板(含 `{topic}` 占位符)增删改即时生效,无缓存无同步。
+- 生成提示词与视频反推提示词:同步聊天调用、按 token 计费;管理端维护的技能,原提示词模板(含 `{topic}` 占位符)增删改即时生效,无缓存无同步。
 - 素材库:任务成功即把产物转存自有存储(S3 兼容接口 `objectstore`,MVP 落地本地卷,不依赖厂商临时 URL);跨画布复用走内容寻址 `/assets/{id}/content`,素材面板与管理端素材页共用同一列表 API。
 
-**管理后台(admin-web)**:仪表盘(双服务健康)、渠道(含一键连通测试)、API Keys(创建/吊销/额度充值)、用量审计、提示词模板、素材库。模型价格暂走 admin API(`/admin/pricing`),尚无页面。
+**管理后台(admin-web)**:仪表盘(双服务健康)、渠道(含一键连通测试)、API Keys(创建/吊销/额度充值)、用量审计、技能(提示词模板)、素材库。模型价格暂走 admin API(`/admin/pricing`),尚无页面。
 
 ## API 面
 
 | 挂载点 | 鉴权 | 内容 |
 | --- | --- | --- |
 | gateway `/v1/*` | API key(Bearer `sk-…`) | OpenAI 兼容中转面,见上;错误统一 OpenAI error object,code 区分 `invalid_api_key` / `insufficient_quota` / `model_not_priced` 等 |
-| gateway `/admin/*` | JWT 会话 | 渠道、API keys、模型价格、提示词模板的 CRUD,用量日志与汇总查询 |
+| gateway `/admin/*` | JWT 会话 | 渠道、API keys、模型价格、技能(提示词模板)的 CRUD,用量日志与汇总查询 |
 | gateway `/auth/*` | `status`/`init`/`login` 公开,`me` 需 JWT | 单管理员会话 |
 | canvas `/canvases` | JWT 会话 | 画布 CRUD + `PUT /:id/graph` 整图保存;`:id/tasks` 创建/查询/重试/取消;`:id/generate-prompt`、`:id/reverse-prompt` 同步动作 |
 | canvas 目录端点 | JWT 会话 | `/image-models`、`/video-models`、`/prompt-templates`(仅启用)、`/prompt-models`(token 轨) |
