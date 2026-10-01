@@ -1,6 +1,6 @@
 # AGENTS.md — 编码代理工作指南
 
-InfiniteChance:自用 LLM Token 网关(OpenAI 兼容中转)+ 无限画布创作工具。**单管理员、单用户形态**——没有注册、支付、多租户,不要往代码里加这些。文档与代码注释以中文为主;提交 subject 用英文(见「提交与验证纪律」)。
+InfiniteChance:自用 LLM Token 网关(OpenAI 兼容中转)+ 无限画布创作工具。**单管理员、单用户形态**——没有注册、支付、多租户,不要往代码里加这些。文档、代码注释与提交信息均以中文为主(见「提交与验证纪律」)。
 
 ## 必读文档(改动前先查,按优先级)
 
@@ -81,6 +81,6 @@ go run ./canvas/server    # 宿主机直跑画布服务
 
 ## 提交与验证纪律
 
-- 提交信息:Conventional Commits,subject 用英文、正文英文段落 + 按域分点,票号放行尾括号,如 `feat(asset): Tencent COS storage driver and relay image persistence (23 号票)`;docs 类提交不带票号。
+- 提交信息:Conventional Commits,**自 2026-10-01 起 subject 与正文一律用中文**;类型前缀(`feat`/`fix`/`docs`/`chore` 等)保留英文,正文中文段落 + 按域分点,票号放行尾括号,如 `feat(asset): 腾讯云 COS 存储驱动与生图转存落桶(23 号票)`;docs 类提交不带票号。此前历史提交为英文,不作回改。
 - **静默补丁必须回验**:字符串替换后 grep 确认真的生效;tsc/lint 通过 ≠ UI 存在;改完跑 `make test` 与 `make lint`,动前端后要实际构建或打开页面确认。
 - 管理台已知缺口:模型价格页(`/admin/prices` 有 API 无 UI,配价走 curl);旧渠道编辑页面会重置能力位——动渠道表单时留意。
