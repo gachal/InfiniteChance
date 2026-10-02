@@ -83,6 +83,7 @@ func (f fakePrices) ByModel(_ context.Context, model string) (pricing.Price, err
 type stubGateway struct {
 	requests []promptgen.ChatRequest
 	content  string
+	deltas   []string
 	err      error
 }
 
@@ -92,6 +93,15 @@ func (f *stubGateway) GenerateChat(_ context.Context, req promptgen.ChatRequest)
 		return promptgen.ChatResult{}, f.err
 	}
 	return promptgen.ChatResult{Content: f.content}, nil
+}
+
+// StreamChat 回放配置好的增量帧:onDelta 逐个回调后返回 err(可空)。
+func (f *stubGateway) StreamChat(_ context.Context, req promptgen.ChatRequest, onDelta func(string)) error {
+	f.requests = append(f.requests, req)
+	for _, d := range f.deltas {
+		onDelta(d)
+	}
+	return f.err
 }
 
 type fakeAssets struct {
@@ -134,7 +144,7 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			6: {ID: 6, Kind: asset.KindImage, CanvasID: 7, URL: "https://cdn.example.com/pic.png"},
 			7: {ID: 7, Kind: asset.KindVideo, CanvasID: 7, URL: "data:video/mp4;base64,AAAA"},
 		}},
-		gateway: &stubGateway{content: "a neon cyberpunk city at dusk"},
+		gateway: &stubGateway{content: "a neon cyberpunk city at dusk", deltas: []string{"a neon ", "cyberpunk city"}},
 	}
 	if mutate != nil {
 		mutate(params)
@@ -308,6 +318,145 @@ func TestGenerateMultiRoundConversationShape(t *testing.T) {
 	}
 	if !reflect.DeepEqual(req.Conversation, want) {
 		t.Errorf("conversation = %+v, want instruction + history + current input", req.Conversation)
+	}
+}
+
+// ---- generate-prompt/stream(31 号票:SSE 流式变体)----
+
+func TestGenerateStreamEmitsDeltasAndDone(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"template_id": 1,
+		"topic":       "赛博朋克城市",
+		"model":       "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("content-type = %q, want text/event-stream", ct)
+	}
+	if res.Header.Get("X-Accel-Buffering") != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want no (nginx 按请求关缓冲)", res.Header.Get("X-Accel-Buffering"))
+	}
+	// 帧形状:增量逐帧下发,[DONE] 收尾;载荷是 JSON,键序确定。
+	want := "data: {\"delta\":\"a neon \"}\n\ndata: {\"delta\":\"cyberpunk city\"}\n\ndata: [DONE]\n\n"
+	if raw != want {
+		t.Errorf("body = %q, want delta frames plus done marker", raw)
+	}
+
+	// 会话形状与同步端点同源:首条指令 + 历史 + 本轮输入。
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if req.Source != "canvas=7 gen=prompt" {
+		t.Errorf("source = %q, want canvas origin mark", req.Source)
+	}
+	if len(req.Conversation) != 1 ||
+		req.Conversation[0].Content != "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。" {
+		t.Errorf("conversation = %+v, want the rendered instruction", req.Conversation)
+	}
+}
+
+func TestGenerateStreamMultiRoundUsesSameConversationShape(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"topic": "把色调改暖",
+		"model": "chat-m",
+		"history": []map[string]string{
+			{"role": "user", "content": "赛博朋克城市"},
+			{"role": "assistant", "content": "a neon cyberpunk city"},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	want := []promptgen.ChatMessage{
+		{Role: "user", Content: "你是提示词工程师。本次对话的主题是「赛博朋克城市」"},
+		{Role: "user", Content: "赛博朋克城市"},
+		{Role: "assistant", Content: "a neon cyberpunk city"},
+		{Role: "user", Content: "把色调改暖"},
+	}
+	if len(req.Conversation) != len(want) {
+		t.Fatalf("conversation = %+v, want %d turns", req.Conversation, len(want))
+	}
+	for i, m := range want {
+		got := req.Conversation[i]
+		if got.Role != m.Role {
+			t.Errorf("turn %d role = %q, want %q", i, got.Role, m.Role)
+		}
+		if i == 0 {
+			if !strings.HasPrefix(got.Content, m.Content) {
+				t.Errorf("instruction = %q, want the builtin brief pinned to 首轮主题", got.Content)
+			}
+			continue
+		}
+		if got.Content != m.Content {
+			t.Errorf("turn %d content = %q, want %q", i, got.Content, m.Content)
+		}
+	}
+}
+
+func TestGenerateStreamMidStreamFailureEmitsErrorFrame(t *testing.T) {
+	// 流开始后失败:error 帧收尾,失败前的增量照常下发 —— 编辑器保留部分
+	// 文本,不回滚。
+	env := newHandlerEnv(t, func(p *envParams) {
+		p.gateway = &stubGateway{deltas: []string{"部分"}, err: errors.New("gateway 502: 上游断了")}
+	})
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"topic": "任意", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (流已开,状态码回不了头); body = %s", res.StatusCode, raw)
+	}
+	want := "data: {\"delta\":\"部分\"}\n\ndata: {\"error\":{\"code\":\"upstream_error\",\"message\":\"gateway 502: 上游断了\"}}\n\n"
+	if raw != want {
+		t.Errorf("body = %q, want the partial delta plus error frame", raw)
+	}
+}
+
+func TestGenerateStreamValidationAnswersJSONBeforeStream(t *testing.T) {
+	// 校验前置:没过完校验不给流 —— 失败仍是 JSON 错误形状,状态码语义不丢。
+	cases := []struct {
+		name     string
+		body     map[string]any
+		wantCode string
+	}{
+		{"unpriced model", map[string]any{"topic": "任意", "model": "img-m"}, "model_not_priced"},
+		{"bad history role", map[string]any{"topic": "任意", "model": "chat-m",
+			"history": []map[string]string{{"role": "system", "content": "任意"}}}, "invalid_request"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", tc.body)
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+			if ct := res.Header.Get("Content-Type"); ct == "text/event-stream" {
+				t.Errorf("content-type = %q, want JSON before the stream opens", ct)
+			}
+			code, _ := errorBody(t, raw)
+			if code != tc.wantCode {
+				t.Errorf("code = %q, want %q", code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestGenerateStreamWithoutGatewayAnswers503(t *testing.T) {
+	env := newHandlerEnv(t, func(p *envParams) { p.gateway = nil })
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"topic": "任意", "model": "chat-m",
+	})
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body = %s", res.StatusCode, raw)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "gateway_unconfigured" {
+		t.Errorf("code = %q, want gateway_unconfigured", code)
 	}
 }
 

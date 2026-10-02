@@ -546,6 +546,77 @@ describe('ApiClient prompt generation (canvas)', () => {
     expect((err as ApiError).code).toBe('upstream_error')
   })
 
+  // ---- generatePromptStream(31 号票:SSE 流式)----
+
+  /** 用 ReadableStream 顶替 Response.body,并按给定切块下发字节 —— 切点
+   * 落在事件中间,验证跨 chunk 的粘包缓冲。 */
+  function sseFetch(raw: string, chunks = 2) {
+    const encoder = new TextEncoder()
+    const size = Math.ceil(raw.length / chunks)
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < raw.length; i += size) {
+          controller.enqueue(encoder.encode(raw.slice(i, i + size)))
+        }
+        controller.close()
+      },
+    })
+    return vi.fn().mockResolvedValue({ status: 200, body: stream })
+  }
+
+  it('generatePromptStream relays deltas and resolves the accumulated text', async () => {
+    const raw =
+      'data: {"delta":"a neon "}\n\n' +
+      'data: {"delta":"cyberpunk city"}\n\n' +
+      'data: [DONE]\n\n'
+    const fetchImpl = sseFetch(raw)
+    const client = clientWithBase(fetchImpl)
+
+    const deltas: string[] = []
+    await expect(
+      client.generatePromptStream(7, { topic: '任意', model: 'chat-m' }, (d) => deltas.push(d)),
+    ).resolves.toBe('a neon cyberpunk city')
+    expect(deltas).toEqual(['a neon ', 'cyberpunk city'])
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/generate-prompt/stream')
+    expect((init as RequestInit).method).toBe('POST')
+  })
+
+  it('generatePromptStream throws on a mid-stream error frame', async () => {
+    const raw = 'data: {"delta":"部分"}\n\n' + 'data: {"error":{"code":"upstream_error","message":"上游断了"}}\n\n'
+    const client = clientWithBase(sseFetch(raw))
+
+    const deltas: string[] = []
+    const err = await client
+      .generatePromptStream(7, { topic: '任意', model: 'chat-m' }, (d) => deltas.push(d))
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(502)
+    expect((err as ApiError).message).toBe('上游断了')
+    expect(deltas).toEqual(['部分'])
+  })
+
+  it('generatePromptStream throws when the stream ends without a done marker', async () => {
+    const client = clientWithBase(sseFetch('data: {"delta":"半句"}\n\n'))
+    const err = await client
+      .generatePromptStream(7, { topic: '任意', model: 'chat-m' }, () => {})
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).code).toBe('upstream_error')
+  })
+
+  it('generatePromptStream surfaces pre-stream validation errors as ApiError', async () => {
+    const fetchImpl = stubFetch(400, { error: { code: 'model_not_priced', message: '未配置 token 计价' } })
+    const client = clientWithBase(fetchImpl)
+
+    const err = await client
+      .generatePromptStream(7, { topic: '任意', model: 'img-m' }, () => {})
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(400)
+    expect((err as ApiError).code).toBe('model_not_priced')
+  })
+
   it('analyzeMedia POSTs the media reference to the canvas analyze path', async () => {
     const fetchImpl = stubFetch(200, { text: '# 分镜表\n…' })
     const client = clientWithBase(fetchImpl)

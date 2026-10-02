@@ -420,6 +420,15 @@ curl -X POST $CANVAS/canvases/1/generate-prompt -H "Authorization: Bearer $TOKEN
                   {"role":"assistant","content":"...上一轮提示词..."}]}'
 # → {"text":"..."}
 
+# 生成提示词 · 流式(31 号票,请求体与同步端点完全同形,响应为 SSE):
+# data: {"delta":"…"} 增量 → data: [DONE] 收尾;流中途失败发
+# data: {"error":{code,message}}。校验前置:没过完校验不给流,失败仍是
+# 普通 JSON 错误形状。响应带 X-Accel-Buffering: no,反代无需另配。
+curl -N -X POST $CANVAS/canvases/1/generate-prompt/stream -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"node_id":"n_agent_1","template_id":1,"topic":"把色调改暖","model":"gpt-4o"}'
+# → data: {"delta":"a ne"}\n\ndata: {"delta":"on city"}\n\ndata: [DONE]\n\n
+
 # 视频反推提示词(video_url 接受厂商 http(s) 地址或素材内容寻址路径;
 # 结果落为新 Agent 节点并与视频节点连线)
 curl -X POST $CANVAS/canvases/1/reverse-prompt -H "Authorization: Bearer $TOKEN" \

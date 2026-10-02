@@ -167,6 +167,108 @@ func TestGenerateChatSendsConversationVerbatim(t *testing.T) {
 	}
 }
 
+// sseBody 拼一帧 data: 事件(与网关 clientFrame 同形:前缀 + 空格 + 载荷 + 空行)。
+func sseBody(payload string) string {
+	return "data: " + payload + "\n\n"
+}
+
+// TestStreamChatRelaysDeltasUntilDone 验证 31 号票流式主干:delta 逐帧回调、
+// [DONE] 正常收尾、注释保活行被跳过。
+func TestStreamChatRelaysDeltasUntilDone(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, nil)
+	gateway.respondRaw(http.StatusOK,
+		sseBody(`{"choices":[{"delta":{"content":"a neon "}}]}`)+
+			": keep-alive\n\n"+
+			sseBody(`{"choices":[{"delta":{"content":"cyberpunk city"}}]}`)+
+			"data: [DONE]\n\n")
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	var got []string
+	err := client.StreamChat(context.Background(), promptgen.ChatRequest{
+		Model:  "chat-m",
+		Source: "canvas=7 node=agent-1-1 gen=prompt",
+		Conversation: []promptgen.ChatMessage{
+			{Role: "user", Content: "为主题「赛博朋克城市」写提示词"},
+		},
+	}, func(delta string) { got = append(got, delta) })
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+	if len(got) != 2 || got[0] != "a neon " || got[1] != "cyberpunk city" {
+		t.Errorf("deltas = %q, want the two content deltas", got)
+	}
+	// 流式与同步同源:来源标记照带。
+	if gateway.last.Source != "canvas=7 node=agent-1-1 gen=prompt" {
+		t.Errorf("source = %q, want the canvas origin mark", gateway.last.Source)
+	}
+	body, _ := gateway.last.Body["stream"].(bool)
+	if !body {
+		t.Errorf("stream = %v, want true", gateway.last.Body["stream"])
+	}
+}
+
+func TestStreamChatSurfacesPreStreamHTTPError(t *testing.T) {
+	// 流打开前的失败与同步路径同答:额度不足等用户可行动的信息原样透出。
+	gateway := newFakeGateway(http.StatusPaymentRequired, map[string]any{
+		"error": map[string]any{"message": "余额不足 (insufficient quota)"},
+	})
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	err := client.StreamChat(context.Background(), promptgen.ChatRequest{
+		Model: "chat-m", Content: "问题",
+	}, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "余额不足") {
+		t.Fatalf("err = %v, want the pre-stream gateway reason", err)
+	}
+}
+
+func TestStreamChatSurfacesMidStreamErrorFrame(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, nil)
+	gateway.respondRaw(http.StatusOK,
+		sseBody(`{"choices":[{"delta":{"content":"部分"}}]}`)+
+			sseBody(`{"error":{"message":"上游中途失败"}}`))
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	var got []string
+	err := client.StreamChat(context.Background(), promptgen.ChatRequest{
+		Model: "chat-m", Content: "问题",
+	}, func(d string) { got = append(got, d) })
+	if err == nil || !strings.Contains(err.Error(), "上游中途失败") {
+		t.Fatalf("err = %v, want the mid-stream error", err)
+	}
+	if len(got) != 1 || got[0] != "部分" {
+		t.Errorf("deltas = %q, want the frames before the failure delivered", got)
+	}
+}
+
+func TestStreamChatRejectsIncompleteOrEmptyStreams(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"eof without done", sseBody(`{"choices":[{"delta":{"content":"半句"}}]}`)},
+		{"done without deltas", "data: [DONE]\n\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := newFakeGateway(http.StatusOK, nil)
+			gateway.respondRaw(http.StatusOK, tc.raw)
+			server := newGatewayServer(t, gateway)
+			client := promptgen.NewClient(server.URL, "sk-service-key")
+
+			err := client.StreamChat(context.Background(), promptgen.ChatRequest{
+				Model: "chat-m", Content: "问题",
+			}, func(string) {})
+			if err == nil {
+				t.Fatal("err = nil, want a failure")
+			}
+		})
+	}
+}
+
 func TestGenerateChatWithVideoSendsMultimodalContentParts(t *testing.T) {
 	gateway := newFakeGateway(http.StatusOK, chatCompletion("提示词"))
 	server := newGatewayServer(t, gateway)

@@ -746,10 +746,12 @@ async function refreshCatalogs(): Promise<void> {
   }
 }
 
-/** Agent 会话的一轮(29 号票):输入作本轮主题/修改意见,服务端把技能
- * 渲染文本作首条指令、拼历史与本轮输入经网关聊天生成。结果写回本节点
- * 文本区并追加进对话历史(20 轮上限截断最旧),随后沿连线自动投递。
- * 技能刚被删/停用时立刻刷新目录,悬空 chip 当场收回。 */
+/** Agent 会话的一轮(29 号票;31 号票起走流式):输入作本轮主题/修改
+ * 意见,服务端把技能渲染文本作首条指令、拼历史与本轮输入经网关聊天流式
+ * 生成。增量实时写节点文本区(不标脏,autosave 防抖不被高频打扰);收尾
+ * 一次性落盘 —— 成功追加对话历史(20 轮上限截断最旧)并沿连线自动投递,
+ * 失败保留已流出文本(不回滚、不追加历史不投递)。技能刚被删/停用时立刻
+ * 刷新目录,悬空 chip 当场收回。 */
 async function onGeneratePrompt(
   nodeId: string,
   payload: { template_id?: number; topic: string; model: string; history: AgentChatMessage[] },
@@ -763,16 +765,26 @@ async function onGeneratePrompt(
   }
   promptGenerating.value = true
   generateError.value = ''
+  // 流中途失败时已到手的增量(text)用于保留部分文本;成功路径以返回的
+  // 累计全文为准。
+  let text = ''
   try {
-    const result = await client.generatePrompt(canvasId, {
-      node_id: nodeId,
-      ...(payload.template_id != null ? { template_id: payload.template_id } : {}),
-      topic: payload.topic,
-      model: payload.model,
-      ...(payload.history.length > 0 ? { history: payload.history } : {}),
-    })
-    const messages = appendAgentTurn(payload.history, payload.topic, result.text)
-    updateNodeData(nodeId, { text: result.text, messages })
+    const full = await client.generatePromptStream(
+      canvasId,
+      {
+        node_id: nodeId,
+        ...(payload.template_id != null ? { template_id: payload.template_id } : {}),
+        topic: payload.topic,
+        model: payload.model,
+        ...(payload.history.length > 0 ? { history: payload.history } : {}),
+      },
+      (delta) => {
+        text += delta
+        updateNodeData(nodeId, { text })
+      },
+    )
+    const messages = appendAgentTurn(payload.history, payload.topic, full)
+    updateNodeData(nodeId, { text: full, messages })
     autosave.markDirty()
     deliverPromptFrom(nodeId)
   } catch (e) {
@@ -780,6 +792,10 @@ async function onGeneratePrompt(
     // 技能刚被删除/停用时本地目录已过期:立刻刷新,悬空 chip 当场收回。
     if (e instanceof ApiError && (e.status === 404 || e.code === 'template_disabled')) {
       void refreshCatalogs()
+    }
+    // 流中途失败:已流出文本保留在节点并落盘(重开画布可见当时进展)。
+    if (text !== '') {
+      autosave.markDirty()
     }
   } finally {
     promptGenerating.value = false

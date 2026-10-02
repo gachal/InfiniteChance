@@ -2,6 +2,7 @@ package promptgen
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -59,9 +60,11 @@ type ModelPricer interface {
 }
 
 // Gateway is the slice of the gateway client the handlers need; tests
-// substitute fakes.
+// substitute fakes. StreamChat backs the 31 号票 streaming variant of the
+// prompt generation (same conversation, stream=true on the relay).
 type Gateway interface {
 	GenerateChat(ctx context.Context, req ChatRequest) (ChatResult, error)
+	StreamChat(ctx context.Context, req ChatRequest, onDelta func(string)) error
 }
 
 // Handlers serves the creator prompt-generation endpoints. canvas/server
@@ -84,11 +87,13 @@ type Handlers struct {
 // RegisterRoutes mounts (relative to the group, which the binary mounts at
 // /canvases behind the JWT middleware, alongside the canvas CRUD routes):
 //
-//	POST /:id/generate-prompt — {node_id?, template_id?, topic, model, history?} → text
-//	POST /:id/reverse-prompt  — {node_id?, video_url, model} → text
-//	POST /:id/analyze         — {node_id?, media_url, media_kind, model} → text
+//	POST /:id/generate-prompt        — {node_id?, template_id?, topic, model, history?} → text
+//	POST /:id/generate-prompt/stream — 同请求体,SSE 增量返回(31 号票)
+//	POST /:id/reverse-prompt         — {node_id?, video_url, model} → text
+//	POST /:id/analyze                — {node_id?, media_url, media_kind, model} → text
 func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/:id/generate-prompt", h.Generate)
+	group.POST("/:id/generate-prompt/stream", h.GenerateStream)
 	group.POST("/:id/reverse-prompt", h.Reverse)
 	group.POST("/:id/analyze", h.Analyze)
 }
@@ -173,59 +178,71 @@ func conversationMessages(instructionText string, history []chatTurnIn, topic st
 	return msgs
 }
 
-// Generate renders the chosen template with the topic and relays it through
-// the gateway chat surface. The text comes back to the editor synchronously:
-// prompt generation is an ordinary chat call, not a task — nothing queues,
-// nothing polls, and the node write happens client-side via autosave.
-func (h *Handlers) Generate(c *gin.Context) {
+// generatePrep 是 Generate 与 GenerateStream 共用的前置产物(31 号票):
+// 流式与同步的校验完全同套 —— 校验不过回答 JSON 错误,流不能开始。
+type generatePrep struct {
+	canvasID        int64
+	nodeID          string
+	instructionText string
+	history         []chatTurnIn
+	topic           string
+	model           string
+}
+
+// prepareGenerate runs the whole validation prologue the two prompt
+// generation endpoints share: canvas exists, gateway configured, body and
+// history well-formed, skill (optional) present and enabled, model priced.
+// Every failure is answered as the admin-API JSON error before any response
+// body of the caller's shape is committed.
+func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 	canvasID, ok := bindID(c)
 	if !ok {
-		return
+		return generatePrep{}, false
 	}
 	if _, err := h.Canvases.Get(c.Request.Context(), canvasID); err != nil {
 		h.failCanvas(c, err)
-		return
+		return generatePrep{}, false
 	}
 	if !h.requireGateway(c) {
-		return
+		return generatePrep{}, false
 	}
 
 	var in generateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		apierr.InvalidRequest(c, "请求体必须是 {template_id?, topic, model} JSON")
-		return
+		return generatePrep{}, false
 	}
 	nodeID := strings.TrimSpace(in.NodeID)
 	if utf8.RuneCountInString(nodeID) > maxNodeIDRunes {
 		apierr.InvalidRequest(c, "node_id 最多 128 个字符")
-		return
+		return generatePrep{}, false
 	}
 	if in.TemplateID < 0 {
 		apierr.InvalidRequest(c, "template_id 必须是非负整数,0 表示不选技能")
-		return
+		return generatePrep{}, false
 	}
 	topic := strings.TrimSpace(in.Topic)
 	if topic == "" {
 		apierr.InvalidRequest(c, "topic 不能为空")
-		return
+		return generatePrep{}, false
 	}
 	if utf8.RuneCountInString(topic) > maxTopicRunes {
 		apierr.InvalidRequest(c, "topic 最多 4000 个字符")
-		return
+		return generatePrep{}, false
 	}
 	model := strings.TrimSpace(in.Model)
 	if model == "" {
 		apierr.InvalidRequest(c, "model 不能为空")
-		return
+		return generatePrep{}, false
 	}
 	if utf8.RuneCountInString(model) > pricing.ModelNameRunes {
 		apierr.InvalidRequest(c, "model 名最多 200 个字符")
-		return
+		return generatePrep{}, false
 	}
 	history, err := normalizeHistory(in.History)
 	if err != nil {
 		apierr.InvalidRequest(c, err.Error())
-		return
+		return generatePrep{}, false
 	}
 
 	// 技能可选(29 号票):未选技能时首条指令用内置通用「提示词书写」,
@@ -235,15 +252,15 @@ func (h *Handlers) Generate(c *gin.Context) {
 		tpl, err := h.Templates.Get(c.Request.Context(), in.TemplateID)
 		if errors.Is(err, prompttemplate.ErrNotFound) {
 			apierr.NotFound(c, "技能不存在或已被删除")
-			return
+			return generatePrep{}, false
 		}
 		if err != nil {
 			h.failStore(c, err)
-			return
+			return generatePrep{}, false
 		}
 		if !tpl.Enabled {
 			apierr.Write(c, http.StatusBadRequest, "template_disabled", "技能已停用")
-			return
+			return generatePrep{}, false
 		}
 		instructionText = tpl.Template
 	}
@@ -251,13 +268,32 @@ func (h *Handlers) Generate(c *gin.Context) {
 	// 发起前先看价:模型没有按 token 计价时,聊天注定被网关拒绝 ——
 	// 让用户立刻知道,而不是干等一次注定失败的上游调用。
 	if !h.chatModelPriced(c, model) {
+		return generatePrep{}, false
+	}
+	return generatePrep{
+		canvasID:        canvasID,
+		nodeID:          nodeID,
+		instructionText: instructionText,
+		history:         history,
+		topic:           topic,
+		model:           model,
+	}, true
+}
+
+// Generate renders the chosen template with the topic and relays it through
+// the gateway chat surface. The text comes back to the editor synchronously:
+// prompt generation is an ordinary chat call, not a task — nothing queues,
+// nothing polls, and the node write happens client-side via autosave.
+func (h *Handlers) Generate(c *gin.Context) {
+	prep, ok := h.prepareGenerate(c)
+	if !ok {
 		return
 	}
 
 	result, err := h.Gateway.GenerateChat(c.Request.Context(), ChatRequest{
-		Model:        model,
-		Conversation: conversationMessages(instructionText, history, topic),
-		Source:       canvasSource(canvasID, nodeID, "prompt"),
+		Model:        prep.model,
+		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic),
+		Source:       canvasSource(prep.canvasID, prep.nodeID, "prompt"),
 	})
 	if err != nil {
 		// 上游失败原样透出:额度不足、模型不可用等都是用户可行动的信息,
@@ -267,6 +303,61 @@ func (h *Handlers) Generate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"text": result.Content})
+}
+
+// sseDataFrame 是一帧 SSE data 事件的前缀;载荷恒为 JSON(换行已转义),
+// 单帧即合法事件。
+var sseDataFrame = []byte("data: ")
+
+// GenerateStream relays the same conversation as Generate but as server-sent
+// events (31 号票):deltas reach the editor while the model is still writing.
+// 帧形状 —— data: {"delta":"…"} 增量、data: {"error":{code,message}} 流中
+// 失败、data: [DONE] 成功收尾。X-Accel-Buffering: no 让 nginx 按请求关
+// proxy_buffering(gzip_types 不含 text/event-stream,无压缩缓冲),部署反
+// 代与 dev 代理都无需另配。失败语义:已下发的增量不回收 —— 编辑器保留部
+// 分文本,不追加历史不投递;网关已按聊天轨完成记账/退款。
+func (h *Handlers) GenerateStream(c *gin.Context) {
+	prep, ok := h.prepareGenerate(c)
+	if !ok {
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	writeEvent := func(payload []byte) {
+		out := make([]byte, 0, len(sseDataFrame)+len(payload)+2)
+		out = append(out, sseDataFrame...)
+		out = append(out, payload...)
+		out = append(out, '\n', '\n')
+		_, _ = c.Writer.Write(out)
+		c.Writer.Flush()
+	}
+
+	err := h.Gateway.StreamChat(c.Request.Context(), ChatRequest{
+		Model:        prep.model,
+		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic),
+		Source:       canvasSource(prep.canvasID, prep.nodeID, "prompt"),
+	}, func(delta string) {
+		body, mErr := json.Marshal(gin.H{"delta": delta})
+		if mErr != nil {
+			return
+		}
+		writeEvent(body)
+	})
+	if err != nil {
+		log.Printf("promptgen: %s %s: gateway stream: %v", c.Request.Method, c.Request.URL.Path, err)
+		if body, mErr := json.Marshal(gin.H{
+			"error": gin.H{"code": "upstream_error", "message": err.Error()},
+		}); mErr == nil {
+			writeEvent(body)
+		}
+		return
+	}
+	writeEvent(sseDoneMarker)
 }
 
 // chatModelPriced guards both chat-driven actions: a model without a token

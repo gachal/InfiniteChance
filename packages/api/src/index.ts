@@ -736,6 +736,88 @@ export class ApiClient {
     })
   }
 
+  /** 生成提示词的流式变体(31 号票):POST /canvases/:id/generate-prompt/stream,
+   * SSE 响应逐帧把增量交给 onDelta,`data: [DONE]` 收尾时返回累计全文;
+   * `data: {"error":{code,message}}` 中途失败抛 ApiError。校验类失败仍是
+   * 普通 JSON 错误响应(非 2xx → ApiError),流断在半途(无 DONE)同样抛错。 */
+  async generatePromptStream(
+    canvasId: number,
+    input: GeneratePromptInput,
+    onDelta: (delta: string) => void,
+  ): Promise<string> {
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    const token = this.getToken?.()
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+    const res = await this.fetchImpl(`${this.base}/canvases/${canvasId}/generate-prompt/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(input),
+    })
+    if (res.status < 200 || res.status > 299) {
+      // 校验失败发生在流打开之前:与 request() 同款错误形状。
+      const payload: unknown = await res.json().catch(() => null)
+      const { code, message } = errorInfo(payload, res.status)
+      if (res.status === 401) {
+        throw new UnauthorizedError(code, message)
+      }
+      throw new ApiError(res.status, code, message)
+    }
+    if (!res.body) {
+      throw new ApiError(res.status, 'error', '响应没有内容流')
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let text = ''
+    let finished = false
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const event = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        boundary = buffer.indexOf('\n\n')
+
+        const dataLine = event.split('\n').find((line) => line.startsWith('data:'))
+        if (dataLine === undefined) {
+          continue
+        }
+        const payload = dataLine.slice(5).replace(/^ /, '')
+        if (payload === '[DONE]') {
+          finished = true
+          break
+        }
+        try {
+          const parsed = JSON.parse(payload) as { delta?: string; error?: { code?: string; message?: string } }
+          if (parsed.error) {
+            throw new ApiError(502, parsed.error.code ?? 'upstream_error', parsed.error.message ?? '生成失败')
+          }
+          if (parsed.delta) {
+            text += parsed.delta
+            onDelta(parsed.delta)
+          }
+        } catch (e) {
+          if (e instanceof ApiError) {
+            throw e
+          }
+          // 不可解析的帧:后端只发合法 JSON,出现即跳过不打断。
+        }
+      }
+      if (finished) {
+        return text
+      }
+    }
+    // 流断在半途(无 DONE):已交增量不作成功,由调用方决定去留。
+    throw new ApiError(502, 'upstream_error', '生成流中断,未收到完成标记')
+  }
+
   /** 视频反推提示词(13 号票):canvas/server 经网关多模态聊天接口分析
    * 视频,同步返回提示词文本;用量按 token 计费入网关用量日志。 */
   reversePrompt(canvasId: number, input: ReversePromptInput): Promise<ReversePromptResult> {

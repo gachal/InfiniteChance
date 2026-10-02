@@ -6,7 +6,7 @@
 // 沿连线自动投递,手改后可点「投递」重推。内联文生图入口随本票移除 ——
 // 图片/视频生成统一走媒体节点 + 生成对话框。不直接改 props:文本变更
 // 与技能变更上抛给编辑器,由 updateNodeData 应用。
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
 import type { PromptTemplateOption, SkillTarget } from '@infinitechance/api'
@@ -75,6 +75,7 @@ watch(
 // ---- 输入行与技能浮层 ----
 
 const input = ref('')
+const inputEl = ref<HTMLTextAreaElement | null>(null)
 const overlayOpen = ref(false)
 const highlight = ref(0)
 const targetFilter = ref<'all' | 'image' | 'video'>('all')
@@ -87,6 +88,19 @@ watch(input, (value) => {
   } else {
     overlayOpen.value = false
   }
+})
+
+// 输入框自动增高(31 号票多行输入):1 行起,约 5 行封顶后内部滚动;
+// flush: post 保证读到的 scrollHeight 已含最新文本,提交清空后缩回一行。
+watch(input, () => {
+  void nextTick(() => {
+    const el = inputEl.value
+    if (!el) {
+      return
+    }
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 110)}px`
+  })
 })
 
 const filteredSkills = computed(() => {
@@ -158,7 +172,8 @@ function onInputKeydown(e: KeyboardEvent): void {
     }
     return
   }
-  if (e.key === 'Enter') {
+  // 多行输入(31 号票):Enter 提交,Shift+Enter 换行(交回默认行为)。
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     submit()
   }
@@ -241,13 +256,14 @@ function onDeliver(): void {
       </div>
 
       <div class="input-row">
-        <input
+        <textarea
+          ref="inputEl"
           v-model="input"
-          type="text"
-          placeholder="输入主题,或打 / 选技能…"
+          rows="1"
+          placeholder="输入主题,或打 / 选技能…(Shift+Enter 换行)"
           maxlength="4000"
           @keydown="onInputKeydown"
-        >
+        />
       </div>
 
       <div class="action-row">
@@ -468,17 +484,24 @@ textarea:focus {
   color: #ff8f8f;
 }
 
-.input-row input {
+/* 对话输入是多行 textarea(31 号票):高度由脚本随内容调节,1 行起、
+ * 约 5 行封顶后内部滚动。 */
+.input-row textarea {
   width: 100%;
+  min-height: 32px;
+  max-height: 110px;
+  resize: none;
+  overflow-y: auto;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 6px 8px;
   color: inherit;
   font-size: 12px;
+  line-height: 1.5;
 }
 
-.input-row input:focus {
+.input-row textarea:focus {
   outline: 2px solid rgba(122, 162, 247, 0.6);
   outline-offset: 1px;
   border-color: transparent;

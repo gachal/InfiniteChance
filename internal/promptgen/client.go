@@ -8,6 +8,7 @@
 package promptgen
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -143,6 +144,117 @@ func (c *Client) GenerateChat(ctx context.Context, req ChatRequest) (ChatResult,
 // maxResponseBytes caps how much of the answer body is read: prompts are
 // text, tens of megabytes would mean something is wrong upstream.
 const maxResponseBytes = 4 << 20
+
+// maxSSELineBytes caps one SSE line: a delta frame is tiny, anything bigger
+// means the peer is not the streaming shape we agreed on.
+const maxSSELineBytes = 1 << 20
+
+var (
+	sseDataPrefix = []byte("data:")
+	sseDoneMarker = []byte("[DONE]")
+)
+
+// StreamChat calls POST /v1/chat/completions with stream=true and hands each
+// delta (choices[0].delta.content) to onDelta as it arrives (31 号票 Agent
+// 流式):the gateway relays upstream frames one by one (usage-only chunks are
+// swallowed there — this client never asks for include_usage), so the text
+// lands in the editor while the model is still writing. Accumulating the
+// full text is the caller's job. A gateway rejection before the stream opens
+// is the same error GenerateChat returns; a failure after frames have flowed
+// (error frame, EOF without [DONE], zero deltas) is an error too — the
+// caller decides what to keep of the partial text.
+func (c *Client) StreamChat(ctx context.Context, req ChatRequest, onDelta func(string)) error {
+	messages := make([]chatMessage, 0, len(req.Conversation)+1)
+	if len(req.Conversation) > 0 {
+		for _, m := range req.Conversation {
+			messages = append(messages, chatMessage{Role: m.Role, Content: m.Content})
+		}
+	} else {
+		messages = append(messages, userMessage(req))
+	}
+	payload, err := json.Marshal(struct {
+		Model    string        `json:"model"`
+		Messages []chatMessage `json:"messages"`
+		Stream   bool          `json:"stream"`
+	}{
+		Model:    req.Model,
+		Messages: messages,
+		Stream:   true,
+	})
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/v1/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+	if req.Source != "" {
+		httpReq.Header.Set("X-InfiniteChance-Source", req.Source)
+	}
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// 流打开前的失败照同步路径回答:网关已按聊天轨完成记账/退款。
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+		if err != nil {
+			return fmt.Errorf("read gateway response: %w", err)
+		}
+		return fmt.Errorf("gateway %d: %s", resp.StatusCode, errorSummary(raw))
+	}
+
+	sawDelta := false
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxResponseBytes))
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if !bytes.HasPrefix(line, sseDataPrefix) {
+			continue // 注释保活行与空行:无负载
+		}
+		payloadLine := bytes.TrimPrefix(bytes.TrimPrefix(line, sseDataPrefix), []byte(" "))
+		if bytes.Equal(payloadLine, sseDoneMarker) {
+			if !sawDelta {
+				return fmt.Errorf("gateway delivered an empty message")
+			}
+			return nil
+		}
+		// 网关透传上游的任何 JSON 形状:只认 delta 与 error,其余跳过
+		// (与同步路径只读 choices[0] 的宽容一致)。
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(payloadLine, &chunk) != nil {
+			continue
+		}
+		if chunk.Error.Message != "" {
+			return fmt.Errorf("gateway stream error: %s", chunk.Error.Message)
+		}
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			sawDelta = true
+			onDelta(chunk.Choices[0].Delta.Content)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read gateway stream: %w", err)
+	}
+	// EOF 而无 [DONE]:上游断流,已交的增量不作成功。
+	return fmt.Errorf("gateway stream ended without a completion marker")
+}
 
 type chatMessage struct {
 	Role    string `json:"role"`
