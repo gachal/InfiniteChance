@@ -80,6 +80,35 @@ const overlayOpen = ref(false)
 const highlight = ref(0)
 const targetFilter = ref<'all' | 'image' | 'video'>('all')
 
+// 输入框高度(31 号票 + 追补):默认随内容自动调节,1 行起、约 5 行封顶
+// 后内部滚动;用户拖动右下角 grip 后高度归用户所有 —— auto-grow 退位,
+// 超出部分内部滚动,组件生命周期内有效(不入节点 data,与草稿同属 UI 态)。
+const userResized = ref(false)
+let resizeArmed = false
+
+// 部分内核会给 textarea 派发原生 resize 事件,直接认定。
+function onInputResize(): void {
+  userResized.value = true
+}
+
+// resize 事件不齐时的兜底:按住右下角 18px 角区并移动即认定在拖 grip
+// (只按下不动不误判,避免点角落定位光标关闭自动增高)。
+function onInputPointerdown(e: PointerEvent): void {
+  const el = inputEl.value
+  if (!el) {
+    return
+  }
+  const rect = el.getBoundingClientRect()
+  resizeArmed = rect.right - e.clientX <= 18 && rect.bottom - e.clientY <= 18
+}
+
+function onInputPointermove(): void {
+  if (resizeArmed) {
+    userResized.value = true
+    resizeArmed = false
+  }
+}
+
 // 打 `/` 唤起浮层:`/` 后的文本即搜索词(名称/描述),清掉即收起。
 watch(input, (value) => {
   if (value.startsWith('/')) {
@@ -90,12 +119,13 @@ watch(input, (value) => {
   }
 })
 
-// 输入框自动增高(31 号票多行输入):1 行起,约 5 行封顶后内部滚动;
-// flush: post 保证读到的 scrollHeight 已含最新文本,提交清空后缩回一行。
+// 输入框自动增高(31 号票):1 行起,约 5 行封顶后内部滚动;
+// flush: post 保证读到的 scrollHeight 已含最新文本,提交清空后缩回一行;
+// 用户拖过 grip(userResized)后不再代管高度。
 watch(input, () => {
   void nextTick(() => {
     const el = inputEl.value
-    if (!el) {
+    if (!el || userResized.value) {
       return
     }
     el.style.height = 'auto'
@@ -263,6 +293,9 @@ function onDeliver(): void {
           placeholder="输入主题,或打 / 选技能…(Shift+Enter 换行)"
           maxlength="4000"
           @keydown="onInputKeydown"
+          @resize="onInputResize"
+          @pointerdown="onInputPointerdown"
+          @pointermove="onInputPointermove"
         />
       </div>
 
@@ -484,13 +517,13 @@ textarea:focus {
   color: #ff8f8f;
 }
 
-/* 对话输入是多行 textarea(31 号票):高度由脚本随内容调节,1 行起、
- * 约 5 行封顶后内部滚动。 */
+/* 对话输入是多行 textarea(31 号票):默认高度由脚本随内容调节,1 行起、
+ * 约 5 行封顶后内部滚动;右下角 grip 可拖拽调高(追补),拖过后高度归
+ * 用户,auto-grow 退位 —— CSS 不设 max-height,不挡用户拖大。 */
 .input-row textarea {
   width: 100%;
   min-height: 32px;
-  max-height: 110px;
-  resize: none;
+  resize: vertical;
   overflow-y: auto;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.12);
