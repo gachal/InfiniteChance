@@ -32,6 +32,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: []
   analyze: [payload: { model: string }]
+  /** 点击媒体区打开灯箱预览(33 号票);选中行为不受影响(不拦冒泡)。 */
+  preview: []
   /** 左右 + 按钮点击(30 号票两击连线):side 决定本节点作 source 还是 target。 */
   'connect-start': [side: ConnectSide]
 }>()
@@ -114,6 +116,8 @@ function submitAnalyze(): void {
     <div
       v-else-if="data.url && !loadFailed"
       class="media-frame"
+      title="点击查看大图"
+      @click="emit('preview')"
     >
       <img
         :src="data.url"
@@ -234,6 +238,7 @@ function submitAnalyze(): void {
 
 .media-frame {
   position: relative;
+  cursor: zoom-in;
 }
 
 .media-frame img {

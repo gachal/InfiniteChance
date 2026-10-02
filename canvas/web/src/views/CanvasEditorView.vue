@@ -60,11 +60,13 @@ import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
+import { newNodeAnchor } from '../placement'
 import AssetPanel from '../components/AssetPanel.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
 import AgentMediaPicker from '../components/AgentMediaPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
+import MediaLightbox from '../components/MediaLightbox.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
@@ -93,11 +95,13 @@ const {
   onNodesChange,
   onPaneClick,
   removeSelectedNodes,
+  screenToFlowCoordinate,
   setEdges,
   setNodes,
   toObject,
   updateNodeData,
   viewport,
+  vueFlowRef,
 } = useVueFlow()
 
 const canvasName = ref('')
@@ -1288,15 +1292,27 @@ function onTextChange(nodeId: string, text: string): void {
 
 let nodeSeq = 0
 
+/** 无锚点落位(33 号票):新节点落当前视口中心。锚点按容器 client 矩形
+ * 计算后经 screenToFlowCoordinate 换算成图坐标 —— 画布平移缩放到哪里,
+ * 新节点都出现在眼前的同一位置;级联偏移在 newNodeAnchor 里叠加。
+ * 容器矩形取不到(理论只在未挂载时)退回旧图坐标基点。 */
+function viewportCenterPosition(): { x: number; y: number } {
+  const count = toObject().nodes.length
+  const rect = vueFlowRef.value?.getBoundingClientRect()
+  if (!rect) {
+    return { x: 140 + (count % 8) * 48, y: 120 + (count % 8) * 48 }
+  }
+  return screenToFlowCoordinate(newNodeAnchor(rect, count))
+}
+
 function addNode(type: CanvasNodeType): void {
   nodeSeq += 1
-  const step = (toObject().nodes.length % 8) * 48
   const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([
     {
       id,
       type,
-      position: { x: 140 + step, y: 120 + step },
+      position: viewportCenterPosition(),
       data: initialData(type),
     },
   ])
@@ -1309,6 +1325,18 @@ function addNode(type: CanvasNodeType): void {
     addSelectedNodes([added])
   }
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
+}
+
+// ---- 媒体预览灯箱(33 号票)----
+
+/** 当前灯箱内容(null = 关闭);编辑器级单实例,媒体节点点击媒体区置位。
+ * 触发侧组件已保证只在产物成功落位时上抛,这里只兜一层空 url。 */
+const lightbox = ref<{ kind: 'image' | 'video'; url: string } | null>(null)
+
+function openPreview(kind: 'image' | 'video', url: string): void {
+  if (url) {
+    lightbox.value = { kind, url }
+  }
 }
 
 // ---- 素材库面板(14 号票)与生成记录面板(28 号票)----
@@ -1341,12 +1369,11 @@ function toggleRecordsPanel(): void {
 function insertAssetRef(kind: 'image' | 'video', assetId: number, contentUrl: string): void {
   nodeSeq += 1
   const type: CanvasNodeType = kind === 'video' ? 'video' : 'image'
-  const step = (toObject().nodes.length % 8) * 48
   addNodes([
     {
       id: `${type}-${Date.now()}-${nodeSeq}`,
       type,
-      position: { x: 140 + step, y: 120 + step },
+      position: viewportCenterPosition(),
       data: { url: contentUrl, asset_id: assetId, note: '' } satisfies MediaNodeData,
     },
   ])
@@ -1778,6 +1805,7 @@ function backToList(): void {
             :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
+            @preview="openPreview('image', nodeProps.data.url ?? '')"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -1797,6 +1825,7 @@ function backToList(): void {
             @cancel="onCancelVideo(nodeProps.id)"
             @reverse-prompt="onReversePrompt(nodeProps.id, $event)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
+            @preview="openPreview('video', nodeProps.data.url ?? '')"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -1883,6 +1912,13 @@ function backToList(): void {
         :selected-asset-ids="pickerSelectedIds"
         @toggle="onAgentPickToggle(pickerNode.id, $event)"
         @close="pickerNodeId = ''"
+      />
+      <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body)。 -->
+      <MediaLightbox
+        v-if="lightbox"
+        :kind="lightbox.kind"
+        :url="lightbox.url"
+        @close="lightbox = null"
       />
     </div>
 

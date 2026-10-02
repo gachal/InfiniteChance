@@ -39,6 +39,8 @@ const emit = defineEmits<{
   cancel: []
   'reverse-prompt': [payload: { model: string }]
   analyze: [payload: { model: string }]
+  /** 点击媒体区打开灯箱预览(33 号票);选中行为不受影响(不拦冒泡)。 */
+  preview: []
   /** 左右 + 按钮点击(30 号票两击连线):side 决定本节点作 source 还是 target。 */
   'connect-start': [side: ConnectSide]
 }>()
@@ -60,6 +62,14 @@ watch(
 const canReverse = computed(
   () => !!props.data.url && reverseModel.value !== '' && !props.reverseGenerating,
 )
+
+// 节点内缩略只求显示首帧(33 号票):补媒体片段 #t=0.1 让浏览器跳到
+// 0.1 秒渲染该帧(preload=metadata 即可);url 已带 fragment 时不动,
+// data: URI 加 fragment 同样合法。真正的播放器在灯箱里。
+const thumbUrl = computed(() => {
+  const url = props.data.url ?? ''
+  return url.includes('#') ? url : `${url}#t=0.1`
+})
 const canAnalyze = computed(
   () => !!props.data.url && reverseModel.value !== '' && !props.analyzing,
 )
@@ -135,13 +145,25 @@ function submitAnalyze(): void {
       <span>已取消</span>
       <small>预扣额度已退回</small>
     </div>
-    <video
+    <!-- 33 号票:内联播放收拢进灯箱,节点内是静音首帧缩略 + 播放徽标,
+         点击媒体区开灯箱(不拦冒泡,选中行为不受影响)。 -->
+    <div
       v-else-if="data.url && !loadFailed"
-      :src="data.url"
-      controls
-      muted
-      @error="loadFailed = true"
-    />
+      class="media-frame"
+      title="点击放大播放"
+      @click="emit('preview')"
+    >
+      <video
+        :src="thumbUrl"
+        muted
+        preload="metadata"
+        @error="loadFailed = true"
+      />
+      <span
+        class="play-badge"
+        aria-hidden="true"
+      >▶</span>
+    </div>
     <div
       v-else-if="data.url && loadFailed"
       class="placeholder missing"
@@ -250,6 +272,29 @@ video {
   display: block;
   width: 100%;
   border-radius: 8px;
+}
+
+/* 33 号票:缩略媒体区(点击开灯箱),徽标居中盖在首帧上。 */
+.media-frame {
+  position: relative;
+  cursor: pointer;
+}
+
+.play-badge {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(13, 18, 32, 0.75);
+  color: #fff;
+  font-size: 15px;
+  /* 视觉上把 ▶ 拨正(三角形几何中心偏左)。 */
+  padding-left: 3px;
+  pointer-events: none;
 }
 
 .placeholder {
