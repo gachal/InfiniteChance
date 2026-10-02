@@ -1,7 +1,7 @@
 # 32 Agent 媒体附件与会话历史面板:节点升级为可携媒体的多模态提示词工作台
 
 Type: grilling
-Status: approved(2026-10-02 grilling 定案,待实现)
+Status: approved(2026-10-02 grilling 定案;同日实现)
 
 ## Question
 
