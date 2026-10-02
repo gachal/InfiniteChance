@@ -51,6 +51,16 @@ describe('appendAgentTurn', () => {
     ])
   })
 
+  it('carries media refs on the user turn when attachments were sent (32 号票)', () => {
+    const media = [{ ref: '/api/assets/6/content', kind: 'image' as const }]
+    const next = appendAgentTurn([], '分析这张图', 'a neon cyberpunk city', media)
+    expect(next[0]).toEqual({ role: 'user', content: '分析这张图', media })
+    expect(next[1]).toEqual({ role: 'assistant', content: 'a neon cyberpunk city' })
+    // 无媒体轮不带 media 键,历史形状向后兼容。
+    const plain = appendAgentTurn(next, '把色调改暖', 'warmer tones')
+    expect(plain[2]).toEqual({ role: 'user', content: '把色调改暖' })
+  })
+
   it('keeps alternation across rounds without mutating the input', () => {
     const seed: AgentChatMessage[] = [{ role: 'user', content: '主题' }]
     const next = appendAgentTurn(seed, '把色调改暖', 'warmer tones')

@@ -1,17 +1,28 @@
 <script setup lang="ts">
-// Agent 节点(29 号票,提示词节点的升级取代):纯提示词生产者 —— 上方
-// 文本区是当前提示词草稿(生成落点,可手编),底部单框输入即对话行:
-// 打 `/` 唤起技能浮层,选中技能成可删 chip,继续输入即主题/修改意见,
-// 回车提交;多轮历史存节点 data(换技能 = 开新会话)。生成成功由编辑器
-// 沿连线自动投递,手改后可点「投递」重推。内联文生图入口随本票移除 ——
-// 图片/视频生成统一走媒体节点 + 生成对话框。不直接改 props:文本变更
-// 与技能变更上抛给编辑器,由 updateNodeData 应用。
+// Agent 节点(29 号票,提示词节点的升级取代;32 号票升级为可携媒体的
+// 多模态提示词工作台):上方文本区是当前提示词草稿(生成落点,可手编),
+// 底部单框输入即对话行:打 `/` 唤起技能浮层,选中技能成可删 chip,继续
+// 输入即主题/修改意见,回车提交;多轮历史存节点 data(换技能 = 开新会话)。
+// 32 号票:输入区旁媒体附件双入口(本机上传 / 从素材库选),待发附件
+// chips 显示上传中/失败态、逐个可移除,发送只带就绪引用;「历史」按钮开
+// 会话历史面板、「新会话」显式清历史。附件清单是编辑器持有的 UI 态,经
+// props 下发、事件上抛;生成成功由编辑器沿连线自动投递。不直接改 props:
+// 文本变更与技能变更上抛给编辑器,由 updateNodeData 应用。
 import { computed, nextTick, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
-import type { PromptTemplateOption, SkillTarget } from '@infinitechance/api'
+import type { AgentChatMedia, PromptTemplateOption, SkillTarget } from '@infinitechance/api'
 
-import { type AgentChatMessage, type AgentNodeData, agentRoundCount } from '../../graph'
+import {
+  type AgentChatMessage,
+  type AgentNodeData,
+  agentRoundCount,
+} from '../../graph'
+import {
+  type PendingAgentMedia,
+  isAgentMediaUploading,
+  readyAgentMediaRefs,
+} from '../../agentMedia'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
 import NodePorts from './NodePorts.vue'
 
@@ -27,15 +38,37 @@ const props = defineProps<{
   promptGenerating: boolean
   /** 本节点下游连线上是否存在媒体节点(决定「投递」是否可用)。 */
   hasDownstream: boolean
+  /** 待发媒体附件(编辑器持有的 UI 态:上传中/失败 chip 留在输入区)。 */
+  attachments: PendingAgentMedia[]
+  /** 会话历史面板是否正绑定本节点(「历史」按钮高亮)。 */
+  historyOpen: boolean
+  /** 素材选择面板是否正绑定本节点(「素材库」按钮高亮)。 */
+  pickerOpen: boolean
   /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
   connectState?: ConnectState
 }>()
 
 const emit = defineEmits<{
   'text-change': [value: string]
-  send: [payload: { template_id?: number; topic: string; model: string; history: AgentChatMessage[] }]
+  send: [payload: {
+    template_id?: number
+    topic: string
+    model: string
+    media: AgentChatMedia[]
+    history: AgentChatMessage[]
+  }]
   'skill-change': [skillId: number | null]
   deliver: []
+  /** 本机文件选作附件(32 号票):编辑器上传入素材库后挂 chip。 */
+  'attach-files': [files: File[]]
+  /** 移除一条待发附件。 */
+  'detach-attachment': [id: number]
+  /** 开/关素材选择面板(绑定本节点)。 */
+  'open-picker': []
+  /** 开/关会话历史面板(绑定本节点)。 */
+  'open-history': []
+  /** 新会话:清历史与未发送附件(技能不变)。 */
+  'new-session': []
   /** 左右 + 按钮点击(30 号票两击连线):side 决定本节点作 source 还是 target。 */
   'connect-start': [side: ConnectSide]
 }>()
@@ -214,9 +247,31 @@ function onInputKeydown(e: KeyboardEvent): void {
 const history = computed(() => props.data.messages ?? [])
 const rounds = computed(() => agentRoundCount(history.value))
 
+// 待发附件:发送只带就绪引用;还有上传在途时不可发送(引用没就绪);
+// 有历史或未发送附件时「新会话」才有意义。
+const attachments = computed(() => props.attachments)
+const hasConversation = computed(() => history.value.length > 0 || attachments.value.length > 0)
+
 const canSend = computed(
-  () => input.value.trim().length > 0 && chatModel.value !== '' && !props.promptGenerating,
+  () =>
+    input.value.trim().length > 0 &&
+    chatModel.value !== '' &&
+    !props.promptGenerating &&
+    !isAgentMediaUploading(attachments.value),
 )
+
+// 本机附件入口:文件选择后整体上抛,上传与上限校验在编辑器(与对话框
+// 上传同址);input 复位让同一文件下次选择仍触发 change。
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function onFilesPicked(e: Event): void {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (files.length > 0) {
+    emit('attach-files', files)
+  }
+}
 
 // 主题为空的裸回车不提交:submit 由 canSend 挡下,无副作用。
 function submit(): void {
@@ -227,6 +282,7 @@ function submit(): void {
     ...(props.data.skill_id != null ? { template_id: props.data.skill_id } : {}),
     topic: input.value.trim(),
     model: chatModel.value,
+    media: readyAgentMediaRefs(attachments.value),
     history: history.value,
   })
   input.value = ''
@@ -285,6 +341,39 @@ function onDeliver(): void {
         </span>
       </div>
 
+      <!-- 32 号票:待发附件 chips —— 图片缩略 / 视频徽章,上传中/失败
+           态就地展示,逐个可移除;发送成功由编辑器清空进历史。 -->
+      <div
+        v-if="attachments.length > 0"
+        class="chip-row media-chips"
+      >
+        <span
+          v-for="m in attachments"
+          :key="m.id"
+          class="media-chip"
+          :data-state="m.state"
+          :title="m.state === 'failed' ? m.error || '上传失败' : m.kind === 'image' ? '图片附件' : '视频附件'"
+        >
+          <img
+            v-if="m.state === 'ready' && m.kind === 'image'"
+            :src="m.ref"
+            alt="附件图片"
+          >
+          <span
+            v-else
+            class="media-badge"
+          >{{ m.state === 'uploading' ? (m.kind === 'image' ? '图片上传中…' : '视频上传中…') : m.state === 'failed' ? '上传失败' : m.kind === 'image' ? '图片' : '▶ 视频' }}</span>
+          <button
+            class="chip-x"
+            type="button"
+            title="移除附件"
+            @click="emit('detach-attachment', m.id)"
+          >
+            ×
+          </button>
+        </span>
+      </div>
+
       <div class="input-row">
         <textarea
           ref="inputEl"
@@ -297,6 +386,55 @@ function onDeliver(): void {
           @pointerdown="onInputPointerdown"
           @pointermove="onInputPointermove"
         />
+      </div>
+
+      <!-- 32 号票:附件双入口(本机上传 / 素材库选)+ 历史面板与新会话
+           入口;上限 ≤4 图 + ≤1 视频,拒收提示由编辑器横幅给出。 -->
+      <div class="tools-row">
+        <button
+          class="tool"
+          type="button"
+          title="上传本机图片/视频作参考输入(单条消息 ≤4 图 + ≤1 视频)"
+          @click="fileInput?.click()"
+        >
+          附件
+        </button>
+        <button
+          class="tool"
+          type="button"
+          :class="{ on: pickerOpen }"
+          title="从素材库选图片/视频作参考输入"
+          @click="emit('open-picker')"
+        >
+          素材库
+        </button>
+        <span class="tool-spacer" />
+        <button
+          class="tool"
+          type="button"
+          :class="{ on: historyOpen }"
+          title="查看本节点的完整会话历史"
+          @click="emit('open-history')"
+        >
+          历史
+        </button>
+        <button
+          class="tool"
+          type="button"
+          :disabled="!hasConversation"
+          title="清空对话历史与未发送附件,重新开始会话(技能不变)"
+          @click="emit('new-session')"
+        >
+          新会话
+        </button>
+        <input
+          ref="fileInput"
+          class="file-input"
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          @change="onFilesPicked"
+        >
       </div>
 
       <div class="action-row">
@@ -515,6 +653,89 @@ textarea:focus {
 
 .chip-x:hover {
   color: #ff8f8f;
+}
+
+/* 32 号票:待发附件 chips —— 图片 chip 是缩略,视频/上传中/失败是徽章。 */
+.media-chips {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.media-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(122, 162, 247, 0.12);
+  border: 1px solid rgba(122, 162, 247, 0.35);
+  border-radius: 8px;
+  padding: 2px;
+  font-size: 11px;
+  color: #c4cdf3;
+}
+
+.media-chip[data-state='uploading'] {
+  border-style: dashed;
+  color: #8b91a7;
+}
+
+.media-chip[data-state='failed'] {
+  border-color: rgba(224, 49, 49, 0.5);
+  color: #ff8f8f;
+}
+
+.media-chip img {
+  width: 30px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+}
+
+.media-badge {
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+/* 32 号票:附件双入口 + 历史/新会话工具行。 */
+.tools-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: #8b91a7;
+  border-radius: 7px;
+  padding: 3px 7px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tool:hover {
+  border-color: rgba(122, 162, 247, 0.5);
+  color: #c4cdf3;
+}
+
+.tool.on {
+  border-color: rgba(122, 162, 247, 0.7);
+  color: #7aa2f7;
+  background: rgba(122, 162, 247, 0.12);
+}
+
+.tool:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tool-spacer {
+  flex: 1;
+}
+
+.file-input {
+  display: none;
 }
 
 /* 对话输入是多行 textarea(31 号票):默认高度由脚本随内容调节,1 行起、

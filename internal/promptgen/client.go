@@ -40,11 +40,15 @@ func NewClient(baseURL, key string) *Client {
 	}
 }
 
-// ChatMessage is one plain-text conversation turn (29 号票 Agent 多轮会话):
-// role ∈ user|assistant,content 即该轮文本。
+// ChatMessage is one conversation turn (29 号票 Agent 多轮会话):role ∈
+// user|assistant。纯文本轮 Content 即该轮文本;媒体轮(32 号票)置 Parts,
+// content 走多模态分节数组、Content 被忽略。
 type ChatMessage struct {
 	Role    string
 	Content string
+	// Parts 非空 = 多模态轮:content 上送为分节数组(媒体在前文本在后,
+	// 17 号票形状),由 MediaTextParts 组装。
+	Parts []ChatContentPart
 }
 
 // ChatRequest is one chat call through the gateway. Two shapes share the
@@ -69,26 +73,32 @@ type ChatResult struct {
 	Content string
 }
 
+// conversationOf picks the messages a chat call sends: the complete
+// conversation when one is given (multi-turn Agent sessions), the
+// single-turn shape otherwise.
+func conversationOf(req ChatRequest) []chatMessage {
+	messages := make([]chatMessage, 0, len(req.Conversation)+1)
+	if len(req.Conversation) > 0 {
+		for _, m := range req.Conversation {
+			messages = append(messages, chatMessage{Role: m.Role, Content: messageContent(m)})
+		}
+		return messages
+	}
+	return append(messages, userMessage(req))
+}
+
 // GenerateChat calls POST /v1/chat/completions (non-streaming — the editor
 // waits for the whole text anyway) and returns choices[0].message.content.
 // A gateway rejection (OpenAI error object) or an empty answer is an error
 // carrying the reason back to the editor.
 func (c *Client) GenerateChat(ctx context.Context, req ChatRequest) (ChatResult, error) {
-	messages := make([]chatMessage, 0, len(req.Conversation)+1)
-	if len(req.Conversation) > 0 {
-		for _, m := range req.Conversation {
-			messages = append(messages, chatMessage{Role: m.Role, Content: m.Content})
-		}
-	} else {
-		messages = append(messages, userMessage(req))
-	}
 	body := struct {
 		Model    string        `json:"model"`
 		Messages []chatMessage `json:"messages"`
 		Stream   bool          `json:"stream"`
 	}{
 		Model:    req.Model,
-		Messages: messages,
+		Messages: conversationOf(req),
 		Stream:   false,
 	}
 	payload, err := json.Marshal(body)
@@ -164,21 +174,13 @@ var (
 // (error frame, EOF without [DONE], zero deltas) is an error too — the
 // caller decides what to keep of the partial text.
 func (c *Client) StreamChat(ctx context.Context, req ChatRequest, onDelta func(string)) error {
-	messages := make([]chatMessage, 0, len(req.Conversation)+1)
-	if len(req.Conversation) > 0 {
-		for _, m := range req.Conversation {
-			messages = append(messages, chatMessage{Role: m.Role, Content: m.Content})
-		}
-	} else {
-		messages = append(messages, userMessage(req))
-	}
 	payload, err := json.Marshal(struct {
 		Model    string        `json:"model"`
 		Messages []chatMessage `json:"messages"`
 		Stream   bool          `json:"stream"`
 	}{
 		Model:    req.Model,
-		Messages: messages,
+		Messages: conversationOf(req),
 		Stream:   true,
 	})
 	if err != nil {
@@ -268,24 +270,66 @@ func userMessage(req ChatRequest) chatMessage {
 	if req.VideoURL == "" && req.ImageURL == "" {
 		return chatMessage{Role: "user", Content: req.Content}
 	}
-	parts := make([]chatContentPart, 0, 2)
+	parts := make([]ChatContentPart, 0, 2)
 	if req.VideoURL != "" {
-		parts = append(parts, chatContentPart{Type: "video_url", VideoURL: &mediaURLPart{URL: req.VideoURL}})
+		parts = append(parts, ChatContentPart{Type: "video_url", VideoURL: &mediaURLPart{URL: req.VideoURL}})
 	}
 	if req.ImageURL != "" {
-		parts = append(parts, chatContentPart{Type: "image_url", ImageURL: &mediaURLPart{URL: req.ImageURL}})
+		parts = append(parts, ChatContentPart{Type: "image_url", ImageURL: &mediaURLPart{URL: req.ImageURL}})
 	}
-	parts = append(parts, chatContentPart{Type: "text", Text: req.Content})
+	parts = append(parts, ChatContentPart{Type: "text", Text: req.Content})
 	return chatMessage{Role: "user", Content: parts}
 }
 
 // chatContentPart is one multimodal content part; the pointer shape keeps
 // the part kinds on a single struct without emitting empty fields.
-type chatContentPart struct {
+// Exported as ChatContentPart for handlers that assemble conversations
+// (32 号票 Agent 历史媒体轮).
+type ChatContentPart struct {
 	Type     string        `json:"type"`
 	Text     string        `json:"text,omitempty"`
 	VideoURL *mediaURLPart `json:"video_url,omitempty"`
 	ImageURL *mediaURLPart `json:"image_url,omitempty"`
+}
+
+// MediaKind names the two multimodal input kinds a conversation turn may
+// carry (32 号票);the values match the asset kinds on the wire.
+const (
+	MediaKindImage = "image"
+	MediaKindVideo = "video"
+)
+
+// MediaPart is one resolved media reference riding in a conversation turn:
+// the handler resolves the editor's reference to the LLM-reachable address,
+// MediaTextParts turns it into the wire part.
+type MediaPart struct {
+	Kind string // MediaKindImage | MediaKindVideo
+	URL  string
+}
+
+// MediaTextParts builds a multimodal content array, media ahead of text
+// (17 号票形状):each media part keeps the caller's order, the instruction
+// text closes the array as a text part.
+func MediaTextParts(media []MediaPart, text string) []ChatContentPart {
+	parts := make([]ChatContentPart, 0, len(media)+1)
+	for _, m := range media {
+		if m.Kind == MediaKindVideo {
+			parts = append(parts, ChatContentPart{Type: "video_url", VideoURL: &mediaURLPart{URL: m.URL}})
+			continue
+		}
+		parts = append(parts, ChatContentPart{Type: "image_url", ImageURL: &mediaURLPart{URL: m.URL}})
+	}
+	parts = append(parts, ChatContentPart{Type: "text", Text: text})
+	return parts
+}
+
+// messageContent picks the wire shape of one conversation turn: the part
+// array when the turn carries media, the plain string otherwise.
+func messageContent(m ChatMessage) any {
+	if len(m.Parts) > 0 {
+		return m.Parts
+	}
+	return m.Content
 }
 
 // mediaURLPart is the {url} payload video_url and image_url parts share.

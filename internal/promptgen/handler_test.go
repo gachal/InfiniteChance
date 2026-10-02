@@ -357,6 +357,229 @@ func TestGenerateStreamEmitsDeltasAndDone(t *testing.T) {
 	}
 }
 
+// ---- generate-prompt · 媒体附件(32 号票)----
+
+// TestGenerateMultimodalConversationShape 验证 32 号票验证点的最终 messages
+// 形状:首条指令(纯文本)+ 历史带媒体 user 轮的 content 分节(媒体在前
+// 文本在后)+ 本轮输入(带媒体时分节);内容寻址引用解出素材真实地址。
+func TestGenerateMultimodalConversationShape(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"node_id":     "prompt-1-1",
+		"template_id": 1,
+		"topic":       "参考这个角色再改一版",
+		"model":       "chat-m",
+		"media":       []map[string]string{{"ref": "/api/assets/6/content", "kind": "image"}},
+		"history": []map[string]any{
+			{"role": "user", "content": "赛博朋克城市",
+				"media": []map[string]string{{"ref": "/api/assets/5/content", "kind": "video"}}},
+			{"role": "assistant", "content": "a neon cyberpunk city"},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	want := []promptgen.ChatMessage{
+		{Role: "user", Content: "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。"},
+		{Role: "user", Parts: promptgen.MediaTextParts(
+			[]promptgen.MediaPart{{Kind: promptgen.MediaKindVideo, URL: "https://cdn.example.com/generated.mp4"}},
+			"赛博朋克城市")},
+		{Role: "assistant", Content: "a neon cyberpunk city"},
+		{Role: "user", Parts: promptgen.MediaTextParts(
+			[]promptgen.MediaPart{{Kind: promptgen.MediaKindImage, URL: "https://cdn.example.com/pic.png"}},
+			"参考这个角色再改一版")},
+	}
+	if !reflect.DeepEqual(req.Conversation, want) {
+		t.Errorf("conversation = %+v, want instruction + media history + current media input", req.Conversation)
+	}
+	if req.Source != "canvas=7 node=prompt-1-1 gen=prompt" {
+		t.Errorf("source = %q, want the gen=prompt mark unchanged", req.Source)
+	}
+}
+
+// TestGenerateFirstRoundWithMediaRidesInstruction 验证首轮(无历史)带
+// 媒体:指令即唯一一条消息,媒体随指令分节(媒体在前、含主题的指令文本
+// 收尾)—— 否则媒体无处可挂。
+func TestGenerateFirstRoundWithMediaRidesInstruction(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id": 1,
+		"topic":       "以这张三视图为参考",
+		"model":       "chat-m",
+		"media":       []map[string]string{{"ref": "/api/assets/6/content", "kind": "image"}},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	want := []promptgen.ChatMessage{
+		{Role: "user", Parts: promptgen.MediaTextParts(
+			[]promptgen.MediaPart{{Kind: promptgen.MediaKindImage, URL: "https://cdn.example.com/pic.png"}},
+			"请为主题「以这张三视图为参考」写一段英文文生图提示词,只输出提示词本身。")},
+	}
+	if !reflect.DeepEqual(req.Conversation, want) {
+		t.Errorf("conversation = %+v, want the instruction as one multimodal turn", req.Conversation)
+	}
+}
+
+func TestGenerateHistoryMediaValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"assistant turn with media", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"history": []map[string]any{{"role": "assistant", "content": "上一轮",
+				"media": []map[string]string{{"ref": "/api/assets/6/content", "kind": "image"}}}},
+		}},
+		{"unknown media kind", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"media": []map[string]string{{"ref": "/api/assets/6/content", "kind": "audio"}},
+		}},
+		{"empty ref", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"media": []map[string]string{{"ref": "", "kind": "image"}},
+		}},
+		{"oversized ref", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"media": []map[string]string{{"ref": strings.Repeat("长", 4097), "kind": "image"}},
+		}},
+		{"five images in one message", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"media": []map[string]string{
+				{"ref": "https://a.example/1.png", "kind": "image"},
+				{"ref": "https://a.example/2.png", "kind": "image"},
+				{"ref": "https://a.example/3.png", "kind": "image"},
+				{"ref": "https://a.example/4.png", "kind": "image"},
+				{"ref": "https://a.example/5.png", "kind": "image"},
+			},
+		}},
+		{"two videos in one message", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"media": []map[string]string{
+				{"ref": "https://a.example/1.mp4", "kind": "video"},
+				{"ref": "https://a.example/2.mp4", "kind": "video"},
+			},
+		}},
+		{"over cap inside history turn", map[string]any{
+			"topic": "任意", "model": "chat-m",
+			"history": []map[string]any{{"role": "user", "content": "带五个图的历史轮",
+				"media": []map[string]string{
+					{"ref": "https://a.example/1.png", "kind": "image"},
+					{"ref": "https://a.example/2.png", "kind": "image"},
+					{"ref": "https://a.example/3.png", "kind": "image"},
+					{"ref": "https://a.example/4.png", "kind": "image"},
+					{"ref": "https://a.example/5.png", "kind": "image"},
+				}}},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", tc.body)
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func TestGenerateMediaRefFailureMapping(t *testing.T) {
+	cases := []struct {
+		name       string
+		ref        string
+		kind       string
+		wantStatus int
+		wantCode   string
+		wantInMsg  string
+	}{
+		{"malformed ref", "file:///etc/passwd", "image", http.StatusBadRequest, "invalid_request", ""},
+		{"direct data uri", "data:image/png;base64,AAAA", "image", http.StatusBadRequest, "media_inline_unsupported", ""},
+		{"unknown asset", "/api/assets/99/content", "image", http.StatusNotFound, "asset_not_found", "开新会话"},
+		{"kind mismatch", "/api/assets/5/content", "image", http.StatusBadRequest, "asset_not_image", ""},
+		{"inline asset", "/api/assets/7/content", "video", http.StatusBadRequest, "media_inline_unsupported", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+				"topic": "任意", "model": "chat-m",
+				"media": []map[string]string{{"ref": tc.ref, "kind": tc.kind}},
+			})
+			if res.StatusCode != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", res.StatusCode, tc.wantStatus, raw)
+			}
+			code, message := errorBody(t, raw)
+			if code != tc.wantCode {
+				t.Errorf("code = %q, want %q", code, tc.wantCode)
+			}
+			if tc.wantInMsg != "" && !strings.Contains(message, tc.wantInMsg) {
+				t.Errorf("message = %q, want the 开新会话 hint", message)
+			}
+		})
+	}
+}
+
+// TestGenerateStreamWithMediaSameShape 验证流式端点与同步同套:带媒体的
+// 请求照常成流,会话形状与同步端点一致(历史媒体轮 content 走分节)。
+func TestGenerateStreamWithMediaSameShape(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"topic": "把色调改暖",
+		"model": "chat-m",
+		"media": []map[string]string{{"ref": "/api/assets/6/content", "kind": "image"}},
+		"history": []map[string]any{
+			{"role": "user", "content": "赛博朋克城市",
+				"media": []map[string]string{{"ref": "https://vendor.example.com/clip.mp4", "kind": "video"}}},
+			{"role": "assistant", "content": "a neon cyberpunk city"},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("content-type = %q, want text/event-stream", ct)
+	}
+	if !strings.HasSuffix(raw, "data: [DONE]\n\n") {
+		t.Errorf("body = %q, want the stream to complete", raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if len(req.Conversation) != 4 {
+		t.Fatalf("conversation = %+v, want 4 turns", req.Conversation)
+	}
+	if len(req.Conversation[1].Parts) != 2 {
+		t.Errorf("history media turn = %+v, want video part ahead of text part", req.Conversation[1])
+	}
+	if len(req.Conversation[3].Parts) != 2 {
+		t.Errorf("current media turn = %+v, want image part ahead of text part", req.Conversation[3])
+	}
+}
+
+// TestGenerateStreamMediaValidationAnswersJSONBeforeStream 验证媒体校验
+// 失败属流前校验:照旧回答 JSON 错误、流不开始。
+func TestGenerateStreamMediaValidationAnswersJSONBeforeStream(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"topic": "任意", "model": "chat-m",
+		"history": []map[string]any{{"role": "assistant", "content": "上一轮",
+			"media": []map[string]string{{"ref": "/api/assets/6/content", "kind": "image"}}}},
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+	}
+	if ct := res.Header.Get("Content-Type"); ct == "text/event-stream" {
+		t.Errorf("content-type = %q, want JSON before the stream opens", ct)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "invalid_request" {
+		t.Errorf("code = %q, want invalid_request", code)
+	}
+}
+
 func TestGenerateStreamMultiRoundUsesSameConversationShape(t *testing.T) {
 	env := newHandlerEnv(t, nil)
 

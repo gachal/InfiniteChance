@@ -19,6 +19,7 @@ import {
 
 import { useAuth } from '../auth'
 import {
+  type AgentChatMedia,
   type AgentChatMessage,
   type AgentNodeData,
   appendAgentTurn,
@@ -29,6 +30,12 @@ import {
   type CanvasNodeType,
   type MediaNodeData,
 } from '../graph'
+import {
+  type PendingAgentMedia,
+  type AgentMediaKind,
+  hasAgentMediaSlot,
+  nextAgentMediaId,
+} from '../agentMedia'
 import {
   appendComposerRef,
   appendVideoRef,
@@ -54,6 +61,8 @@ import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
 import AssetPanel from '../components/AssetPanel.vue'
+import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
+import AgentMediaPicker from '../components/AgentMediaPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
@@ -746,15 +755,22 @@ async function refreshCatalogs(): Promise<void> {
   }
 }
 
-/** Agent 会话的一轮(29 号票;31 号票起走流式):输入作本轮主题/修改
- * 意见,服务端把技能渲染文本作首条指令、拼历史与本轮输入经网关聊天流式
- * 生成。增量实时写节点文本区(不标脏,autosave 防抖不被高频打扰);收尾
- * 一次性落盘 —— 成功追加对话历史(20 轮上限截断最旧)并沿连线自动投递,
- * 失败保留已流出文本(不回滚、不追加历史不投递)。技能刚被删/停用时立刻
- * 刷新目录,悬空 chip 当场收回。 */
+/** Agent 会话的一轮(29 号票;31 号票起走流式;32 号票带媒体):输入作
+ * 本轮主题/修改意见,media 为本轮附件引用,服务端把技能渲染文本作首条
+ * 指令、拼历史与本轮输入经网关聊天流式生成。增量实时写节点文本区(不标
+ * 脏,autosave 防抖不被高频打扰);收尾一次性落盘 —— 成功追加对话历史
+ * (20 轮上限截断最旧,媒体随轮进历史)、清空待发附件并沿连线自动投递,
+ * 失败保留已流出文本与待发附件(不回滚、不追加历史不投递)。技能刚被删/
+ * 停用时立刻刷新目录,悬空 chip 当场收回。 */
 async function onGeneratePrompt(
   nodeId: string,
-  payload: { template_id?: number; topic: string; model: string; history: AgentChatMessage[] },
+  payload: {
+    template_id?: number
+    topic: string
+    model: string
+    media: AgentChatMedia[]
+    history: AgentChatMessage[]
+  },
 ): Promise<void> {
   if (promptGenerating.value) {
     return
@@ -776,6 +792,7 @@ async function onGeneratePrompt(
         ...(payload.template_id != null ? { template_id: payload.template_id } : {}),
         topic: payload.topic,
         model: payload.model,
+        ...(payload.media.length > 0 ? { media: payload.media } : {}),
         ...(payload.history.length > 0 ? { history: payload.history } : {}),
       },
       (delta) => {
@@ -783,8 +800,10 @@ async function onGeneratePrompt(
         updateNodeData(nodeId, { text })
       },
     )
-    const messages = appendAgentTurn(payload.history, payload.topic, full)
+    const messages = appendAgentTurn(payload.history, payload.topic, full, payload.media)
     updateNodeData(nodeId, { text: full, messages })
+    // 发送成功即清空进历史:待发附件的引用已随本轮进 messages。
+    clearAgentAttachments(nodeId)
     autosave.markDirty()
     deliverPromptFrom(nodeId)
   } catch (e) {
@@ -793,7 +812,8 @@ async function onGeneratePrompt(
     if (e instanceof ApiError && (e.status === 404 || e.code === 'template_disabled')) {
       void refreshCatalogs()
     }
-    // 流中途失败:已流出文本保留在节点并落盘(重开画布可见当时进展)。
+    // 流中途失败:已流出文本保留在节点并落盘(重开画布可见当时进展);
+    // 待发附件一并保留,修正后可直接重发。
     if (text !== '') {
       autosave.markDirty()
     }
@@ -803,12 +823,14 @@ async function onGeneratePrompt(
 }
 
 /** 技能变更(选中/移除/悬空收回)= 开新会话:写 skill_id 并清空对话
- * 历史(换技能清历史重算);文本草稿保留,已投递文本不受影响。 */
+ * 历史与未发送附件(换技能清历史重算);文本草稿保留,已投递文本不受
+ * 影响。 */
 function onSkillChange(nodeId: string, skillId: number | null): void {
   updateNodeData(nodeId, {
     ...(skillId != null ? { skill_id: skillId } : { skill_id: undefined }),
     messages: [],
   })
+  clearAgentAttachments(nodeId)
   autosave.markDirty()
 }
 
@@ -857,6 +879,158 @@ const downstreamHasMedia = computed(() => {
   }
   return isMedia
 })
+
+// ---- Agent 媒体附件与会话历史面板(32 号票)----
+
+// 待发附件按节点 id 分桶(编辑器持有的 UI 态,不入节点 data/整图 JSON):
+// 选中/挑选即上传,发送成功/换技能/新会话清空对应桶。
+const agentAttachments = ref<Record<string, PendingAgentMedia[]>>({})
+
+function agentAttachmentsOf(nodeId: string): PendingAgentMedia[] {
+  return agentAttachments.value[nodeId] ?? []
+}
+
+function setAgentAttachments(nodeId: string, list: PendingAgentMedia[]): void {
+  agentAttachments.value = { ...agentAttachments.value, [nodeId]: list }
+}
+
+function clearAgentAttachments(nodeId: string): void {
+  if (!agentAttachments.value[nodeId]?.length) {
+    return
+  }
+  const next = { ...agentAttachments.value }
+  delete next[nodeId]
+  agentAttachments.value = next
+}
+
+const agentUploading = ref(false)
+
+const AGENT_CAP_MESSAGES: Record<AgentMediaKind, string> = {
+  image: '单条消息最多 4 张图片,请先移除或开新会话',
+  video: '单条消息最多 1 个视频,请先移除或开新会话',
+}
+
+/** Agent 节点的本机附件上传(32 号票,选中即上传):逐个文件入素材库,
+ * 上传中/失败的 chip 留在输入区可移除;超限的文件直接报错不传字节(与
+ * 服务端「单条 ≤4 图 + ≤1 视频」同款前置纪律)。 */
+async function onAgentAttachFiles(nodeId: string, files: File[]): Promise<void> {
+  if (agentUploading.value) {
+    return
+  }
+  agentUploading.value = true
+  try {
+    for (const file of files) {
+      const kind = uploadKindOf(file)
+      const list = agentAttachmentsOf(nodeId)
+      if (!hasAgentMediaSlot(list, kind)) {
+        generateError.value = AGENT_CAP_MESSAGES[kind]
+        continue
+      }
+      const pending: PendingAgentMedia = { id: nextAgentMediaId(), kind, state: 'uploading' }
+      setAgentAttachments(nodeId, [...agentAttachmentsOf(nodeId), pending])
+      try {
+        const a = await client.uploadAsset(file, kind)
+        setAgentAttachments(
+          nodeId,
+          agentAttachmentsOf(nodeId).map((m) =>
+            m.id === pending.id ? { ...m, state: 'ready', ref: a.content_url, assetId: a.id } : m,
+          ),
+        )
+      } catch (e) {
+        setAgentAttachments(
+          nodeId,
+          agentAttachmentsOf(nodeId).map((m) =>
+            m.id === pending.id
+              ? { ...m, state: 'failed', error: e instanceof ApiError ? e.message : '上传失败,请稍后再试' }
+              : m,
+          ),
+        )
+      }
+    }
+  } finally {
+    agentUploading.value = false
+  }
+}
+
+/** 素材库点选(32 号票):选中即挂待发附件(ready,内容寻址引用,与上
+ * 传两路引用形状一致),再点取消;超限拒收与上传入口同一套纪律。 */
+function onAgentPickToggle(nodeId: string, a: AssetRecord): void {
+  if (a.kind !== 'image' && a.kind !== 'video') {
+    return
+  }
+  const list = agentAttachmentsOf(nodeId)
+  const existing = list.find((m) => m.assetId === a.id)
+  if (existing) {
+    setAgentAttachments(nodeId, list.filter((m) => m.id !== existing.id))
+    return
+  }
+  if (!hasAgentMediaSlot(list, a.kind)) {
+    generateError.value = AGENT_CAP_MESSAGES[a.kind]
+    return
+  }
+  setAgentAttachments(nodeId, [
+    ...list,
+    { id: nextAgentMediaId(), kind: a.kind, state: 'ready', ref: a.content_url, assetId: a.id },
+  ])
+}
+
+function onAgentDetach(nodeId: string, id: number): void {
+  setAgentAttachments(nodeId, agentAttachmentsOf(nodeId).filter((m) => m.id !== id))
+}
+
+/** 新会话(32 号票显式入口):清空对话历史与未发送附件,技能不变 ——
+ * 此前唯一清历史途径是换技能,太隐蔽。 */
+function onAgentNewSession(nodeId: string): void {
+  updateNodeData(nodeId, { messages: [] })
+  clearAgentAttachments(nodeId)
+  autosave.markDirty()
+}
+
+// 会话历史 / 素材选择面板的节点绑定:点哪个 Agent 节点开谁的;与素材库、
+// 生成记录面板同占画布右缘,四方互斥。
+const historyNodeId = ref('')
+const pickerNodeId = ref('')
+
+const historyNode = computed(() => (historyNodeId.value ? findNode(historyNodeId.value) ?? null : null))
+const pickerNode = computed(() => (pickerNodeId.value ? findNode(pickerNodeId.value) ?? null : null))
+
+const historyMessages = computed<AgentChatMessage[]>(() => {
+  const data = historyNode.value?.data as AgentNodeData | undefined
+  return data?.messages ?? []
+})
+
+const pickerSelectedIds = computed<number[]>(() =>
+  agentAttachmentsOf(pickerNodeId.value)
+    .map((m) => m.assetId)
+    .filter((id): id is number => id != null),
+)
+
+function openAgentHistory(nodeId: string): void {
+  if (historyNodeId.value === nodeId) {
+    historyNodeId.value = ''
+    return
+  }
+  historyNodeId.value = nodeId
+  pickerNodeId.value = ''
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+}
+
+function openAgentPicker(nodeId: string): void {
+  if (pickerNodeId.value === nodeId) {
+    pickerNodeId.value = ''
+    return
+  }
+  pickerNodeId.value = nodeId
+  historyNodeId.value = ''
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+}
+
+/** 清空会话(历史面板顶部按钮):与新会话同一语义,清后节点可重新开始。 */
+function clearAgentHistory(nodeId: string): void {
+  onAgentNewSession(nodeId)
+}
 
 /** 反推/派生的落图纪律(11/13 号票共用,29 号票落点改 Agent):生成的
  * 提示词恒落为新 Agent 节点,与来源节点连线(派生关系可见),图由自动
@@ -1142,11 +1316,13 @@ function addNode(type: CanvasNodeType): void {
 const assetPanelOpen = ref(false)
 const recordsPanelOpen = ref(false)
 
-// 两个面板同占画布右缘,互斥打开。
+// 面板同占画布右缘,互斥打开(32 号票起含 Agent 的历史/素材选择面板)。
 function toggleAssetPanel(): void {
   assetPanelOpen.value = !assetPanelOpen.value
   if (assetPanelOpen.value) {
     recordsPanelOpen.value = false
+    historyNodeId.value = ''
+    pickerNodeId.value = ''
   }
 }
 
@@ -1154,6 +1330,8 @@ function toggleRecordsPanel(): void {
   recordsPanelOpen.value = !recordsPanelOpen.value
   if (recordsPanelOpen.value) {
     assetPanelOpen.value = false
+    historyNodeId.value = ''
+    pickerNodeId.value = ''
   }
 }
 
@@ -1572,11 +1750,19 @@ function backToList(): void {
             :chat-models="promptModels"
             :prompt-generating="promptGenerating"
             :has-downstream="downstreamHasMedia.has(nodeProps.id)"
+            :attachments="agentAttachments[nodeProps.id] ?? []"
+            :history-open="historyNodeId === nodeProps.id"
+            :picker-open="pickerNodeId === nodeProps.id"
             :connect-state="connection.stateOf(nodeProps.id)"
             @text-change="onTextChange(nodeProps.id, $event)"
             @send="onGeneratePrompt(nodeProps.id, $event)"
             @skill-change="onSkillChange(nodeProps.id, $event)"
             @deliver="onDeliver(nodeProps.id)"
+            @attach-files="onAgentAttachFiles(nodeProps.id, $event)"
+            @detach-attachment="onAgentDetach(nodeProps.id, $event)"
+            @open-picker="openAgentPicker(nodeProps.id)"
+            @open-history="openAgentHistory(nodeProps.id)"
+            @new-session="onAgentNewSession(nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -1681,6 +1867,22 @@ function backToList(): void {
         :tasks="taskRecords"
         @locate="locateRecordTask"
         @insert="insertRecordTask"
+      />
+      <!-- 32 号票:Agent 会话历史面板与素材选择面板,绑定单个 Agent 节点
+           (按节点 id 换 key 重挂),节点被删时随 computed 自动消失。 -->
+      <AgentHistoryPanel
+        v-if="historyNode"
+        :key="`history-${historyNode.id}`"
+        :messages="historyMessages"
+        @clear="clearAgentHistory(historyNode.id)"
+        @close="historyNodeId = ''"
+      />
+      <AgentMediaPicker
+        v-if="pickerNode"
+        :key="`picker-${pickerNode.id}`"
+        :selected-asset-ids="pickerSelectedIds"
+        @toggle="onAgentPickToggle(pickerNode.id, $event)"
+        @close="pickerNodeId = ''"
       />
     </div>
 

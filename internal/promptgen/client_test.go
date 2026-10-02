@@ -341,6 +341,58 @@ func TestGenerateChatWithImageSendsImagePartAheadOfText(t *testing.T) {
 	}
 }
 
+// TestGenerateChatConversationMediaTurnSendsPartArray 验证 32 号票会话
+// 媒体轮:Parts 非空时 content 上送为分节数组(媒体在前、文本在后),
+// 纯文本轮保持字符串 content 不变。
+func TestGenerateChatConversationMediaTurnSendsPartArray(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, chatCompletion("改后的提示词"))
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	if _, err := client.GenerateChat(context.Background(), promptgen.ChatRequest{
+		Model:  "chat-m",
+		Source: "canvas=7 node=agent-1-1 gen=prompt",
+		Conversation: []promptgen.ChatMessage{
+			{Role: "user", Content: "指令"},
+			{Role: "user", Parts: promptgen.MediaTextParts([]promptgen.MediaPart{
+				{Kind: promptgen.MediaKindImage, URL: "https://cdn.example.com/a.png"},
+				{Kind: promptgen.MediaKindVideo, URL: "https://cdn.example.com/b.mp4"},
+			}, "分析这段素材")},
+			{Role: "assistant", Content: "上一轮提示词"},
+		},
+	}); err != nil {
+		t.Fatalf("GenerateChat: %v", err)
+	}
+
+	messages, _ := gateway.last.Body["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %v, want three turns", gateway.last.Body["messages"])
+	}
+	// 纯文本轮:content 是字符串。
+	first, _ := messages[0].(map[string]any)
+	if _, isStr := first["content"].(string); !isStr {
+		t.Errorf("messages[0].content = %v, want a plain string", first["content"])
+	}
+	// 媒体轮:content 是分节数组,图片在前、视频其次、文本收尾。
+	media, _ := messages[1].(map[string]any)
+	parts, _ := media["content"].([]any)
+	if len(parts) != 3 {
+		t.Fatalf("media turn content = %v, want three parts (image, video, text)", media["content"])
+	}
+	img, _ := parts[0].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Errorf("part[0] = %v, want an image_url part", img)
+	}
+	vid, _ := parts[1].(map[string]any)
+	if vid["type"] != "video_url" {
+		t.Errorf("part[1] = %v, want a video_url part", vid)
+	}
+	text, _ := parts[2].(map[string]any)
+	if text["type"] != "text" || text["text"] != "分析这段素材" {
+		t.Errorf("part[2] = %v, want the text part closing the array", text)
+	}
+}
+
 func TestGenerateChatOmitsSourceHeaderWhenEmpty(t *testing.T) {
 	gateway := newFakeGateway(http.StatusOK, chatCompletion("答案"))
 	server := newGatewayServer(t, gateway)

@@ -252,23 +252,36 @@ export interface PromptTemplateOption {
   target: SkillTarget
 }
 
+/** Agent 会话媒体附件的一条引用(32 号票):ref 持久化素材内容寻址路径
+ * (/api/assets/{id}/content,永久地址,整图 JSON 不背 base64)或厂商
+ * http(s) 地址;data: URI 进不了网关媒体契约,前端也不产生。 */
+export interface AgentChatMedia {
+  ref: string
+  kind: 'image' | 'video'
+}
+
 /** Agent 节点多轮对话的一轮(29 号票):role+content 随节点 data 持久化
- * (整图 JSON),20 轮上限超出截断最旧。 */
+ * (整图 JSON),20 轮上限超出截断最旧;32 号票起 user 轮可携 media
+ * (单条 ≤4 图 + ≤1 视频,混合允许;assistant 恒纯文本),媒体随轮滚出
+ * 截断,发送成功后这些引用进入历史并逐轮全量重发。 */
 export interface AgentChatMessage {
   role: 'user' | 'assistant'
   content: string
+  media?: AgentChatMedia[]
 }
 
-/** 生成提示词的请求体(29 号票 Agent 会话):template_id 可选 —— 缺省/
- * 0 = 未选技能,服务端用内置通用「提示词书写」指令作首条;topic 为本轮
- * 输入(主题或修改意见);history 为此前的对话轮次(不含本轮,不含首条
- * 指令 —— 那由服务端按技能即时渲染);model 是 token 轨聊天模型;
- * node_id 可选,用于用量归因。 */
+/** 生成提示词的请求体(29 号票 Agent 会话;32 号票多模态):template_id
+ * 可选 —— 缺省/0 = 未选技能,服务端用内置通用「提示词书写」指令作首条;
+ * topic 为本轮输入(主题或修改意见);media 为本轮附件引用(内容寻址
+ * 路径或厂商 http(s) 地址,≤4 图 + ≤1 视频);history 为此前的对话轮次
+ * (不含本轮,不含首条指令 —— 那由服务端按技能即时渲染,user 轮可带
+ * media);model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
 export interface GeneratePromptInput {
   node_id?: string
   template_id?: number
   topic: string
   model: string
+  media?: AgentChatMedia[]
   history?: AgentChatMessage[]
 }
 

@@ -31,6 +31,19 @@ const (
 	maxMediaRefRunes = 4096
 )
 
+// 单条消息的媒体附件上限(32 号票,混合允许):图片对齐 21 号票图生图
+// image_urls ≤4,视频对齐 24 号票参考视频 ≤1(聊天轨视频分节计价贵,
+// 1 条封顶是成本护栏);保守自限,上游不认时 4xx 原样透出。
+const (
+	maxMediaImagesPerMessage = 4
+	maxMediaVideosPerMessage = 1
+)
+
+// missingAssetSessionHint 拼在素材缺失错误后的行动指引(32 号票):历史
+// 媒体全量重发,历史里引用的素材被删后每一轮都会撞同一个 404,指路开新
+// 会话而不是静默降级。
+const missingAssetSessionHint = ";若引用的素材已被删除,请开新会话后重试"
+
 // TemplateSource is the slice of the template store the handlers need: the
 // action fetches the chosen template per request, so admin edits take effect
 // immediately (no cache — 11 号票的「即时反映」).
@@ -106,13 +119,27 @@ type generateInput struct {
 	Topic      string       `json:"topic"`
 	Model      string       `json:"model"`
 	History    []chatTurnIn `json:"history"`
+	// Media 是本轮输入携带的媒体附件(32 号票):素材内容寻址路径或厂商
+	// http(s) 地址,服务端解出 LLM 可达地址;历史轮的媒体随各轮自带。
+	Media []chatMediaIn `json:"media"`
+}
+
+// chatMediaIn is one media attachment on a conversation turn (32 号票):
+// ref 是素材内容寻址路径或厂商 http(s) 地址,kind 声明 image|video。
+type chatMediaIn struct {
+	Ref  string `json:"ref"`
+	Kind string `json:"kind"`
 }
 
 // chatTurnIn is one history turn of the Agent node's multi-round conversation
-// (29 号票):role+content,user/assistant 交替,由编辑器随节点 data 持久化。
+// (29 号票):role+content,user/assistant 交替,由编辑器随节点 data 持久化;
+// 32 号票起 user 轮可带 media(assistant 恒纯文本),resolved 是服务端解出
+// 的 LLM 可达地址(不参与 JSON)。
 type chatTurnIn struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role     string        `json:"role"`
+	Content  string        `json:"content"`
+	Media    []chatMediaIn `json:"media"`
+	resolved []MediaPart
 }
 
 // agentHistoryMaxMessages 是服务端收下的历史消息条数上限:与前端「20 轮
@@ -130,7 +157,8 @@ const builtinPromptInstruction = "你是提示词工程师。本次对话的主�
 	"只输出提示词本身,不要任何解释、前缀或分点,用一段连贯的文字完成。"
 
 // normalizeHistory validates the conversation history: 每轮 role 必须是
-// user|assistant、内容非空且与 topic 同宽,总轮数不超上限。
+// user|assistant、内容非空且与 topic 同宽,总轮数不超上限;32 号票起 user
+// 轮可带媒体附件(assistant 恒纯文本),逐条过媒体形状校验。
 func normalizeHistory(raw []chatTurnIn) ([]chatTurnIn, error) {
 	turns := make([]chatTurnIn, 0, len(raw))
 	for _, t := range raw {
@@ -145,7 +173,14 @@ func normalizeHistory(raw []chatTurnIn) ([]chatTurnIn, error) {
 		if utf8.RuneCountInString(content) > maxTopicRunes {
 			return nil, fmt.Errorf("history 单条内容最多 %d 个字符", maxTopicRunes)
 		}
-		turns = append(turns, chatTurnIn{Role: role, Content: content})
+		media, err := normalizeTurnMedia(t.Media)
+		if err != nil {
+			return nil, err
+		}
+		if role == "assistant" && len(media) > 0 {
+			return nil, fmt.Errorf("history 的 assistant 轮不能携带媒体,media 只允许挂在 user 轮")
+		}
+		turns = append(turns, chatTurnIn{Role: role, Content: content, Media: media})
 	}
 	if len(turns) > agentHistoryMaxMessages {
 		return nil, fmt.Errorf("history 最多 %d 条(20 轮),请在编辑器里开新会话", agentHistoryMaxMessages)
@@ -153,12 +188,52 @@ func normalizeHistory(raw []chatTurnIn) ([]chatTurnIn, error) {
 	return turns, nil
 }
 
+// normalizeTurnMedia validates one message's media attachments (32 号票):
+// kind ∈ image|video、ref 非空且与媒体地址同宽,单条消息 ≤4 图 + ≤1 视频
+// (图片对齐 21 号票 image_urls、视频对齐 24 号票参考视频;混合允许,
+// 超限整单拒绝 —— 前端同款纪律,服务端只挡明显失控的请求)。
+func normalizeTurnMedia(raw []chatMediaIn) ([]chatMediaIn, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	media := make([]chatMediaIn, 0, len(raw))
+	images, videos := 0, 0
+	for _, m := range raw {
+		kind := strings.TrimSpace(m.Kind)
+		if kind != MediaKindImage && kind != MediaKindVideo {
+			return nil, fmt.Errorf("媒体的 kind 必须是 image 或 video")
+		}
+		ref := strings.TrimSpace(m.Ref)
+		if ref == "" {
+			return nil, fmt.Errorf("媒体的 ref 不能为空")
+		}
+		if utf8.RuneCountInString(ref) > maxMediaRefRunes {
+			return nil, fmt.Errorf("媒体的 ref 最多 %d 个字符", maxMediaRefRunes)
+		}
+		if kind == MediaKindImage {
+			images++
+		} else {
+			videos++
+		}
+		media = append(media, chatMediaIn{Ref: ref, Kind: kind})
+	}
+	if images > maxMediaImagesPerMessage {
+		return nil, fmt.Errorf("单条消息最多 %d 张图片", maxMediaImagesPerMessage)
+	}
+	if videos > maxMediaVideosPerMessage {
+		return nil, fmt.Errorf("单条消息最多 %d 个视频", maxMediaVideosPerMessage)
+	}
+	return media, nil
+}
+
 // conversationMessages renders the final chat messages (29 号票验证点的
-// 形状):首条指令(技能渲染文本,技能可选)+ 历史 + 本轮输入。首轮主题
-// 取历史里最早一条 user 消息 —— 会话中指令钉住首轮主题,本轮输入只作为
-// 最后一条 user 消息表达修改意见;首轮(无历史)时指令即本轮输入,与
-// 11 号票的单次生成形状逐字节同形。
-func conversationMessages(instructionText string, history []chatTurnIn, topic string) []ChatMessage {
+// 形状,32 号票多模态化):首条指令(技能渲染文本,技能可选)+ 历史 +
+// 本轮输入。首轮主题取历史里最早一条 user 消息 —— 会话中指令钉住首轮
+// 主题,本轮输入只作为最后一条 user 消息表达修改意见。带媒体的 user 轮
+// content 走分节数组(媒体在前、该轮文本在后,17 号票形状),无媒体轮
+// 恒纯文本,指令首条恒纯文本 —— 首轮(无历史)带媒体时媒体随指令分节,
+// 否则媒体无处可挂。历史媒体全量重发:每轮请求解出会话出现过的全部媒体。
+func conversationMessages(instructionText string, history []chatTurnIn, topic string, currentMedia []MediaPart) []ChatMessage {
 	firstTopic := topic
 	for _, t := range history {
 		if t.Role == "user" {
@@ -168,11 +243,23 @@ func conversationMessages(instructionText string, history []chatTurnIn, topic st
 	}
 	instruction := strings.ReplaceAll(instructionText, prompttemplate.TopicPlaceholder, firstTopic)
 	msgs := make([]ChatMessage, 0, len(history)+2)
-	msgs = append(msgs, ChatMessage{Role: "user", Content: instruction})
-	if len(history) > 0 {
-		for _, t := range history {
-			msgs = append(msgs, ChatMessage{Role: t.Role, Content: t.Content})
+	if len(history) == 0 {
+		if len(currentMedia) > 0 {
+			return []ChatMessage{{Role: "user", Parts: MediaTextParts(currentMedia, instruction)}}
 		}
+		return []ChatMessage{{Role: "user", Content: instruction}}
+	}
+	msgs = append(msgs, ChatMessage{Role: "user", Content: instruction})
+	for _, t := range history {
+		if len(t.resolved) > 0 {
+			msgs = append(msgs, ChatMessage{Role: t.Role, Parts: MediaTextParts(t.resolved, t.Content)})
+			continue
+		}
+		msgs = append(msgs, ChatMessage{Role: t.Role, Content: t.Content})
+	}
+	if len(currentMedia) > 0 {
+		msgs = append(msgs, ChatMessage{Role: "user", Parts: MediaTextParts(currentMedia, topic)})
+	} else {
 		msgs = append(msgs, ChatMessage{Role: "user", Content: topic})
 	}
 	return msgs
@@ -185,8 +272,10 @@ type generatePrep struct {
 	nodeID          string
 	instructionText string
 	history         []chatTurnIn
-	topic           string
-	model           string
+	// currentMedia 是本轮输入的媒体(32 号票):已解出 LLM 可达地址。
+	currentMedia []MediaPart
+	topic        string
+	model        string
 }
 
 // prepareGenerate runs the whole validation prologue the two prompt
@@ -244,6 +333,29 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 		apierr.InvalidRequest(c, err.Error())
 		return generatePrep{}, false
 	}
+	// 本轮输入的媒体附件(32 号票):与历史轮同套形状校验 —— media 只
+	// 挂 user 轮的规则对本轮天然成立,assistant 轮的拒绝只在 history 里。
+	currentTurnMedia, err := normalizeTurnMedia(in.Media)
+	if err != nil {
+		apierr.InvalidRequest(c, err.Error())
+		return generatePrep{}, false
+	}
+
+	// 32 号票:history 与本轮的媒体逐条解引用(http(s) 直传 / 内容寻址
+	// 解出素材真实地址并校验 kind / data: URI 拒绝,17 号票同套)。历史
+	// 媒体全量重发,任何一条解不出 LLM 可达地址都整单拒绝 —— 流前校验,
+	// 照旧回答 JSON 错误、流不开始;历史素材被删时文案指路开新会话。
+	for i := range history {
+		resolved, ok := h.resolveMediaRefs(c, history[i].Media, "history 里的媒体引用")
+		if !ok {
+			return generatePrep{}, false
+		}
+		history[i].resolved = resolved
+	}
+	currentMedia, ok := h.resolveMediaRefs(c, currentTurnMedia, "media")
+	if !ok {
+		return generatePrep{}, false
+	}
 
 	// 技能可选(29 号票):未选技能时首条指令用内置通用「提示词书写」,
 	// 不查模板目录 —— 会话没有技能依赖,换技能才开新会话是编辑器语义。
@@ -275,6 +387,7 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 		nodeID:          nodeID,
 		instructionText: instructionText,
 		history:         history,
+		currentMedia:    currentMedia,
 		topic:           topic,
 		model:           model,
 	}, true
@@ -292,7 +405,7 @@ func (h *Handlers) Generate(c *gin.Context) {
 
 	result, err := h.Gateway.GenerateChat(c.Request.Context(), ChatRequest{
 		Model:        prep.model,
-		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic),
+		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic, prep.currentMedia),
 		Source:       canvasSource(prep.canvasID, prep.nodeID, "prompt"),
 	})
 	if err != nil {
@@ -339,7 +452,7 @@ func (h *Handlers) GenerateStream(c *gin.Context) {
 
 	err := h.Gateway.StreamChat(c.Request.Context(), ChatRequest{
 		Model:        prep.model,
-		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic),
+		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic, prep.currentMedia),
 		Source:       canvasSource(prep.canvasID, prep.nodeID, "prompt"),
 	}, func(delta string) {
 		body, mErr := json.Marshal(gin.H{"delta": delta})
@@ -450,7 +563,7 @@ func (h *Handlers) Reverse(c *gin.Context) {
 
 	videoURL, err := h.resolveMedia(c.Request.Context(), videoRef, asset.KindVideo)
 	if err != nil {
-		h.failMediaRef(c, err, "video_url", "video_inline_unsupported", asset.KindVideo)
+		h.failMediaRef(c, err, "video_url", "video_inline_unsupported", asset.KindVideo, "")
 		return
 	}
 
@@ -552,7 +665,7 @@ func (h *Handlers) Analyze(c *gin.Context) {
 
 	mediaURL, err := h.resolveMedia(c.Request.Context(), mediaRef, kind)
 	if err != nil {
-		h.failMediaRef(c, err, "media_url", "media_inline_unsupported", kind)
+		h.failMediaRef(c, err, "media_url", "media_inline_unsupported", kind, "")
 		return
 	}
 
@@ -650,13 +763,38 @@ func (h *Handlers) publicBaseURL(ctx context.Context) string {
 	return h.PublicBaseURL(ctx)
 }
 
+// resolveMediaRefs resolves one message's media attachments to the
+// LLM-reachable addresses the gateway relays (32 号票,17 号票同套引用
+// 规则):http(s) 直传、内容寻址解出素材真实地址并校验 kind、data: URI
+// 拒绝。任何一条失败都经 failMediaRef 回答请求(流前校验)并报告 false。
+func (h *Handlers) resolveMediaRefs(c *gin.Context, media []chatMediaIn, fieldLabel string) ([]MediaPart, bool) {
+	if len(media) == 0 {
+		return nil, true
+	}
+	parts := make([]MediaPart, 0, len(media))
+	for _, m := range media {
+		kind := asset.KindImage
+		if m.Kind == MediaKindVideo {
+			kind = asset.KindVideo
+		}
+		url, err := h.resolveMedia(c.Request.Context(), m.Ref, kind)
+		if err != nil {
+			h.failMediaRef(c, err, fieldLabel, "media_inline_unsupported", kind, missingAssetSessionHint)
+			return nil, false
+		}
+		parts = append(parts, MediaPart{Kind: m.Kind, URL: url})
+	}
+	return parts, true
+}
+
 // failMediaRef maps a reference-resolution failure onto the admin-API error
 // surface; store faults (non-sentinel) stay internal. fieldLabel names the
 // request field the reference arrived on, inlineCode is the endpoint's
 // inline-refusal code, want carries the requested asset kind (决定种类
 // 不符的错误码与文案:反推与分析视频用 asset_not_video,分析图片用
-// asset_not_image)。
-func (h *Handlers) failMediaRef(c *gin.Context, err error, fieldLabel, inlineCode string, want string) {
+// asset_not_image),missingHint 拼在素材缺失文案后(生成端点指路开新
+// 会话,反推/分析无此语义传空)。
+func (h *Handlers) failMediaRef(c *gin.Context, err error, fieldLabel, inlineCode string, want string, missingHint string) {
 	switch {
 	case errors.Is(err, errMediaRefMalformed):
 		apierr.Write(c, http.StatusBadRequest, "invalid_request",
@@ -674,7 +812,7 @@ func (h *Handlers) failMediaRef(c *gin.Context, err error, fieldLabel, inlineCod
 		apierr.Write(c, http.StatusBadRequest, inlineCode,
 			"该媒体是内联 base64 产物,无法作为多模态输入;请使用带 http(s) 地址的媒体")
 	case errors.Is(err, errMediaAssetMissing):
-		apierr.Write(c, http.StatusNotFound, "asset_not_found", "素材不存在或已被删除")
+		apierr.Write(c, http.StatusNotFound, "asset_not_found", "素材不存在或已被删除"+missingHint)
 	default:
 		h.failStore(c, err)
 	}

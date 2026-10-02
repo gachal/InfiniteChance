@@ -4,11 +4,11 @@
  * vue-flow 的内部装饰(尺寸、事件、选中态)不落库。
  */
 
-import type { AgentChatMessage } from '@infinitechance/api'
+import type { AgentChatMedia, AgentChatMessage } from '@infinitechance/api'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
-export type { AgentChatMessage }
+export type { AgentChatMessage, AgentChatMedia }
 
 /** Agent 节点数据(29 号票,提示词节点的升级取代):text 是当前提示词
  * 草稿(生成落点,可手编,也是投递的内容);skill_id 是 `/` 选中的技能
@@ -79,13 +79,20 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
 export const AGENT_MAX_HISTORY_MESSAGES = 40
 
 /** 追加一轮对话并按上限截断最旧(29 号票):生成成功后由编辑器写入节点
- * data,返回新数组(不改动入参)。 */
+ * data,返回新数组(不改动入参);32 号票起 user 轮可携媒体附件(发送
+ * 成功的引用进历史,下一轮起随 history 全量重发,旧轮滚出截断即停止
+ * 重发)。 */
 export function appendAgentTurn(
   history: AgentChatMessage[],
   user: string,
   assistant: string,
+  media?: AgentChatMedia[],
 ): AgentChatMessage[] {
-  const next = [...history, { role: 'user' as const, content: user }, { role: 'assistant' as const, content: assistant }]
+  const next = [
+    ...history,
+    { role: 'user' as const, content: user, ...(media && media.length > 0 ? { media } : {}) },
+    { role: 'assistant' as const, content: assistant },
+  ]
   return next.length > AGENT_MAX_HISTORY_MESSAGES
     ? next.slice(next.length - AGENT_MAX_HISTORY_MESSAGES)
     : next
