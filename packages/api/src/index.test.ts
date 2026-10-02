@@ -212,6 +212,7 @@ describe('ApiClient channels', () => {
     has_key: true,
     key_hint: '…9876',
     model_map: { 'gpt-4o': 'gpt-4o-2024-11-20' },
+    capabilities: ['chat'],
     priority: 10,
     weight: 1,
     enabled: true,
@@ -779,6 +780,7 @@ describe('ApiClient uploadAsset (18 号票)', () => {
 describe('ApiClient storage settings', () => {
   const storage: StorageSettings = {
     driver: 'oss',
+    relay_persist: true,
     oss: {
       endpoint: 'oss-cn-hangzhou.aliyuncs.com',
       bucket: 'infinitechance',
@@ -787,6 +789,13 @@ describe('ApiClient storage settings', () => {
       access_key_hint: '…z9ab',
       has_secret: true,
       secret_hint: '…wxyz',
+    },
+    cos: {
+      endpoint: '',
+      bucket: '',
+      public_base_url: '',
+      has_secret_id: false,
+      has_secret_key: false,
     },
     updated_at: '2026-09-11T12:00:00Z',
   }
