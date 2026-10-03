@@ -643,6 +643,66 @@ func TestHandlerCreateVideoTaskRefs(t *testing.T) {
 	}
 }
 
+// TestHandlerCreateImageTaskBackground 覆盖 37 号票的透明背景入参:图片
+// 任务收 background=transparent 落行并回显;其他枚举值 400(与网关 /v1
+// 的校验同形);视频任务上该字段不读(视频透明显式 out of scope)。
+func TestHandlerCreateImageTaskBackground(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "x"})
+
+	// transparent 落行 + 回显。
+	w := env.postTask(t, `{"node_id":"image-1-1","kind":"image","prompt":"p","model":"img-m","background":"transparent"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("transparent status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID         string `json:"id"`
+			Background string `json:"background"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored := env.tasks.tasks[resp.Task.ID]
+	if stored.Background != "transparent" {
+		t.Errorf("stored background = %q, want transparent", stored.Background)
+	}
+	if resp.Task.Background != "transparent" {
+		t.Errorf("echo background = %q, want transparent", resp.Task.Background)
+	}
+
+	// 缺省不传:落空串。
+	w = env.postTask(t, `{"node_id":"image-1-2","kind":"image","prompt":"p","model":"img-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("default status = %d, want 201", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if env.tasks.tasks[resp.Task.ID].Background != "" {
+		t.Errorf("default background = %q, want empty", env.tasks.tasks[resp.Task.ID].Background)
+	}
+
+	// 其他枚举值 400。
+	w = env.postTask(t, `{"node_id":"x","kind":"image","prompt":"p","model":"img-m","background":"opaque"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("opaque = %d %s, want 400", w.Code, w.Body.String())
+	}
+
+	// 视频任务不读 background:提交合法,字段落空。
+	w = env.postTask(t, `{"node_id":"video-1-1","kind":"video","prompt":"p","model":"vid-m","background":"transparent"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("video with background status = %d body %s, want 201 (field ignored)", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if env.tasks.tasks[resp.Task.ID].Background != "" {
+		t.Errorf("video background = %q, want empty (video transparency is out of scope)",
+			env.tasks.tasks[resp.Task.ID].Background)
+	}
+}
+
 func TestHandlerCancelClosesActiveVideoTask(t *testing.T) {
 	env := newHandlerEnv(&okGateway{url: "x"})
 	w := env.postTask(t, `{"node_id":"video-1-1","kind":"video","prompt":"p","model":"vid-m","image_url":"https://img.example/a.png"}`)

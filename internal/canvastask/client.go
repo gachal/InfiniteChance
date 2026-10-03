@@ -36,12 +36,15 @@ func NewClient(baseURL, key string) *Client {
 }
 
 // ImageRequest is one text-to-image generation the worker submits.
-// Source is the canvas origin mark (X-InfiniteChance-Source 值).
+// Source is the canvas origin mark (X-InfiniteChance-Source 值). Background
+// (37 号票)是透明背景请求:非空只可能是 "transparent",落 generations
+// JSON 体;空串不落线(与不传逐字节一致)。
 type ImageRequest struct {
-	Model  string
-	Prompt string
-	Size   string
-	Source string
+	Model      string
+	Prompt     string
+	Size       string
+	Background string
+	Source     string
 }
 
 // ImageResult is one delivered artifact. URL is the vendor's http(s) URL,
@@ -71,11 +74,12 @@ const maxEditRefsTotalBytes = 24 << 20
 // empty delivery is an error carrying the reason for the task row.
 func (c *Client) GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error) {
 	body := struct {
-		Model  string `json:"model"`
-		Prompt string `json:"prompt"`
-		N      int64  `json:"n"`
-		Size   string `json:"size,omitempty"`
-	}{Model: req.Model, Prompt: req.Prompt, N: 1, Size: req.Size}
+		Model      string `json:"model"`
+		Prompt     string `json:"prompt"`
+		N          int64  `json:"n"`
+		Size       string `json:"size,omitempty"`
+		Background string `json:"background,omitempty"`
+	}{Model: req.Model, Prompt: req.Prompt, N: 1, Size: req.Size, Background: req.Background}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return ImageResult{}, err
@@ -145,12 +149,14 @@ func decodeImageDelivery(raw []byte) (ImageResult, error) {
 // carries the already-resolved http(s) reference addresses; the client
 // fetches each one and uploads the bytes as multipart file parts — the
 // gateway's edits contract is a rebuilt multipart form, not a URL list.
+// Background (37 号票)与 ImageRequest 同语义,以 multipart 文本字段落线。
 type EditRequest struct {
-	Model  string
-	Prompt string
-	Size   string
-	Images []string
-	Source string
+	Model      string
+	Prompt     string
+	Size       string
+	Background string
+	Images     []string
+	Source     string
 }
 
 // EditImage calls POST /v1/images/edits (n=1) with the reference images as
@@ -171,6 +177,9 @@ func (c *Client) EditImage(ctx context.Context, req EditRequest) (ImageResult, e
 	}
 	if req.Size != "" {
 		fields = append(fields, struct{ name, value string }{"size", req.Size})
+	}
+	if req.Background != "" {
+		fields = append(fields, struct{ name, value string }{"background", req.Background})
 	}
 	for _, f := range fields {
 		if err := w.WriteField(f.name, f.value); err != nil {

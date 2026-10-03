@@ -98,29 +98,31 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 // video tasks; the reference image stays server-side (它可能是超长的 data:
 // URI,不该随每次轮询漂在任务列表里 —— 编辑器自己持有它,在图片节点上).
 type taskJSON struct {
-	ID        string    `json:"id"`
-	CanvasID  int64     `json:"canvas_id"`
-	NodeID    string    `json:"node_id"`
-	Kind      string    `json:"kind"`
-	Prompt    string    `json:"prompt"`
-	Model     string    `json:"model"`
-	Size      string    `json:"size"`
-	Ratio     string    `json:"ratio"`
-	Seconds   int64     `json:"seconds"`
-	Status    Status    `json:"status"`
-	Attempts  int64     `json:"attempts"`
-	Error     string    `json:"error"`
-	AssetID   int64     `json:"asset_id"`
-	ImageURL  string    `json:"image_url"`
-	VideoURL  string    `json:"video_url"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	CanvasID   int64     `json:"canvas_id"`
+	NodeID     string    `json:"node_id"`
+	Kind       string    `json:"kind"`
+	Prompt     string    `json:"prompt"`
+	Model      string    `json:"model"`
+	Size       string    `json:"size"`
+	Ratio      string    `json:"ratio"`
+	Background string    `json:"background"`
+	Seconds    int64     `json:"seconds"`
+	Status     Status    `json:"status"`
+	Attempts   int64     `json:"attempts"`
+	Error      string    `json:"error"`
+	AssetID    int64     `json:"asset_id"`
+	ImageURL   string    `json:"image_url"`
+	VideoURL   string    `json:"video_url"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 func toTaskJSON(t Task) taskJSON {
 	return taskJSON{
 		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, Kind: t.Kind,
-		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio, Seconds: t.Seconds,
+		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio,
+		Background: t.Background, Seconds: t.Seconds,
 		Status: t.Status, Attempts: t.Attempts, Error: t.Error, AssetID: t.AssetID,
 		ImageURL: t.ImageURL, VideoURL: t.VideoURL,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
@@ -128,16 +130,17 @@ func toTaskJSON(t Task) taskJSON {
 }
 
 type createInput struct {
-	NodeID    string       `json:"node_id"`
-	Kind      string       `json:"kind"`
-	Prompt    string       `json:"prompt"`
-	Model     string       `json:"model"`
-	Size      string       `json:"size"`
-	Ratio     string       `json:"ratio"`
-	Seconds   *int64       `json:"seconds"`
-	ImageURL  string       `json:"image_url"`
-	ImageURLs []string     `json:"image_urls"`
-	VideoRefs []videoRefIn `json:"video_refs"`
+	NodeID     string       `json:"node_id"`
+	Kind       string       `json:"kind"`
+	Prompt     string       `json:"prompt"`
+	Model      string       `json:"model"`
+	Size       string       `json:"size"`
+	Ratio      string       `json:"ratio"`
+	Background string       `json:"background"`
+	Seconds    *int64       `json:"seconds"`
+	ImageURL   string       `json:"image_url"`
+	ImageURLs  []string     `json:"image_urls"`
+	VideoRefs  []videoRefIn `json:"video_refs"`
 }
 
 // videoRefIn is one wire-form video reference (24 号票):{url, kind, role}。
@@ -319,6 +322,18 @@ func (h *Handlers) Create(c *gin.Context) {
 		apierr.InvalidRequest(c, "size 最多 64 个字符")
 		return
 	}
+	// 透明背景(37 号票):仅图片任务、仅 transparent 一个枚举值 —— 其他
+	// 值在落任务行之前 400,与网关 /v1 的校验同形(严格全等,不 trim,
+	// 行上的值就是上送的值);视频透明显式 out of scope,视频任务不读
+	// 该字段。
+	background := ""
+	if kind == KindImage && in.Background != "" {
+		if in.Background != "transparent" {
+			apierr.InvalidRequest(c, "background 仅支持 transparent")
+			return
+		}
+		background = in.Background
+	}
 
 	// 提交前先看价:模型没有按相应轨道计价时,生成注定失败 —— 让用户
 	// 立刻知道,而不是排队后才在节点上看到失败。生图走按次轨(07 号票),
@@ -358,7 +373,7 @@ func (h *Handlers) Create(c *gin.Context) {
 	}
 	task, err := h.Tasks.Create(c.Request.Context(), Task{
 		ID: id, CanvasID: canvasID, NodeID: nodeID, Kind: kind,
-		Prompt: prompt, Model: model, Size: size, Ratio: ratio,
+		Prompt: prompt, Model: model, Size: size, Ratio: ratio, Background: background,
 		Seconds: seconds, ImageRef: imageRef, VideoRefs: videoRefs, ImageRefs: imageRefs,
 	})
 	if err != nil {

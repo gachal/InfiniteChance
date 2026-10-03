@@ -731,3 +731,54 @@ func TestWorkerImageTaskWithRefsRoutesThroughEdits(t *testing.T) {
 		t.Errorf("generations calls = %d, want 0 for a reference task", len(gens))
 	}
 }
+
+// 37 号票:任务行的 Background 非空即上送 —— generations 与 edits 两条
+// 分流路都把它带上网关请求;行上只可能是 "transparent"(createInput 已
+// 校验),worker 不再做枚举判断。
+func TestWorkerCarriesBackgroundToGateway(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	gateway := &stubGateway{
+		fn: func(_ context.Context, _ canvastask.ImageRequest) (canvastask.ImageResult, error) {
+			return canvastask.ImageResult{URL: "https://img.example/plain.png"}, nil
+		},
+		editFn: func(_ context.Context, _ canvastask.EditRequest) (canvastask.ImageResult, error) {
+			return canvastask.ImageResult{URL: "https://img.example/edited.png"}, nil
+		},
+	}
+	runWorker(t, newTestWorker(store, gateway))
+
+	seed := func(nodeID string, refs []string) canvastask.Task {
+		t.Helper()
+		id, err := canvastask.NewID()
+		if err != nil {
+			t.Fatalf("NewID: %v", err)
+		}
+		task, err := store.Create(context.Background(), canvastask.Task{
+			ID: id, CanvasID: 7, NodeID: nodeID, Kind: canvastask.KindImage,
+			Prompt: "一只在月光下奔跑的猫", Model: "img-m", Size: "1024x1024",
+			Background: "transparent", ImageRefs: refs, Status: canvastask.StatusQueued,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		return task
+	}
+
+	textTask := seed("image-1-1", nil)
+	if final := awaitTask(t, store, textTask.ID); final.Status != canvastask.StatusSucceeded {
+		t.Fatalf("text task = %+v, want succeeded", final)
+	}
+	refTask := seed("image-1-2", []string{"https://img.example/ref.png"})
+	if final := awaitTask(t, store, refTask.ID); final.Status != canvastask.StatusSucceeded {
+		t.Fatalf("ref task = %+v, want succeeded", final)
+	}
+
+	reqs := gateway.seen()
+	if len(reqs) != 1 || reqs[0].Background != "transparent" {
+		t.Errorf("generations requests = %+v, want one carrying background transparent", reqs)
+	}
+	edits := gateway.seenEdits()
+	if len(edits) != 1 || edits[0].Background != "transparent" {
+		t.Errorf("edit requests = %+v, want one carrying background transparent", edits)
+	}
+}

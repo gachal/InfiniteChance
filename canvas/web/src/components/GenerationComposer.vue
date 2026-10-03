@@ -40,6 +40,9 @@ const props = defineProps<{
   model: string
   ratio: string
   resolution: string
+  /** 图片模式草稿:透明背景开关(37 号票,所有生图模型显示;视频模式
+   * 不出现 —— 视频透明显式 out of scope)。 */
+  transparent: boolean
   /** 视频模式草稿:时长档('' = 自动,不传 seconds)。 */
   duration: string
   /** 提交在途(编辑器级状态,防连点)。 */
@@ -54,6 +57,7 @@ const emit = defineEmits<{
   'update:model': [value: string]
   'update:ratio': [value: string]
   'update:resolution': [value: string]
+  'update:transparent': [value: boolean]
   'update:duration': [value: string]
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
@@ -318,6 +322,20 @@ function onFileChange(e: Event): void {
           {{ p.label }}
         </option>
       </select>
+      <!-- 透明背景开关(37 号票):仅图片模式、所有生图模型显示,不按
+           模型特判 —— 上游不认时 4xx 原样透出、节点可见可重试。 -->
+      <label
+        v-if="!isVideo"
+        class="transparent"
+        title="透明背景(产物为带 alpha 通道的 PNG;上游不支持时错误原样透出)"
+      >
+        <input
+          type="checkbox"
+          :checked="transparent"
+          @change="emit('update:transparent', ($event.target as HTMLInputElement).checked)"
+        >
+        透明背景
+      </label>
       <select
         :value="model"
         class="model"
@@ -529,6 +547,24 @@ textarea:focus {
   color: inherit;
   font-size: 12px;
   box-sizing: border-box;
+}
+
+/* 透明背景开关:与下拉同排的小号复选项。 */
+.controls label.transparent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #aab1c5;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.controls label.transparent input {
+  accent-color: #7aa2f7;
+  margin: 0;
 }
 
 .controls .model {

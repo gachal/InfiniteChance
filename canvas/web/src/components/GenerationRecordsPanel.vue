@@ -127,6 +127,11 @@ function statusClass(task: CanvasTask): string {
           <span class="row-1">
             <span class="kind">{{ recordKindLabel(task.kind) }}</span>
             <span
+              v-if="task.background === 'transparent'"
+              class="bg-flag"
+              title="透明背景(37 号票)"
+            >透明</span>
+            <span
               class="status"
               :class="statusClass(task)"
             >{{ recordStatusLabel(task.status) }}</span>
@@ -273,6 +278,14 @@ function statusClass(task: CanvasTask): string {
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.08);
   color: #aab1c5;
+}
+
+/* 透明背景徽章(37 号票):与 kind 徽章同族的浅色小标。 */
+.bg-flag {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(122, 162, 247, 0.18);
+  color: #a5b4fc;
 }
 
 .status {

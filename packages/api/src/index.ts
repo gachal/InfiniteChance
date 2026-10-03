@@ -194,7 +194,8 @@ export type CanvasTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | '
 /** 服务端编排的生成任务。node_id 绑定到编辑器里展示结果的节点;
  * image_url / video_url 是产物地址(成功时与素材行同值),asset_id 是
  * 素材库引用;seconds 只属于视频任务(0 = 自动,不传维持厂商缺省),
- * ratio 是视频任务的显式宽高比串(空 = 不传)。 */
+ * ratio 是视频任务的显式宽高比串(空 = 不传);background 是图片任务的
+ * 透明背景标记(37 号票,空串 = 未开,"transparent" = 透明)。 */
 export interface CanvasTask {
   id: string
   canvas_id: number
@@ -204,6 +205,7 @@ export interface CanvasTask {
   model: string
   size: string
   ratio: string
+  background: string
   seconds: number
   status: CanvasTaskStatus
   attempts: number
@@ -227,10 +229,11 @@ export interface CanvasVideoRef {
 
 /** 提交生成任务的请求体。kind=image 为文生图/图生图(image_urls 带参考
  * 图列表,≤4 条:厂商 http(s) 地址或素材内容寻址路径,服务端逐条解引用,
- * 21 号票);kind=video 为视频生成(24 号票对话框范式):video_refs 带全
- * 模态参考(空/缺省 = 文生视频;12 号票的单串 image_url 仍兼容),
- * seconds 可选(缺省 = 自动,厂商缺省时长),size 为分辨率档位串
- * (480p/720p/1080p),ratio 为显式宽高比。 */
+ * 21 号票),background 可选(37 号票:仅 "transparent" 一个枚举值,透明
+ * 背景产物为带 alpha 的 PNG;缺省 = 不传);kind=video 为视频生成(24 号
+ * 票对话框范式):video_refs 带全模态参考(空/缺省 = 文生视频;12 号票的
+ * 单串 image_url 仍兼容),seconds 可选(缺省 = 自动,厂商缺省时长),
+ * size 为分辨率档位串(480p/720p/1080p),ratio 为显式宽高比。 */
 export interface CreateCanvasTaskInput {
   node_id: string
   kind: 'image' | 'video'
@@ -238,6 +241,7 @@ export interface CreateCanvasTaskInput {
   model: string
   size?: string
   ratio?: string
+  background?: string
   image_url?: string
   image_urls?: string[]
   video_refs?: CanvasVideoRef[]

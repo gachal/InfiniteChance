@@ -203,6 +203,7 @@ async function submitImageTask(payload: {
   prompt: string
   model: string
   size?: string
+  background?: string
   imageUrls?: string[]
   sourceNodeId: string
 }): Promise<void> {
@@ -259,6 +260,7 @@ async function submitImageTask(payload: {
       prompt: payload.prompt,
       model: payload.model,
       ...(payload.size ? { size: payload.size } : {}),
+      ...(payload.background ? { background: payload.background } : {}),
       ...(payload.imageUrls && payload.imageUrls.length > 0 ? { image_urls: payload.imageUrls } : {}),
     })
     taskSync.track(task)
@@ -279,11 +281,13 @@ const wrapEl = ref<HTMLDivElement | null>(null)
 const composerMode = ref<'image' | 'video'>('image')
 
 // 图片模式草稿:提示词/模型/比例/分辨率不随选中切换清空;比例 × 分辨率
-// 在发送时经 composeSize 组合成 size 串(双自动 = 不传)。
+// 在发送时经 composeSize 组合成 size 串(双自动 = 不传);透明背景开关
+// (37 号票)同款独立草稿,默认关、发送时折成 background 参数。
 const composerPrompt = ref('')
 const composerModel = ref('')
 const composerRatio = ref('')
 const composerResolution = ref('')
+const composerTransparent = ref(false)
 // 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
 const uploadedRefs = ref<ComposerRef[]>([])
 // 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
@@ -612,6 +616,7 @@ async function onComposerSend(): Promise<void> {
     prompt,
     model: composerModel.value,
     size: composeSize(composerRatio.value, composerResolution.value) || undefined,
+    background: composerTransparent.value ? 'transparent' : undefined,
     imageUrls: urls.length > 0 ? urls : undefined,
     sourceNodeId: node.id,
   })
@@ -1873,6 +1878,7 @@ function backToList(): void {
         :model="composerMode === 'video' ? videoModel : composerModel"
         :ratio="composerMode === 'video' ? videoRatio : composerRatio"
         :resolution="composerMode === 'video' ? videoResolution : composerResolution"
+        :transparent="composerTransparent"
         :duration="videoDuration"
         :generating="generating"
         :uploading="refUploading"
@@ -1881,6 +1887,7 @@ function backToList(): void {
         @update:model="onDraftUpdate(($v) => (videoModel = $v), ($v) => (composerModel = $v), $event)"
         @update:ratio="onDraftUpdate(($v) => (videoRatio = $v), ($v) => (composerRatio = $v), $event)"
         @update:resolution="onDraftUpdate(($v) => (videoResolution = $v), ($v) => (composerResolution = $v), $event)"
+        @update:transparent="composerTransparent = $event"
         @update:duration="videoDuration = $event"
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"

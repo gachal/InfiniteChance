@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	image_refs     MEDIUMTEXT   NULL,
 	video_refs     MEDIUMTEXT   NULL,
 	ratio          VARCHAR(32)  NOT NULL DEFAULT '',
+	background     VARCHAR(32)  NOT NULL DEFAULT '',
 	status         VARCHAR(16)  NOT NULL,
 	attempts       BIGINT       NOT NULL DEFAULT 0,
 	error          TEXT         NULL,
@@ -56,6 +57,7 @@ var migrations = []struct{ column, ddl string }{
 	{"image_refs", "ALTER TABLE canvas_tasks ADD COLUMN image_refs MEDIUMTEXT NULL"},
 	{"video_refs", "ALTER TABLE canvas_tasks ADD COLUMN video_refs MEDIUMTEXT NULL"},
 	{"ratio", "ALTER TABLE canvas_tasks ADD COLUMN ratio VARCHAR(32) NOT NULL DEFAULT ''"},
+	{"background", "ALTER TABLE canvas_tasks ADD COLUMN background VARCHAR(32) NOT NULL DEFAULT ''"},
 	{"video_url", "ALTER TABLE canvas_tasks ADD COLUMN video_url MEDIUMTEXT NULL"},
 	{"remote_task_id", "ALTER TABLE canvas_tasks ADD COLUMN remote_task_id VARCHAR(64) NOT NULL DEFAULT ''"},
 }
@@ -86,7 +88,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
-const taskColumns = `id, canvas_id, node_id, kind, prompt, model, size, ratio, seconds,
+const taskColumns = `id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds,
 	image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
 	remote_task_id, created_at, updated_at`
 
@@ -95,9 +97,9 @@ func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, seconds, image_ref, image_refs, video_refs, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, image_ref, image_refs, video_refs, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
 		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs), t.Status)
 	if err != nil {
 		return Task{}, err
@@ -369,7 +371,7 @@ func scanTask(row rowScanner) (Task, error) {
 	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs sql.NullString
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Seconds, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}

@@ -191,23 +191,27 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 		t.ID, t.CanvasID, t.NodeID, t.Attempts)
 	// 图生图分流(21 号票):带参考图的任务走 edits multipart,其余与
 	// 文生图同一 generations 调用;产物/记账/失败路径两种形态完全同构。
+	// Background(37 号票)两种形态同语义:非空即上送(行上只可能是
+	// "transparent",createInput 已校验),空串不落线。
 	source := fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID)
 	var result ImageResult
 	var err error
 	if len(t.ImageRefs) > 0 {
 		result, err = w.gateway.EditImage(ctx, EditRequest{
-			Model:  t.Model,
-			Prompt: t.Prompt,
-			Size:   t.Size,
-			Images: t.ImageRefs,
-			Source: source,
+			Model:      t.Model,
+			Prompt:     t.Prompt,
+			Size:       t.Size,
+			Background: t.Background,
+			Images:     t.ImageRefs,
+			Source:     source,
 		})
 	} else {
 		result, err = w.gateway.GenerateImage(ctx, ImageRequest{
-			Model:  t.Model,
-			Prompt: t.Prompt,
-			Size:   t.Size,
-			Source: source,
+			Model:      t.Model,
+			Prompt:     t.Prompt,
+			Size:       t.Size,
+			Background: t.Background,
+			Source:     source,
 		})
 	}
 	bookkeeping := context.WithoutCancel(parent)

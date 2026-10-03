@@ -112,6 +112,9 @@ func NewID() (string, error) {
 // ImageRef remains the single-string legacy shape old rows keep, and Seconds
 // 0 means "auto" (omit seconds on the wire, vendor default applies).
 // Ratio/Size carry the aspect-ratio and resolution tier strings verbatim.
+// Background (37 号票) is the image task's transparency request — 空串 =
+// 不传,非空只可能是 "transparent"(createInput 已校验),worker 非空即
+// 上送网关;视频任务不读它(视频透明显式 out of scope)。
 type Task struct {
 	ID           string
 	CanvasID     int64
@@ -121,6 +124,7 @@ type Task struct {
 	Model        string
 	Size         string
 	Ratio        string     // video: 显式宽高比串(如 16:9);空 = 不传
+	Background   string     // image: "transparent" = 透明背景;空 = 不传
 	Seconds      int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);image 恒 0
 	ImageRef     string     // video: 图生视频的单串参考图(12 号票旧形态)
 	VideoRefs    []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频

@@ -39,7 +39,8 @@ func TestSQLiteCanvasTaskImageRefsRoundTrip(t *testing.T) {
 	task, err := s.Create(ctx, Task{
 		ID: id, CanvasID: 1, NodeID: "image-5-1", Kind: KindImage,
 		Prompt: "把背景换成雪原", Model: "img-m",
-		ImageRefs: []string{"https://img.example/ref1.png", "https://img.example/ref2.png"},
+		Background: "transparent",
+		ImageRefs:  []string{"https://img.example/ref1.png", "https://img.example/ref2.png"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -50,6 +51,10 @@ func TestSQLiteCanvasTaskImageRefsRoundTrip(t *testing.T) {
 	}
 	if len(got.ImageRefs) != 2 || got.ImageRefs[0] != "https://img.example/ref1.png" || got.ImageRefs[1] != "https://img.example/ref2.png" {
 		t.Fatalf("image_refs = %v, want both references in order", got.ImageRefs)
+	}
+	// 37 号票:background 列保真往返(非空 = "transparent")。
+	if got.Background != "transparent" {
+		t.Fatalf("background = %q, want transparent verbatim", got.Background)
 	}
 
 	plain, err := s.Create(ctx, Task{
@@ -65,6 +70,9 @@ func TestSQLiteCanvasTaskImageRefsRoundTrip(t *testing.T) {
 	}
 	if got.ImageRefs != nil {
 		t.Errorf("plain image_refs = %v, want nil", got.ImageRefs)
+	}
+	if got.Background != "" {
+		t.Errorf("plain background = %q, want empty (缺省不传)", got.Background)
 	}
 }
 

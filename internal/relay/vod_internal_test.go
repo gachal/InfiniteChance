@@ -454,3 +454,87 @@ func TestVODAdaptorImageRefConstraints(t *testing.T) {
 		t.Fatalf("10 refs refusal = %s", upstream.Body)
 	}
 }
+
+// 37 号票:background=transparent 翻译为 ExtInfo 双层 JSON 编码串 + 强制
+// OutputFormat=png,generations 与 edits 两路共用同一段翻译;不带
+// background 的请求保持现状(提交体无 ExtInfo、OutputConfig 无
+// OutputFormat)。
+func TestVODAdaptorTransparentBackgroundExtInfo(t *testing.T) {
+	stub, srv := newVODStub(t,
+		`{"Response":{"AigcImageTask":{"Status":"SUCCESS","Output":{"FileInfos":[{"FileUrl":"https://cdn/t.png"}]}}}}`)
+	a := fastVODAdaptor(srv.URL)
+	ch := vodTestChannel(srv.URL)
+
+	assertTransparent := func(who string, raw []byte) {
+		t.Helper()
+		var submit map[string]any
+		if err := json.Unmarshal(raw, &submit); err != nil {
+			t.Fatalf("%s submit body: %v (%s)", who, err, raw)
+		}
+		if submit["ExtInfo"] != vodTransparentExtInfo {
+			t.Errorf("%s ExtInfo = %v, want %s", who, submit["ExtInfo"], vodTransparentExtInfo)
+		}
+		output, _ := submit["OutputConfig"].(map[string]any)
+		if output == nil || output["OutputFormat"] != "png" {
+			t.Errorf("%s OutputConfig = %v, want OutputFormat png", who, submit["OutputConfig"])
+		}
+	}
+
+	// generations:transparent 带上即翻译。
+	upstream, err := a.ImagesGenerations(context.Background(), ch,
+		[]byte(`{"model":"OG image2.5_sunburst","prompt":"a cat","background":"transparent"}`))
+	if err != nil || !upstream.OK {
+		t.Fatalf("generations = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	select {
+	case raw := <-stub.submits:
+		assertTransparent("generations", raw)
+	default:
+		t.Fatal("no generations submit reached the stub")
+	}
+
+	// edits:multipart 文本字段 background 同样翻译。
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("model", "OG image2.5_sunburst")
+	_ = mw.WriteField("prompt", "remove background")
+	_ = mw.WriteField("background", "transparent")
+	fw, _ := mw.CreateFormFile("image", "ref-0.png")
+	_, _ = fw.Write([]byte("fake-png-bytes"))
+	_ = mw.Close()
+	upstream, err = a.ImagesEdits(context.Background(), ch, mw.FormDataContentType(), buf.Bytes())
+	if err != nil || !upstream.OK {
+		t.Fatalf("edits = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	select {
+	case raw := <-stub.submits:
+		assertTransparent("edits", raw)
+	default:
+		t.Fatal("no edits submit reached the stub")
+	}
+
+	// 缺省不传:提交体没有 ExtInfo,OutputConfig 没有 OutputFormat。
+	upstream, err = a.ImagesGenerations(context.Background(), ch,
+		[]byte(`{"model":"OG image2.5_sunburst","prompt":"plain"}`))
+	if err != nil || !upstream.OK {
+		t.Fatalf("default generations = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	var submit struct {
+		ExtInfo      *string        `json:"ExtInfo"`
+		OutputConfig map[string]any `json:"OutputConfig"`
+	}
+	select {
+	case raw := <-stub.submits:
+		if err := json.Unmarshal(raw, &submit); err != nil {
+			t.Fatalf("default submit body: %v (%s)", err, raw)
+		}
+	default:
+		t.Fatal("no default submit reached the stub")
+	}
+	if submit.ExtInfo != nil {
+		t.Errorf("default ExtInfo = %q, want absent", *submit.ExtInfo)
+	}
+	if _, ok := submit.OutputConfig["OutputFormat"]; ok {
+		t.Errorf("default OutputConfig = %v, want no OutputFormat", submit.OutputConfig)
+	}
+}

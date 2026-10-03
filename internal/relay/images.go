@@ -34,11 +34,15 @@ import (
 const defaultImageCount = int64(1)
 
 // imagesRequest is the slice of an images body the gateway itself needs.
-// Everything else rides through untouched.
+// Everything else rides through untouched. Background is 37 号票的透明背景
+// 参数:MVP 只收 transparent 一个枚举值(校验见 prepareImages),openai
+// 形渠道全量透传 —— generations 的 JSON 体经 rewriteModel 保形重写、edits
+// 的重建表单逐字段复刻,两边都不需要 adaptor 参与。
 type imagesRequest struct {
-	Model string `json:"model"`
-	N     *int64 `json:"n"`
-	Size  string `json:"size"`
+	Model      string `json:"model"`
+	N          *int64 `json:"n"`
+	Size       string `json:"size"`
+	Background string `json:"background"`
 }
 
 // ImagesGenerations relays POST /v1/images/generations (JSON body).
@@ -77,7 +81,8 @@ func (h *Handlers) prepareImagesEdit(c *gin.Context, key apikey.Key) *prepared {
 		refuseBody(c, err)
 		return nil
 	}
-	req := imagesRequest{Model: formValue(form, "model"), Size: formValue(form, "size")}
+	req := imagesRequest{Model: formValue(form, "model"), Size: formValue(form, "size"),
+		Background: formValue(form, "background")}
 	if v := formValue(form, "n"); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
@@ -115,6 +120,17 @@ func (h *Handlers) prepareImages(c *gin.Context, key apikey.Key, req imagesReque
 	if len([]rune(size)) > pricing.MaxSizeRunes {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
 			"The 'size' parameter is too long.")
+		return nil
+	}
+	// background 只收 transparent(37 号票):其他枚举值(auto/opaque 等)
+	// 在预扣之前 400,报错写明当前支持的值;缺省不传 = 现状行为不变。值
+	// 本身不需要单独携带 —— generations 的 JSON 体与 edits 的重建表单都
+	// 原样带往上游,VOD adaptor 在各自入口再解一次。严格全等比较(不
+	// trim):透传的是原值,放过 " transparent " 会把带空白的值原样送给
+	// openai 型上游,校验与线上的值就分家了。
+	if bg := req.Background; bg != "" && bg != "transparent" {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
+			"The 'background' parameter only supports 'transparent' at the moment.")
 		return nil
 	}
 

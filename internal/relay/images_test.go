@@ -415,6 +415,9 @@ func TestRelayImagesValidation(t *testing.T) {
 		{"n over 100", `{"model":"img-m","n":101}`, 400, "invalid_request"},
 		{"n not an integer", `{"model":"img-m","n":1.5}`, 400, "invalid_request"},
 		{"not json", `{invalid`, 400, "invalid_request"},
+		{"background opaque", `{"model":"img-m","background":"opaque"}`, 400, "invalid_request"},
+		{"background auto", `{"model":"img-m","background":"auto"}`, 400, "invalid_request"},
+		{"background padded", `{"model":"img-m","background":" transparent "}`, 400, "invalid_request"},
 		{"token-track model", `{"model":"tokenpriced-m","prompt":"x"}`, 400, "model_not_priced"},
 		{"unpriced model", `{"model":"unpriced-m","prompt":"x"}`, 400, "model_not_priced"},
 	} {
@@ -439,6 +442,74 @@ func TestRelayImagesValidation(t *testing.T) {
 	}
 	if rows := env.usageRows(t); len(rows) != 0 {
 		t.Errorf("usage rows = %d, want none for pre-billing rejections", len(rows))
+	}
+}
+
+// TestRelayImagesBackgroundPassthrough 覆盖 37 号票的 background 参数:
+// generations JSON 体与 edits multipart 的 transparent 值对 openai 形渠道
+// 全量透传(generations 经 rewriteModel 保形重写、edits 逐字段复刻),
+// 400 枚举拒绝已在 TestRelayImagesValidation 覆盖。
+func TestRelayImagesBackgroundPassthrough(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	var mu sync.Mutex
+	var sawJSONBackground string
+	var sawFormBackground string
+	upstream := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(32 << 20); err == nil {
+				sawFormBackground = r.FormValue("background")
+			}
+		} else {
+			var body struct {
+				Background string `json:"background"`
+			}
+			raw, _ := io.ReadAll(r.Body)
+			if json.Unmarshal(raw, &body) == nil {
+				sawJSONBackground = body.Background
+			}
+		}
+		okImagesHandler(map[string]any{"url": "https://img.example/bg.png"})(w, r)
+	})
+	env.seedImageChannel(t, "img", upstream.server.URL, "img-m", "upstream-img", 0,
+		[]channel.Capability{channel.CapImages})
+	_, full := env.seedKey(t, 1_000_000)
+	env.seedImagePrice(t, "img-m", nil)
+
+	// generations:transparent 原样抵达上游。
+	w := env.postImages(t, full, `{"model":"img-m","prompt":"猫","background":"transparent"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("generations status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	if sawJSONBackground != "transparent" {
+		mu.Unlock()
+		t.Fatalf("upstream generations background = %q, want transparent verbatim", sawJSONBackground)
+	}
+	mu.Unlock()
+
+	// edits:multipart 文本字段 background 原样复刻进重建表单。
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, _ := mw.CreateFormFile("image", "cat.png")
+	part.Write([]byte{0x89, 'P', 'N', 'G'})
+	mw.WriteField("prompt", "换背景")
+	mw.WriteField("model", "img-m")
+	mw.WriteField("background", "transparent")
+	mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+full)
+	w = httptest.NewRecorder()
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("edits status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sawFormBackground != "transparent" {
+		t.Errorf("upstream edits background = %q, want transparent verbatim", sawFormBackground)
 	}
 }
 

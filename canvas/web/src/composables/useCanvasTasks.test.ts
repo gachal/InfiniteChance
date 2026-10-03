@@ -16,6 +16,7 @@ function task(overrides: Partial<CanvasTask>): CanvasTask {
     model: 'img-m',
     size: '',
     ratio: '',
+    background: '',
     seconds: 0,
     status: 'queued',
     attempts: 1,

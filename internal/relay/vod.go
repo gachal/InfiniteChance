@@ -52,6 +52,14 @@ const (
 	vodPollTolerance = 3
 )
 
+// vodTransparentExtInfo 是透明图层的上游机制(37 号票 2026-10-03 直调实证):
+// CreateAigcImageTask 没有独立的背景参数,透明 = ExtInfo 双层 JSON 编码
+// 字符串 —— 顶层 JSON 的 AdditionalParameters 值本身又是一段 JSON 串。
+// SDK ExtInfo 注释为此机制的文档级证据;直调实测产物为真 PNG(四角
+// alpha=0、透明占比 35.4%,提示词刻意不含透明字样,归因于 ExtInfo)。
+// 透明只活在 PNG 的 alpha 通道里,因此伴随强制 OutputFormat=png。
+const vodTransparentExtInfo = `{"AdditionalParameters":"{\"background\":\"transparent\"}"}`
+
 // vodTaskKey names the DescribeTaskDetail sub-object carrying one AIGC
 // task (AigcImageTask, SceneAigcVideoTask, …).
 var vodTaskKey = regexp.MustCompile(`^(Aigc|SceneAigc)\w*Task$`)
@@ -192,14 +200,16 @@ func vodRefusal(message string) *UpstreamResponse {
 // body the VOD translation needs; everything else is not expressible
 // upstream and dropped by design (response_format 恒 url,quality 不翻译).
 // 21 号票:image(参考图 URL,单个字符串或数组)存在即图生图,ratio 为
-// 显式宽高比、优先于 size 推导。
+// 显式宽高比、优先于 size 推导。37 号票:background=transparent 翻译为
+// ExtInfo + 强制 OutputFormat=png(见 vodTransparentExtInfo)。
 type vodImagesRequest struct {
-	Model  string       `json:"model"`
-	Prompt string       `json:"prompt"`
-	N      *int64       `json:"n"`
-	Size   string       `json:"size"`
-	Ratio  string       `json:"ratio"`
-	Image  vodImageRefs `json:"image"`
+	Model      string       `json:"model"`
+	Prompt     string       `json:"prompt"`
+	N          *int64       `json:"n"`
+	Size       string       `json:"size"`
+	Ratio      string       `json:"ratio"`
+	Background string       `json:"background"`
+	Image      vodImageRefs `json:"image"`
 }
 
 // vodImageRefs accepts the reference-image parameter in both wire shapes —
@@ -280,7 +290,10 @@ func vodURLFileInfos(refs []string) []map[string]string {
 // vodSubmitTask builds and submits one CreateAigcImageTask, returning the
 // vendor TaskId. modelName carries the ModelMap upstream string with the
 // documented shape "ModelName ModelVersion" (空格连接,如 "OG image2.5_sunburst")。
-func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, modelName, prompt, size, aspectOverride string, n int64, refs []map[string]string) (*UpstreamResponse, string, error) {
+// background 非空(经网关校验只可能是 "transparent")时透明输出:ExtInfo
+// 双层 JSON + 强制 OutputFormat=png,generations 与 edits 两路共用这段翻译
+// (37 号票)。
+func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, modelName, prompt, size, aspectOverride, background string, n int64, refs []map[string]string) (*UpstreamResponse, string, error) {
 	if n < 1 || n > vodMaxOutputImages {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: vodErrorBody(fmt.Sprintf("'n' must be between 1 and %d on tencent-vod image channels.", vodMaxOutputImages))}, "", nil
@@ -303,6 +316,10 @@ func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, mode
 		"ModelVersion": version,
 		"Prompt":       prompt,
 		"OutputConfig": output,
+	}
+	if strings.TrimSpace(background) != "" {
+		output["OutputFormat"] = "png"
+		req["ExtInfo"] = vodTransparentExtInfo
 	}
 	if v, ok := vodView(ch); ok && v.subAppID != 0 {
 		req["SubAppId"] = v.subAppID
@@ -540,7 +557,7 @@ func (a *vodAdaptor) ImagesGenerations(ctx context.Context, ch channel.Channel, 
 	if refusal := vodCheckImageRefs(req.Image); refusal != nil {
 		return refusal, nil
 	}
-	upstream, taskID, err := a.vodSubmitTask(ctx, ch, req.Model, req.Prompt, req.Size, req.Ratio, n, vodURLFileInfos(req.Image))
+	upstream, taskID, err := a.vodSubmitTask(ctx, ch, req.Model, req.Prompt, req.Size, req.Ratio, req.Background, n, vodURLFileInfos(req.Image))
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}
@@ -559,7 +576,7 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 	}
 	reader := multipart.NewReader(bytes.NewReader(payload), params["boundary"])
 
-	var prompt, model, size string
+	var prompt, model, size, background string
 	n := int64(1)
 	var refs []map[string]string
 	for {
@@ -579,6 +596,8 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 				model = readPartText(part)
 			case "size":
 				size = readPartText(part)
+			case "background":
+				background = readPartText(part)
 			case "n":
 				if v, perr := strconv.ParseInt(strings.TrimSpace(readPartText(part)), 10, 64); perr == nil {
 					n = v
@@ -598,7 +617,7 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 		})
 	}
 
-	upstream, taskID, err := a.vodSubmitTask(ctx, ch, model, prompt, size, "", n, refs)
+	upstream, taskID, err := a.vodSubmitTask(ctx, ch, model, prompt, size, "", background, n, refs)
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}

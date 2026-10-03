@@ -98,6 +98,50 @@ func TestMySQLCanvasTaskSchemaIsIdempotent(t *testing.T) {
 	}
 }
 
+// 37 号票:background 列在 MySQL 侧同样保真往返;空串 = 不传(缺省落 '')。
+func TestMySQLCanvasTaskBackgroundRoundTrip(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	task, err := store.Create(ctx, canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "image-1-1", Kind: canvastask.KindImage,
+		Prompt: "p", Model: "img-m", Background: "transparent", Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Background != "transparent" {
+		t.Errorf("background = %q, want transparent verbatim", got.Background)
+	}
+
+	plainID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	plain, err := store.Create(ctx, canvastask.Task{
+		ID: plainID, CanvasID: 7, NodeID: "image-1-2", Kind: canvastask.KindImage,
+		Prompt: "p", Model: "img-m", Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = store.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.Background != "" {
+		t.Errorf("plain background = %q, want empty (缺省不传)", got.Background)
+	}
+}
+
 func TestMySQLCanvasTaskCreateGetRoundTrip(t *testing.T) {
 	store, _ := openTaskTestDB(t)
 	ctx := context.Background()
