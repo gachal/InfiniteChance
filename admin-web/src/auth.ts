@@ -1,8 +1,9 @@
 /**
  * 35 号票后 auth.ts 不再持有会话:token 由 vben access store 持久化,
  * 登录/登出/401 全走 vben access 机制(store/auth.ts + 路由守卫)。
- * 本文件退化为 API 客户端访问器,给八个业务视图原样保留的
- * `useAuth().client / canvasClient` 提供同一形状。
+ * 本文件退化为 API 客户端访问器,给业务视图原样保留的
+ * `useAuth().client / canvasClient` 提供同一形状;模型价格页走本应用的
+ * requestClient(36 号票,@infinitechance/api 按票定案不扩展)。
  */
 import { ApiClient, ApiError } from '@infinitechance/api'
 

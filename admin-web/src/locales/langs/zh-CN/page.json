@@ -10,6 +10,7 @@
     "title": "网关管理",
     "channels": "渠道管理",
     "keys": "API Key 管理",
+    "prices": "模型价格",
     "usage": "用量审计",
     "storage": "存储设置"
   },

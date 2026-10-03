@@ -338,9 +338,6 @@ importers:
       '@infinitechance/api':
         specifier: workspace:*
         version: link:../packages/api
-      '@infinitechance/ui':
-        specifier: workspace:*
-        version: link:../packages/ui
       '@vben/access':
         specifier: workspace:*
         version: link:vben/access

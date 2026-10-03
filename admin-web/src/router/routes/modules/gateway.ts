@@ -45,6 +45,15 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'Prices',
+        path: '/prices',
+        component: () => import('#/views/PricesView.vue'),
+        meta: {
+          icon: 'lucide:tags',
+          title: $t('page.gateway.prices'),
+        },
+      },
+      {
         name: 'Usage',
         path: '/usage',
         component: () => import('#/views/UsageView.vue'),

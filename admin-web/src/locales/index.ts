@@ -32,7 +32,7 @@ const localesMap = loadLocalesMapFromDir(
 async function loadMessages(lang: SupportedLanguagesType) {
   const [appLocaleMessages] = await Promise.all([
     localesMap[lang]?.(),
-    loadThirdPartyMessage(lang),
+    loadThirdPartyMessage(),
   ]);
   return appLocaleMessages?.default;
 }
