@@ -8,7 +8,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ApiError, type PromptTemplate, type SkillTarget } from '@infinitechance/api'
 
 import { authErrorMessage, useAuth } from '../auth'
-import AdminShell from '../components/AdminShell.vue'
 
 const auth = useAuth()
 
@@ -156,7 +155,7 @@ function templateSummary(t: PromptTemplate): string {
 </script>
 
 <template>
-  <AdminShell>
+  <main class="admin-page">
     <div class="toolbar">
       <h2>技能</h2>
       <button
@@ -345,7 +344,7 @@ function templateSummary(t: PromptTemplate): string {
         </div>
       </dl>
     </section>
-  </AdminShell>
+  </main>
 </template>
 
 <style scoped src="../components/admin-ui.css"></style>

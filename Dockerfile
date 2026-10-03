@@ -19,8 +19,12 @@ FROM node:22-alpine AS web-build
 WORKDIR /src
 RUN npm install -g pnpm@11.28.2
 # 先只拷贝清单文件装依赖,源码变更不再拖慢依赖层缓存。
+# admin-web/vben/(35 号票收编的 vben 闭包)整目录随清单层拷入:30 个内部包
+# 都是 workspace 成员,缺任一 manifest frozen-lockfile 直接失败;vben 源码
+# 变更会击穿依赖缓存,属已知代价。
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY admin-web/package.json admin-web/
+COPY admin-web/vben/ admin-web/vben/
 COPY canvas/web/package.json canvas/web/
 COPY packages/api/package.json packages/api/
 COPY packages/ui/package.json packages/ui/

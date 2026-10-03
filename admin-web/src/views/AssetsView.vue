@@ -8,7 +8,6 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError, type AssetRecord, type CanvasSummary } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
-import AdminShell from '../components/AdminShell.vue'
 
 const { canvasClient } = useAuth()
 
@@ -151,7 +150,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AdminShell>
+  <main class="admin-page">
     <div class="toolbar">
       <h2>素材管理</h2>
       <div class="filters">
@@ -352,7 +351,7 @@ onBeforeUnmount(() => {
         </figcaption>
       </figure>
     </div>
-  </AdminShell>
+  </main>
 </template>
 
 <style scoped src="../components/admin-ui.css"></style>

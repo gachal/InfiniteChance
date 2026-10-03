@@ -10,7 +10,6 @@ import {
 } from '@infinitechance/api'
 
 import { authErrorMessage, useAuth } from '../auth'
-import AdminShell from '../components/AdminShell.vue'
 
 const auth = useAuth()
 
@@ -195,7 +194,7 @@ const formHint = computed(() =>
 </script>
 
 <template>
-  <AdminShell>
+  <main class="admin-page">
     <div class="toolbar">
       <h2>API Key 管理</h2>
       <button
@@ -485,7 +484,7 @@ const formHint = computed(() =>
         </table>
       </div>
     </section>
-  </AdminShell>
+  </main>
 </template>
 
 <style scoped src="../components/admin-ui.css"></style>

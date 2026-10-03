@@ -6,7 +6,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ApiError, type Channel, type ChannelTestResult } from '@infinitechance/api'
 
 import { authErrorMessage, useAuth } from '../auth'
-import AdminShell from '../components/AdminShell.vue'
 
 const auth = useAuth()
 
@@ -254,7 +253,7 @@ function modelMapSummary(ch: Channel): string {
 </script>
 
 <template>
-  <AdminShell>
+  <main class="admin-page">
     <div class="toolbar">
       <h2>渠道管理</h2>
       <button
@@ -594,7 +593,7 @@ function modelMapSummary(ch: Channel): string {
         </template>
       </p>
     </section>
-  </AdminShell>
+  </main>
 </template>
 
 <style scoped src="../components/admin-ui.css"></style>

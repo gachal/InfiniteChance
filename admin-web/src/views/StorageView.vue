@@ -8,7 +8,6 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, type StorageSettings } from '@infinitechance/api'
 
 import { authErrorMessage, useAuth } from '../auth'
-import AdminShell from '../components/AdminShell.vue'
 
 const auth = useAuth()
 
@@ -141,7 +140,7 @@ function formatSavedAt(): string {
 </script>
 
 <template>
-  <AdminShell>
+  <main class="admin-page">
     <div class="toolbar">
       <h2>存储设置</h2>
     </div>
@@ -324,7 +323,7 @@ function formatSavedAt(): string {
         </div>
       </form>
     </section>
-  </AdminShell>
+  </main>
 </template>
 
 <style scoped src="../components/admin-ui.css"></style>

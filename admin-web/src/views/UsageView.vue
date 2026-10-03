@@ -14,7 +14,6 @@ import {
 } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
-import AdminShell from '../components/AdminShell.vue'
 
 const { client } = useAuth()
 
@@ -186,7 +185,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <AdminShell>
+  <main class="admin-page">
     <div class="toolbar">
       <h2>用量审计</h2>
       <div class="mode-filter">
@@ -446,7 +445,7 @@ onMounted(() => {
         </p>
       </div>
     </template>
-  </AdminShell>
+  </main>
 </template>
 
 <style scoped src="../components/admin-ui.css"></style>

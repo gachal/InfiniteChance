@@ -188,3 +188,10 @@ code {
   font-size: 14px;
   margin-top: 20px;
 }
+
+/* 35 号票:AdminShell 退役后由本类承接页面容器(vben 布局提供外层导航,
+ * 这里只约束内容列宽与留白,保持各页原排版)。 */
+.admin-page {
+  margin: 0 auto;
+  max-width: 960px;
+}

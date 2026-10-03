@@ -1,0 +1,21 @@
+{
+  "auth": {
+    "login": "登录",
+    "init": "初始化引导"
+  },
+  "dashboard": {
+    "title": "仪表盘"
+  },
+  "gateway": {
+    "title": "网关管理",
+    "channels": "渠道管理",
+    "keys": "API Key 管理",
+    "usage": "用量审计",
+    "storage": "存储设置"
+  },
+  "canvas": {
+    "title": "画布管理",
+    "skills": "技能",
+    "assets": "素材管理"
+  }
+}
