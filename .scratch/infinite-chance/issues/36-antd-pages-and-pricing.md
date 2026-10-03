@@ -1,7 +1,7 @@
 # 36 管理页 antd 重写 + 模型价格页
 
 Type: grilling
-Status: approved(2026-10-03 grilling 定案;未实现)
+Status: 已实现(2026-10-03;八页 antd 重写 + 价格页补缺,vue-tsc/eslint/make test 全绿,dev 点验八页并经 /v1 证实计价门按 UI 写入价格预扣与退款)
 
 ## Question
 
