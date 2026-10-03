@@ -1,6 +1,7 @@
 {
   "name": "infinite-chance",
   "private": true,
+  "packageManager": "pnpm@11.28.2",
   "scripts": {
     "dev:admin": "pnpm --filter admin-web dev",
     "dev:canvas": "pnpm --filter canvas-web dev",

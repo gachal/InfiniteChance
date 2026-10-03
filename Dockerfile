@@ -17,7 +17,7 @@ CMD ["/app/gateway-server"]
 # 两个 nginx 运行时托管;运行时容器只含构建产物,不依赖源码与 pnpm。 ---
 FROM node:22-alpine AS web-build
 WORKDIR /src
-RUN npm install -g pnpm@8.15.9
+RUN npm install -g pnpm@11.28.2
 # 先只拷贝清单文件装依赖,源码变更不再拖慢依赖层缓存。
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY admin-web/package.json admin-web/
