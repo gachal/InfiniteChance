@@ -1,4 +1,4 @@
-import { initPreferences } from '@vben/preferences';
+import { initPreferences, updatePreferences } from '@vben/preferences';
 import { unmountGlobalLoading } from '@vben/utils';
 
 import { overridesPreferences } from './preferences';
@@ -18,6 +18,14 @@ async function initApplication() {
     namespace,
     overrides: overridesPreferences,
   });
+
+  // vben 偏好缓存整体优先于代码覆写:老缓存里快照过 vben 默认的 unpkg logo,
+  // 会盖掉 logo 覆写(症状:浅色模式左上角回退旧图,暗色模式因 sourceDark 是
+  // 新字段不受污染而正常)。初始化后重放一次 logo 覆写,既修正本次会话也把
+  // 缓存治愈;logo 随代码发行,不视作用户可改项。
+  if (overridesPreferences.logo) {
+    updatePreferences({ logo: overridesPreferences.logo });
+  }
 
   // 启动应用并挂载
   // vue应用主要逻辑及视图

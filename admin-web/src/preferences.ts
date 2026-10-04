@@ -10,6 +10,12 @@ export const overridesPreferences = defineOverridesPreferences({
   app: {
     name: import.meta.env.VITE_APP_TITLE,
   },
+  // 品牌 logo:替换 vben 默认的 unpkg 远程图;登录页左上角、登录后导航栏等所有展示位
+  // 共用此配置(public/logo.png,256px 见方足够 42px 展示位与高分屏)。
+  logo: {
+    source: `${import.meta.env.BASE_URL}logo.png`,
+    sourceDark: `${import.meta.env.BASE_URL}logo.png`,
+  },
   // 上游版权条是 vben 官网备案信息,自用管理台不展示(36 号票换皮时再定制)。
   copyright: {
     companySiteLink: '',

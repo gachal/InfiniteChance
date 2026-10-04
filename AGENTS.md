@@ -7,7 +7,7 @@ InfiniteChance:自用 LLM Token 网关(OpenAI 兼容中转)+ 无限画布创作�
 - **[CONTEXT.md](CONTEXT.md) — 领域术语表,动任何领域行为前必读**。渠道/调度熔断/API key/额度/计价/生图转发/任务/素材/设置等全部核心语义都在这里;术语冲突时以较新的决策票为准。
 - `.scratch/infinite-chance/spec.md` — 总规格;`.scratch/infinite-chance/issues/` — 决策票(01–23 号),历史决策的原始出处。
 - [docs/adr/](docs/adr/) — 架构决策记录(SQLite 双方言、生成对话框范式);[docs/api.md](docs/api.md) — API curl 用例。
-- [README.zh-CN.md](README.zh-CN.md) — 部署、端口、鉴权契约的完整叙述。
+- [README.md](README.md) — 部署、端口、鉴权契约的完整叙述。**README 一律只用中文编写**(2026-10-04 起);英文为冻结快照 [README.en.md](README.en.md),不随中文版更新。
 
 **工作流是「先票后码」**:新需求先经 grilling 切票写进 `issues/`,定案后再实现;领域语义变化必须**回写 CONTEXT.md**;重大架构取舍落 `docs/adr/`。
 
