@@ -1,8 +1,20 @@
-# InfiniteChance
+# 无限机缘(InfiniteChance)
 
 [English](README.en.md) | 简体中文
 
-自用 Token 网关 + 无限画布,领域术语表见 [CONTEXT.md](CONTEXT.md)。
+**无限机缘** 是一套自用的 LLM Token 网关(OpenAI 兼容中转)+ 无限画布创作工具:网关侧把多家厂商渠道聚合成一个 OpenAI 兼容入口,统一计价、额度与多渠道熔断调度;画布侧把提示词、生图、生视频、图片/视频分析、Agent 编排为节点工作流,任务后台常跑、产物落素材库。单管理员、单用户形态,Docker 一键部署,另有单文件 SQLite 桌面版。领域术语表见 [CONTEXT.md](CONTEXT.md)。
+
+## 推荐模型组合
+
+当前自用的一套组合:文本分析走千问,生图走腾讯云点播 AIGC,生视频走火山 Seedance。
+
+| 用途 | 渠道 · 公开模型 | 参考价格 |
+| --- | --- | --- |
+| 聊天 / 分析节点 / Agent | 阿里 DashScope(OpenAI 兼容模式)· `qwen3.8-flash` | 官方牌价 ¥1/百万 token 输入、¥3/百万 token 输出 |
+| 生图(文生图 / 图生图,支持透明背景) | 腾讯云点播 AIGC(`tencent-vod` 渠道)· `og-image-2.5` | 库内配价 $0.05/张(占位价;腾讯侧按「大模型图片处理」计费项出账,实价以账单为准) |
+| 生视频(文生视频 / 图生视频) | 火山引擎方舟 · `seedance-2.0` | ≈ ¥1/秒,5 秒 1080p ≈ ¥5,仅成功计费 |
+
+参考价格为厂商牌价的近似;网关内的实际配价以管理台「模型价格」为准(curl 示例见 [docs/api.md](docs/api.md) 4.3),未配价模型一律 `model_not_priced` 拒绝,无静默兜底。
 
 ## 功能
 
