@@ -736,6 +736,7 @@ func (h *ModelHandlers) ListVideos(c *gin.Context) {
 		return
 	}
 	models := make([]string, 0, len(prices))
+	summaries := make(map[string]pricing.PriceSummary, len(prices))
 	for _, p := range prices {
 		switch {
 		case p.Unit == pricing.UnitSecond && p.Call != nil:
@@ -744,14 +745,16 @@ func (h *ModelHandlers) ListVideos(c *gin.Context) {
 			continue
 		}
 		models = append(models, p.PublicModel)
+		summaries[p.PublicModel] = p.Summary() // 38 号票:目录随行带价,前端做预估
 	}
 	sort.Strings(models)
-	c.JSON(http.StatusOK, gin.H{"models": models})
+	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
 }
 
 // listTrack answers the public model names priced on one item track, sorted
 // — the catalog is the pricing table's projection, nothing more (渠道侧的
-// capabilities 在网关调度时兜底,这里不重复校验).
+// capabilities 在网关调度时兜底,这里不重复校验). prices 映射随名单带
+// 人类人民币单价与系数(38 号票),models 字段形状不变、旧消费者不受扰。
 func (h *ModelHandlers) listTrack(c *gin.Context, unit pricing.Unit) {
 	prices, err := h.Prices.List(c.Request.Context())
 	if err != nil {
@@ -760,11 +763,13 @@ func (h *ModelHandlers) listTrack(c *gin.Context, unit pricing.Unit) {
 		return
 	}
 	models := make([]string, 0, len(prices))
+	summaries := make(map[string]pricing.PriceSummary, len(prices))
 	for _, p := range prices {
 		if p.Unit == unit && p.Call != nil {
 			models = append(models, p.PublicModel)
+			summaries[p.PublicModel] = p.Summary()
 		}
 	}
 	sort.Strings(models)
-	c.JSON(http.StatusOK, gin.H{"models": models})
+	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
 }

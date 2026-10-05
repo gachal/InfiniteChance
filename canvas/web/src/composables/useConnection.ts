@@ -32,6 +32,9 @@ export function useConnection(options: {
   nodes: () => ConnectableNode[]
   /** 连线落地回调;同向重复边的去重由编辑器负责。 */
   onCommit: (edge: { source: string; target: string }) => void
+  /** 连接态里点了非法目标时的反馈回调(38 号票评审:静默取消改可见反馈);
+   * 只报告,不改变取消语义。 */
+  onReject?: (info: { sourceType?: string; targetType?: string }) => void
 }) {
   const pending = ref<PendingConnection | null>(null)
   /** 预连线终点(画布区屏幕坐标),由编辑器在 mousemove 里喂进来。 */
@@ -55,7 +58,8 @@ export function useConnection(options: {
   }
 
   /** 连接态里点击节点:合法目标按 + 的左右自动定向提交,完成即退出;
-   * 点回原点与点非法节点都按「未表达连线意图」处理 —— 取消,不产生连线。 */
+   * 点回原点按「未表达连线意图」处理 —— 取消;点非法目标同样取消,但经
+   * onReject 把两端类型报给调用方做可见反馈(38 号票评审)。 */
   function clickNode(nodeId: string): void {
     const p = pending.value
     if (!p) {
@@ -63,8 +67,14 @@ export function useConnection(options: {
     }
     const source = p.side === 'right' ? p.nodeId : nodeId
     const target = p.side === 'right' ? nodeId : p.nodeId
-    if (p.nodeId !== nodeId && canConnect(typeOf(source), typeOf(target))) {
-      options.onCommit({ source, target })
+    if (p.nodeId !== nodeId) {
+      const sourceType = typeOf(source)
+      const targetType = typeOf(target)
+      if (canConnect(sourceType, targetType)) {
+        options.onCommit({ source, target })
+      } else {
+        options.onReject?.({ sourceType, targetType })
+      }
     }
     cancel()
   }

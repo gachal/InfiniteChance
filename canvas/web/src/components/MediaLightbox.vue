@@ -4,7 +4,7 @@
 // 纯展示档:媒体等比适配居中、不放大超过原尺寸(max 约束只缩不放),
 // 不做缩放平移;关闭 = Esc / 点击遮罩 / × 三路等价。视频自动播放有声 +
 // 完整 controls —— 打开灯箱本身是用户手势,浏览器放行有声自动播放。
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = defineProps<{
   kind: 'image' | 'video'
@@ -13,20 +13,34 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
+// 38 号票评审:键盘可达性 —— 打开时把焦点移进浮层(屏幕阅读器/Tab
+// 顺序不再落在被遮住的画布上),关闭时归还给打开它的元素。
+const rootEl = ref<HTMLDivElement | null>(null)
+let opener: HTMLElement | null = null
+
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     emit('close')
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onMounted(() => {
+  opener = (document.activeElement as HTMLElement | null) ?? null
+  rootEl.value?.focus()
+  window.addEventListener('keydown', onKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  opener?.focus?.()
+})
 </script>
 
 <template>
   <Teleport to="body">
     <div
+      ref="rootEl"
       class="lightbox"
+      tabindex="-1"
       @click="emit('close')"
     >
       <div class="actions">
@@ -35,12 +49,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           :href="props.url"
           download
           title="下载"
+          aria-label="下载"
           @click.stop
         >⬇</a>
         <button
           class="action"
           type="button"
           title="关闭预览"
+          aria-label="关闭预览"
           @click.stop="emit('close')"
         >
           ✕

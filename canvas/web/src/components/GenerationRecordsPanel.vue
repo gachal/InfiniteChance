@@ -199,8 +199,8 @@ function statusClass(task: CanvasTask): string {
 }
 
 .limit-note {
-  color: #5b627a;
-  font-size: 11px;
+  color: #8f97ad;
+  font-size: 12px;
 }
 
 .panel-empty {
@@ -255,8 +255,8 @@ function statusClass(task: CanvasTask): string {
 .thumb-broken {
   display: grid;
   place-items: center;
-  font-size: 11px;
-  color: #5b627a;
+  font-size: 12px;
+  color: #8f97ad;
   background: rgba(255, 255, 255, 0.03);
 }
 
@@ -270,7 +270,7 @@ function statusClass(task: CanvasTask): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .kind {
@@ -311,7 +311,7 @@ function statusClass(task: CanvasTask): string {
 
 .time {
   margin-left: auto;
-  color: #5b627a;
+  color: #8f97ad;
 }
 
 .prompt {
@@ -331,7 +331,7 @@ function statusClass(task: CanvasTask): string {
 }
 
 .model {
-  font-size: 11px;
+  font-size: 12px;
   color: #8b91a7;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -339,7 +339,7 @@ function statusClass(task: CanvasTask): string {
 }
 
 .error {
-  font-size: 11px;
+  font-size: 12px;
   color: #ff8f8f;
   overflow: hidden;
   text-overflow: ellipsis;

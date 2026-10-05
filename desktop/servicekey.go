@@ -17,7 +17,7 @@ import (
 // ceiling a manual top-up allows; the admin console can top up further.
 const (
 	serviceKeyName       = "canvas-service(桌面版自动开通)"
-	serviceKeyInitialUSD = apikey.MaxAmountUSD
+	serviceKeyInitialUSD = apikey.MaxAmountCNY
 )
 
 // ensureServiceKey returns the service key to run the canvas with: the one
@@ -43,7 +43,7 @@ func ensureServiceKey(ctx context.Context, keys apikey.Store, cfg *Config) error
 		Name:        serviceKeyName,
 		Prefix:      apikey.PrefixOf(full),
 		KeyHash:     apikey.Hash(full),
-		QuotaMicros: serviceKeyInitialUSD * apikey.MicrosPerUSD,
+		QuotaMicros: serviceKeyInitialUSD * apikey.MicrosPerCNY,
 	})
 	if err != nil {
 		return fmt.Errorf("store service key: %w", err)

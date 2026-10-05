@@ -296,7 +296,7 @@ onMounted(refresh)
 }
 
 .meta .prompt {
-  font-size: 11px;
+  font-size: 12px;
   color: #8b91a7;
   overflow: hidden;
   display: -webkit-box;
@@ -305,8 +305,8 @@ onMounted(refresh)
 }
 
 .meta .origin {
-  font-size: 11px;
-  color: #5b627a;
+  font-size: 12px;
+  color: #8f97ad;
 }
 
 .actions {

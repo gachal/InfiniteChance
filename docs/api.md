@@ -186,7 +186,7 @@ curl -X POST $GATEWAY/v1/videos/tasks/vt_1a2b3c/cancel -H "Authorization: Bearer
 curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{
     "public_model":"seedance-2.5","unit":"token",
-    "input_usd_per_mtokens":0, "output_usd_per_mtokens":0.28, "ratio":1.0,
+    "input_cny_per_mtokens":0, "output_cny_per_mtokens":0.28, "ratio":1.0,
     "size_tokens_per_second":{"480p":8664,"720p":21465,"1080p":48299},
     "default_tokens_per_second":21465
   }'
@@ -251,17 +251,17 @@ curl -X POST $GATEWAY/admin/channels/2/test -H "Authorization: Bearer $TOKEN"
 # 发放(完整 key 只在创建响应出现一次)
 curl -X POST $GATEWAY/admin/keys -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"画布服务","initial_quota_usd":20,"expires_at":null}'
+  -d '{"name":"画布服务","initial_quota_cny":20,"expires_at":null}'
 # → {"key":"sk-AbCdEf...43位","id":1,"name":"画布服务","prefix":"sk-AbCdEfgh",
-#    "quota_usd":20,"status":"active",...}
+#    "quota_cny":20,"status":"active",...}
 
 # 列表 / 充值 / 吊销(幂等)/ 流水
 curl $GATEWAY/admin/keys -H "Authorization: Bearer $TOKEN"
 curl -X POST $GATEWAY/admin/keys/1/topup -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" -d '{"amount_usd":10}'
+  -H "Content-Type: application/json" -d '{"amount_cny":10}'
 curl -X POST $GATEWAY/admin/keys/1/revoke -H "Authorization: Bearer $TOKEN"
 curl "$GATEWAY/admin/keys/1/quota-log" -H "Authorization: Bearer $TOKEN"
-# → {"entries":[{"id":3,"delta_usd":-0.04,"balance_usd":19.96,"reason":"settle",
+# → {"entries":[{"id":3,"delta_cny":-0.04,"balance_cny":19.96,"reason":"settle",
 #    "created_at":"..."},...]}(reason: initial/topup/estimate/settle/refund)
 ```
 
@@ -272,21 +272,21 @@ curl "$GATEWAY/admin/keys/1/quota-log" -H "Authorization: Bearer $TOKEN"
 curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{
     "public_model":"gpt-4o","unit":"token",
-    "input_usd_per_mtokens":2.5,"output_usd_per_mtokens":10,"ratio":1.2
+    "input_cny_per_mtokens":2.5,"output_cny_per_mtokens":10,"ratio":1.2
   }'
 
 # 次轨(生图:按张;未配置的尺寸系数恒 ×1.0)
 curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{
     "public_model":"og-image-2.5","unit":"call",
-    "usd_per_call":0.04,"size_factors":{"1024x1024":1,"2048x2048":2}
+    "cny_per_call":0.04,"size_factors":{"1024x1024":1,"2048x2048":2}
   }'
 
 # 秒轨(生视频:每秒单价 × 分辨率系数)
 curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{
     "public_model":"wan-video","unit":"second",
-    "usd_per_call":0.02,"size_factors":{"480p":0.5,"720p":1,"1080p":2}
+    "cny_per_call":0.02,"size_factors":{"480p":0.5,"720p":1,"1080p":2}
   }'
 
 # 列表 / 删除
@@ -338,7 +338,7 @@ curl "$GATEWAY/admin/usage/logs?from=2026-09-01T00:00:00Z&to=2026-10-01T00:00:00
 # → {"logs":[{"id":9,"key_id":1,"channel_id":2,"channel_name":"tencent-vod",
 #    "public_model":"og-image-2.5","upstream_model":"OG image2.5_sunburst",
 #    "unit":"call","tokens_in":0,"tokens_out":0,"count":1,
-#    "price_snapshot":{"usd_per_call_micros":40000,"request":{"size":"1024x1024","n":1}},
+#    "price_snapshot":{"cny_per_call_micros":40000,"request":{"size":"1024x1024","n":1}},
 #    "charge_micros":40000,"duration_ms":23450,"status":"success",
 #    "source":"canvas=3 task=ct_x1 node=n5","upstream_error":"","created_at":"..."}],
 #    "total":1}

@@ -7,6 +7,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
+import { Controls } from '@vue-flow/controls'
+import { MiniMap } from '@vue-flow/minimap'
 import { VueFlow, useVueFlow, type Connection, type Edge } from '@vue-flow/core'
 
 import {
@@ -14,6 +16,7 @@ import {
   type AssetRecord,
   type CanvasDetail,
   type CanvasTask,
+  type ModelPriceSummary,
   type PromptTemplateOption,
 } from '@infinitechance/api'
 
@@ -147,11 +150,142 @@ function connectNodes(source: string, target: string): void {
   ])
 }
 
+// ---- 撤销/重做与轻提示(38 号票评审 P1)----
+
+// 撤销栈 = 整图快照(snapshot() 的输出形状)的环形队列:每个编辑边界
+// (markChanged 的调用点)防抖 600ms 后入栈一帧 —— 拖动节点与流式文本
+// 只在停手时占一帧;上限 50 帧。undo/redo 以 setNodes/setEdges 整图回放,
+// 回放期间的变更事件照常 markDirty(落库语义不变)但不再入栈。
+const undoStack: ReturnType<typeof snapshot>[] = []
+const redoStack: ReturnType<typeof snapshot>[] = []
+let historyArmed = false
+let historyTimer: ReturnType<typeof setTimeout> | undefined
+let applyingSnapshot = false
+
+function scheduleHistoryCapture(): void {
+  if (applyingSnapshot || !historyArmed) {
+    return
+  }
+  if (historyTimer !== undefined) {
+    clearTimeout(historyTimer)
+  }
+  historyTimer = setTimeout(() => {
+    historyTimer = undefined
+    pushHistory()
+  }, 600)
+}
+
+function pushHistory(): void {
+  if (applyingSnapshot) {
+    return
+  }
+  const snap = snapshot()
+  const top = undoStack[undoStack.length - 1]
+  if (top && JSON.stringify(top) === JSON.stringify(snap)) {
+    return
+  }
+  undoStack.push(snap)
+  if (undoStack.length > 50) {
+    undoStack.shift()
+  }
+  redoStack.length = 0
+}
+
+/** 整图加载/重载后重置基线:栈里只留当前帧,redo 清空。 */
+function resetHistory(): void {
+  undoStack.length = 0
+  redoStack.length = 0
+  historyArmed = true
+  undoStack.push(snapshot())
+}
+
+function applyGraphSnapshot(s: ReturnType<typeof snapshot>): void {
+  applyingSnapshot = true
+  setNodes(s.nodes.map((n) => ({ ...n })))
+  setEdges(s.edges.map((e) => ({ ...e })) as unknown as Edge[])
+  void nextTick().finally(() => {
+    applyingSnapshot = false
+  })
+  autosave.markDirty()
+}
+
+function undoGraph(): void {
+  if (undoStack.length < 2) {
+    return
+  }
+  redoStack.push(undoStack.pop()!)
+  applyGraphSnapshot(undoStack[undoStack.length - 1])
+}
+
+function redoGraph(): void {
+  const s = redoStack.pop()
+  if (!s) {
+    return
+  }
+  undoStack.push(s)
+  applyGraphSnapshot(s)
+}
+
+/** 编辑边界的统一入口:标脏 + 排一次撤销快照。 */
+function markChanged(): void {
+  autosave.markDirty()
+  scheduleHistoryCapture()
+}
+
+// 轻提示(38 号票评审):删除可撤销提示、非法连线反馈共用,4 秒自动消退。
+const notice = ref('')
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+
+function showNotice(text: string): void {
+  notice.value = text
+  if (noticeTimer !== undefined) {
+    clearTimeout(noticeTimer)
+  }
+  noticeTimer = setTimeout(() => {
+    notice.value = ''
+    noticeTimer = undefined
+  }, 4000)
+}
+
 // ---- 生成任务(10 号票文生图,12 号票图生视频)----
 
-// 生图/图生视频模型目录:拉取失败视为暂无可用模型,生成入口随之隐藏。
+// 生图/图生视频模型目录(38 号票起随行带价格摘要;拉取失败置失败位,
+// 对话框进入禁态说明原因,不再静默蒸发 —— 评审 P1)。
 const imageModels = ref<string[]>([])
 const videoModels = ref<string[]>([])
+const imagePrices = ref<Record<string, ModelPriceSummary>>({})
+const videoPrices = ref<Record<string, ModelPriceSummary>>({})
+const imageCatalogFailed = ref(false)
+const videoCatalogFailed = ref(false)
+const modelCatalogsLoaded = ref(false)
+
+/** 拉取生图/视频模型目录:成功写名单与价格摘要,失败置失败位(对话框
+ * 禁态 + 重试入口指向这里)。 */
+function refreshModelCatalogs(): void {
+  imageCatalogFailed.value = false
+  videoCatalogFailed.value = false
+  void client
+    .listImageModels()
+    .then((catalog) => {
+      imageModels.value = catalog.models
+      imagePrices.value = catalog.prices
+    })
+    .catch(() => {
+      imageCatalogFailed.value = true
+    })
+    .finally(() => {
+      modelCatalogsLoaded.value = true
+    })
+  void client
+    .listVideoModels()
+    .then((catalog) => {
+      videoModels.value = catalog.models
+      videoPrices.value = catalog.prices
+    })
+    .catch(() => {
+      videoCatalogFailed.value = true
+    })
+}
 
 /** 产物落位与提示词回填:成功任务的补丁(对账逻辑在 composer.ts 的
  * mediaSyncPatch)写进绑定节点;节点是否存在以图为准 —— 结果节点在提交
@@ -167,7 +301,7 @@ function syncTaskToCanvas(task: CanvasTask): void {
   const patch = mediaSyncPatch(task, data)
   if (patch) {
     updateNodeData(task.node_id, patch)
-    autosave.markDirty()
+    markChanged()
   }
 }
 
@@ -248,7 +382,7 @@ async function submitImageTask(payload: {
     // 填入路径同样要 flush:锚点节点多半还在防抖窗口里没落库,任务必须
     // 等图持久化后再提交;已全部落库时多一次 markDirty 只是无变化的版本
     // 推进,无实际代价(flush 在 idle 态返回 false,不能省掉 markDirty)。
-    autosave.markDirty()
+    markChanged()
     const saved = await autosave.flush()
     if (!saved) {
       generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
@@ -378,18 +512,35 @@ const videoComposerRefs = computed<VideoComposerRef[]>(() => {
   return list
 })
 
-/** 对话框只在选中图片/视频节点、且当前模式有可用模型时存在(21 号票修订:
- * 打开画布即常驻底部中央的形态已按用户反馈移除);工具栏添加节点并选中
- * 它,对话框随之出现 —— 空视频占位节点即纯文生视频的锚点。 */
-const composerVisible = computed(() => {
-  if (!composerNode.value) {
-    return false
+/** 对话框只在选中图片/视频节点时存在(21 号票修订:打开画布即常驻底部
+ * 中央的形态已按用户反馈移除);工具栏添加节点并选中它,对话框随之出现
+ * —— 空视频占位节点即纯文生视频的锚点。目录拉取失败或未配价时对话框
+ * 保留但禁用并说明原因(38 号票评审,替换旧的「无模型即隐藏」)。 */
+const composerVisible = computed(() => composerNode.value !== null)
+
+/** 对话框禁用原因:空 = 正常可用。目录未加载完(首屏竞态)不算失败。 */
+const composerDisabledReason = computed(() => {
+  if (composerMode.value === 'video') {
+    if (videoCatalogFailed.value) {
+      return '视频模型目录拉取失败(网关或画布服务不可达),生成暂不可用'
+    }
+    if (modelCatalogsLoaded.value && videoModels.value.length === 0) {
+      return '没有已配价的视频模型:请在管理台「模型价格」配置按秒或视频 token 轨价格'
+    }
+    return ''
   }
-  return composerMode.value === 'video' ? videoModels.value.length > 0 : imageModels.value.length > 0
+  if (imageCatalogFailed.value) {
+    return '生图模型目录拉取失败(网关或画布服务不可达),生成暂不可用'
+  }
+  if (modelCatalogsLoaded.value && imageModels.value.length === 0) {
+    return '没有已配价的生图模型:请在管理台「模型价格」配置按次价格'
+  }
+  return ''
 })
 
 /** 悬浮定位:贴选中节点正下方(视口变换 + 节点尺寸换算成画布区坐标,
- * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。 */
+ * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。视频模式控件更多,
+ * clamp 的估算高度按模式取档(评审:旧值一律 240,视频模式会贴边不准)。 */
 const composerStyle = computed(() => {
   const node = composerNode.value
   if (!node) {
@@ -400,7 +551,7 @@ const composerStyle = computed(() => {
   const wrapW = wrapEl.value?.clientWidth ?? 0
   const wrapH = wrapEl.value?.clientHeight ?? 0
   const halfW = 280
-  const estH = 240
+  const estH = composerMode.value === 'video' ? 360 : 260
   const dims = node.dimensions
   const left = vp.x + (node.position.x + (dims?.width ?? 200) / 2) * vp.zoom
   const top = vp.y + (node.position.y + (dims?.height ?? 160)) * vp.zoom + 12
@@ -708,7 +859,7 @@ async function submitVideoTask(payload: {
     } else {
       updateNodeData(source.id, { prompt: payload.prompt, model: payload.model })
     }
-    autosave.markDirty()
+    markChanged()
     const saved = await autosave.flush()
     if (!saved) {
       generateError.value = '画布尚未保存成功,生成任务未提交;请先解决保存问题'
@@ -756,7 +907,7 @@ async function refreshCatalogs(): Promise<void> {
       client.listPromptModels(),
     ])
     promptTemplates.value = templates
-    promptModels.value = models
+    promptModels.value = models.models
   } catch {
     /* 目录拉不到就保持现状,不打扰画布编辑 */
   } finally {
@@ -813,7 +964,7 @@ async function onGeneratePrompt(
     updateNodeData(nodeId, { text: full, messages })
     // 发送成功即清空进历史:待发附件的引用已随本轮进 messages。
     clearAgentAttachments(nodeId)
-    autosave.markDirty()
+    markChanged()
     deliverPromptFrom(nodeId)
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '提示词生成失败,请稍后再试'
@@ -824,7 +975,7 @@ async function onGeneratePrompt(
     // 流中途失败:已流出文本保留在节点并落盘(重开画布可见当时进展);
     // 待发附件一并保留,修正后可直接重发。
     if (text !== '') {
-      autosave.markDirty()
+      markChanged()
     }
   } finally {
     promptGenerating.value = false
@@ -840,7 +991,7 @@ function onSkillChange(nodeId: string, skillId: number | null): void {
     messages: [],
   })
   clearAgentAttachments(nodeId)
-  autosave.markDirty()
+  markChanged()
 }
 
 /** 投递(29 号票推模式):把 Agent 节点当前文本写进所有下游连线上的媒体
@@ -866,7 +1017,7 @@ function deliverPromptFrom(agentNodeId: string): number {
     }
   }
   if (delivered > 0) {
-    autosave.markDirty()
+    markChanged()
   }
   return delivered
 }
@@ -992,7 +1143,7 @@ function onAgentDetach(nodeId: string, id: number): void {
 function onAgentNewSession(nodeId: string): void {
   updateNodeData(nodeId, { messages: [] })
   clearAgentAttachments(nodeId)
-  autosave.markDirty()
+  markChanged()
 }
 
 // 会话历史 / 素材选择面板的节点绑定:点哪个 Agent 节点开谁的;与素材库、
@@ -1126,7 +1277,7 @@ async function runAnalysis(
       model: payload.model,
     })
     updateNodeData(analysisNodeId, { text: result.text, model: payload.model })
-    autosave.markDirty()
+    markChanged()
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '分析失败,请稍后再试'
   } finally {
@@ -1159,7 +1310,7 @@ async function onAnalyzeAction(
     },
   ])
   connectNodes(sourceNodeId, analysisId)
-  autosave.markDirty()
+  markChanged()
   const saved = await autosave.flush()
   if (!saved) {
     generateError.value = '画布尚未保存成功,分析未发起;请先解决保存问题'
@@ -1198,6 +1349,13 @@ const connection = useConnection({
     if (!exists) {
       connectNodes(source, target)
     }
+  },
+  // 非法目标点击的可见反馈(38 号票评审:替换静默取消)。
+  onReject: ({ sourceType, targetType }) => {
+    const label = (t?: string) => NODE_TYPE_LABEL[normalizeNodeType(t)] ?? t ?? '未知节点'
+    showNotice(
+      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体)`,
+    )
   },
 })
 const connecting = computed(() => connection.active.value)
@@ -1246,10 +1404,81 @@ function onCanvasMouseMove(e: MouseEvent): void {
   connection.moveTo({ x: e.clientX - rect.left, y: e.clientY - rect.top })
 }
 
-/** Esc 取消连接态(窗口级监听,连接态外按下无副作用)。 */
+/** 窗口级快捷键(38 号票评审扩展):Esc 逐层退出(灯箱开着时让位给它
+ * 自己的 Esc,33 号票);F 适配视图;Cmd/Ctrl+Z 撤销、Shift+Z 或 Y 重做。
+ * 输入控件内(输入框/文本域/下拉/可编辑区)让位给浏览器原生行为 ——
+ * 文本编辑的撤销归输入框自己。 */
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const el = e.target as HTMLElement | null
+  if (!el) {
+    return false
+  }
+  return (
+    el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
+  )
+}
+
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
-    connection.cancel()
+    if (lightbox.value) {
+      return // 灯箱自己处理 Esc(33 号票),这里不叠加动作。
+    }
+    if (assetPanelOpen.value) {
+      assetPanelOpen.value = false
+      return
+    }
+    if (recordsPanelOpen.value) {
+      recordsPanelOpen.value = false
+      return
+    }
+    if (pickerNodeId.value) {
+      pickerNodeId.value = ''
+      return
+    }
+    if (historyNodeId.value) {
+      historyNodeId.value = ''
+      return
+    }
+    if (renaming.value) {
+      renaming.value = false
+      return
+    }
+    if (connection.pending.value) {
+      connection.cancel()
+      return
+    }
+    const selected = getSelectedNodes.value
+    if (selected.length > 0) {
+      removeSelectedNodes(selected)
+    }
+    return
+  }
+  const mod = e.metaKey || e.ctrlKey
+  if (mod && (e.key === 'z' || e.key === 'Z')) {
+    if (isTypingTarget(e)) {
+      return
+    }
+    e.preventDefault()
+    if (e.shiftKey) {
+      redoGraph()
+    } else {
+      undoGraph()
+    }
+    return
+  }
+  if (mod && (e.key === 'y' || e.key === 'Y')) {
+    if (isTypingTarget(e)) {
+      return
+    }
+    e.preventDefault()
+    redoGraph()
+    return
+  }
+  if (isTypingTarget(e) || mod || e.altKey) {
+    return
+  }
+  if (e.key === 'f' || e.key === 'F') {
+    void fitView({ padding: 0.2, maxZoom: 1.2, duration: 250 })
   }
 }
 
@@ -1273,15 +1502,19 @@ function snapshot() {
   }
 }
 
-// 尺寸/选中态变更不改变持久化文档,不触发保存。
+// 尺寸/选中态变更不改变持久化文档,不触发保存。删除给出可撤销提示
+// (38 号票评审:误删零恢复的焦虑由撤销栈兜底,提示把这条路告诉用户)。
 onNodesChange((changes) => {
   if (changes.some((c) => c.type === 'add' || c.type === 'remove' || c.type === 'position')) {
-    autosave.markDirty()
+    if (changes.some((c) => c.type === 'remove')) {
+      showNotice('已删除节点,⌘Z / Ctrl+Z 可撤销')
+    }
+    markChanged()
   }
 })
 onEdgesChange((changes) => {
   if (changes.some((c) => c.type === 'add' || c.type === 'remove')) {
-    autosave.markDirty()
+    markChanged()
   }
 })
 onConnect((params: Connection) => {
@@ -1292,7 +1525,7 @@ onConnect((params: Connection) => {
 // flow 状态并标记脏。
 function onTextChange(nodeId: string, text: string): void {
   updateNodeData(nodeId, { text })
-  autosave.markDirty()
+  markChanged()
 }
 
 let nodeSeq = 0
@@ -1330,6 +1563,21 @@ function addNode(type: CanvasNodeType): void {
     addSelectedNodes([added])
   }
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
+}
+
+/** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫),
+ * 38 号票评审补的导航面沿用同一语义色系。 */
+function miniMapNodeColor(node: { type?: string | null }): string {
+  switch (normalizeNodeType(node.type ?? undefined)) {
+    case 'agent':
+      return '#7aa2f7'
+    case 'image':
+      return '#4ade80'
+    case 'video':
+      return '#facc15'
+    default:
+      return '#a78bfa'
+  }
 }
 
 // ---- 媒体预览灯箱(33 号票)----
@@ -1492,8 +1740,10 @@ async function applyServerGraph(detail: CanvasDetail): Promise<void> {
     (raw) => normalizeNodeType((raw as { type?: string }).type) !== (raw as { type?: string }).type,
   )
   if (hasLegacyType) {
-    autosave.markDirty()
+    markChanged()
   }
+  // 撤销基线 = 服务器图落位后的这一帧(含上面的就地迁移),redo 清空。
+  resetHistory()
   void fitView({ padding: 0.2, maxZoom: 1.2, duration: 120 })
 }
 
@@ -1546,7 +1796,7 @@ async function overwriteServer(): Promise<void> {
   try {
     const detail = await client.getCanvas(canvasId)
     autosave.setVersion(detail.version)
-    autosave.markDirty()
+    markChanged()
   } catch {
     // 同上:保持 conflict 态。
   } finally {
@@ -1585,22 +1835,7 @@ onMounted(() => {
   void loadCanvas().finally(() => {
     void taskSync.start()
   })
-  void client
-    .listImageModels()
-    .then((models) => {
-      imageModels.value = models
-    })
-    .catch(() => {
-      /* 目录拉不到就隐藏生成入口,不打扰画布编辑 */
-    })
-  void client
-    .listVideoModels()
-    .then((models) => {
-      videoModels.value = models
-    })
-    .catch(() => {
-      /* 同上:视频模型目录拉不到就不显示图生视频入口 */
-    })
+  refreshModelCatalogs()
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('beforeunload', beforeUnload)
@@ -1610,6 +1845,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
   window.removeEventListener('keydown', onGlobalKeydown)
+  if (historyTimer !== undefined) {
+    clearTimeout(historyTimer)
+  }
+  if (noticeTimer !== undefined) {
+    clearTimeout(noticeTimer)
+  }
   taskSync.stop()
 })
 
@@ -1681,77 +1922,81 @@ function backToList(): void {
       </span>
     </header>
 
-    <div
-      v-if="generateError"
-      class="generate-error"
-      role="alert"
-    >
-      <p>{{ generateError }}</p>
-      <button
-        class="ghost"
-        type="button"
-        @click="generateError = ''"
+    <!-- 横幅统一收纳(38 号票评审):多条同时出现时聚成一列,不再逐条
+         把画布往下推散。 -->
+    <div class="alerts">
+      <div
+        v-if="generateError"
+        class="generate-error"
+        role="alert"
       >
-        知道了
-      </button>
-    </div>
-
-    <div
-      v-if="autosave.state.value === 'conflict'"
-      class="conflict-banner"
-      role="alert"
-    >
-      <p>
-        画布已在其他窗口被修改,本地更改尚未保存。
-        可加载服务器版本(放弃本地更改),或以当前内容覆盖服务器。
-      </p>
-      <span class="conflict-actions">
+        <p>{{ generateError }}</p>
         <button
-          class="primary"
+          class="ghost"
           type="button"
-          :disabled="resolvingConflict"
-          @click="reloadServerVersion"
+          @click="generateError = ''"
         >
-          加载服务器版本
+          知道了
         </button>
+      </div>
+
+      <div
+        v-if="autosave.state.value === 'conflict'"
+        class="conflict-banner"
+        role="alert"
+      >
+        <p>
+          画布已在其他窗口被修改,本地更改尚未保存。
+          可加载服务器版本(放弃本地更改),或以当前内容覆盖服务器。
+        </p>
+        <span class="conflict-actions">
+          <button
+            class="primary"
+            type="button"
+            :disabled="resolvingConflict"
+            @click="reloadServerVersion"
+          >
+            加载服务器版本
+          </button>
+          <button
+            class="danger"
+            type="button"
+            :disabled="resolvingConflict"
+            @click="overwriteServer"
+          >
+            以我的版本覆盖
+          </button>
+        </span>
+      </div>
+
+      <div
+        v-if="loadError"
+        class="load-error"
+        role="alert"
+      >
+        <p>{{ loadError }}</p>
         <button
-          class="danger"
+          class="ghost"
           type="button"
-          :disabled="resolvingConflict"
-          @click="overwriteServer"
+          @click="loadCanvas"
         >
-          以我的版本覆盖
+          重试
         </button>
-      </span>
-    </div>
+      </div>
 
-    <div
-      v-if="loadError"
-      class="load-error"
-      role="alert"
-    >
-      <p>{{ loadError }}</p>
-      <button
-        class="ghost"
-        type="button"
-        @click="loadCanvas"
+      <div
+        v-if="missing"
+        class="load-error"
       >
-        重试
-      </button>
-    </div>
-
-    <div
-      v-if="missing"
-      class="load-error"
-    >
-      <p>画布不存在或已被删除。</p>
-      <button
-        class="ghost"
-        type="button"
-        @click="backToList"
-      >
-        返回列表
-      </button>
+        <p>画布不存在或已被删除。</p>
+        <button
+          class="ghost"
+          type="button"
+          @click="backToList"
+        >
+          返回列表
+        </button>
+      </div>
     </div>
 
     <div
@@ -1773,6 +2018,15 @@ function backToList(): void {
         :elements-selectable="!connecting"
       >
         <Background :gap="24" />
+        <!-- 缩放/回正控件与小地图(38 号票评审:画布变大后回全景不再只能
+             靠刷新或记录面板定位)。深色主题在全局 style.css 覆写。 -->
+        <Controls position="bottom-right" />
+        <MiniMap
+          position="bottom-left"
+          pannable
+          zoomable
+          :node-color="miniMapNodeColor"
+        />
         <template #node-agent="nodeProps">
           <AgentNode
             :id="nodeProps.id"
@@ -1872,6 +2126,8 @@ function backToList(): void {
         :mode-locked="composerModeLocked"
         :image-models="imageModels"
         :video-models="videoModels"
+        :prices="composerMode === 'video' ? videoPrices : imagePrices"
+        :disabled-reason="composerDisabledReason"
         :refs="composerRefs"
         :video-refs="videoComposerRefs"
         :prompt="composerMode === 'video' ? videoPrompt : composerPrompt"
@@ -1892,6 +2148,7 @@ function backToList(): void {
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"
         @upload="onComposerUpload"
+        @retry-catalogs="refreshModelCatalogs"
         @send="onComposerSend"
       />
       <AssetPanel
@@ -1927,10 +2184,18 @@ function backToList(): void {
         :url="lightbox.url"
         @close="lightbox = null"
       />
+      <!-- 38 号票评审:轻提示(删除可撤销 / 非法连线反馈),自动消退。 -->
+      <div
+        v-if="notice"
+        class="toast"
+        role="status"
+      >
+        {{ notice }}
+      </div>
     </div>
 
     <footer class="toolbar">
-      <span class="hint">拖拽节点排布,点节点旁 + 号连线(左接上游、右连下游)。</span>
+      <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送。</span>
       <span class="add-group">
         <button
           v-for="t in (['agent', 'image', 'video'] as const)"
@@ -2036,8 +2301,10 @@ function backToList(): void {
   font-size: 13px;
 }
 
+/* 已保存态用中性蓝灰而不是绿(38 号票评审:绿色与图片节点/在途任务
+   撞色,状态色不该占用类型色)。 */
 .save-state[data-state='saved'] {
-  color: #4ade80;
+  color: #a8b6d8;
 }
 
 .save-state[data-state='error'],
@@ -2045,10 +2312,17 @@ function backToList(): void {
   color: #ff8f8f;
 }
 
+/* 在途任务 = 活动态,用交互蓝,不再与图片节点的绿色共用。 */
 .task-state {
-  color: #4ade80;
+  color: #7aa2f7;
   font-size: 13px;
   white-space: nowrap;
+}
+
+/* 横幅收纳列(38 号票评审):多条横幅同列堆叠,视觉上是一个系统。 */
+.alerts {
+  display: flex;
+  flex-direction: column;
 }
 
 .generate-error {
@@ -2161,8 +2435,27 @@ function backToList(): void {
   fill: rgba(122, 162, 247, 0.9);
 }
 
+/* 轻提示(38 号票评审):画布底部居中,自动消退,不抢焦点。 */
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(20, 28, 48, 0.95);
+  border: 1px solid rgba(122, 162, 247, 0.4);
+  color: #cdd7ee;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
 .primary {
-  background: #4c6ef5;
+  background: #3b5bdb;
   color: #fff;
   font-weight: 600;
 }
@@ -2228,9 +2521,11 @@ function backToList(): void {
   color: #facc15;
 }
 
+/* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是
+   分析;类型色留给节点,容器类动作用中性色)。 */
 .add-asset {
-  background: rgba(165, 180, 252, 0.16);
-  color: #a5b4fc;
+  background: rgba(168, 182, 216, 0.14);
+  color: #b6c2d8;
 }
 
 .add-records {

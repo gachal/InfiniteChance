@@ -159,13 +159,13 @@ function formatDuration(ms: number): string {
   return `${(ms / 60_000).toFixed(1)} min`;
 }
 
-function formatUSD(usd: number): string {
-  return new Intl.NumberFormat('en-US', {
+function formatCNY(cny: number): string {
+  return new Intl.NumberFormat('zh-CN', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'CNY',
     minimumFractionDigits: 2,
     maximumFractionDigits: 6,
-  }).format(usd);
+  }).format(cny);
 }
 
 // 计费单位与数量:token 轨读列,按次/按秒轨读快照里的请求事实(张/秒)。
@@ -361,7 +361,7 @@ onMounted(() => {
           </template>
 
           <template v-else-if="column.key === 'charge'">
-            {{ formatUSD(record.charge_usd) }}
+            {{ formatCNY(record.charge_cny) }}
           </template>
 
           <template v-else-if="column.key === 'source'">
@@ -401,7 +401,7 @@ onMounted(() => {
               <span :class="record.errors > 0 ? 'text-red-500' : ''">{{ record.errors }}</span>
             </template>
             <template v-else-if="column.key === 'charge'">
-              {{ formatUSD(record.charge_usd) }}
+              {{ formatCNY(record.charge_cny) }}
             </template>
           </template>
           <template #emptyText>

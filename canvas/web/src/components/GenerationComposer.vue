@@ -7,10 +7,13 @@
 // 产物不能当生图参考),底栏模式下拉的「图片生成」禁选。
 import { computed, ref } from 'vue'
 
+import type { ModelPriceSummary } from '@infinitechance/api'
+
 import {
   MAX_COMPOSER_REFS,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
+  composeSize,
   durationRangeFor,
   rolesForKind,
   VIDEO_RESOLUTION_PRESETS,
@@ -31,6 +34,12 @@ const props = defineProps<{
   imageModels: string[]
   /** 可用的按秒计价视频模型(编辑器从 /video-models 拉取)。 */
   videoModels: string[]
+  /** 当前模式的模型价格摘要(38 号票):key = 模型名,人类人民币单位;
+   * 旧目录无 prices 时为空对象,价格展示与预估随之静默退位。 */
+  prices: Record<string, ModelPriceSummary>
+  /** 目录不可用原因(38 号票评审:目录拉取失败或未配价时,对话框保留
+   * 但整体禁用并说明原因,不再静默蒸发);空 = 正常可用。 */
+  disabledReason: string
   /** 图片模式的生效参考图列表。 */
   refs: ComposerRef[]
   /** 视频模式的全模态参考条(角色在 chip 上切换)。 */
@@ -62,6 +71,8 @@ const emit = defineEmits<{
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
   upload: [file: File]
+  /** 目录禁用态里的「重试」:编辑器重新拉取模型目录。 */
+  'retry-catalogs': []
   send: []
 }>()
 
@@ -89,10 +100,96 @@ function onDurationBlur(e: Event): void {
 }
 
 const canSend = computed(
-  () => props.prompt.trim().length > 0 && props.model !== '' && !props.generating,
+  () =>
+    props.prompt.trim().length > 0 &&
+    props.model !== '' &&
+    !props.generating &&
+    props.disabledReason === '',
 )
 
 const refsFull = computed(() => props.refs.length >= MAX_COMPOSER_REFS)
+
+// ---- 成本可见性(38 号票):下拉带价、发送前预估 ----
+
+/** 人民币金额的紧凑展示:整数不带小数、最多三位小数、去尾零。 */
+function fmtCNY(n: number): string {
+  const s = n.toFixed(3).replace(/\.?0+$/, '')
+  return `¥${s}`
+}
+
+/** 模型下拉 option 的展示名:带价时缀上人类可读单价,选中即见成本。 */
+function modelOptionLabel(m: string): string {
+  const p = props.prices[m]
+  if (!p) {
+    return m
+  }
+  if (p.unit === 'call' && p.cny_per_call != null) {
+    return `${m} · ${fmtCNY(p.cny_per_call)}/张`
+  }
+  if (p.unit === 'second' && p.cny_per_call != null) {
+    return `${m} · ${fmtCNY(p.cny_per_call)}/秒`
+  }
+  if (p.unit === 'token' && p.output_cny_per_mtokens != null) {
+    return `${m} · 约 ${fmtCNY(p.output_cny_per_mtokens)}/百万 tok`
+  }
+  return m
+}
+
+/** 发送前预估(仅展示,向上取整对齐服务端预扣口径;旧目录无 prices 或
+ * 未知轨道时空串退位)。second 轨按 分辨率系数 × 秒数;时长自动时只报
+ * 单价;视频 token 轨按 秒折算率 × 秒数 × 输出单价 × 倍率;call 轨按
+ * 尺寸系数,不乘参考图数(参考加价各厂商不同,不虚报)。 */
+const estimate = computed<string>(() => {
+  const p = props.prices[props.model]
+  if (!p) {
+    return ''
+  }
+  if (p.unit === 'call' && p.cny_per_call != null) {
+    const size = composeSize(props.ratio, props.resolution)
+    const factor = size ? (p.size_factors?.[size] ?? 1) : 1
+    return `本次预估 ${fmtCNY(Math.ceil(p.cny_per_call * factor * 100) / 100)}`
+  }
+  if (p.unit === 'second' && p.cny_per_call != null) {
+    const factor = props.resolution ? (p.size_factors?.[props.resolution] ?? 1) : 1
+    const per = p.cny_per_call * factor
+    const secs = Number(props.duration)
+    if (props.duration !== '' && Number.isFinite(secs) && secs > 0) {
+      return `本次预估 ${fmtCNY(Math.ceil(per * secs * 100) / 100)}(${fmtCNY(per)}/秒 × ${secs} 秒)`
+    }
+    return `${fmtCNY(per)}/秒,时长自动,按实结算`
+  }
+  if (p.unit === 'token' && p.output_cny_per_mtokens != null) {
+    const secs = Number(props.duration)
+    if (props.duration === '' || !Number.isFinite(secs) || secs <= 0) {
+      return ''
+    }
+    const rate = props.resolution
+      ? (p.size_tokens_per_second?.[props.resolution] ?? p.default_tokens_per_second ?? 0)
+      : (p.default_tokens_per_second ?? 0)
+    if (rate <= 0) {
+      return ''
+    }
+    const tokens = Math.ceil(rate * secs)
+    const cost = (tokens / 1_000_000) * p.output_cny_per_mtokens * (p.ratio ?? 1)
+    return `本次预估 约 ${fmtCNY(Math.ceil(cost * 100) / 100)}(${tokens} tok)`
+  }
+  return ''
+})
+
+/** 键盘发送(38 号票评审):Enter 发送、Shift+Enter 换行,Cmd/Ctrl+Enter
+ * 同样发送;输入法组词中不触发(isComposing,31 号票同款纪律)。 */
+function onPromptKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' || e.isComposing) {
+    return
+  }
+  if (e.shiftKey && !(e.metaKey || e.ctrlKey)) {
+    return // Shift+Enter = 换行,交给默认行为。
+  }
+  e.preventDefault()
+  if (canSend.value) {
+    emit('send')
+  }
+}
 
 /** 视频参考条还有空位:任一角色未满即可再收(appendVideoRef 会按角色
  * 最终裁决,这里只决定加号按钮的可用态与提示)。 */
@@ -131,8 +228,24 @@ function onFileChange(e: Event): void {
 <template>
   <section
     class="composer"
+    :class="{ disabled: disabledReason !== '' }"
     aria-label="生成对话框"
   >
+    <!-- 目录不可用禁态(38 号票评审):对话框保留、说明原因、可重试,
+         不再静默蒸发。 -->
+    <div
+      v-if="disabledReason"
+      class="catalog-error"
+      role="alert"
+    >
+      <span>{{ disabledReason }}</span>
+      <button
+        type="button"
+        @click="emit('retry-catalogs')"
+      >
+        重试
+      </button>
+    </div>
     <!-- 图片模式:参考图缩略条 -->
     <div
       v-if="!isVideo"
@@ -151,6 +264,7 @@ function onFileChange(e: Event): void {
           class="ref-remove"
           type="button"
           title="移除参考图(发送即文生图,连线仍保留)"
+          aria-label="移除参考图"
           @click="emit('remove-ref', i)"
         >
           ×
@@ -159,8 +273,9 @@ function onFileChange(e: Event): void {
       <button
         class="ref-add"
         type="button"
-        :disabled="uploading || refsFull"
+        :disabled="uploading || refsFull || disabledReason !== ''"
         :title="uploadTitle"
+        aria-label="上传参考图"
         @click="fileInput?.click()"
       >
         {{ uploading ? '…' : '+' }}
@@ -244,14 +359,26 @@ function onFileChange(e: Event): void {
     <textarea
       :value="prompt"
       :placeholder="placeholder"
+      :disabled="disabledReason !== ''"
       rows="3"
+      aria-label="生成提示词"
       @input="emit('update:prompt', ($event.target as HTMLTextAreaElement).value)"
+      @keydown="onPromptKeydown"
     />
+
+    <!-- 成本预估(38 号票):有价才显示,随参数联动。 -->
+    <p
+      v-if="estimate"
+      class="estimate"
+    >
+      {{ estimate }}
+    </p>
 
     <div class="controls">
       <select
         :value="mode"
         class="mode"
+        :disabled="disabledReason !== ''"
         title="生成模式(选中视频节点时锁定视频生成)"
         @change="emit('update:mode', ($event.target as HTMLSelectElement).value as 'image' | 'video')"
       >
@@ -274,6 +401,7 @@ function onFileChange(e: Event): void {
         :max="durationRange.max"
         step="1"
         placeholder="自动"
+        :disabled="disabledReason !== ''"
         :title="`时长(秒):留空 = 自动由模型裁决;本模型支持 ${durationRange.min}–${durationRange.max} 秒`"
         @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
         @blur="onDurationBlur"
@@ -281,6 +409,7 @@ function onFileChange(e: Event): void {
       <select
         :value="ratio"
         class="ratio"
+        :disabled="disabledReason !== ''"
         title="画面比例(自动 = 由模型缺省裁决)"
         @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
       >
@@ -296,6 +425,7 @@ function onFileChange(e: Event): void {
         v-if="isVideo"
         :value="resolution"
         class="resolution"
+        :disabled="disabledReason !== ''"
         title="分辨率档位(自动 = 由模型缺省裁决;档位串直传上游)"
         @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
       >
@@ -311,6 +441,7 @@ function onFileChange(e: Event): void {
         v-else
         :value="resolution"
         class="resolution"
+        :disabled="disabledReason !== ''"
         title="分辨率档位(自动 = 由模型缺省裁决;单选分辨率按 1:1 兜底)"
         @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
       >
@@ -332,6 +463,7 @@ function onFileChange(e: Event): void {
         <input
           type="checkbox"
           :checked="transparent"
+          :disabled="disabledReason !== ''"
           @change="emit('update:transparent', ($event.target as HTMLInputElement).checked)"
         >
         透明背景
@@ -339,6 +471,7 @@ function onFileChange(e: Event): void {
       <select
         :value="model"
         class="model"
+        :disabled="disabledReason !== ''"
         :title="isVideo ? '视频模型' : '生图模型'"
         @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
       >
@@ -347,14 +480,15 @@ function onFileChange(e: Event): void {
           :key="m"
           :value="m"
         >
-          {{ m }}
+          {{ modelOptionLabel(m) }}
         </option>
       </select>
       <button
         class="send"
         type="button"
         :disabled="!canSend"
-        :title="canSend ? '生成(提交画布任务)' : '先写提示词并选模型'"
+        :title="canSend ? '生成(Enter 发送,Shift+Enter 换行)' : '先写提示词并选模型'"
+        aria-label="生成"
         @click="emit('send')"
       >
         {{ generating ? '…' : '↑' }}
@@ -490,6 +624,49 @@ function onFileChange(e: Event): void {
 
 .ref-file {
   display: none;
+}
+
+/* 目录不可用禁态:整体降不透明度,交互面全部 :disabled。 */
+.composer.disabled .ref-strip {
+  opacity: 0.5;
+}
+
+.catalog-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  border-radius: 10px;
+  background: rgba(250, 204, 21, 0.08);
+  font-size: 12px;
+  color: #fde68a;
+}
+
+.catalog-error button {
+  border: 1px solid rgba(253, 230, 138, 0.5);
+  border-radius: 8px;
+  background: transparent;
+  color: #fde68a;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.catalog-error button:hover {
+  background: rgba(253, 230, 138, 0.12);
+}
+
+/* 成本预估行:安静的单行小字,参数变化即时刷新。 */
+.estimate {
+  margin: 0;
+  font-size: 12px;
+  color: #9fb3d9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 textarea {

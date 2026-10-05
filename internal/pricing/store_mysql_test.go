@@ -72,7 +72,7 @@ func TestMySQLPriceCallTrackRoundTrip(t *testing.T) {
 		PublicModel: "dall-e-3",
 		Unit:        pricing.UnitCall,
 		Call: &pricing.CallPrice{
-			USDPerCallMicros: 40_000,
+			CNYPerCallMicros: 40_000,
 			SizeFactorMicros: map[string]int64{"1024x1024": 1_000_000, "1792x1024": 2_000_000},
 		},
 	}
@@ -80,7 +80,7 @@ func TestMySQLPriceCallTrackRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Upsert call row: %v", err)
 	}
-	if stored.Call == nil || stored.Call.USDPerCallMicros != 40_000 ||
+	if stored.Call == nil || stored.Call.CNYPerCallMicros != 40_000 ||
 		stored.Call.SizeFactorMicros["1792x1024"] != 2_000_000 {
 		t.Fatalf("stored = %+v, want the call payload back", stored)
 	}
@@ -89,7 +89,7 @@ func TestMySQLPriceCallTrackRoundTrip(t *testing.T) {
 	}
 
 	got, err := store.ByModel(ctx, "dall-e-3")
-	if err != nil || got.Call == nil || got.Call.USDPerCallMicros != 40_000 {
+	if err != nil || got.Call == nil || got.Call.CNYPerCallMicros != 40_000 {
 		t.Fatalf("ByModel = %+v (err %v), want the call payload", got, err)
 	}
 	// 同名换轨覆盖:call → token,config 列载荷随之替换。

@@ -2,8 +2,8 @@
  * 模型价格(36 号票补 UI):/admin/prices 挂网关管理面(JWT 会话)。
  * @infinitechance/api 按 36 号票定案保持原样,价格三端点走本应用自己的
  * requestClient(同一错误形状与 401 处理,错误提示由拦截器统一弹出)。
- * 金额在 API 边缘就是人类单位(USD/百万 token、USD/次、倍率 ×1.0),
- * 微美元换算发生在服务端 handler,前端不接触计费算术。
+ * 金额在 API 边缘就是人类单位(元/百万 token、元/次、倍率 ×1.0),
+ * 微人民币换算发生在服务端 handler,前端不接触计费算术。
  */
 
 import { requestClient } from '#/api/request';
@@ -12,17 +12,17 @@ import { requestClient } from '#/api/request';
 export type PriceUnit = 'call' | 'second' | 'token';
 
 /** 一条模型价格(GET 列表行 / PUT 响应)。哪些字段有意义随 unit 而定:
- * token 行用 per-mtokens/ratio 族,call/second 行用 usd_per_call/size_factors 族;
+ * token 行用 per-mtokens/ratio 族,call/second 行用 cny_per_call/size_factors 族;
  * 视频 token 行(25 号票)另带秒折算表。 */
 export interface ModelPrice {
   public_model: string;
   unit: PriceUnit;
-  input_usd_per_mtokens: number;
-  output_usd_per_mtokens: number;
+  input_cny_per_mtokens: number;
+  output_cny_per_mtokens: number;
   ratio: number;
   size_tokens_per_second?: Record<string, number>;
   default_tokens_per_second?: number;
-  usd_per_call: number;
+  cny_per_call: number;
   size_factors?: Record<string, number>;
   created_at: string;
   updated_at: string;
@@ -33,12 +33,12 @@ export interface ModelPrice {
 export interface ModelPriceInput {
   public_model: string;
   unit: PriceUnit;
-  input_usd_per_mtokens?: number;
-  output_usd_per_mtokens?: number;
+  input_cny_per_mtokens?: number;
+  output_cny_per_mtokens?: number;
   ratio?: number;
   size_tokens_per_second?: Record<string, number>;
   default_tokens_per_second?: number;
-  usd_per_call?: number;
+  cny_per_call?: number;
   size_factors?: Record<string, number>;
 }
 

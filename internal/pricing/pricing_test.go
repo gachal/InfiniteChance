@@ -67,7 +67,7 @@ func TestTokenPriceChargeMicros(t *testing.T) {
 func TestCallPriceChargeMicros(t *testing.T) {
 	// $0.04/张,1024x1024 ×1.0、1792x1024 ×2.0(dall-e-3 标准价形状)。
 	base := CallPrice{
-		USDPerCallMicros: 40_000,
+		CNYPerCallMicros: 40_000,
 		SizeFactorMicros: map[string]int64{"1024x1024": 1_000_000, "1792x1024": 2_000_000},
 	}
 	if got := base.ChargeMicros("1024x1024", 1); got != 40_000 {
@@ -85,7 +85,7 @@ func TestCallPriceChargeMicros(t *testing.T) {
 		t.Errorf("ChargeMicros n=3 = %d, want 240000", got)
 	}
 	// 不足 1 微美元向上取整:单价 1 micro × 系数 1.5 → 每张 ⌈1.5⌉ = 2。
-	tiny := CallPrice{USDPerCallMicros: 1, SizeFactorMicros: map[string]int64{"s": 1_500_000}}
+	tiny := CallPrice{CNYPerCallMicros: 1, SizeFactorMicros: map[string]int64{"s": 1_500_000}}
 	if got := tiny.ChargeMicros("s", 1); got != 2 {
 		t.Errorf("ChargeMicros ceil = %d, want 2", got)
 	}
@@ -105,7 +105,7 @@ func TestCallPriceChargeMicros(t *testing.T) {
 	}
 
 	// 大数值不溢出:$1000/张 × ×1000 系数 = $1e6/张,100 张 = 1e14 micros。
-	huge := CallPrice{USDPerCallMicros: 1000 * 1_000_000, SizeFactorMicros: map[string]int64{"s": 1000 * 1_000_000}}
+	huge := CallPrice{CNYPerCallMicros: 1000 * 1_000_000, SizeFactorMicros: map[string]int64{"s": 1000 * 1_000_000}}
 	if got := huge.ChargeMicros("s", MaxCallItems); got != 100_000_000_000_000 {
 		t.Errorf("ChargeMicros huge = %d, want 1e14", got)
 	}
@@ -120,7 +120,7 @@ func TestCallPriceNormalize(t *testing.T) {
 		PublicModel: " dall-e-3 ",
 		Unit:        UnitCall,
 		Call: &CallPrice{
-			USDPerCallMicros: 40_000,
+			CNYPerCallMicros: 40_000,
 			SizeFactorMicros: map[string]int64{" 1024x1024 ": 1_000_000, "1792x1024": 2_000_000},
 		},
 	}
@@ -128,7 +128,7 @@ func TestCallPriceNormalize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
-	if got.PublicModel != "dall-e-3" || got.Call.USDPerCallMicros != 40_000 {
+	if got.PublicModel != "dall-e-3" || got.Call.CNYPerCallMicros != 40_000 {
 		t.Fatalf("normalized = %+v, want trimmed model and intact price", got)
 	}
 	if got.Call.SizeFactorMicros["1024x1024"] != 1_000_000 {
@@ -141,8 +141,8 @@ func TestCallPriceNormalize(t *testing.T) {
 	}{
 		{"missing call payload", Price{PublicModel: "m", Unit: UnitCall}},
 		{"token payload on call track", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{}, Token: &TokenPrice{}}},
-		{"negative price", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{USDPerCallMicros: -1}}},
-		{"price over $1000", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{USDPerCallMicros: 1001 * 1_000_000}}},
+		{"negative price", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{CNYPerCallMicros: -1}}},
+		{"price over $1000", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{CNYPerCallMicros: 1001 * 1_000_000}}},
 		{"negative factor", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{SizeFactorMicros: map[string]int64{"s": -1}}}},
 		{"factor over 1000", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{SizeFactorMicros: map[string]int64{"s": 1001 * 1_000_000}}}},
 		{"empty size key", Price{PublicModel: "m", Unit: UnitCall, Call: &CallPrice{SizeFactorMicros: map[string]int64{" ": 1_000_000}}}},
@@ -160,7 +160,7 @@ func TestCallSnapshots(t *testing.T) {
 	p := Price{
 		PublicModel: "dall-e-3",
 		Unit:        UnitCall,
-		Call:        &CallPrice{USDPerCallMicros: 40_000, SizeFactorMicros: map[string]int64{"1792x1024": 2_000_000}},
+		Call:        &CallPrice{CNYPerCallMicros: 40_000, SizeFactorMicros: map[string]int64{"1792x1024": 2_000_000}},
 	}
 	// 基础快照带 call 载荷。
 	raw, err := p.Snapshot()
@@ -175,8 +175,8 @@ func TestCallSnapshots(t *testing.T) {
 		t.Errorf("snapshot unit = %v, want call", got["unit"])
 	}
 	call, ok := got["call"].(map[string]any)
-	if !ok || call["usd_per_call_micros"] != float64(40_000) {
-		t.Errorf("snapshot call payload = %v, want usd_per_call_micros 40000", got["call"])
+	if !ok || call["cny_per_call_micros"] != float64(40_000) {
+		t.Errorf("snapshot call payload = %v, want cny_per_call_micros 40000", got["call"])
 	}
 	// 审计快照额外记下请求事实(size、n):按次扣费没有它们无法重算。
 	craw, err := p.CallSnapshot("1792x1024", 2)

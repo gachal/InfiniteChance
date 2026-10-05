@@ -256,6 +256,27 @@ export interface PromptTemplateOption {
   target: SkillTarget
 }
 
+/** 模型价格摘要(38 号票):目录端点随名单附带的投影,人类人民币单位,
+ * 字段形状对齐服务端 pricing.PriceSummary;仅作展示与发送前预估,不参与
+ * 计费(计费永远读服务端价格行)。哪些字段有意义随 unit 而定。 */
+export interface ModelPriceSummary {
+  unit: string
+  ratio?: number
+  input_cny_per_mtokens?: number
+  output_cny_per_mtokens?: number
+  size_tokens_per_second?: Record<string, number>
+  default_tokens_per_second?: number
+  cny_per_call?: number
+  size_factors?: Record<string, number>
+}
+
+/** 模型目录(38 号票):models 名单照旧,prices 是按模型名索引的价格摘要
+ * (旧服务端不带 prices 时为空对象,消费方照常只读名单)。 */
+export interface ModelCatalog {
+  models: string[]
+  prices: Record<string, ModelPriceSummary>
+}
+
 /** Agent 会话媒体附件的一条引用(32 号票):ref 持久化素材内容寻址路径
  * (/api/assets/{id}/content,永久地址,整图 JSON 不背 base64)或厂商
  * http(s) 地址;data: URI 进不了网关媒体契约,前端也不产生。 */
@@ -720,16 +741,22 @@ export class ApiClient {
     }).then((body) => body.task)
   }
 
-  /** 可用于文生图的公开模型(按次计价的 call 轨模型,名字排序)。 */
-  async listImageModels(): Promise<string[]> {
-    const body = await this.request<{ models: string[] }>('/image-models')
-    return body.models
+  /** 模型价格摘要(38 号票):目录随行携带,人类人民币单位,仅作展示
+   * 与发送前预估,不带任何计费语义(计费永远读服务端价格行)。 */
+  async listImageModels(): Promise<ModelCatalog> {
+    const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
+      '/image-models',
+    )
+    return { models: body.models, prices: body.prices ?? {} }
   }
 
-  /** 可用于图生视频的公开模型(按秒计价的 second 轨模型,名字排序)。 */
-  async listVideoModels(): Promise<string[]> {
-    const body = await this.request<{ models: string[] }>('/video-models')
-    return body.models
+  /** 可用于图生视频的公开模型(按秒计价的 second 轨模型 + 带折算表的视频
+   * token 轨模型,名字排序;价格摘要同上,38 号票)。 */
+  async listVideoModels(): Promise<ModelCatalog> {
+    const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
+      '/video-models',
+    )
+    return { models: body.models, prices: body.prices ?? {} }
   }
 
   /** 可用于 Agent 会话的技能目录(仅启用,画布侧每次即时读库)。 */
@@ -738,10 +765,13 @@ export class ApiClient {
     return body.templates
   }
 
-  /** 可用于提示词生成的聊天模型(token 轨计价的公开模型,名字排序)。 */
-  async listPromptModels(): Promise<string[]> {
-    const body = await this.request<{ models: string[] }>('/prompt-models')
-    return body.models
+  /** 可用于提示词生成的聊天模型(token 轨计价的公开模型,名字排序;
+   * 价格摘要随行,38 号票)。 */
+  async listPromptModels(): Promise<ModelCatalog> {
+    const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
+      '/prompt-models',
+    )
+    return { models: body.models, prices: body.prices ?? {} }
   }
 
   /** 生成提示词(Agent 会话,29 号票):canvas/server 把技能渲染文本作

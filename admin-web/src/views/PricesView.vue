@@ -2,7 +2,7 @@
 // 模型价格(36 号票补 UI):/admin/prices 的列表 + 配价编辑,覆盖双轨计价
 // 字段(token 轨单价×倍率、次/秒轨单价×尺寸系数;视频 token 模型另有秒
 // 折算表,25 号票)。服务端语义不变 —— 未配价模型一律 model_not_priced
-// 拒绝,这里只是把 curl 配价换成界面;金额按人类单位上送,微美元换算在
+// 拒绝,这里只是把 curl 配价换成界面;金额按人类单位上送,微人民币换算在
 // 服务端 handler。数据走本应用的 requestClient(共享包按票定案不动)。
 import type { FormInstance } from 'ant-design-vue';
 
@@ -48,26 +48,26 @@ const formError = ref('');
 
 interface PriceForm {
   defaultTokensPerSecond: number | undefined;
-  inputUsd: number | undefined;
-  outputUsd: number | undefined;
+  inputCny: number | undefined;
+  outputCny: number | undefined;
   publicModel: string;
   ratio: number;
   sizeFactors: { factor: number | undefined; size: string }[];
   unit: PriceUnit;
-  usdPerCall: number | undefined;
+  cnyPerCall: number | undefined;
   videoRates: { rate: number | undefined; size: string }[];
 }
 
 function blankForm(): PriceForm {
   return {
     defaultTokensPerSecond: undefined,
-    inputUsd: undefined,
-    outputUsd: undefined,
+    inputCny: undefined,
+    outputCny: undefined,
     publicModel: '',
     ratio: 1,
     sizeFactors: [],
     unit: 'token',
-    usdPerCall: undefined,
+    cnyPerCall: undefined,
     videoRates: [],
   };
 }
@@ -121,13 +121,13 @@ function openEdit(p: ModelPrice): void {
   editingModel.value = p.public_model;
   Object.assign(formState, {
     defaultTokensPerSecond: p.default_tokens_per_second || undefined,
-    inputUsd: p.input_usd_per_mtokens,
-    outputUsd: p.output_usd_per_mtokens,
+    inputCny: p.input_cny_per_mtokens,
+    outputCny: p.output_cny_per_mtokens,
     publicModel: p.public_model,
     ratio: p.ratio || 1,
     sizeFactors: Object.entries(p.size_factors ?? {}).map(([size, factor]) => ({ factor, size })),
     unit: p.unit,
-    usdPerCall: p.usd_per_call,
+    cnyPerCall: p.cny_per_call,
     videoRates: Object.entries(p.size_tokens_per_second ?? {}).map(([size, rate]) => ({ rate, size })),
   } satisfies PriceForm);
   formError.value = '';
@@ -153,8 +153,8 @@ function buildInput() {
     return {
       public_model: publicModel,
       unit: formState.unit,
-      input_usd_per_mtokens: formState.inputUsd ?? 0,
-      output_usd_per_mtokens: formState.outputUsd ?? 0,
+      input_cny_per_mtokens: formState.inputCny ?? 0,
+      output_cny_per_mtokens: formState.outputCny ?? 0,
       ratio: formState.ratio,
       size_tokens_per_second: rates,
       default_tokens_per_second: formState.defaultTokensPerSecond ?? 0,
@@ -169,7 +169,7 @@ function buildInput() {
   return {
     public_model: publicModel,
     unit: formState.unit,
-    usd_per_call: formState.usdPerCall ?? 0,
+    cny_per_call: formState.cnyPerCall ?? 0,
     size_factors: factors,
   };
 }
@@ -216,27 +216,27 @@ function remove(p: ModelPrice): void {
 
 // ---- 展示辅助 ----
 
-function formatUSD(usd: number): string {
-  return new Intl.NumberFormat('en-US', {
+function formatCNY(cny: number): string {
+  return new Intl.NumberFormat('zh-CN', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'CNY',
     minimumFractionDigits: 2,
     maximumFractionDigits: 6,
-  }).format(usd);
+  }).format(cny);
 }
 
 /** 单价列:token 轨展示输入/输出单价与倍率;次/秒轨展示单价。 */
 function priceSummary(p: ModelPrice): string {
   if (p.unit === 'token') {
     const parts = [
-      `${formatUSD(p.input_usd_per_mtokens)} / ${formatUSD(p.output_usd_per_mtokens)} 每 1M tok`,
+      `${formatCNY(p.input_cny_per_mtokens)} / ${formatCNY(p.output_cny_per_mtokens)} 每 1M tok`,
     ];
     if (p.ratio !== 1) {
       parts.push(`×${p.ratio}`);
     }
     return parts.join(' · ');
   }
-  return `${formatUSD(p.usd_per_call)} / ${p.unit === 'call' ? '张' : '秒'}`;
+  return `${formatCNY(p.cny_per_call)} / ${p.unit === 'call' ? '张' : '秒'}`;
 }
 
 /** 尺寸表列:次/秒轨的尺寸系数或视频 token 轨的秒折算率,悬停看全表。 */
@@ -404,16 +404,16 @@ const modalTitle = computed(() =>
           </FormItem>
         </div>
 
-        <!-- token 轨:输入/输出单价(USD 每百万 token)与倍率 -->
+        <!-- token 轨:输入/输出单价(元 每百万 token)与倍率 -->
         <template v-if="formState.unit === 'token'">
           <div class="grid grid-cols-1 gap-x-4 md:grid-cols-2">
             <FormItem
-              label="输入单价(USD / 1M tokens)"
-              name="inputUsd"
+              label="输入单价(元 / 1M tokens)"
+              name="inputCny"
               :rules="[{ required: true, message: '请输入输入单价' }]"
             >
               <InputNumber
-                v-model:value="formState.inputUsd"
+                v-model:value="formState.inputCny"
                 class="w-full"
                 :min="0"
                 :max="10000"
@@ -421,12 +421,12 @@ const modalTitle = computed(() =>
               />
             </FormItem>
             <FormItem
-              label="输出单价(USD / 1M tokens)"
-              name="outputUsd"
+              label="输出单价(元 / 1M tokens)"
+              name="outputCny"
               :rules="[{ required: true, message: '请输入输出单价' }]"
             >
               <InputNumber
-                v-model:value="formState.outputUsd"
+                v-model:value="formState.outputCny"
                 class="w-full"
                 :min="0"
                 :max="10000"
@@ -492,15 +492,15 @@ const modalTitle = computed(() =>
           </div>
         </template>
 
-        <!-- 次/秒轨:单价(USD 每张/每秒)与尺寸系数(未配档恒 ×1.0) -->
+        <!-- 次/秒轨:单价(元 每张/每秒)与尺寸系数(未配档恒 ×1.0) -->
         <template v-else>
           <FormItem
-            :label="`单价(USD / ${formState.unit === 'call' ? '张' : '秒'})`"
-            name="usdPerCall"
+            :label="`单价(元 / ${formState.unit === 'call' ? '张' : '秒'})`"
+            name="cnyPerCall"
             :rules="[{ required: true, message: '请输入单价' }]"
           >
             <InputNumber
-              v-model:value="formState.usdPerCall"
+              v-model:value="formState.cnyPerCall"
               class="w-full"
               :min="0"
               :max="1000"

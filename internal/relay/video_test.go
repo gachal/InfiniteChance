@@ -165,7 +165,7 @@ func (e *relayEnv) seedVideoPrice(t *testing.T, publicModel string, factors map[
 	t.Helper()
 	_, err := e.stores.prices.Upsert(context.Background(), pricing.Price{
 		PublicModel: publicModel, Unit: pricing.UnitSecond,
-		Call: &pricing.CallPrice{USDPerCallMicros: 100_000, SizeFactorMicros: factors},
+		Call: &pricing.CallPrice{CNYPerCallMicros: 100_000, SizeFactorMicros: factors},
 	})
 	if err != nil {
 		t.Fatalf("seed video price: %v", err)
@@ -339,7 +339,7 @@ func TestRelayVideoSubmitPollSucceedEndToEnd(t *testing.T) {
 	var snapshot struct {
 		Unit string `json:"unit"`
 		Call struct {
-			USDPerCallMicros int64 `json:"usd_per_call_micros"`
+			CNYPerCallMicros int64 `json:"cny_per_call_micros"`
 		} `json:"call"`
 		Request struct {
 			Size string `json:"size"`
@@ -349,7 +349,7 @@ func TestRelayVideoSubmitPollSucceedEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(trail.PriceSnapshot, &snapshot); err != nil {
 		t.Fatalf("snapshot not JSON: %v (%s)", err, trail.PriceSnapshot)
 	}
-	if snapshot.Unit != "second" || snapshot.Call.USDPerCallMicros != 100_000 ||
+	if snapshot.Unit != "second" || snapshot.Call.CNYPerCallMicros != 100_000 ||
 		snapshot.Request.Size != "720p" || snapshot.Request.N != 5 {
 		t.Errorf("snapshot = %s, want second track with request {720p, 5}", trail.PriceSnapshot)
 	}
@@ -837,7 +837,7 @@ func TestRelayVideoValidation(t *testing.T) {
 	// 按次(张)轨价格的视频模型:必须拒绝。
 	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
 		PublicModel: "callpriced-m", Unit: pricing.UnitCall,
-		Call: &pricing.CallPrice{USDPerCallMicros: 40_000},
+		Call: &pricing.CallPrice{CNYPerCallMicros: 40_000},
 	}); err != nil {
 		t.Fatalf("seed call price: %v", err)
 	}
@@ -898,7 +898,7 @@ func TestRelayVideoFreeModelSkipsBillingButStillTracks(t *testing.T) {
 	// 免费模型:单价 0 → 预扣为 0,跳过账务但任务照常全流程。
 	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
 		PublicModel: "vid-m", Unit: pricing.UnitSecond,
-		Call: &pricing.CallPrice{USDPerCallMicros: 0},
+		Call: &pricing.CallPrice{CNYPerCallMicros: 0},
 	}); err != nil {
 		t.Fatalf("seed free price: %v", err)
 	}

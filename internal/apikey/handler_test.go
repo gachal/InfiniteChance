@@ -205,7 +205,7 @@ type keyBody struct {
 	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
 	Prefix    string     `json:"prefix"`
-	QuotaUSD  float64    `json:"quota_usd"`
+	QuotaCNY  float64    `json:"quota_cny"`
 	Status    string     `json:"status"`
 	Key       string     `json:"key"`
 	ExpiresAt *time.Time `json:"expires_at"`
@@ -237,7 +237,7 @@ func TestCreateKeyReturnsFullValueExactlyOnce(t *testing.T) {
 
 	w := doJSON(r, http.MethodPost, "/admin/keys", map[string]any{
 		"name":              "canvas-service",
-		"initial_quota_usd": 10,
+		"initial_quota_cny": 10,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201; body: %s", w.Code, w.Body.String())
@@ -253,8 +253,8 @@ func TestCreateKeyReturnsFullValueExactlyOnce(t *testing.T) {
 	if created.Prefix != created.Key[:11] {
 		t.Errorf("prefix = %q, want the key's leading slice %q", created.Prefix, created.Key[:11])
 	}
-	if created.QuotaUSD != 10 {
-		t.Errorf("quota_usd = %v, want 10", created.QuotaUSD)
+	if created.QuotaCNY != 10 {
+		t.Errorf("quota_cny = %v, want 10", created.QuotaCNY)
 	}
 	if created.Status != apikey.StatusActive {
 		t.Errorf("status = %q, want active", created.Status)
@@ -296,9 +296,9 @@ func TestCreateKeyValidatesInput(t *testing.T) {
 	}{
 		{"empty name", map[string]any{"name": "   "}},
 		{"past expiry", map[string]any{"name": "x", "expires_at": "2020-01-01T00:00:00Z"}},
-		{"zero quota", map[string]any{"name": "x", "initial_quota_usd": 0}},
-		{"negative quota", map[string]any{"name": "x", "initial_quota_usd": -5}},
-		{"over cap quota", map[string]any{"name": "x", "initial_quota_usd": 2_000_000}},
+		{"zero quota", map[string]any{"name": "x", "initial_quota_cny": 0}},
+		{"negative quota", map[string]any{"name": "x", "initial_quota_cny": -5}},
+		{"over cap quota", map[string]any{"name": "x", "initial_quota_cny": 2_000_000}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -378,7 +378,7 @@ func TestTopUpUpdatesBalanceImmediatelyAndLogs(t *testing.T) {
 	store := newFakeStore()
 	r := newKeyServer(store)
 	seeded := seedKey(t, store, "canvas-service", func(k *apikey.Key) {
-		k.QuotaMicros = apikey.USDToMicros(10)
+		k.QuotaMicros = apikey.CNYToMicros(10)
 	})
 
 	fetchLedger := func(t *testing.T) []apikey.QuotaEntry {
@@ -390,8 +390,8 @@ func TestTopUpUpdatesBalanceImmediatelyAndLogs(t *testing.T) {
 		var body struct {
 			Entries []struct {
 				ID         int64   `json:"id"`
-				DeltaUSD   float64 `json:"delta_usd"`
-				BalanceUSD float64 `json:"balance_usd"`
+				DeltaCNY   float64 `json:"delta_cny"`
+				BalanceCNY float64 `json:"balance_cny"`
 				Reason     string  `json:"reason"`
 			} `json:"entries"`
 		}
@@ -401,8 +401,8 @@ func TestTopUpUpdatesBalanceImmediatelyAndLogs(t *testing.T) {
 		out := make([]apikey.QuotaEntry, 0, len(body.Entries))
 		for _, e := range body.Entries {
 			out = append(out, apikey.QuotaEntry{
-				ID: e.ID, DeltaMicros: apikey.USDToMicros(e.DeltaUSD),
-				BalanceMicros: apikey.USDToMicros(e.BalanceUSD), Reason: e.Reason,
+				ID: e.ID, DeltaMicros: apikey.CNYToMicros(e.DeltaCNY),
+				BalanceMicros: apikey.CNYToMicros(e.BalanceCNY), Reason: e.Reason,
 			})
 		}
 		return out
@@ -410,13 +410,13 @@ func TestTopUpUpdatesBalanceImmediatelyAndLogs(t *testing.T) {
 
 	// 初始额度也留下了流水。
 	entries := fetchLedger(t)
-	if len(entries) != 1 || entries[0].Reason != apikey.ReasonInitial || entries[0].BalanceMicros != apikey.USDToMicros(10) {
+	if len(entries) != 1 || entries[0].Reason != apikey.ReasonInitial || entries[0].BalanceMicros != apikey.CNYToMicros(10) {
 		t.Fatalf("initial ledger = %+v, want one initial entry at 10 USD", entries)
 	}
 
 	// 手工充值后余额即时变化。
 	w := doJSON(r, http.MethodPost, fmt.Sprintf("/admin/keys/%d/topup", seeded.ID), map[string]any{
-		"amount_usd": 2.5,
+		"amount_cny": 2.5,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("topup status = %d, want 200; body: %s", w.Code, w.Body.String())
@@ -425,21 +425,21 @@ func TestTopUpUpdatesBalanceImmediatelyAndLogs(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &topped); err != nil {
 		t.Fatalf("bad JSON: %v", err)
 	}
-	if topped.QuotaUSD != 12.5 {
-		t.Errorf("quota_usd after topup = %v, want 12.5", topped.QuotaUSD)
+	if topped.QuotaCNY != 12.5 {
+		t.Errorf("quota_cny after topup = %v, want 12.5", topped.QuotaCNY)
 	}
 
 	entries = fetchLedger(t)
 	if len(entries) != 2 {
 		t.Fatalf("ledger = %d entries, want 2", len(entries))
 	}
-	if entries[0].Reason != apikey.ReasonManualTopUp || entries[0].BalanceMicros != apikey.USDToMicros(12.5) {
+	if entries[0].Reason != apikey.ReasonManualTopUp || entries[0].BalanceMicros != apikey.CNYToMicros(12.5) {
 		t.Errorf("newest entry = %+v, want the manual topup at 12.5 USD", entries[0])
 	}
 
 	// 非法金额拒绝,余额不动。
 	for _, amount := range []any{0, -1, 5_000_000} {
-		w := doJSON(r, http.MethodPost, fmt.Sprintf("/admin/keys/%d/topup", seeded.ID), map[string]any{"amount_usd": amount})
+		w := doJSON(r, http.MethodPost, fmt.Sprintf("/admin/keys/%d/topup", seeded.ID), map[string]any{"amount_cny": amount})
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("topup %v status = %d, want 400", amount, w.Code)
 		}
@@ -448,11 +448,11 @@ func TestTopUpUpdatesBalanceImmediatelyAndLogs(t *testing.T) {
 		t.Fatalf("topup missing amount status = %d, want 400", w.Code)
 	}
 	k, err := store.ByHash(t.Context(), seeded.KeyHash)
-	if err != nil || k.QuotaMicros != apikey.USDToMicros(12.5) {
+	if err != nil || k.QuotaMicros != apikey.CNYToMicros(12.5) {
 		t.Errorf("balance after rejected topups = %v (err %v), want unchanged 12.5", k.QuotaMicros, err)
 	}
 
-	w = doJSON(r, http.MethodPost, "/admin/keys/999/topup", map[string]any{"amount_usd": 1})
+	w = doJSON(r, http.MethodPost, "/admin/keys/999/topup", map[string]any{"amount_cny": 1})
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("topup missing key status = %d, want 404", w.Code)
 	}
@@ -471,7 +471,7 @@ func TestTopUpRejectsInactiveKeys(t *testing.T) {
 	})
 
 	for _, id := range []int64{revoked.ID, expired.ID} {
-		w := doJSON(r, http.MethodPost, fmt.Sprintf("/admin/keys/%d/topup", id), map[string]any{"amount_usd": 1})
+		w := doJSON(r, http.MethodPost, fmt.Sprintf("/admin/keys/%d/topup", id), map[string]any{"amount_cny": 1})
 		if w.Code != http.StatusConflict {
 			t.Fatalf("topup on inactive key %d status = %d, want 409; body: %s", id, w.Code, w.Body.String())
 		}

@@ -230,7 +230,7 @@ function markBroken(messageIndex: number, mediaIndex: number): void {
   border-radius: 8px;
   border: 1px dashed rgba(255, 255, 255, 0.2);
   color: #8b91a7;
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 </style>

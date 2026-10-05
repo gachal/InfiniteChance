@@ -221,7 +221,7 @@ type logJSON struct {
 	Request          *requestFacts `json:"request"`
 	DurationMS       int64         `json:"duration_ms"`
 	Status           string        `json:"status"`
-	ChargeUSD        float64       `json:"charge_usd"`
+	ChargeCNY        float64       `json:"charge_cny"`
 	UpstreamError    string        `json:"upstream_error"`
 	Source           string        `json:"source"`
 	CreatedAt        time.Time     `json:"created_at"`
@@ -233,7 +233,7 @@ func toLogJSON(l Log) logJSON {
 		PublicModel: l.PublicModel, UpstreamModel: l.UpstreamModel, Unit: l.Unit,
 		PromptTokens: l.PromptTokens, CompletionTokens: l.CompletionTokens,
 		Request: requestFactsOf(l), DurationMS: l.DurationMS, Status: l.Status,
-		ChargeUSD:     float64(l.ChargeMicros) / 1e6,
+		ChargeCNY:     float64(l.ChargeMicros) / 1e6,
 		UpstreamError: l.UpstreamError, Source: l.Source, CreatedAt: l.CreatedAt,
 	}
 }
@@ -250,14 +250,14 @@ type bucketJSON struct {
 	ChannelName string  `json:"channel_name,omitempty"`
 	Requests    int64   `json:"requests"`
 	Errors      int64   `json:"errors"`
-	ChargeUSD   float64 `json:"charge_usd"`
+	ChargeCNY   float64 `json:"charge_cny"`
 }
 
 func toBucketJSON(b Bucket) bucketJSON {
 	return bucketJSON{
 		Day: b.Day, Model: b.Model, ChannelID: b.ChannelID, ChannelName: b.ChannelName,
 		Requests: b.Requests, Errors: b.Errors,
-		ChargeUSD: float64(b.ChargeMicros) / 1e6,
+		ChargeCNY: float64(b.ChargeMicros) / 1e6,
 	}
 }
 

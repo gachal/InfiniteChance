@@ -15,7 +15,7 @@ import (
 
 // Handlers serves the admin model-price endpoints. The gateway mounts them
 // under /admin behind the JWT session middleware. Amounts cross the wire as
-// human units (USD per million tokens, ratio ×1.0) and are converted to
+// human units (CNY per million tokens, ratio ×1.0) and are converted to
 // integer micros here, like the key quota API.
 type Handlers struct {
 	Store Store
@@ -35,18 +35,18 @@ func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 
 // priceJSON is the wire form: human units at the edge. Which fields are
 // meaningful follows unit — token rows use the per-mtoken/ratio fields, call
-// rows use usd_per_call/size_factors; video token rows (25 号票) additionally
+// rows use cny_per_call/size_factors; video token rows (25 号票) additionally
 // carry the per-second conversion table in native token counts (no unit
 // conversion applies).
 type priceJSON struct {
 	PublicModel            string             `json:"public_model"`
 	Unit                   Unit               `json:"unit"`
-	InputUSDPerMTokens     float64            `json:"input_usd_per_mtokens"`
-	OutputUSDPerMTokens    float64            `json:"output_usd_per_mtokens"`
+	InputCNYPerMTokens     float64            `json:"input_cny_per_mtokens"`
+	OutputCNYPerMTokens    float64            `json:"output_cny_per_mtokens"`
 	Ratio                  float64            `json:"ratio"`
 	SizeTokensPerSecond    map[string]float64 `json:"size_tokens_per_second,omitempty"`
 	DefaultTokensPerSecond float64            `json:"default_tokens_per_second,omitempty"`
-	USDPerCall             float64            `json:"usd_per_call"`
+	CNYPerCall             float64            `json:"cny_per_call"`
 	SizeFactors            map[string]float64 `json:"size_factors,omitempty"`
 	CreatedAt              time.Time          `json:"created_at"`
 	UpdatedAt              time.Time          `json:"updated_at"`
@@ -62,8 +62,8 @@ func toPriceJSON(p Price) priceJSON {
 	switch p.Unit {
 	case UnitToken:
 		if p.Token != nil {
-			body.InputUSDPerMTokens = MicrosToUSDPerMTokens(p.Token.InputMicrosPerMTokens)
-			body.OutputUSDPerMTokens = MicrosToUSDPerMTokens(p.Token.OutputMicrosPerMTokens)
+			body.InputCNYPerMTokens = MicrosToCNYPerMTokens(p.Token.InputMicrosPerMTokens)
+			body.OutputCNYPerMTokens = MicrosToCNYPerMTokens(p.Token.OutputMicrosPerMTokens)
 			body.Ratio = MicrosToRatio(p.Token.RatioMicros)
 			if len(p.Token.SizeTokensPerSecond) > 0 {
 				body.SizeTokensPerSecond = p.Token.SizeTokensPerSecond
@@ -74,7 +74,7 @@ func toPriceJSON(p Price) priceJSON {
 		}
 	case UnitCall, UnitSecond:
 		if p.Call != nil {
-			body.USDPerCall = MicrosToUSD(p.Call.USDPerCallMicros)
+			body.CNYPerCall = MicrosToCNY(p.Call.CNYPerCallMicros)
 			if len(p.Call.SizeFactorMicros) > 0 {
 				factors := make(map[string]float64, len(p.Call.SizeFactorMicros))
 				for size, f := range p.Call.SizeFactorMicros {
@@ -87,26 +87,26 @@ func toPriceJSON(p Price) priceJSON {
 	return body
 }
 
-// usdPerMTokensToMicros converts a human USD-per-million-tokens price to
+// cnyPerMTokensToMicros converts a human CNY-per-million-tokens price to
 // micros, rounding to the nearest micro so float artifacts at the API edge
 // never accumulate.
-func usdPerMTokensToMicros(usd float64) int64 {
-	return int64(math.Round(usd * apikey.MicrosPerUSD))
+func cnyPerMTokensToMicros(cny float64) int64 {
+	return int64(math.Round(cny * apikey.MicrosPerCNY))
 }
 
-// MicrosToUSDPerMTokens converts back for the admin API.
-func MicrosToUSDPerMTokens(micros int64) float64 {
-	return float64(micros) / apikey.MicrosPerUSD
+// MicrosToCNYPerMTokens converts back for the admin API.
+func MicrosToCNYPerMTokens(micros int64) float64 {
+	return float64(micros) / apikey.MicrosPerCNY
 }
 
-// usdToMicros converts a plain human USD amount (per-call prices) to micros.
-func usdToMicros(usd float64) int64 {
-	return int64(math.Round(usd * apikey.MicrosPerUSD))
+// cnyToMicros converts a plain human CNY amount (per-call prices) to micros.
+func cnyToMicros(cny float64) int64 {
+	return int64(math.Round(cny * apikey.MicrosPerCNY))
 }
 
-// MicrosToUSD converts back for the admin API.
-func MicrosToUSD(micros int64) float64 {
-	return float64(micros) / apikey.MicrosPerUSD
+// MicrosToCNY converts back for the admin API.
+func MicrosToCNY(micros int64) float64 {
+	return float64(micros) / apikey.MicrosPerCNY
 }
 
 // ratioToMicros converts a ×1.0-based multiplier to ratio micros.
@@ -132,12 +132,12 @@ func MicrosToFactor(micros int64) float64 {
 type priceInputJSON struct {
 	PublicModel            string             `json:"public_model"`
 	Unit                   Unit               `json:"unit"`
-	InputUSDPerMTokens     float64            `json:"input_usd_per_mtokens"`
-	OutputUSDPerMTokens    float64            `json:"output_usd_per_mtokens"`
+	InputCNYPerMTokens     float64            `json:"input_cny_per_mtokens"`
+	OutputCNYPerMTokens    float64            `json:"output_cny_per_mtokens"`
 	Ratio                  *float64           `json:"ratio"`
 	SizeTokensPerSecond    map[string]float64 `json:"size_tokens_per_second"`
 	DefaultTokensPerSecond float64            `json:"default_tokens_per_second"`
-	USDPerCall             float64            `json:"usd_per_call"`
+	CNYPerCall             float64            `json:"cny_per_call"`
 	SizeFactors            map[string]float64 `json:"size_factors"`
 }
 
@@ -172,8 +172,8 @@ func (h *Handlers) Upsert(c *gin.Context) {
 			ratio = *raw.Ratio
 		}
 		p.Token = &TokenPrice{
-			InputMicrosPerMTokens:  usdPerMTokensToMicros(raw.InputUSDPerMTokens),
-			OutputMicrosPerMTokens: usdPerMTokensToMicros(raw.OutputUSDPerMTokens),
+			InputMicrosPerMTokens:  cnyPerMTokensToMicros(raw.InputCNYPerMTokens),
+			OutputMicrosPerMTokens: cnyPerMTokensToMicros(raw.OutputCNYPerMTokens),
 			RatioMicros:            ratioToMicros(ratio),
 			SizeTokensPerSecond:    raw.SizeTokensPerSecond,
 			DefaultTokensPerSecond: raw.DefaultTokensPerSecond,
@@ -184,7 +184,7 @@ func (h *Handlers) Upsert(c *gin.Context) {
 			factors[size] = factorToMicros(f)
 		}
 		p.Call = &CallPrice{
-			USDPerCallMicros: usdToMicros(raw.USDPerCall),
+			CNYPerCallMicros: cnyToMicros(raw.CNYPerCall),
 			SizeFactorMicros: factors,
 		}
 	}

@@ -25,7 +25,7 @@
 - 视频 `POST /v1/videos/generations` + `GET/POST /v1/videos/tasks/{id}`(轮询/取消):异步任务契约,五态状态机(queued/running/succeeded/failed/canceled),仅成功计费,任务归属发放 key。
 - 模型目录 `GET /v1/models`:合并全部启用渠道的公开模型,不受熔断影响。
 - 多渠道调度与熔断:同一模型挂多渠道时按优先级分层故障转移、层内加权随机分流;每渠道独立熔断器(连续临时失败达阈值转 open → 冷却后 half-open 单飞探测),候选全部熔断时 503 `model_unavailable` 拒绝。
-- 计价与额度:双轨计价(token 轨 / 按次·按秒轨,未配价模型一律 `model_not_priced` 拒绝),额度以微美元记账,变动落流水;API key 为 `sk-` + 40 位随机串,仅存哈希,支持过期与吊销。
+- 计价与额度:双轨计价(token 轨 / 按次·按秒轨,未配价模型一律 `model_not_priced` 拒绝),额度以微人民币记账(38 号票起单一币种人民币,存量不迁移、管理台重配),变动落流水;API key 为 `sk-` + 40 位随机串,仅存哈希,支持过期与吊销。
 - 用量审计:请求级日志(渠道/模型快照、价格快照、上游错误摘要、`X-InfiniteChance-Source` 来源标记,画布来源形如 `canvas=<id> task=<…>`)+ `GET /admin/usage/summary` 按天/模型/渠道汇总,管理后台「用量审计」页可查明细与三种汇总桶。
 
 **创作画布(canvas/server + canvas/web)**:

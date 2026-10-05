@@ -42,12 +42,12 @@ func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 }
 
 // keyJSON is the wire form of a key. The secret never appears here — only
-// the prefix — and quota crosses the wire as human USD.
+// the prefix — and quota crosses the wire as human CNY.
 type keyJSON struct {
 	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
 	Prefix    string     `json:"prefix"`
-	QuotaUSD  float64    `json:"quota_usd"`
+	QuotaCNY  float64    `json:"quota_cny"`
 	Status    string     `json:"status"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	RevokedAt *time.Time `json:"revoked_at"`
@@ -58,7 +58,7 @@ type keyJSON struct {
 func toKeyJSON(k Key, now time.Time) keyJSON {
 	return keyJSON{
 		ID: k.ID, Name: k.Name, Prefix: k.Prefix,
-		QuotaUSD:  MicrosToUSD(k.QuotaMicros),
+		QuotaCNY:  MicrosToCNY(k.QuotaMicros),
 		Status:    k.Status(now),
 		ExpiresAt: k.ExpiresAt, RevokedAt: k.RevokedAt,
 		CreatedAt: k.CreatedAt, UpdatedAt: k.UpdatedAt,
@@ -78,7 +78,7 @@ type keyListResponse struct {
 type createKeyInput struct {
 	Name            string     `json:"name"`
 	ExpiresAt       *time.Time `json:"expires_at"`
-	InitialQuotaUSD *float64   `json:"initial_quota_usd"`
+	InitialQuotaCNY *float64   `json:"initial_quota_cny"`
 }
 
 func (h *Handlers) Create(c *gin.Context) {
@@ -104,8 +104,8 @@ func (h *Handlers) Create(c *gin.Context) {
 	}
 
 	var initialMicros int64
-	if raw.InitialQuotaUSD != nil {
-		micros, err := amountToMicros(*raw.InitialQuotaUSD)
+	if raw.InitialQuotaCNY != nil {
+		micros, err := amountToMicros(*raw.InitialQuotaCNY)
 		if err != nil {
 			apierr.InvalidRequest(c, fmt.Sprintf("初始额度非法:%v", err))
 			return
@@ -159,7 +159,7 @@ func (h *Handlers) Revoke(c *gin.Context) {
 }
 
 type topUpInput struct {
-	AmountUSD *float64 `json:"amount_usd"`
+	AmountCNY *float64 `json:"amount_cny"`
 }
 
 func (h *Handlers) TopUp(c *gin.Context) {
@@ -172,11 +172,11 @@ func (h *Handlers) TopUp(c *gin.Context) {
 		apierr.InvalidRequest(c, "请求体不是合法的充值 JSON")
 		return
 	}
-	if raw.AmountUSD == nil {
-		apierr.InvalidRequest(c, "缺少充值金额 amount_usd")
+	if raw.AmountCNY == nil {
+		apierr.InvalidRequest(c, "缺少充值金额 amount_cny")
 		return
 	}
-	micros, err := amountToMicros(*raw.AmountUSD)
+	micros, err := amountToMicros(*raw.AmountCNY)
 	if err != nil {
 		apierr.InvalidRequest(c, fmt.Sprintf("充值金额非法:%v", err))
 		return
@@ -207,15 +207,15 @@ func (h *Handlers) storeError(c *gin.Context, err error) bool {
 	return true
 }
 
-// amountToMicros validates a human USD amount and converts it to quota
+// amountToMicros validates a human CNY amount and converts it to quota
 // micros — the single gate shared by initial quota and top-up.
-func amountToMicros(usd float64) (int64, error) {
-	if usd <= 0 || usd > MaxAmountUSD {
-		return 0, fmt.Errorf("需大于 0 且不超过 %.0f 美元", float64(MaxAmountUSD))
+func amountToMicros(cny float64) (int64, error) {
+	if cny <= 0 || cny > MaxAmountCNY {
+		return 0, fmt.Errorf("需大于 0 且不超过 %.0f 元", float64(MaxAmountCNY))
 	}
-	micros := USDToMicros(usd)
+	micros := CNYToMicros(cny)
 	if micros <= 0 {
-		return 0, fmt.Errorf("太小,至少需要 0.000001 美元")
+		return 0, fmt.Errorf("太小,至少需要 0.000001 元")
 	}
 	return micros, nil
 }
@@ -226,8 +226,8 @@ type quotaLogResponse struct {
 
 type quotaEntryJSON struct {
 	ID         int64     `json:"id"`
-	DeltaUSD   float64   `json:"delta_usd"`
-	BalanceUSD float64   `json:"balance_usd"`
+	DeltaCNY   float64   `json:"delta_cny"`
+	BalanceCNY float64   `json:"balance_cny"`
 	Reason     string    `json:"reason"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -250,8 +250,8 @@ func (h *Handlers) QuotaLog(c *gin.Context) {
 	for _, e := range entries {
 		bodies = append(bodies, quotaEntryJSON{
 			ID:         e.ID,
-			DeltaUSD:   MicrosToUSD(e.DeltaMicros),
-			BalanceUSD: MicrosToUSD(e.BalanceMicros),
+			DeltaCNY:   MicrosToCNY(e.DeltaMicros),
+			BalanceCNY: MicrosToCNY(e.BalanceMicros),
 			Reason:     e.Reason,
 			CreatedAt:  e.CreatedAt,
 		})

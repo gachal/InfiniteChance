@@ -1,7 +1,7 @@
 // Package pricing implements the gateway's dual-track model pricing: chat
 // models bill by token with an upstream-cost multiplier (ratio track), image
-// and video models bill per generated item in USD with a size coefficient
-// (item track). All amounts are integer micro-USD like the quota ledger, so
+// and video models bill per generated item in CNY with a size coefficient
+// (item track). All amounts are integer micro-CNY like the quota ledger, so
 // billing arithmetic never touches floats; the admin API converts at the edge.
 package pricing
 
@@ -20,7 +20,7 @@ import (
 )
 
 // Unit names a billing track. TokenTrack bills chat usage by token counts
-// times a ratio; the item track bills per generated unit in USD with a
+// times a ratio; the item track bills per generated unit in CNY with a
 // size coefficient — UnitCall for images (07 号票), UnitSecond for video
 // (08 号票:单价按秒,系数按分辨率). Both share CallPrice arithmetic; the
 // unit only decides which requests may use the row and what usage rows log.
@@ -39,13 +39,13 @@ const (
 	// ModelNameRunes matches the channel package's model-name bound so a
 	// mapping key can always be priced.
 	ModelNameRunes = 200
-	// MaxUSDPerMTokens bounds a per-million-token price at $10,000 — a
+	// MaxCNYPerMTokens bounds a per-million-token price at $10,000 — a
 	// typo shield, not a business rule.
-	MaxUSDPerMTokens = 10_000
+	MaxCNYPerMTokens = 10_000
 	// MaxRatio bounds the multiplier at ×1000 for the same reason.
 	MaxRatio = 1_000
-	// MaxUSDPerCall bounds a per-item (per image) price at $1,000.
-	MaxUSDPerCall = 1_000
+	// MaxCNYPerCall bounds a per-item (per image) price at $1,000.
+	MaxCNYPerCall = 1_000
 	// MaxFactor bounds a size coefficient at ×1000.
 	MaxFactor = 1_000
 	// MaxSizeRunes bounds a size key (e.g. "1024x1024").
@@ -62,7 +62,7 @@ const (
 
 // ChargeMicros' division denominators: prices are per million tokens and
 // ratios/factors are in micro-units, so (tokens × micros-per-M × ratio-micros)
-// divides by 1e6 × 1e6 to land on micro-USD; per-item prices multiply by
+// divides by 1e6 × 1e6 to land on micro-CNY; per-item prices multiply by
 // factor-micros and divide by 1e6.
 const (
 	mtokensDenom = 1_000_000
@@ -71,7 +71,7 @@ const (
 )
 
 // TokenPrice is the token-track price of one public model. Costs are the
-// upstream's micro-USD per million tokens; the key is charged
+// upstream's micro-CNY per million tokens; the key is charged
 // upstream cost × ratio (RatioMicros = 1e6 means ×1.0, at cost).
 //
 // 视频模型也可配 token 轨(25 号票):实际消耗体现在 output tokens(厂商
@@ -114,12 +114,12 @@ func (t TokenPrice) EstimateVideoTokens(size string, seconds int64) int64 {
 	return int64(math.Ceil(rate * float64(seconds)))
 }
 
-// CallPrice is the call-track price of one public model: a USD unit price
+// CallPrice is the call-track price of one public model: a CNY unit price
 // per generated item (一张图一次), multiplied by a per-size coefficient.
 // Sizes without a configured entry bill at exactly ×1.0, so a coefficient
 // table only needs the non-default sizes.
 type CallPrice struct {
-	USDPerCallMicros int64            `json:"usd_per_call_micros"`
+	CNYPerCallMicros int64            `json:"cny_per_call_micros"`
 	SizeFactorMicros map[string]int64 `json:"size_factor_micros,omitempty"` // 尺寸 → 系数(1e6 = ×1.0)
 }
 
@@ -141,7 +141,7 @@ func (c CallPrice) ChargeMicros(size string, n int64) int64 {
 	if n < 1 {
 		return 0
 	}
-	perItem := new(big.Int).Mul(big.NewInt(c.USDPerCallMicros), big.NewInt(c.FactorMicros(size)))
+	perItem := new(big.Int).Mul(big.NewInt(c.CNYPerCallMicros), big.NewInt(c.FactorMicros(size)))
 	q, rem := new(big.Int).QuoRem(perItem, big.NewInt(factorDenom), new(big.Int))
 	if rem.Sign() > 0 {
 		q.Add(q, big.NewInt(1))
@@ -288,14 +288,14 @@ func (p Price) Normalize() (Price, error) {
 		p.Token = &t
 	case UnitCall, UnitSecond:
 		if p.Call == nil {
-			return p, fmt.Errorf("%s计价需要 USD 单价", unitLabel(p.Unit))
+			return p, fmt.Errorf("%s计价需要 人民币单价", unitLabel(p.Unit))
 		}
 		if p.Token != nil {
 			return p, fmt.Errorf("%s计价不能带 token 价格", unitLabel(p.Unit))
 		}
 		c := *p.Call
-		if c.USDPerCallMicros < 0 || c.USDPerCallMicros > MaxUSDPerCall*apikey.MicrosPerUSD {
-			return p, fmt.Errorf("%s单价需在 0 到 %d 美元之间", unitLabel(p.Unit), MaxUSDPerCall)
+		if c.CNYPerCallMicros < 0 || c.CNYPerCallMicros > MaxCNYPerCall*apikey.MicrosPerCNY {
+			return p, fmt.Errorf("%s单价需在 0 到 %d 元之间", unitLabel(p.Unit), MaxCNYPerCall)
 		}
 		if len(c.SizeFactorMicros) > maxFactorEntries {
 			return p, fmt.Errorf("尺寸系数最多 %d 条", maxFactorEntries)
@@ -335,8 +335,8 @@ func unitLabel(u Unit) string {
 }
 
 func validatePerMTokens(label string, micros int64) error {
-	if micros < 0 || micros > MaxUSDPerMTokens*mtokensDenom {
-		return fmt.Errorf("%s需在 0 到 %d 美元/百万 token 之间", label, MaxUSDPerMTokens)
+	if micros < 0 || micros > MaxCNYPerMTokens*mtokensDenom {
+		return fmt.Errorf("%s需在 0 到 %d 元/百万 token 之间", label, MaxCNYPerMTokens)
 	}
 	return nil
 }

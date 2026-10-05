@@ -326,7 +326,7 @@ onMounted(refresh)
 }
 
 .meta .prompt {
-  font-size: 11px;
+  font-size: 12px;
   color: #8b91a7;
   overflow: hidden;
   display: -webkit-box;

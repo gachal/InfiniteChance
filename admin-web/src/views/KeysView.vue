@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // API Key 管理:创建(完整值仅显示一次)、吊销、过期、手工充值与额度流水,
-// antd 重写(36 号票)。微美元不变量在服务端,前端只过人类 USD 数字。
+// antd 重写(36 号票)。微人民币不变量在服务端,前端只过人类人民币数字。
 import { computed, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
@@ -69,7 +69,7 @@ const statusColor: Record<string, string> = {
 const columns = [
   { key: 'name', title: '名称' },
   { dataIndex: 'prefix', key: 'prefix', title: 'Key', width: 130 },
-  { dataIndex: 'quota_usd', key: 'quota_usd', title: '余额', width: 130 },
+  { dataIndex: 'quota_cny', key: 'quota_cny', title: '余额', width: 130 },
   { key: 'expires_at', title: '过期时间', width: 180 },
   { key: 'created_at', title: '创建时间', width: 180 },
   { key: 'actions', title: '操作', width: 200 },
@@ -77,8 +77,8 @@ const columns = [
 
 const logColumns = [
   { key: 'created_at', title: '时间', width: 170 },
-  { key: 'delta_usd', title: '变动' },
-  { dataIndex: 'balance_usd', key: 'balance_usd', title: '变动后余额' },
+  { key: 'delta_cny', title: '变动' },
+  { dataIndex: 'balance_cny', key: 'balance_cny', title: '变动后余额' },
   { key: 'reason', title: '原因' },
 ];
 
@@ -121,14 +121,14 @@ async function submit(): Promise<void> {
   saving.value = true;
   formError.value = '';
   try {
-    const input: { expires_at?: string; initial_quota_usd?: number; name: string } = {
+    const input: { expires_at?: string; initial_quota_cny?: number; name: string } = {
       name: formState.name.trim(),
     };
     if (formState.expiresAt !== '') {
       input.expires_at = new Date(formState.expiresAt.replace(' ', 'T')).toISOString();
     }
     if (formState.initialQuota !== undefined) {
-      input.initial_quota_usd = formState.initialQuota;
+      input.initial_quota_cny = formState.initialQuota;
     }
     createdKey.value = await auth.client.createKey(input);
     await refresh();
@@ -214,13 +214,13 @@ async function openLog(key: ApiKeyRecord): Promise<void> {
 
 // ---- 展示辅助 ----
 
-function formatUSD(usd: number): string {
-  return new Intl.NumberFormat('en-US', {
+function formatCNY(cny: number): string {
+  return new Intl.NumberFormat('zh-CN', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'CNY',
     minimumFractionDigits: 2,
     maximumFractionDigits: 6,
-  }).format(usd);
+  }).format(cny);
 }
 
 function formatTime(iso: null | string): string {
@@ -277,8 +277,8 @@ const formHint = computed(() =>
             <code>{{ record.prefix }}…</code>
           </template>
 
-          <template v-else-if="column.key === 'quota_usd'">
-            <span class="font-medium">{{ formatUSD(record.quota_usd) }}</span>
+          <template v-else-if="column.key === 'quota_cny'">
+            <span class="font-medium">{{ formatCNY(record.quota_cny) }}</span>
           </template>
 
           <template v-else-if="column.key === 'expires_at'">
@@ -373,7 +373,7 @@ const formHint = computed(() =>
             placeholder="留空 = 永不过期"
           />
         </FormItem>
-        <FormItem label="初始额度(USD)">
+        <FormItem label="初始额度(元)">
           <InputNumber
             v-model:value="formState.initialQuota"
             class="w-full"
@@ -430,7 +430,7 @@ const formHint = computed(() =>
       @cancel="topupTarget = null"
     >
       <p class="mb-1">
-        充值金额(USD)
+        充值金额(元)
       </p>
       <InputNumber
         v-model:value="topupAmount"
@@ -474,13 +474,13 @@ const formHint = computed(() =>
           <template v-if="column.key === 'created_at'">
             {{ formatTime(record.created_at) }}
           </template>
-          <template v-else-if="column.key === 'delta_usd'">
-            <span :class="record.delta_usd >= 0 ? 'text-green-600' : 'text-red-500'">
-              {{ record.delta_usd >= 0 ? '+' : '' }}{{ formatUSD(record.delta_usd) }}
+          <template v-else-if="column.key === 'delta_cny'">
+            <span :class="record.delta_cny >= 0 ? 'text-green-600' : 'text-red-500'">
+              {{ record.delta_cny >= 0 ? '+' : '' }}{{ formatCNY(record.delta_cny) }}
             </span>
           </template>
-          <template v-else-if="column.key === 'balance_usd'">
-            {{ formatUSD(record.balance_usd) }}
+          <template v-else-if="column.key === 'balance_cny'">
+            {{ formatCNY(record.balance_cny) }}
           </template>
           <template v-else-if="column.key === 'reason'">
             {{ reasonLabel[record.reason] ?? record.reason }}

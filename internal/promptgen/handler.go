@@ -926,12 +926,14 @@ func (h *ModelHandlers) List(c *gin.Context) {
 		return
 	}
 	models := make([]string, 0, len(prices))
+	summaries := make(map[string]pricing.PriceSummary, len(prices))
 	for _, p := range prices {
 		// 带折算表的是视频 token 价(25 号票),不进聊天目录。
 		if p.Unit == pricing.UnitToken && p.Token != nil && !p.Token.HasVideoRates() {
 			models = append(models, p.PublicModel)
+			summaries[p.PublicModel] = p.Summary() // 38 号票:目录随行带价
 		}
 	}
 	sort.Strings(models)
-	c.JSON(http.StatusOK, gin.H{"models": models})
+	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
 }

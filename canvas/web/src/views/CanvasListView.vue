@@ -333,7 +333,7 @@ async function logout(): Promise<void> {
 }
 
 .create button {
-  background: #4c6ef5;
+  background: #3b5bdb;
   color: #fff;
   font-weight: 600;
 }
@@ -399,7 +399,7 @@ async function logout(): Promise<void> {
 }
 
 .primary {
-  background: #4c6ef5;
+  background: #3b5bdb;
   color: #fff;
   font-weight: 600;
 }

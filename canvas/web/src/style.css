@@ -1,3 +1,6 @@
+@import '@vue-flow/controls/dist/style.css';
+@import '@vue-flow/minimap/dist/style.css';
+
 :root {
   color-scheme: dark;
   font-family:
@@ -85,3 +88,54 @@ body {
   opacity: 0.3;
 }
 
+
+/* ---- 键盘可达性(38 号票评审) ----
+   全局 focus-visible:焦点指示只在键盘导航时出现,统一用交互蓝,
+   不依赖各组件自带的 focus 样式。 */
+:focus-visible {
+  outline: 2px solid #7aa2f7;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 连接态非法目标:透明度之外叠加去饱和与虚线描边,状态区分不再只靠
+   透明度(评审:可访问性 + 一眼可辨),配合点击时的 toast 文字反馈。 */
+.vue-flow__node .node.connect-dimmed {
+  opacity: 0.35;
+  filter: grayscale(0.7);
+  border-style: dashed;
+}
+
+/* ---- vue-flow 控件与小地图(38 号票评审):深色主题化 ---- */
+
+.vue-flow__controls {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.vue-flow__controls-button {
+  background: rgba(13, 21, 36, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  fill: #aab1c5;
+}
+
+.vue-flow__controls-button:hover {
+  background: rgba(28, 40, 68, 0.95);
+}
+
+.vue-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.vue-flow__minimap {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(13, 21, 36, 0.92);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.vue-flow__minimap-mask {
+  fill: rgba(9, 12, 20, 0.65);
+}

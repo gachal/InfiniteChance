@@ -90,8 +90,8 @@ func TestPricingUpsertListDeleteRoundTrip(t *testing.T) {
 	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
 		"public_model":           "deepseek-chat",
 		"unit":                   "token",
-		"input_usd_per_mtokens":  0.44,
-		"output_usd_per_mtokens": 1.32,
+		"input_cny_per_mtokens":  0.44,
+		"output_cny_per_mtokens": 1.32,
 		"ratio":                  1.5,
 	})
 	if w.Code != http.StatusOK {
@@ -101,15 +101,15 @@ func TestPricingUpsertListDeleteRoundTrip(t *testing.T) {
 	var wire struct {
 		PublicModel         string  `json:"public_model"`
 		Unit                string  `json:"unit"`
-		InputUSDPerMTokens  float64 `json:"input_usd_per_mtokens"`
-		OutputUSDPerMTokens float64 `json:"output_usd_per_mtokens"`
+		InputCNYPerMTokens  float64 `json:"input_cny_per_mtokens"`
+		OutputCNYPerMTokens float64 `json:"output_cny_per_mtokens"`
 		Ratio               float64 `json:"ratio"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
 		t.Fatalf("decode upsert response: %v", err)
 	}
 	if wire.PublicModel != "deepseek-chat" || wire.Unit != "token" ||
-		wire.InputUSDPerMTokens != 0.44 || wire.OutputUSDPerMTokens != 1.32 || wire.Ratio != 1.5 {
+		wire.InputCNYPerMTokens != 0.44 || wire.OutputCNYPerMTokens != 1.32 || wire.Ratio != 1.5 {
 		t.Fatalf("upsert response = %+v, want echoed human-unit price", wire)
 	}
 
@@ -147,7 +147,7 @@ func TestPricingCallTrackRoundTrip(t *testing.T) {
 	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
 		"public_model": "dall-e-3",
 		"unit":         "call",
-		"usd_per_call": 0.04,
+		"cny_per_call": 0.04,
 		"size_factors": map[string]any{"1024x1024": 1.0, "1792x1024": 2.0},
 	})
 	if w.Code != http.StatusOK {
@@ -156,14 +156,14 @@ func TestPricingCallTrackRoundTrip(t *testing.T) {
 	var wire struct {
 		PublicModel string             `json:"public_model"`
 		Unit        string             `json:"unit"`
-		USDPerCall  float64            `json:"usd_per_call"`
+		CNYPerCall  float64            `json:"cny_per_call"`
 		SizeFactors map[string]float64 `json:"size_factors"`
 		Ratio       float64            `json:"ratio"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
 		t.Fatalf("decode upsert response: %v", err)
 	}
-	if wire.PublicModel != "dall-e-3" || wire.Unit != "call" || wire.USDPerCall != 0.04 ||
+	if wire.PublicModel != "dall-e-3" || wire.Unit != "call" || wire.CNYPerCall != 0.04 ||
 		wire.SizeFactors["1024x1024"] != 1 || wire.SizeFactors["1792x1024"] != 2 {
 		t.Fatalf("upsert response = %+v, want echoed human-unit call price", wire)
 	}
@@ -175,8 +175,8 @@ func TestPricingCallTrackRoundTrip(t *testing.T) {
 	w = doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
 		"public_model":          "gpt-image-1",
 		"unit":                  "call",
-		"usd_per_call":          0.02,
-		"input_usd_per_mtokens": 5.0,
+		"cny_per_call":          0.02,
+		"input_cny_per_mtokens": 5.0,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("Upsert with stray token fields status = %d body %s, want 200", w.Code, w.Body.String())
@@ -188,7 +188,7 @@ func TestPricingCallTrackRoundTrip(t *testing.T) {
 		Prices []struct {
 			PublicModel string             `json:"public_model"`
 			Unit        string             `json:"unit"`
-			USDPerCall  float64            `json:"usd_per_call"`
+			CNYPerCall  float64            `json:"cny_per_call"`
 			SizeFactors map[string]float64 `json:"size_factors"`
 		} `json:"prices"`
 	}
@@ -212,7 +212,7 @@ func TestPricingSecondTrackRoundTrip(t *testing.T) {
 	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
 		"public_model": "wan2.2",
 		"unit":         "second",
-		"usd_per_call": 0.10,
+		"cny_per_call": 0.10,
 		"size_factors": map[string]any{"720p": 1.0, "1080p": 2.0},
 	})
 	if w.Code != http.StatusOK {
@@ -221,13 +221,13 @@ func TestPricingSecondTrackRoundTrip(t *testing.T) {
 	var wire struct {
 		PublicModel string             `json:"public_model"`
 		Unit        string             `json:"unit"`
-		USDPerCall  float64            `json:"usd_per_call"`
+		CNYPerCall  float64            `json:"cny_per_call"`
 		SizeFactors map[string]float64 `json:"size_factors"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
 		t.Fatalf("decode upsert response: %v", err)
 	}
-	if wire.PublicModel != "wan2.2" || wire.Unit != "second" || wire.USDPerCall != 0.10 ||
+	if wire.PublicModel != "wan2.2" || wire.Unit != "second" || wire.CNYPerCall != 0.10 ||
 		wire.SizeFactors["1080p"] != 2 {
 		t.Fatalf("upsert response = %+v, want echoed human-unit second price", wire)
 	}
@@ -241,12 +241,12 @@ func TestPricingUpsertValidation(t *testing.T) {
 		body map[string]any
 	}{
 		{"missing model", map[string]any{"unit": "token"}},
-		{"negative per-call price", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": -1}},
-		{"absurd per-call price", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 1001.0}},
-		{"absurd size factor", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 0.04, "size_factors": map[string]any{"s": 1001.0}}},
-		{"negative size factor", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 0.04, "size_factors": map[string]any{"s": -2.0}}},
+		{"negative per-call price", map[string]any{"public_model": "m", "unit": "call", "cny_per_call": -1}},
+		{"absurd per-call price", map[string]any{"public_model": "m", "unit": "call", "cny_per_call": 1001.0}},
+		{"absurd size factor", map[string]any{"public_model": "m", "unit": "call", "cny_per_call": 0.04, "size_factors": map[string]any{"s": 1001.0}}},
+		{"negative size factor", map[string]any{"public_model": "m", "unit": "call", "cny_per_call": 0.04, "size_factors": map[string]any{"s": -2.0}}},
 		{"unknown unit", map[string]any{"public_model": "m", "unit": "bogus"}},
-		{"absurd price", map[string]any{"public_model": "m", "unit": "token", "input_usd_per_mtokens": 1e9, "output_usd_per_mtokens": 1}},
+		{"absurd price", map[string]any{"public_model": "m", "unit": "token", "input_cny_per_mtokens": 1e9, "output_cny_per_mtokens": 1}},
 		{"absurd ratio", map[string]any{"public_model": "m", "unit": "token", "ratio": 1001}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,7 +258,7 @@ func TestPricingUpsertValidation(t *testing.T) {
 	}
 
 	// 免费按次价(0 美元/张)与 token 轨的 0 单价对称,合法。
-	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{"public_model": "m", "unit": "call", "usd_per_call": 0})
+	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{"public_model": "m", "unit": "call", "cny_per_call": 0})
 	if w.Code != http.StatusOK {
 		t.Fatalf("free call price status = %d body %s, want 200", w.Code, w.Body.String())
 	}

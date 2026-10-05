@@ -67,7 +67,7 @@ go run ./canvas/server    # 宿主机直跑画布服务
 ## 硬性约束(违反即 bug)
 
 1. **密钥只写不读**:厂商密钥明文存库(需重放签名)但管理 API 只回 `has_key` + 尾 4 位;渠道 `config` 列里键名含 `secret`/`key` 的值同款处理,PUT 空值 = 保留原密。API key 仅存 SHA-256 哈希,完整值只在创建响应出现一次。任何新端点不得回显密钥。
-2. **计费不变量**:库内金额一律微美元(1e6 = $1)整数、扣费向上取整不低估;时序为「预扣 → 多退少补 → 失败退款」;并发安全靠数据库条件更新(`WHERE quota >= ?`),不做先查后扣;每次变动落 `api_key_quota_log` 流水。
+2. **计费不变量**:库内金额一律微人民币(1e6 = ¥1)整数、扣费向上取整不低估;时序为「预扣 → 多退少补 → 失败退款」;并发安全靠数据库条件更新(`WHERE quota >= ?`),不做先查后扣;每次变动落 `api_key_quota_log` 流水。
 3. **未配价模型一律拒绝**(`model_not_priced`),不做静默兜底倍率;计价轨道不匹配(聊天打非 token 轨等)同码拒绝。
 4. **错误形状**:中转面 `/v1` 统一 OpenAI error object(`invalid_api_key` / `insufficient_quota` / `model_unavailable` / `upstream_error` 等 code);管理面统一 `{"error":{"code","message"}}`。
 5. **路由鉴权面互不混用**:`/v1` 挂 `apikey.RequireKey`,`/admin` 挂 JWT 会话,`/auth` 公开。canvas 侧 `GET /assets/{id}/content` **故意不挂鉴权**(`<img>/<video>` 带不了 Authorization 头)——不要"修复"它;素材管理面照常挂 JWT。

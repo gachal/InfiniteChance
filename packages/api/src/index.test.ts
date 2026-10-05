@@ -506,12 +506,28 @@ describe('ApiClient prompt generation (canvas)', () => {
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/prompt-templates')
   })
 
-  it('listPromptModels unwraps the models envelope', async () => {
+  it('listPromptModels unwraps the models envelope and defaults prices (38 号票)', async () => {
     const fetchImpl = stubFetch(200, { models: ['chat-a', 'chat-b'] })
     const client = clientWithBase(fetchImpl)
 
-    await expect(client.listPromptModels()).resolves.toEqual(['chat-a', 'chat-b'])
+    await expect(client.listPromptModels()).resolves.toEqual({
+      models: ['chat-a', 'chat-b'],
+      prices: {},
+    })
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/prompt-models')
+  })
+
+  it('listPromptModels carries the price summaries through', async () => {
+    const fetchImpl = stubFetch(200, {
+      models: ['chat-a'],
+      prices: { 'chat-a': { unit: 'token', input_cny_per_mtokens: 2, output_cny_per_mtokens: 8 } },
+    })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.listPromptModels()).resolves.toEqual({
+      models: ['chat-a'],
+      prices: { 'chat-a': { unit: 'token', input_cny_per_mtokens: 2, output_cny_per_mtokens: 8 } },
+    })
   })
 
   it('generatePrompt POSTs to the canvas path and returns the text', async () => {

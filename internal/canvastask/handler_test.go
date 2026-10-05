@@ -191,10 +191,10 @@ func (fakePrices) ByModel(_ context.Context, model string) (pricing.Price, error
 	switch model {
 	case "img-m":
 		return pricing.Price{PublicModel: model, Unit: pricing.UnitCall,
-			Call: &pricing.CallPrice{USDPerCallMicros: 40_000}}, nil
+			Call: &pricing.CallPrice{CNYPerCallMicros: 40_000}}, nil
 	case "vid-m":
 		return pricing.Price{PublicModel: model, Unit: pricing.UnitSecond,
-			Call: &pricing.CallPrice{USDPerCallMicros: 5_000}}, nil
+			Call: &pricing.CallPrice{CNYPerCallMicros: 5_000}}, nil
 	case "chat-m":
 		return pricing.Price{PublicModel: model, Unit: pricing.UnitToken,
 			Token: &pricing.TokenPrice{}}, nil
@@ -212,7 +212,10 @@ func (fakePrices) List(_ context.Context) ([]pricing.Price, error) {
 		{PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
 		{PublicModel: "sd-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{DefaultTokensPerSecond: 21_465}},
 		{PublicModel: "zeta-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
-		{PublicModel: "alpha-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
+		{PublicModel: "alpha-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{
+			CNYPerCallMicros: 350_000, // ¥0.35/张(38 号票目录带价断言用)
+			SizeFactorMicros: map[string]int64{"1024x1024": 1_000_000, "2048x2048": 2_000_000},
+		}},
 		{PublicModel: "vid-m", Unit: pricing.UnitSecond, Call: &pricing.CallPrice{}},
 		{PublicModel: "zed-vid", Unit: pricing.UnitSecond, Call: &pricing.CallPrice{}},
 	}, nil
@@ -472,12 +475,24 @@ func TestHandlerImageModelsListsCallTrackOnly(t *testing.T) {
 	}
 	var resp struct {
 		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit        string             `json:"unit"`
+			CNYPerCall  float64            `json:"cny_per_call"`
+			SizeFactors map[string]float64 `json:"size_factors"`
+		} `json:"prices"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("not JSON: %v", err)
 	}
 	if len(resp.Models) != 2 || resp.Models[0] != "alpha-img" || resp.Models[1] != "zeta-img" {
 		t.Errorf("models = %v, want the two call-track models sorted", resp.Models)
+	}
+	// 38 号票:目录随行带 prices 摘要(人类元单位与系数)。
+	if len(resp.Prices) != 2 {
+		t.Fatalf("prices = %v, want one summary per call-track model", resp.Prices)
+	}
+	if p := resp.Prices["alpha-img"]; p.Unit != "call" || p.CNYPerCall <= 0 || len(p.SizeFactors) == 0 {
+		t.Errorf("alpha-img summary = %+v, want call track with CNY unit price and factors", p)
 	}
 }
 

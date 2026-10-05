@@ -88,7 +88,7 @@ func TestMySQLKeyCreateAndLookupByHash(t *testing.T) {
 		Name:        "canvas-service",
 		Prefix:      apikey.PrefixOf(full),
 		KeyHash:     apikey.Hash(full),
-		QuotaMicros: apikey.USDToMicros(10),
+		QuotaMicros: apikey.CNYToMicros(10),
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -101,7 +101,7 @@ func TestMySQLKeyCreateAndLookupByHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ByHash: %v", err)
 	}
-	if got.ID != created.ID || got.QuotaMicros != apikey.USDToMicros(10) {
+	if got.ID != created.ID || got.QuotaMicros != apikey.CNYToMicros(10) {
 		t.Errorf("ByHash = %+v, want the created key", got)
 	}
 	if got.Status(time.Now()) != apikey.StatusActive {
@@ -114,7 +114,7 @@ func TestMySQLKeyCreateAndLookupByHash(t *testing.T) {
 		t.Fatalf("QuotaLog: %v", err)
 	}
 	if len(entries) != 1 || entries[0].Reason != apikey.ReasonInitial ||
-		entries[0].BalanceMicros != apikey.USDToMicros(10) {
+		entries[0].BalanceMicros != apikey.CNYToMicros(10) {
 		t.Fatalf("initial ledger = %+v, want one initial entry at 10 USD", entries)
 	}
 
@@ -140,24 +140,24 @@ func TestMySQLKeyTopUpAccumulatesWithLedger(t *testing.T) {
 	ctx := context.Background()
 	created, err := store.Create(ctx, apikey.Key{
 		Name: "topup", Prefix: "sk-topup000", KeyHash: apikey.Hash("sk-topup-full"),
-		QuotaMicros: apikey.USDToMicros(1),
+		QuotaMicros: apikey.CNYToMicros(1),
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	k, err := store.TopUp(ctx, created.ID, apikey.USDToMicros(2.5), apikey.ReasonManualTopUp)
+	k, err := store.TopUp(ctx, created.ID, apikey.CNYToMicros(2.5), apikey.ReasonManualTopUp)
 	if err != nil {
 		t.Fatalf("TopUp: %v", err)
 	}
-	if k.QuotaMicros != apikey.USDToMicros(3.5) {
+	if k.QuotaMicros != apikey.CNYToMicros(3.5) {
 		t.Errorf("balance = %d, want 3.5 USD in micros", k.QuotaMicros)
 	}
-	k, err = store.TopUp(ctx, created.ID, apikey.USDToMicros(0.5), apikey.ReasonManualTopUp)
+	k, err = store.TopUp(ctx, created.ID, apikey.CNYToMicros(0.5), apikey.ReasonManualTopUp)
 	if err != nil {
 		t.Fatalf("TopUp 2: %v", err)
 	}
-	if k.QuotaMicros != apikey.USDToMicros(4) {
+	if k.QuotaMicros != apikey.CNYToMicros(4) {
 		t.Errorf("balance = %d, want 4 USD in micros", k.QuotaMicros)
 	}
 
@@ -174,9 +174,9 @@ func TestMySQLKeyTopUpAccumulatesWithLedger(t *testing.T) {
 		balance int64
 		reason  string
 	}{
-		{apikey.USDToMicros(0.5), apikey.USDToMicros(4), apikey.ReasonManualTopUp},
-		{apikey.USDToMicros(2.5), apikey.USDToMicros(3.5), apikey.ReasonManualTopUp},
-		{apikey.USDToMicros(1), apikey.USDToMicros(1), apikey.ReasonInitial},
+		{apikey.CNYToMicros(0.5), apikey.CNYToMicros(4), apikey.ReasonManualTopUp},
+		{apikey.CNYToMicros(2.5), apikey.CNYToMicros(3.5), apikey.ReasonManualTopUp},
+		{apikey.CNYToMicros(1), apikey.CNYToMicros(1), apikey.ReasonInitial},
 	}
 	for i, w := range want {
 		if entries[i].DeltaMicros != w.delta || entries[i].BalanceMicros != w.balance || entries[i].Reason != w.reason {
@@ -453,7 +453,7 @@ func TestMySQLKeyReserveSettleRefundLedger(t *testing.T) {
 	ctx := context.Background()
 	created, err := store.Create(ctx, apikey.Key{
 		Name: "billing", Prefix: "sk-billing00", KeyHash: apikey.Hash("sk-billing-full"),
-		QuotaMicros: apikey.USDToMicros(1),
+		QuotaMicros: apikey.CNYToMicros(1),
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -469,14 +469,14 @@ func TestMySQLKeyReserveSettleRefundLedger(t *testing.T) {
 	}
 	steps := []step{
 		// 预扣 0.4,实际 0.5:少补,再扣 0.1。
-		{"reserve", apikey.USDToMicros(0.4), apikey.USDToMicros(0.6), 2},
-		{"settle", -apikey.USDToMicros(0.1), apikey.USDToMicros(0.5), 3},
+		{"reserve", apikey.CNYToMicros(0.4), apikey.CNYToMicros(0.6), 2},
+		{"settle", -apikey.CNYToMicros(0.1), apikey.CNYToMicros(0.5), 3},
 		// 预扣 0.3,实际 0.1:多退,退回 0.2。
-		{"reserve", apikey.USDToMicros(0.3), apikey.USDToMicros(0.2), 4},
-		{"settle", apikey.USDToMicros(0.2), apikey.USDToMicros(0.4), 5},
+		{"reserve", apikey.CNYToMicros(0.3), apikey.CNYToMicros(0.2), 4},
+		{"settle", apikey.CNYToMicros(0.2), apikey.CNYToMicros(0.4), 5},
 		// 预扣 0.4 后上游失败:全额退款。
-		{"reserve", apikey.USDToMicros(0.4), 0, 6},
-		{"refund", apikey.USDToMicros(0.4), apikey.USDToMicros(0.4), 7},
+		{"reserve", apikey.CNYToMicros(0.4), 0, 6},
+		{"refund", apikey.CNYToMicros(0.4), apikey.CNYToMicros(0.4), 7},
 	}
 	for i, s := range steps {
 		var balance int64
@@ -507,13 +507,13 @@ func TestMySQLKeyReserveSettleRefundLedger(t *testing.T) {
 		balance int64
 		reason  string
 	}{
-		{apikey.USDToMicros(0.4), apikey.USDToMicros(0.4), apikey.ReasonRefund},
-		{-apikey.USDToMicros(0.4), 0, apikey.ReasonEstimate},
-		{apikey.USDToMicros(0.2), apikey.USDToMicros(0.4), apikey.ReasonSettle},
-		{-apikey.USDToMicros(0.3), apikey.USDToMicros(0.2), apikey.ReasonEstimate},
-		{-apikey.USDToMicros(0.1), apikey.USDToMicros(0.5), apikey.ReasonSettle},
-		{-apikey.USDToMicros(0.4), apikey.USDToMicros(0.6), apikey.ReasonEstimate},
-		{apikey.USDToMicros(1), apikey.USDToMicros(1), apikey.ReasonInitial},
+		{apikey.CNYToMicros(0.4), apikey.CNYToMicros(0.4), apikey.ReasonRefund},
+		{-apikey.CNYToMicros(0.4), 0, apikey.ReasonEstimate},
+		{apikey.CNYToMicros(0.2), apikey.CNYToMicros(0.4), apikey.ReasonSettle},
+		{-apikey.CNYToMicros(0.3), apikey.CNYToMicros(0.2), apikey.ReasonEstimate},
+		{-apikey.CNYToMicros(0.1), apikey.CNYToMicros(0.5), apikey.ReasonSettle},
+		{-apikey.CNYToMicros(0.4), apikey.CNYToMicros(0.6), apikey.ReasonEstimate},
+		{apikey.CNYToMicros(1), apikey.CNYToMicros(1), apikey.ReasonInitial},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("ledger = %d entries, want %d", len(entries), len(want))
@@ -529,7 +529,7 @@ func TestMySQLKeyReserveSettleRefundLedger(t *testing.T) {
 	// 零差额结算不改余额、不落流水。
 	entriesBefore, _ := store.QuotaLog(ctx, created.ID, 100)
 	balance, err := store.Adjust(ctx, created.ID, 0, apikey.ReasonSettle)
-	if err != nil || balance != apikey.USDToMicros(0.4) {
+	if err != nil || balance != apikey.CNYToMicros(0.4) {
 		t.Fatalf("Adjust zero = %d (err %v), want unchanged", balance, err)
 	}
 	entriesAfter, _ := store.QuotaLog(ctx, created.ID, 100)
@@ -552,7 +552,7 @@ func TestMySQLKeyReserveRejectsInsufficientAndDead(t *testing.T) {
 	}
 	revoked, err := store.Create(ctx, apikey.Key{
 		Name: "revoked", Prefix: "sk-rsvoked0", KeyHash: apikey.Hash("sk-reserve-revoked"),
-		QuotaMicros: apikey.USDToMicros(5),
+		QuotaMicros: apikey.CNYToMicros(5),
 	})
 	if err != nil {
 		t.Fatalf("Create revoked: %v", err)
@@ -563,7 +563,7 @@ func TestMySQLKeyReserveRejectsInsufficientAndDead(t *testing.T) {
 	past := now.Add(-time.Hour)
 	expired, err := store.Create(ctx, apikey.Key{
 		Name: "expired", Prefix: "sk-rsxpired", KeyHash: apikey.Hash("sk-reserve-expired"),
-		QuotaMicros: apikey.USDToMicros(5),
+		QuotaMicros: apikey.CNYToMicros(5),
 		ExpiresAt:   &past,
 	})
 	if err != nil {

@@ -129,6 +129,7 @@ function submitAnalyze(): void {
         :href="data.url"
         download
         title="下载图片"
+        aria-label="下载图片"
         @click.stop
       >⬇</a>
     </div>

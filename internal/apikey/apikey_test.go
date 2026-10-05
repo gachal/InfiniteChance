@@ -94,14 +94,14 @@ func TestUSDConversions(t *testing.T) {
 		{0.0000004, 0}, // rounds to zero — the handler must reject this
 	}
 	for _, tc := range cases {
-		if got := USDToMicros(tc.usd); got != tc.want {
-			t.Errorf("USDToMicros(%v) = %d, want %d", tc.usd, got, tc.want)
+		if got := CNYToMicros(tc.usd); got != tc.want {
+			t.Errorf("CNYToMicros(%v) = %d, want %d", tc.usd, got, tc.want)
 		}
 	}
-	if got := MicrosToUSD(10_000_000); got != 10 {
-		t.Errorf("MicrosToUSD = %v, want 10", got)
+	if got := MicrosToCNY(10_000_000); got != 10 {
+		t.Errorf("MicrosToCNY = %v, want 10", got)
 	}
-	if got := MicrosToUSD(150); got != 0.00015 {
-		t.Errorf("MicrosToUSD(150) = %v, want 0.00015", got)
+	if got := MicrosToCNY(150); got != 0.00015 {
+		t.Errorf("MicrosToCNY(150) = %v, want 0.00015", got)
 	}
 }

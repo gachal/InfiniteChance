@@ -39,14 +39,14 @@ const (
 	prefixRunes = 11
 )
 
-// Quota is an integer count of micro-USD (1 USD = 1e6 micros): billing does
+// Quota is an integer count of micro-CNY (1 CNY = 1e6 micros): billing does
 // all arithmetic in this unit — the conditional-decrement UPDATE in ticket 04
-// relies on it — while the admin API converts to/from human USD at the edge.
-const MicrosPerUSD = 1_000_000
+// relies on it — while the admin API converts to/from human CNY at the edge.
+const MicrosPerCNY = 1_000_000
 
-// MaxAmountUSD caps a single manual credit (initial quota and top-up alike)
+// MaxAmountCNY caps a single manual credit (initial quota and top-up alike)
 // so a typo cannot mint unlimited balance; call it again to add more.
-const MaxAmountUSD = 1_000_000
+const MaxAmountCNY = 1_000_000
 
 // Ledger reasons recorded in the quota log. Ticket 04's billing appends
 // pre-deduction/settlement/refund entries with the relay reasons.
@@ -118,15 +118,15 @@ func PrefixOf(full string) string {
 	return string(runes)
 }
 
-// USDToMicros converts a human USD amount to quota micros, rounding to the
+// CNYToMicros converts a human CNY amount to quota micros, rounding to the
 // nearest micro so float artifacts at the API edge never accumulate.
-func USDToMicros(usd float64) int64 {
-	return int64(math.Round(usd * MicrosPerUSD))
+func CNYToMicros(cny float64) int64 {
+	return int64(math.Round(cny * MicrosPerCNY))
 }
 
-// MicrosToUSD converts quota micros back to human USD for the admin API.
-func MicrosToUSD(micros int64) float64 {
-	return float64(micros) / MicrosPerUSD
+// MicrosToCNY converts quota micros back to human CNY for the admin API.
+func MicrosToCNY(micros int64) float64 {
+	return float64(micros) / MicrosPerCNY
 }
 
 // QuotaEntry is one immutable quota ledger row: what changed, the balance

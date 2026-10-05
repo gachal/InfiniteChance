@@ -168,7 +168,7 @@ func TestUsageLogsResponseShape(t *testing.T) {
 					ID: 11, KeyID: 7, ChannelID: 4, ChannelName: "flux-main",
 					PublicModel: "flux-pro", UpstreamModel: "flux-up",
 					Unit: "call", DurationMS: 4000, Status: usage.StatusSuccess, ChargeMicros: 500,
-					PriceSnapshot: []byte(`{"unit":"call","call":{"usd_per_call_micros":250000},"request":{"size":"1792x1024","n":2}}`),
+					PriceSnapshot: []byte(`{"unit":"call","call":{"cny_per_call_micros":250000},"request":{"size":"1792x1024","n":2}}`),
 					UpstreamError: "channel-a: 429; channel-b: conn refused",
 					Source:        "canvas=1 task=ct_1 node=n1",
 					CreatedAt:     time.Date(2026, 9, 4, 7, 0, 0, 0, time.UTC),
@@ -199,7 +199,7 @@ func TestUsageLogsResponseShape(t *testing.T) {
 			} `json:"request"`
 			DurationMS    int64     `json:"duration_ms"`
 			Status        string    `json:"status"`
-			ChargeUSD     float64   `json:"charge_usd"`
+			ChargeCNY     float64   `json:"charge_cny"`
 			UpstreamError string    `json:"upstream_error"`
 			Source        string    `json:"source"`
 			CreatedAt     time.Time `json:"created_at"`
@@ -214,8 +214,8 @@ func TestUsageLogsResponseShape(t *testing.T) {
 	}
 
 	tokenRow, callRow := body.Logs[0], body.Logs[1]
-	if tokenRow.ChargeUSD != 0.02125 {
-		t.Errorf("token row charge_usd = %v, want 0.02125(微美元 → 美元)", tokenRow.ChargeUSD)
+	if tokenRow.ChargeCNY != 0.02125 {
+		t.Errorf("token row charge_cny = %v, want 0.02125(微美元 → 美元)", tokenRow.ChargeCNY)
 	}
 	if tokenRow.Request != nil {
 		t.Errorf("token row request = %+v, want null(数量在 token 列)", tokenRow.Request)
@@ -258,7 +258,7 @@ func TestUsageSummaryValidatesDimension(t *testing.T) {
 		t.Errorf("store got by=%v filter=%+v", store.gotBy, store.gotFilter)
 	}
 	if !strings.Contains(w.Body.String(), `"day":"2026-09-04"`) ||
-		!strings.Contains(w.Body.String(), `"charge_usd":0.00075`) {
+		!strings.Contains(w.Body.String(), `"charge_cny":0.00075`) {
 		t.Errorf("bucket body = %s, want day 与美元扣费", w.Body.String())
 	}
 }

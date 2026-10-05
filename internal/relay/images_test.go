@@ -63,7 +63,7 @@ func (e *relayEnv) seedImagePrice(t *testing.T, publicModel string, factors map[
 	t.Helper()
 	_, err := e.stores.prices.Upsert(context.Background(), pricing.Price{
 		PublicModel: publicModel, Unit: pricing.UnitCall,
-		Call: &pricing.CallPrice{USDPerCallMicros: 40_000, SizeFactorMicros: factors},
+		Call: &pricing.CallPrice{CNYPerCallMicros: 40_000, SizeFactorMicros: factors},
 	})
 	if err != nil {
 		t.Fatalf("seed image price: %v", err)
@@ -147,7 +147,7 @@ func TestRelayImagesGenerationsEndToEnd(t *testing.T) {
 	var snapshot struct {
 		Unit string `json:"unit"`
 		Call struct {
-			USDPerCallMicros int64 `json:"usd_per_call_micros"`
+			CNYPerCallMicros int64 `json:"cny_per_call_micros"`
 		} `json:"call"`
 		Request struct {
 			Size string `json:"size"`
@@ -157,7 +157,7 @@ func TestRelayImagesGenerationsEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(row.PriceSnapshot, &snapshot); err != nil {
 		t.Fatalf("snapshot not JSON: %v (%s)", err, row.PriceSnapshot)
 	}
-	if snapshot.Unit != "call" || snapshot.Call.USDPerCallMicros != 40_000 ||
+	if snapshot.Unit != "call" || snapshot.Call.CNYPerCallMicros != 40_000 ||
 		snapshot.Request.Size != "1024x1024" || snapshot.Request.N != 1 {
 		t.Errorf("snapshot = %s, want call track with request {1024x1024, 1}", row.PriceSnapshot)
 	}
