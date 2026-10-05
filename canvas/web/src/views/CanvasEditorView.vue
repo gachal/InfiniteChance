@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// 画布编辑器:vue-flow 四类节点(Agent/图片/视频,17 号票起加分析;
-// 29 号票提示词节点升级为 Agent 并就地迁移)、节点旁 + 按钮的两击连线
-// (30 号票)、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
+// 画布编辑器:vue-flow 五类节点(Agent/图片/视频/分析;29 号票提示词
+// 节点升级为 Agent 并就地迁移;39 号票追加预演台)、节点旁 + 按钮的两击
+// 连线(30 号票)、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
 // 编排的客户端侧(10 号票):生成动作 → 结果节点先落库再提交 → 轮询
 // 任务 → 产物写回节点。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -32,6 +32,7 @@ import {
   type CanvasNodeData,
   type CanvasNodeType,
   type MediaNodeData,
+  type PrevizNodeData,
 } from '../graph'
 import {
   type PendingAgentMedia,
@@ -73,6 +74,7 @@ import MediaLightbox from '../components/MediaLightbox.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
+import PrevizNode from '../components/nodes/PrevizNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 
 const route = useRoute()
@@ -1334,6 +1336,72 @@ async function onReanalyze(
   await runAnalysis(sourceId, analysisNodeId, payload)
 }
 
+// ---- 预演台(39 号票)----
+
+// 渲染帧上传在途的节点 id('' = 无):渲染本身是本地 WebGL 零计费,耗时
+// 在上传素材库这一步,节点按钮随此标记禁用。
+const previzRendering = ref('')
+
+/** 预演台场景数据落盘:updateNodeData 浅合并(objects/cameras/
+ * active_camera_id 整包替换),自动保存免费获得(27 号票「数据随身」)。 */
+function onPrevizSceneChange(
+  nodeId: string,
+  patch: { objects: PrevizNodeData['objects']; cameras: PrevizNodeData['cameras']; active_camera_id?: string },
+): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
+/** 渲染帧入库(39 号票 Q6):WebGL 画布 toBlob 出的 PNG 经
+ * /api/assets/upload 进素材库(服务端魔数裁决,键落 uploads/ 档,与用户
+ * 上传同义),成功后把素材引用写回节点 latest —— 媒体区/灯箱/落画布都
+ * 吃这个引用;后端零改动。 */
+async function onPrevizRender(nodeId: string, blob: Blob): Promise<void> {
+  if (previzRendering.value !== '') {
+    return
+  }
+  previzRendering.value = nodeId
+  generateError.value = ''
+  try {
+    const file = new File([blob], 'previz.png', { type: 'image/png' })
+    const a = await client.uploadAsset(file, 'image')
+    updateNodeData(nodeId, { latest: { url: a.content_url, asset_id: a.id } })
+    markChanged()
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '渲染帧上传失败,请稍后再试'
+  } finally {
+    previzRendering.value = ''
+  }
+}
+
+/** 落画布(39 号票 Q7):最新渲染帧落为新图片节点并连线 —— 复用产物落位
+ * +连线语义,可多次,每次渲染的帧各自成节点;图片节点持有 uploads/ 档
+ * 素材引用,喂生成链(对话框参考条/首帧)全链照旧。 */
+function onPrevizDrop(nodeId: string): void {
+  const node = findNode(nodeId)
+  const data = node?.data as PrevizNodeData | undefined
+  if (!node || !data?.latest?.url) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `image-${Date.now()}-${nodeSeq}`
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'image',
+      position: { x: node.position.x + 380, y: node.position.y },
+      data: { url: data.latest.url, asset_id: data.latest.asset_id, note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  // addNodes/连线各自触发变更事件,那边已 markDirty,这里无需重复。
+}
+
 // ---- 两击连线(30 号票)----
 
 // 连线唯一入口 = 节点旁常驻 + 按钮:点击进入连接态,预连线跟随鼠标,点
@@ -1354,7 +1422,7 @@ const connection = useConnection({
   onReject: ({ sourceType, targetType }) => {
     const label = (t?: string) => NODE_TYPE_LABEL[normalizeNodeType(t)] ?? t ?? '未知节点'
     showNotice(
-      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体)`,
+      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体、预演台→图片)`,
     )
   },
 })
@@ -1565,8 +1633,8 @@ function addNode(type: CanvasNodeType): void {
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
 }
 
-/** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫),
- * 38 号票评审补的导航面沿用同一语义色系。 */
+/** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫/
+ * 预演台粉),38 号票评审补的导航面沿用同一语义色系。 */
 function miniMapNodeColor(node: { type?: string | null }): string {
   switch (normalizeNodeType(node.type ?? undefined)) {
     case 'agent':
@@ -1575,6 +1643,8 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#4ade80'
     case 'video':
       return '#facc15'
+    case 'previz':
+      return '#f472b6'
     default:
       return '#a78bfa'
   }
@@ -2100,6 +2170,22 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
+        <!-- 39 号票:预演台节点,三维静帧排练;渲染帧上传与落画布在编辑器侧。 -->
+        <template #node-previz="nodeProps">
+          <PrevizNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :rendering="previzRendering === nodeProps.id"
+            :render-busy="previzRendering !== ''"
+            :connect-state="connection.stateOf(nodeProps.id)"
+            @scene-change="onPrevizSceneChange(nodeProps.id, $event)"
+            @render="onPrevizRender(nodeProps.id, $event)"
+            @drop="onPrevizDrop(nodeProps.id)"
+            @preview="openPreview('image', nodeProps.data.latest?.url ?? '')"
+            @connect-start="connection.start(nodeProps.id, $event)"
+          />
+        </template>
       </VueFlow>
       <!-- 30 号票:连接态预连线(画布区屏幕坐标;pointer-events none,
            不挡任何底层交互)。 -->
@@ -2198,7 +2284,7 @@ function backToList(): void {
       <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送。</span>
       <span class="add-group">
         <button
-          v-for="t in (['agent', 'image', 'video'] as const)"
+          v-for="t in (['agent', 'image', 'video', 'previz'] as const)"
           :key="t"
           :class="`add-${t}`"
           type="button"
@@ -2519,6 +2605,11 @@ function backToList(): void {
 .add-video {
   background: rgba(250, 204, 21, 0.14);
   color: #facc15;
+}
+
+.add-previz {
+  background: rgba(244, 114, 182, 0.16);
+  color: #f472b6;
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是

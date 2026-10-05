@@ -347,6 +347,42 @@ export interface AnalyzeResult {
 
 // ---- 素材库(挂 /assets,canvas/server;列表/删除需 JWT 会话,14 号票)----
 
+// ---- 画布:预演台节点场景数据(39 号票)----
+// 随预演台节点 data 存整图 JSON(27 号票「数据随身」先例),持久化形状
+// 在此收口;渲染/编辑语义见 canvas/web 的 previz.ts 与 PrevizStage.vue。
+
+/** 场景坐标三元组:米制,地面为 XZ 平面,y 向上。 */
+export interface PrevizVec3 {
+  x: number
+  y: number
+  z: number
+}
+
+/** 内置代理对象的几何种类(39 号票 MVP 全内置零外部资产):盒/柱/板
+ * 基础几何道具 + 站姿人形素体。 */
+export type PrevizObjectKind = 'box' | 'cylinder' | 'board' | 'humanoid'
+
+/** 场景中的一个代理对象:position 是落地点(y 为离地抬升,≥0),
+ * rotation 为绕 Y 轴角度(度),scale 为等比缩放。 */
+export interface PrevizObject {
+  id: string
+  kind: PrevizObjectKind
+  name: string
+  position: PrevizVec3
+  rotation: number
+  scale: number
+}
+
+/** 一个机位:position 为相机位置,target 为注视点(朝向由二者连线的
+ * lookAt 推导,不单独存旋转),fov 为竖直视场角(度)。 */
+export interface PrevizCamera {
+  id: string
+  name: string
+  position: PrevizVec3
+  target: PrevizVec3
+  fov: number
+}
+
 /** 一条素材:生成产物在素材库中的引用。content_url 恒为内容寻址路径
  * (预览与跨画布复用统一走它),url 是原始厂商地址(或历史 data: URI),
  * 仅排障时关心。canvas_name 来自来源画布,画布已删时为空。 */

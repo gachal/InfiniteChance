@@ -4,11 +4,19 @@
  * vue-flow 的内部装饰(尺寸、事件、选中态)不落库。
  */
 
-import type { AgentChatMedia, AgentChatMessage } from '@infinitechance/api'
+import type {
+  AgentChatMedia,
+  AgentChatMessage,
+  PrevizCamera,
+  PrevizObject,
+} from '@infinitechance/api'
+
+import { defaultPrevizScene } from './previz'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
 export type { AgentChatMessage, AgentChatMedia }
+export type { PrevizCamera, PrevizObject, PrevizObjectKind } from '@infinitechance/api'
 
 /** Agent 节点数据(29 号票,提示词节点的升级取代):text 是当前提示词
  * 草稿(生成落点,可手编,也是投递的内容);skill_id 是 `/` 选中的技能
@@ -43,12 +51,30 @@ export interface AnalysisNodeData {
   model?: string
 }
 
-export type CanvasNodeData = AgentNodeData | MediaNodeData | AnalysisNodeData
+/** 预演台节点数据(39 号票):三维场景(对象列表 + 机位列表)随节点
+ * data 存整图 JSON(27 号票「数据随身」先例),自动保存免费获得;
+ * active_camera_id 是当前渲染机位;latest 是最新渲染帧的素材引用
+ * (uploads/ 档,经 /api/assets/upload 落库,媒体区展示、可点灯箱、
+ * 可「落画布」成图片节点),未渲染过时缺省。 */
+export interface PrevizNodeData {
+  objects: PrevizObject[]
+  cameras: PrevizCamera[]
+  active_camera_id?: string
+  latest?: { url: string; asset_id: number }
+}
 
-export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis'
+export type CanvasNodeData = AgentNodeData | MediaNodeData | AnalysisNodeData | PrevizNodeData
+
+export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
-  return value === 'agent' || value === 'image' || value === 'video' || value === 'analysis'
+  return (
+    value === 'agent' ||
+    value === 'image' ||
+    value === 'video' ||
+    value === 'analysis' ||
+    value === 'previz'
+  )
 }
 
 /** 读旧图的就地迁移(29 号票):类型值 prompt 映射为 agent —— 历史
@@ -62,9 +88,17 @@ export function normalizeNodeType(value: unknown): CanvasNodeType {
 }
 
 /** 新节点的初始数据。分析节点由视频/图片节点上的「分析」动作创建
- * (文本后填),不从工具栏直接添加。 */
+ * (文本后填),不从工具栏直接添加;预演台自带默认场景(一个人形 +
+ * 一个机位),添加即可见可渲染。 */
 export function initialData(type: CanvasNodeType): CanvasNodeData {
-  return type === 'agent' || type === 'analysis' ? { text: '' } : { url: '', note: '' }
+  if (type === 'agent' || type === 'analysis') {
+    return { text: '' }
+  }
+  if (type === 'previz') {
+    const scene = defaultPrevizScene()
+    return { objects: scene.objects, cameras: scene.cameras, active_camera_id: scene.activeCameraId }
+  }
+  return { url: '', note: '' }
 }
 
 export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
@@ -72,6 +106,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   image: '图片',
   video: '视频',
   analysis: '分析',
+  previz: '预演台',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出

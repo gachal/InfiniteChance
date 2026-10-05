@@ -22,6 +22,7 @@ describe('normalizeNodeType', () => {
     expect(normalizeNodeType('image')).toBe('image')
     expect(normalizeNodeType('video')).toBe('video')
     expect(normalizeNodeType('analysis')).toBe('analysis')
+    expect(normalizeNodeType('previz')).toBe('previz')
   })
 
   it('falls back to agent for unknown types', () => {
@@ -39,6 +40,16 @@ describe('isCanvasNodeType / initialData', () => {
   it('seeds agent nodes with an empty text draft', () => {
     expect(initialData('agent')).toEqual({ text: '' })
     expect(initialData('image')).toEqual({ url: '', note: '' })
+  })
+
+  it('seeds previz nodes with the default scene (39 号票)', () => {
+    const data = initialData('previz')
+    expect(isCanvasNodeType('previz')).toBe(true)
+    // 一个人形 + 一个机位,活跃机位指向列表内的实体。
+    const scene = data as { objects: unknown[]; cameras: { id: string }[]; active_camera_id?: string }
+    expect(scene.objects).toHaveLength(1)
+    expect(scene.cameras).toHaveLength(1)
+    expect(scene.active_camera_id).toBe(scene.cameras[0].id)
   })
 })
 
