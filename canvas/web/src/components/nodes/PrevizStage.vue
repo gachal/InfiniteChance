@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// 预演台 3D 视口(39 号票):three.js 场景的渲染与编辑交互。地面 + 固定
-// 默认光 + 内置代理(盒/柱/板/人形素体)+ 机位 gizmo(带注视点标记);
-// 编辑 = 自由轨道导航(OrbitControls)+ 点选实体 + 平移 gizmo
-// (TransformControls,恒 translate 档;旋转/缩放走节点卡片上的滑杆,
-// 见 PrevizNode)。captureFrame() 按当前机位出 16:9 静帧 PNG —— 隐藏
-// 网格/gizmo 等辅助元素后离屏重渲,零计费、不进 canvas_tasks。
-// 交互事件在容器上 .stop:视口内的拖拽/滚轮归 three.js,vue-flow 不再
-// 抢(节点拖动与画布缩放让位)。
+// 预演台 3D 视口(39 号票;40 号票起只在全屏编辑层 PrevizEditorLayer
+// 挂载,画布卡片不再跑 three.js):three.js 场景的渲染与编辑交互。地面
+// + 固定默认光 + 内置代理(盒/柱/板/人形素体)+ 机位 gizmo(带注视点
+// 标记);编辑 = 自由轨道导航(OrbitControls)+ 点选实体 + 平移 gizmo
+// (TransformControls,恒 translate 档;旋转/缩放走编辑层右侧检查器的
+// 滑杆)。captureFrame() 按当前机位出 16:9 静帧 PNG —— 隐藏网格/gizmo
+// 等辅助元素后离屏重渲,零计费、不进 canvas_tasks。尺寸随容器自适应
+// (ResizeObserver),固定高 220px 的卡片用法已随 40 号票移除;容器上
+// 的 .stop 保留以防组件将来回到画布内使用。
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
@@ -606,7 +607,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .stage {
   position: relative;
-  height: 220px;
+  /* 尺寸交给宿主(编辑层的视口窗格),组件随容器自适应。 */
+  width: 100%;
+  height: 100%;
   border-radius: 10px;
   overflow: hidden;
   background: #1d2434;

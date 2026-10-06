@@ -71,6 +71,7 @@ import AgentMediaPicker from '../components/AgentMediaPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import MediaLightbox from '../components/MediaLightbox.vue'
+import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
@@ -1342,6 +1343,15 @@ async function onReanalyze(
 // 在上传素材库这一步,节点按钮随此标记禁用。
 const previzRendering = ref('')
 
+// 40 号票:全屏预演台编辑层绑定的节点('' = 关闭)。编辑层不卸载画布,
+// 场景改动仍走 onPrevizSceneChange 同一条落盘链;节点被删时 computed
+// 就地关层(与 Agent 历史面板同款兜底)。
+const previzEditorNodeId = ref('')
+const previzEditorNode = computed(() => {
+  const node = previzEditorNodeId.value ? findNode(previzEditorNodeId.value) : undefined
+  return node ? { id: node.id, data: node.data as PrevizNodeData } : null
+})
+
 /** 预演台场景数据落盘:updateNodeData 浅合并(objects/cameras/
  * active_camera_id 整包替换),自动保存免费获得(27 号票「数据随身」)。 */
 function onPrevizSceneChange(
@@ -2170,19 +2180,15 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
-        <!-- 39 号票:预演台节点,三维静帧排练;渲染帧上传与落画布在编辑器侧。 -->
+        <!-- 40 号票:预演台帧卡,整卡点击进全屏编辑层;渲染上传与落画布在编辑器侧。 -->
         <template #node-previz="nodeProps">
           <PrevizNode
             :id="nodeProps.id"
             :type="nodeProps.type"
             :data="nodeProps.data"
-            :rendering="previzRendering === nodeProps.id"
-            :render-busy="previzRendering !== ''"
             :connect-state="connection.stateOf(nodeProps.id)"
-            @scene-change="onPrevizSceneChange(nodeProps.id, $event)"
-            @render="onPrevizRender(nodeProps.id, $event)"
+            @edit="previzEditorNodeId = nodeProps.id"
             @drop="onPrevizDrop(nodeProps.id)"
-            @preview="openPreview('image', nodeProps.data.latest?.url ?? '')"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -2262,6 +2268,21 @@ function backToList(): void {
         :selected-asset-ids="pickerSelectedIds"
         @toggle="onAgentPickToggle(pickerNode.id, $event)"
         @close="pickerNodeId = ''"
+      />
+      <!-- 40 号票:预演台全屏编辑层(Teleport 到 body),场景改动走同一条
+           scene-change 落盘链;渲染帧大图经编辑器级灯箱打开(灯箱入口收进
+           编辑层,33 号票对图片/视频节点不变)。 -->
+      <PrevizEditorLayer
+        v-if="previzEditorNode"
+        :key="`previz-${previzEditorNode.id}`"
+        :data="previzEditorNode.data"
+        :rendering="previzRendering === previzEditorNode.id"
+        :render-busy="previzRendering !== ''"
+        @scene-change="onPrevizSceneChange(previzEditorNode.id, $event)"
+        @render="onPrevizRender(previzEditorNode.id, $event)"
+        @drop="onPrevizDrop(previzEditorNode.id)"
+        @preview="openPreview('image', previzEditorNode.data.latest?.url ?? '')"
+        @close="previzEditorNodeId = ''"
       />
       <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body)。 -->
       <MediaLightbox
