@@ -582,12 +582,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- 指针事件绝不 .stop:OrbitControls 拖拽期间把 pointermove/pointerup
+       挂在 ownerDocument 上(为接住画布外松手),容器上 stopPropagation 会
+       拦掉 pointerup,旋转状态卡死在「按住」态 —— 下一次鼠标移动就把相机
+       按旧点到新点的位移一次性甩出去(40 号票修复的实际线上症状)。与
+       vue-flow 的手势隔离用 nodrag/nowheel 类(vue-flow 官方逃生口),不用
+       阻断冒泡;contextmenu/dblclick 无文档级监听,照旧拦截。 -->
   <div
     ref="containerEl"
-    class="stage"
-    @pointerdown.stop
-    @pointerup.stop
-    @wheel.stop
+    class="stage nodrag nowheel"
     @contextmenu.stop.prevent
     @dblclick.stop.prevent
   >
