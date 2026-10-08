@@ -1663,12 +1663,51 @@ function miniMapNodeColor(node: { type?: string | null }): string {
 // ---- 媒体预览灯箱(33 号票)----
 
 /** 当前灯箱内容(null = 关闭);编辑器级单实例,媒体节点点击媒体区置位。
- * 触发侧组件已保证只在产物成功落位时上抛,这里只兜一层空 url。 */
-const lightbox = ref<{ kind: 'image' | 'video'; url: string } | null>(null)
+ * 触发侧组件已保证只在产物成功落位时上抛,这里只兜一层空 url。nodeId =
+ * 触发预览的源节点(41 号票截帧落画布要用;图片灯箱无截帧入口,字段空置)。 */
+const lightbox = ref<{ kind: 'image' | 'video'; url: string; nodeId: string } | null>(null)
 
-function openPreview(kind: 'image' | 'video', url: string): void {
+function openPreview(kind: 'image' | 'video', url: string, nodeId: string): void {
   if (url) {
-    lightbox.value = { kind, url }
+    lightbox.value = { kind, url, nodeId }
+  }
+}
+
+/** 灯箱截帧落画布(41 号票):当前帧 JPEG 经 /api/assets/upload 入素材库
+ * (服务端魔数裁决,键落 uploads/ 档,与用户上传/预演台渲染帧同义)→ 源
+ * 视频节点右侧落图片节点 + 媒体→媒体来源边(帧提取复用迭代来源边,不新增
+ * 边类型);连截按源节点已有出边数纵向级联偏移防叠卡,每帧独立上传独立
+ * 成节点;addNodes/连线各自触发变更事件,那边已 markDirty。 */
+async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
+  const sourceId = lightbox.value?.nodeId ?? ''
+  const source = sourceId ? findNode(sourceId) : undefined
+  if (!source) {
+    showNotice('源节点已不存在,截帧未落画布')
+    return
+  }
+  try {
+    const file = new File([blob], `frame-${seconds.toFixed(1)}s.jpg`, { type: 'image/jpeg' })
+    const a = await client.uploadAsset(file, 'image')
+    nodeSeq += 1
+    const newId = `image-${Date.now()}-${nodeSeq}`
+    const lane = flowEdges.value.filter((e) => e.source === sourceId).length
+    removeSelectedNodes(getSelectedNodes.value)
+    addNodes([
+      {
+        id: newId,
+        type: 'image',
+        position: { x: source.position.x + 380, y: source.position.y + lane * 120 },
+        data: { url: a.content_url, asset_id: a.id, note: '' } satisfies MediaNodeData,
+      },
+    ])
+    const added = findNode(newId)
+    if (added) {
+      addSelectedNodes([added])
+    }
+    connectNodes(sourceId, newId)
+    showNotice(`已截帧 ${seconds.toFixed(1)}s 并落为图片节点`)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '截帧上传失败,请稍后再试')
   }
 }
 
@@ -2144,7 +2183,7 @@ function backToList(): void {
             :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
-            @preview="openPreview('image', nodeProps.data.url ?? '')"
+            @preview="openPreview('image', nodeProps.data.url ?? '', nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -2164,7 +2203,7 @@ function backToList(): void {
             @cancel="onCancelVideo(nodeProps.id)"
             @reverse-prompt="onReversePrompt(nodeProps.id, $event)"
             @analyze="onAnalyzeAction(nodeProps.id, $event)"
-            @preview="openPreview('video', nodeProps.data.url ?? '')"
+            @preview="openPreview('video', nodeProps.data.url ?? '', nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -2281,15 +2320,18 @@ function backToList(): void {
         @scene-change="onPrevizSceneChange(previzEditorNode.id, $event)"
         @render="onPrevizRender(previzEditorNode.id, $event)"
         @drop="onPrevizDrop(previzEditorNode.id)"
-        @preview="openPreview('image', previzEditorNode.data.latest?.url ?? '')"
+        @preview="openPreview('image', previzEditorNode.data.latest?.url ?? '', previzEditorNode.id)"
         @close="previzEditorNodeId = ''"
       />
-      <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body)。 -->
+      <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body);41 号票
+           截帧事件在此入素材 + 落画布,失败文案走轻提示。 -->
       <MediaLightbox
         v-if="lightbox"
         :kind="lightbox.kind"
         :url="lightbox.url"
         @close="lightbox = null"
+        @capture="onLightboxCapture"
+        @capture-error="showNotice($event)"
       />
       <!-- 38 号票评审:轻提示(删除可撤销 / 非法连线反馈),自动消退。 -->
       <div
@@ -2542,13 +2584,15 @@ function backToList(): void {
   fill: rgba(122, 162, 247, 0.9);
 }
 
-/* 轻提示(38 号票评审):画布底部居中,自动消退,不抢焦点。 */
+/* 轻提示(38 号票评审):画布底部居中,自动消退,不抢焦点。z 取 120 高于
+   灯箱(z-100,Teleport 到 body;.editor 不建层叠上下文,全局可比)——
+   41 号票截帧等浮层期间的反馈要浮在遮罩之上可见。 */
 .toast {
   position: absolute;
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  z-index: 20;
+  z-index: 120;
   max-width: min(560px, calc(100% - 32px));
   padding: 8px 14px;
   border-radius: 10px;
