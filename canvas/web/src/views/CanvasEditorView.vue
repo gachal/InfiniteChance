@@ -1704,8 +1704,18 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
     if (added) {
       addSelectedNodes([added])
     }
-    connectNodes(sourceId, newId)
-    showNotice(`已截帧 ${seconds.toFixed(1)}s 并落为图片节点`)
+    // 上传在途时源节点可能被删(关灯箱后删除的窄窗):帧照落(上传已花),
+    // 连线只在源仍存在时落 —— connectNodes 不校验存在性,悬空边会随整图
+    // JSON 持久化,加载侧 setEdges 原样灌入也不清洗。
+    const sourceAlive = !!findNode(sourceId)
+    if (sourceAlive) {
+      connectNodes(sourceId, newId)
+    }
+    showNotice(
+      sourceAlive
+        ? `已截帧 ${seconds.toFixed(1)}s 并落为图片节点`
+        : `已截帧 ${seconds.toFixed(1)}s 落为图片节点(源节点已被删除,未连线)`,
+    )
   } catch (e) {
     showNotice(e instanceof ApiError ? e.message : '截帧上传失败,请稍后再试')
   }
