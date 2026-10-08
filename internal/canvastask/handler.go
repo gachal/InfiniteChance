@@ -163,13 +163,23 @@ var videoRefRoleKind = map[string]string{
 	RoleReferenceAud: asset.KindAudio,
 }
 
+// maxVideoRefImages 是视频任务参考图上限(42 号票:与图生图 maxImageRefs=4
+// 解耦,对齐 Seedance 2.0 官方口径 9 张;2.5 支持更多但网关 references
+// 契约上限 9,不跟。上游真实上限仍是验证点,超限 4xx 透出即可)。
+const maxVideoRefImages = 9
+
+// maxVideoRefsTotal 是三类参考(reference_*)合计上限,与网关 /v1/videos 的
+// references 数组上限同值(internal/relay maxVideoReferences,25 号票契约);
+// 首帧/尾帧走 image/last_image 单串,不计入。
+const maxVideoRefsTotal = 9
+
 // maxVideoRefsByRole 是每个角色的数量上限(24 号票自限,前端同款纪律;
-// 上游真实上限是验证点,超限 4xx 透出即可):首帧/尾帧各 1,参考图 4,
+// 42 号票参考图放宽见 maxVideoRefImages):首帧/尾帧各 1,参考图 9,
 // 参考视频/参考音频各 1。
 var maxVideoRefsByRole = map[string]int{
 	RoleFirstFrame:   1,
 	RoleLastFrame:    1,
-	RoleReferenceImg: maxImageRefs,
+	RoleReferenceImg: maxVideoRefImages,
 	RoleReferenceVid: 1,
 	RoleReferenceAud: 1,
 }
@@ -241,6 +251,7 @@ func (h *Handlers) Create(c *gin.Context) {
 				return
 			}
 			counts := make(map[string]int, len(maxVideoRefsByRole))
+			referenceCount := 0
 			for _, raw := range in.VideoRefs {
 				resolved, err := h.resolveVideoRef(c.Request.Context(), raw)
 				if err != nil {
@@ -252,6 +263,15 @@ func (h *Handlers) Create(c *gin.Context) {
 				if counts[resolved.Role]+1 > maxVideoRefsByRole[resolved.Role] {
 					apierr.InvalidRequest(c, errVideoRefTooMany.Error())
 					return
+				}
+				// 三类参考合计上限(42 号票):与网关 references 契约同值,
+				// 首帧/尾帧走单串不占额度。
+				if resolved.Role != RoleFirstFrame && resolved.Role != RoleLastFrame {
+					referenceCount++
+					if referenceCount > maxVideoRefsTotal {
+						apierr.InvalidRequest(c, errVideoRefTotalTooMany.Error())
+						return
+					}
 				}
 				counts[resolved.Role]++
 				videoRefs = append(videoRefs, resolved)
@@ -510,10 +530,11 @@ var (
 
 	// 视频参考(24 号票)的专属失败形状:角色/种类不符、单角色超限是客
 	// 户端的结构错误;地址解析失败复用 image 侧同款哨兵。
-	errVideoRefEmpty   = errors.New("video_refs 条目缺少 url")
-	errVideoRefBadRole = errors.New("video_refs 的 role 必须是 first_frame/last_frame/reference_image/reference_video/reference_audio 之一,且 kind 与角色相符")
-	errVideoRefTooMany = errors.New("video_refs 角色数量超限(首帧/尾帧/参考视频/参考音频各 1,参考图最多 4)")
-	errVideoAssetKind  = errors.New("素材种类与参考角色不符(首帧/尾帧/参考图须为图片素材,参考视频须为视频素材,参考音频须为音频素材)")
+	errVideoRefEmpty        = errors.New("video_refs 条目缺少 url")
+	errVideoRefBadRole      = errors.New("video_refs 的 role 必须是 first_frame/last_frame/reference_image/reference_video/reference_audio 之一,且 kind 与角色相符")
+	errVideoRefTooMany      = errors.New("video_refs 角色数量超限(首帧/尾帧/参考视频/参考音频各 1,参考图最多 9)")
+	errVideoRefTotalTooMany = errors.New("video_refs 参考条目合计超限(参考图/参考视频/参考音频合计最多 9)")
+	errVideoAssetKind       = errors.New("素材种类与参考角色不符(首帧/尾帧/参考图须为图片素材,参考视频须为视频素材,参考音频须为音频素材)")
 )
 
 // assetContentPrefix 是素材内容寻址路径的形状(10 号票定案):14 号票起

@@ -628,9 +628,9 @@ func TestHandlerCreateVideoTaskRefs(t *testing.T) {
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "超限") {
 		t.Errorf("double first frame = %d %s, want 400 cap rejection", w.Code, w.Body.String())
 	}
-	// 第五张参考图:超限拒收。
+	// 第十张参考图:超限拒收(42 号票参考图上限 4→9)。
 	tooMany := `{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[`
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		if i > 0 {
 			tooMany += ","
 		}
@@ -639,7 +639,36 @@ func TestHandlerCreateVideoTaskRefs(t *testing.T) {
 	tooMany += `]}`
 	w = post(tooMany)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("five reference images = %d, want 400", w.Code)
+		t.Errorf("ten reference images = %d, want 400", w.Code)
+	}
+	// 参考条目合计超限(42 号票):8 图 + 1 视频 + 1 音频 = 10 条,合计上限
+	// 9 拒收;各角色自身都未超限。
+	total := `{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[`
+	for i := 0; i < 8; i++ {
+		if i > 0 {
+			total += ","
+		}
+		total += fmt.Sprintf(`{"url":"https://a/%d.png","kind":"image","role":"reference_image"}`, i)
+	}
+	total += `,{"url":"https://a/clip.mp4","kind":"video","role":"reference_video"}` +
+		`,{"url":"https://a/vox.m4a","kind":"audio","role":"reference_audio"}]}`
+	w = post(total)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "合计") {
+		t.Errorf("ten reference entries = %d %s, want 400 total cap rejection", w.Code, w.Body.String())
+	}
+	// 首帧不占参考合计额度(42 号票):9 图 + 1 首帧合法落库。
+	withFirst := `{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[` +
+		`{"url":"https://a/first.png","kind":"image","role":"first_frame"},`
+	for i := 0; i < 9; i++ {
+		if i > 0 {
+			withFirst += ","
+		}
+		withFirst += fmt.Sprintf(`{"url":"https://a/%d.png","kind":"image","role":"reference_image"}`, i)
+	}
+	withFirst += `]}`
+	w = post(withFirst)
+	if w.Code != http.StatusCreated {
+		t.Errorf("first frame + nine refs = %d, want created", w.Code)
 	}
 	// data: URI 进不了参考契约。
 	w = post(`{"node_id":"x","kind":"video","prompt":"p","model":"vid-m","video_refs":[{"url":"data:image/png;base64,AAAA","kind":"image","role":"first_frame"}]}`)

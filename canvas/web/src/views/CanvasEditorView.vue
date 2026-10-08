@@ -46,13 +46,15 @@ import {
   composerImageUrls,
   composerVideoRefs,
   composeSize,
+  defaultVideoRefRole,
   durationRangeFor,
+  isReferenceRole,
   isRelayableRef,
   mediaSyncPatch,
   parseDurationInput,
   resultNodeData,
-  rolesForKind,
   taskUrlFor,
+  VIDEO_REFS_TOTAL_CAP,
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
   type ComposerRef,
@@ -669,40 +671,38 @@ function videoUploadKindOf(file: File): VideoRefKind {
   return 'image'
 }
 
-/** 参考上传(视频模式):图片/视频/音频入库后按默认角色进条 —— 图片在
- * 首帧空缺时默认首帧(与选中图片节点产物同款默认),否则参考图;视频/
- * 音频角色固定。上传前先按种类预检空位:该种类已无任何可扮角色可收时
- * 直接报错不传字节,免得上传成素材却在参考条上拒收(留下孤儿素材行)。 */
+/** 参考上传(视频模式):图片/视频/音频入库后按默认角色进条(defaultVideoRefRole:
+ * 图片在首帧空缺时默认首帧,否则参考图;视频/音频角色固定)。上传前先按
+ * 「默认角色能否收下」预检(42 号票:含参考条目合计 ≤9 的总量守卫),该
+ * 条目必被拒时直接报错不传字节,免得上传成素材却在参考条上拒收(留下
+ * 孤儿素材行)。 */
 async function onComposerUploadVideo(file: File): Promise<void> {
   if (refUploading.value) {
     return
   }
   const kind = videoUploadKindOf(file)
-  const roles = rolesForKind(kind)
-  const vacant = roles.some((role) =>
-    videoComposerRefs.value.filter((r) => r.role === role).length < VIDEO_ROLE_CAPS[role],
-  )
-  if (!vacant) {
+  const refs = videoComposerRefs.value
+  const role = defaultVideoRefRole(refs, kind)
+  const roleFull = refs.filter((r) => r.role === role).length >= VIDEO_ROLE_CAPS[role]
+  const totalFull =
+    refs.filter((r) => isReferenceRole(r.role)).length >= VIDEO_REFS_TOTAL_CAP
+  if (roleFull || totalFull) {
     generateError.value =
-      kind === 'image' ? '图片参考已满员(首帧/尾帧各 1,参考图最多 4)' : `${kind === 'video' ? '视频' : '音频'}参考已满员`
+      totalFull && !roleFull
+        ? '参考条已满员(参考图/参考视频/参考音频合计最多 9 条)'
+        : kind === 'image'
+          ? '图片参考已满员(首帧/尾帧各 1,参考图最多 9)'
+          : `${kind === 'video' ? '视频' : '音频'}参考已满员`
     return
   }
   refUploading.value = true
   generateError.value = ''
   try {
     const a = await client.uploadAsset(file, kind)
-    const role: VideoRefRole =
-      kind === 'video'
-        ? 'reference_video'
-        : kind === 'audio'
-          ? 'reference_audio'
-          : videoComposerRefs.value.some((r) => r.role === 'first_frame')
-            ? 'reference_image'
-            : 'first_frame'
     uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, {
       url: a.content_url,
       kind,
-      role,
+      role: defaultVideoRefRole(refs, kind),
       asset_id: a.id,
     })
   } catch (e) {

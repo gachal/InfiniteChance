@@ -115,14 +115,25 @@ export interface VideoComposerRef {
   asset_id?: number
 }
 
-/** 每个角色的数量上限(与 canvas 后端 maxVideoRefsByRole 同值;上游真实
- * 上限是验证点,自限保守值,超限 4xx 透出即可)。 */
+/** 每个角色的数量上限(与 canvas 后端 maxVideoRefsByRole 同值;42 号票
+ * 参考图对齐 Seedance 2.0 官方口径 9 张——2.5 支持更多但网关 references
+ * 契约上限 9,不跟;上游超限 4xx 透出即可)。 */
 export const VIDEO_ROLE_CAPS: Record<VideoRefRole, number> = {
   first_frame: 1,
   last_frame: 1,
-  reference_image: 4,
+  reference_image: 9,
   reference_video: 1,
   reference_audio: 1,
+}
+
+/** 三类参考(reference_*)合计上限:与网关 /v1/videos 的 references 数组
+ * 上限同值(25 号票契约);首帧/尾帧走 image/last_image 单串,不计入
+ * (42 号票,防「9 图+1 视频+1 音频」组合撞网关 400)。 */
+export const VIDEO_REFS_TOTAL_CAP = 9
+
+/** 该角色是否落入网关 references 数组(首帧/尾帧走单串,不算参考条目)。 */
+export function isReferenceRole(role: VideoRefRole): boolean {
+  return role !== 'first_frame' && role !== 'last_frame'
 }
 
 export const VIDEO_ROLE_LABEL: Record<VideoRefRole, string> = {
@@ -145,8 +156,9 @@ export function rolesForKind(kind: VideoRefKind): VideoRefRole[] {
   }
 }
 
-/** 追加一条视频参考:地址形状不对、角色与种类不符、URL 重复、角色满员都
- * 整条拒收(返回原数组)—— 与 appendComposerRef 同款纪律。 */
+/** 追加一条视频参考:地址形状不对、角色与种类不符、URL 重复、角色满员、
+ * 参考条目合计满员都整条拒收(返回原数组)—— 与 appendComposerRef 同款
+ * 纪律。 */
 export function appendVideoRef(list: VideoComposerRef[], ref: VideoComposerRef): VideoComposerRef[] {
   if (!isRelayableRef(ref.url)) {
     return list
@@ -161,10 +173,17 @@ export function appendVideoRef(list: VideoComposerRef[], ref: VideoComposerRef):
   if (held >= VIDEO_ROLE_CAPS[ref.role]) {
     return list
   }
+  if (isReferenceRole(ref.role)) {
+    const total = list.filter((r) => isReferenceRole(r.role)).length
+    if (total >= VIDEO_REFS_TOTAL_CAP) {
+      return list
+    }
+  }
   return [...list, ref]
 }
 
-/** 切换一条参考的角色:目标角色不属于该媒体或已满员则原样返回。 */
+/** 切换一条参考的角色:目标角色不属于该媒体、已满员或参考条目合计将满员
+ * 则原样返回。 */
 export function withVideoRefRole(
   list: VideoComposerRef[],
   index: number,
@@ -178,7 +197,26 @@ export function withVideoRefRole(
   if (held >= VIDEO_ROLE_CAPS[role]) {
     return list
   }
+  if (isReferenceRole(role)) {
+    const total = list.filter((r, i) => i !== index && isReferenceRole(r.role)).length
+    if (total >= VIDEO_REFS_TOTAL_CAP) {
+      return list
+    }
+  }
   return list.map((r, i) => (i === index ? { ...r, role } : r))
+}
+
+/** 本机上传的默认角色(42 号票抽纯函数,上传预检与入条共用):图片在首帧
+ * 空缺时默认首帧(与选中图片节点产物同款默认),否则参考图;视频/音频
+ * 角色固定(24 号票)。 */
+export function defaultVideoRefRole(list: VideoComposerRef[], kind: VideoRefKind): VideoRefRole {
+  if (kind === 'video') {
+    return 'reference_video'
+  }
+  if (kind === 'audio') {
+    return 'reference_audio'
+  }
+  return list.some((r) => r.role === 'first_frame') ? 'reference_image' : 'first_frame'
 }
 
 /** 对话框发出的 video_refs:{url, kind, role} 原样上送,服务端解引用。 */

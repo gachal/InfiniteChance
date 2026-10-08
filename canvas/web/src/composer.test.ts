@@ -6,7 +6,9 @@ import {
   composerImageUrls,
   composerVideoRefs,
   composeSize,
+  defaultVideoRefRole,
   durationRangeFor,
+  isReferenceRole,
   isRelayableRef,
   MAX_COMPOSER_REFS,
   mediaSyncPatch,
@@ -16,6 +18,7 @@ import {
   RESOLUTION_PRESETS,
   rolesForKind,
   taskUrlFor,
+  VIDEO_REFS_TOTAL_CAP,
   VIDEO_RESOLUTION_PRESETS,
   videoPlaceholder,
   withVideoRefRole,
@@ -148,13 +151,27 @@ describe('appendVideoRef', () => {
 
   it('caps each role at its limit', () => {
     let list: VideoComposerRef[] = []
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 10; i += 1) {
       list = appendVideoRef(list, img(`https://a/${i}.png`, 'reference_image'))
     }
-    expect(list).toHaveLength(4)
+    expect(list).toHaveLength(9)
     list = appendVideoRef(list, img('https://a/first.png'))
     list = appendVideoRef(list, img('https://a/first2.png'))
     expect(list.filter((r) => r.role === 'first_frame')).toHaveLength(1)
+  })
+
+  it('caps reference entries at the wire total, first/last frame excluded (42 号票)', () => {
+    let list: VideoComposerRef[] = []
+    for (let i = 0; i < VIDEO_REFS_TOTAL_CAP; i += 1) {
+      list = appendVideoRef(list, img(`https://a/${i}.png`, 'reference_image'))
+    }
+    // 参考条目已满:再收参考视频被拒,首帧不占合计额度照常收。
+    expect(
+      appendVideoRef(list, { url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' }),
+    ).toBe(list)
+    const withFirst = appendVideoRef(list, img('https://a/first.png'))
+    expect(withFirst).toHaveLength(VIDEO_REFS_TOTAL_CAP + 1)
+    expect(withFirst.filter((r) => isReferenceRole(r.role))).toHaveLength(VIDEO_REFS_TOTAL_CAP)
   })
 })
 
@@ -173,6 +190,30 @@ describe('withVideoRefRole', () => {
       { url: 'https://a/2.png', kind: 'image', role: 'reference_image' },
     ]
     expect(withVideoRefRole(two, 1, 'first_frame')).toBe(two)
+  })
+
+  it('refuses switching into a reference role when the wire total is full (42 号票)', () => {
+    let list: VideoComposerRef[] = [{ url: 'https://a/first.png', kind: 'image', role: 'first_frame' }]
+    for (let i = 0; i < VIDEO_REFS_TOTAL_CAP; i += 1) {
+      list = appendVideoRef(list, { url: `https://a/${i}.png`, kind: 'image', role: 'reference_image' })
+    }
+    // 首帧切参考图会让参考条目超合计,拒收;参考图切尾帧(不占合计)照常。
+    expect(withVideoRefRole(list, 0, 'reference_image')).toBe(list)
+    const freed = withVideoRefRole(list, 1, 'last_frame')
+    expect(freed[1].role).toBe('last_frame')
+  })
+})
+
+describe('defaultVideoRefRole', () => {
+  it('prefers first frame for images when vacant, falls back to reference image', () => {
+    expect(defaultVideoRefRole([], 'image')).toBe('first_frame')
+    const occupied: VideoComposerRef[] = [{ url: 'https://a/1.png', kind: 'image', role: 'first_frame' }]
+    expect(defaultVideoRefRole(occupied, 'image')).toBe('reference_image')
+  })
+
+  it('pins video and audio to their fixed roles', () => {
+    expect(defaultVideoRefRole([], 'video')).toBe('reference_video')
+    expect(defaultVideoRefRole([], 'audio')).toBe('reference_audio')
   })
 })
 
