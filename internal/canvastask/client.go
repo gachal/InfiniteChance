@@ -63,10 +63,11 @@ const maxB64Bytes = 9 << 20
 // 8MiB 与交付图(b64 上限)同量级,超出在 worker 侧就报可读的原因。
 const maxEditRefBytes = 8 << 20
 
-// maxEditRefsTotalBytes caps the references' combined size: four 8MiB
+// maxEditRefsTotalBytes caps the references' combined size: several 8MiB
 // singles are individually legal but together bust the gateway's 32MiB
 // request cap — fail here with a readable reason instead of a late 413
-// a retry could never get past.
+// a retry could never get past. 数量上限(maxImageRefs)与此字节守卫
+// 独立:九张参考图的合计仍须落在 24MiB 内。
 const maxEditRefsTotalBytes = 24 << 20
 
 // GenerateImage calls POST /v1/images/generations (n=1) and returns the

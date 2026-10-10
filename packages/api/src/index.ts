@@ -220,7 +220,8 @@ export interface CanvasTask {
 /** 视频任务的结构化参考(24 号票):url 接受厂商 http(s) 地址或素材内容
  * 寻址路径(服务端解出真实地址并校验素材种类与角色相符);kind/role 的
  * 合法组合 —— 首帧/尾帧/参考图必须 image、参考视频必须 video、参考音频
- * 必须 audio,数量上限首帧/尾帧/参考视频/参考音频各 1、参考图 4。 */
+ * 必须 audio,数量上限首帧/尾帧/参考视频/参考音频各 1、参考图 9(42 号票
+ * 放宽,另三类参考合计 ≤9)。 */
 export interface CanvasVideoRef {
   url: string
   kind: 'image' | 'video' | 'audio'
@@ -228,8 +229,9 @@ export interface CanvasVideoRef {
 }
 
 /** 提交生成任务的请求体。kind=image 为文生图/图生图(image_urls 带参考
- * 图列表,≤4 条:厂商 http(s) 地址或素材内容寻址路径,服务端逐条解引用,
- * 21 号票),background 可选(37 号票:仅 "transparent" 一个枚举值,透明
+ * 图列表,≤9 条:厂商 http(s) 地址或素材内容寻址路径,服务端逐条解引用,
+ * 21 号票定 4、43 号票放宽到 9),background 可选(37 号票:仅
+ * "transparent" 一个枚举值,透明
  * 背景产物为带 alpha 的 PNG;缺省 = 不传);kind=video 为视频生成(24 号
  * 票对话框范式):video_refs 带全模态参考(空/缺省 = 文生视频;12 号票的
  * 单串 image_url 仍兼容),seconds 可选(缺省 = 自动,厂商缺省时长),

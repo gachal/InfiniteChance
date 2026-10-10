@@ -57,6 +57,8 @@ describe('appendComposerRef', () => {
   })
 
   it('caps the list at the backend limit', () => {
+    // 与后端 maxImageRefs 同值(43 号票 4→9),硬编码断言防静默漂移。
+    expect(MAX_COMPOSER_REFS).toBe(9)
     let list: ComposerRef[] = []
     for (let i = 0; i < MAX_COMPOSER_REFS + 2; i += 1) {
       list = appendComposerRef(list, ref(`https://a/${i}.png`))

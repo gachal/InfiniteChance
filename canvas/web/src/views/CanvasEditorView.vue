@@ -485,7 +485,7 @@ watch(
 )
 
 /** 生效参考图 = 选中节点产物(未拆下时)+ 本会话上传,收编规则走
- * composer 纯函数(去重、data URI 不收、上限 4)。 */
+ * composer 纯函数(去重、data URI 不收、上限 9)。 */
 const composerRefs = computed<ComposerRef[]>(() => {
   const node = composerNode.value
   const data = node?.data as MediaNodeData | undefined

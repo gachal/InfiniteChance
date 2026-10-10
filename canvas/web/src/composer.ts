@@ -12,8 +12,9 @@ export interface ComposerRef {
   asset_id?: number
 }
 
-/** 一次图生图提交的参考图上限(与 canvas 后端 maxImageRefs 同值)。 */
-export const MAX_COMPOSER_REFS = 4
+/** 一次图生图提交的参考图上限(与 canvas 后端 maxImageRefs 同值;43 号票
+ * 4→9:对齐 VOD adaptor 厂商侧参考图配额,与视频参考图同值)。 */
+export const MAX_COMPOSER_REFS = 9
 
 /** 参考图地址可进网关媒体契约的形状:厂商 http(s) 地址,或素材内容寻
  * 址路径(服务端解出厂商地址)。data: URI 进不了契约,不收。 */

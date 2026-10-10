@@ -1030,7 +1030,7 @@ func TestHandlerImageTaskReferenceValidations(t *testing.T) {
 		{"坏引用形状", http.StatusBadRequest, `["/assets/5"]`},
 		{"内联 data URI", http.StatusBadRequest, `["data:image/png;base64,AAAA"]`},
 		{"列表混入坏条目整体拒绝", http.StatusBadRequest, `["https://img.example/ok.png","/assets/5"]`},
-		{"超过四条", http.StatusBadRequest, `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png"]`},
+		{"超过九条", http.StatusBadRequest, `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png"]`},
 	}
 	for _, tc := range cases {
 		body := `{"node_id":"n","prompt":"p","model":"img-m","image_urls":` + tc.urls + `}`

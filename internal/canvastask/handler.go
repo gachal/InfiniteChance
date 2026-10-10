@@ -30,10 +30,13 @@ const (
 	maxPromptRunes   = 8000
 	listLimit        = 200
 	maxImageRefRunes = 4096
-	// maxImageRefs 是一次图生图提交的参考图上限(21 号票):网关 edits 的
-	// multipart 整体上限 32MiB,四张参考图连同表单余量必须落在其内,前端
-	// 同款常量拦在入口。
-	maxImageRefs = 4
+	// maxImageRefs 是一次图生图提交的参考图上限(21 号票定 4,43 号票放
+	// 宽到 9):对齐 VOD adaptor 的厂商侧参考图配额(relay 的
+	// vodMaxImageRefs = 9),与视频参考图同值;openai 型上游无数量自限
+	// (gpt-image 官方口径更宽),超限 4xx 透出即可。字节面的真守卫在
+	// worker(client.go 单张 8MiB、合计 24MiB)与网关 32MiB 请求体上限,
+	// 与数量无关。前端同款常量拦在入口。
+	maxImageRefs = 9
 	// maxRatioRunes 对齐网关生图 ratio 的短串形状(22 号票):值不校验枚举,
 	// 交上游裁 —— 档位串("16:9" 等)远小于此,只拦异常长串。
 	maxRatioRunes = 32
@@ -163,9 +166,10 @@ var videoRefRoleKind = map[string]string{
 	RoleReferenceAud: asset.KindAudio,
 }
 
-// maxVideoRefImages 是视频任务参考图上限(42 号票:与图生图 maxImageRefs=4
+// maxVideoRefImages 是视频任务参考图上限(42 号票:与图生图 maxImageRefs
 // 解耦,对齐 Seedance 2.0 官方口径 9 张;2.5 支持更多但网关 references
-// 契约上限 9,不跟。上游真实上限仍是验证点,超限 4xx 透出即可)。
+// 契约上限 9,不跟。43 号票图生图亦放宽到 9,两常量今日同值,仍各自独立
+// 演进。上游真实上限仍是验证点,超限 4xx 透出即可)。
 const maxVideoRefImages = 9
 
 // maxVideoRefsTotal 是三类参考(reference_*)合计上限,与网关 /v1/videos 的
