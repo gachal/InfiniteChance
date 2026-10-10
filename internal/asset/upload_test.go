@@ -132,6 +132,10 @@ func TestUploadVideoSniffsMP4AndQuicktime(t *testing.T) {
 	}{
 		{"mp4", "clip.mp4", "video/mp4", ".mp4", mp4Bytes},
 		{"mov by qt brand", "clip.mov", "video/quicktime", ".mov", movBytes},
+		// BMFF 视频族品牌与扩展名自由组合:苹果设备出片 major brand 常是
+		// qt,.mp4 配 qt 品牌不是扩展名不符(用户实测撞过的误拒)。
+		{"mp4 by qt brand", "clip.mp4", "video/quicktime", ".mov", movBytes},
+		{"mov by isom brand", "clip.mov", "video/mp4", ".mp4", mp4Bytes},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := postUpload(t, env.engine, tc.filename, "video", tc.payload)
@@ -200,6 +204,8 @@ func TestUploadRejections(t *testing.T) {
 	}{
 		{"unknown magic", "note.txt", "image", bytes.Repeat([]byte("just text"), 8), "file_type_mismatch"},
 		{"extension disagrees with magic", "clip.mp4", "image", pngBytes, "file_type_mismatch"},
+		// BMFF 族互认只覆盖视频:音频品牌(M4A)配 .mp4 仍是真不符。
+		{"mp4 extension on audio-brand file", "clip.mp4", "video", m4aBytes, "file_type_mismatch"},
 		{"kind disagrees with content", "photo.png", "video", pngBytes, "file_type_mismatch"},
 		{"audio kind on an image file", "photo.png", "audio", pngBytes, "file_type_mismatch"},
 		{"bad kind value", "photo.png", "music", pngBytes, "invalid_request"},

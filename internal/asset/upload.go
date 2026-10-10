@@ -158,7 +158,7 @@ func sniffUploadedFile(f multipart.File, filename, kind string) (string, error) 
 	if !ok {
 		return "", errors.New("无法识别的文件类型,支持 png/jpeg/webp/gif 图片、mp4/webm/mov/avi 视频与 mp3/wav/m4a/ogg/flac 音频")
 	}
-	if extType, ok := extensionContentType(filepath.Ext(filename)); ok && extType != contentType {
+	if extType, ok := extensionContentType(filepath.Ext(filename)); ok && !extensionAgrees(extType, contentType) {
 		return "", fmt.Errorf("文件扩展名与实际内容不符(扩展名是 %s,内容是 %s)", filepath.Ext(filename), contentType)
 	}
 	// kind 已在入口收敛为 image/video,直接比对嗅探出的家族。
@@ -254,6 +254,20 @@ var uploadableByExt = func() map[string]string {
 	}
 	return m
 }()
+
+// extensionAgrees answers whether the extension's expected media type agrees
+// with the sniffed content type. ISO-BMFF 视频族(mp4 与 quicktime)例外:
+// MP4 容器本就源自 QuickTime,同一族文件的品牌(qt/isom/avc1/dash/…)与
+// 扩展名(.mp4/.m4v/.mov)自由组合是真实世界的常态 —— 苹果设备与不少厂商
+// 出片的 major brand 就是 qt,严格相等会把「.mp4 配 qt 品牌」误判成扩展名
+// 不符(用户实测撞过)。音频品牌(M4A → audio/mp4)不在此族,仍严格。
+func extensionAgrees(extType, sniffed string) bool {
+	if extType == sniffed {
+		return true
+	}
+	bmffVideo := func(t string) bool { return t == "video/mp4" || t == "video/quicktime" }
+	return bmffVideo(extType) && bmffVideo(sniffed)
+}
 
 // extensionContentType maps a filename extension to the media type uploads
 // accept; the second return is false for unknown or absent extensions (魔数
