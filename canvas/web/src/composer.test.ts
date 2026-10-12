@@ -207,10 +207,21 @@ describe('withVideoRefRole', () => {
 })
 
 describe('defaultVideoRefRole', () => {
-  it('prefers first frame for images when vacant, falls back to reference image', () => {
+  it('defaults the first image on an empty strip to first frame (24 号票图生视频语义)', () => {
     expect(defaultVideoRefRole([], 'image')).toBe('first_frame')
+    // 条上只有参考视频时图片条目仍空缺,首张图照旧默认首帧。
+    const videoOnly: VideoComposerRef[] = [
+      { url: 'https://a/v.mp4', kind: 'video', role: 'reference_video' },
+    ]
+    expect(defaultVideoRefRole(videoOnly, 'image')).toBe('first_frame')
+  })
+
+  it('defaults images to reference image once the strip holds any image entry (44 号票防静默落首帧)', () => {
     const occupied: VideoComposerRef[] = [{ url: 'https://a/1.png', kind: 'image', role: 'first_frame' }]
     expect(defaultVideoRefRole(occupied, 'image')).toBe('reference_image')
+    // 陷阱序列:首帧位的图被切成参考图后首帧空缺,下一张上传图不得再落首帧。
+    const switched: VideoComposerRef[] = [{ url: 'https://a/1.png', kind: 'image', role: 'reference_image' }]
+    expect(defaultVideoRefRole(switched, 'image')).toBe('reference_image')
   })
 
   it('pins video and audio to their fixed roles', () => {
@@ -257,6 +268,14 @@ describe('durationRangeFor / parseDurationInput / 官方时长区间', () => {
     expect(durationRangeFor('doubao-seedance-2-5-260628')).toEqual({ min: 4, max: 30 })
     expect(durationRangeFor('doubao-seedance-2-0-260128')).toEqual({ min: 4, max: 15 })
     expect(durationRangeFor('wan-video')).toEqual({ min: 4, max: 15 })
+  })
+
+  it('accepts the dotted public names from ticket 25 (seedance-2.5/2.0)', () => {
+    // 25 号票公开名带点;只认连字符形态会让点号名静默落保守档 4–15,
+    // 2.5 的 16–30 秒被发送校验拦下 —— 两种形态都认。
+    expect(durationRangeFor('seedance-2.5')).toEqual({ min: 4, max: 30 })
+    expect(durationRangeFor('seedance-2.0')).toEqual({ min: 4, max: 15 })
+    expect(parseDurationInput('30', durationRangeFor('seedance-2.5'))).toBe(30)
   })
 
   it('parses empty as auto and in-range integers as seconds', () => {

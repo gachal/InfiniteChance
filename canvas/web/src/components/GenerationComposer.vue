@@ -205,6 +205,12 @@ const placeholder = computed(() =>
 
 const uploadAccept = computed(() => (isVideo.value ? 'image/*,video/*,audio/*' : 'image/*'))
 
+/** 参考视频在场时提示 Seedance 的编辑型契约(实测 25 号票渠道):此类任务
+ * 输出比例与时长跟随输入视频(输入视频本身需 4–30 秒),强制指定比例/时长
+ * 会被上游在生成阶段拒绝 —— 提交时 2xx、跑起来才 400,失败落节点很难归
+ * 因,故在参考条上就地提醒留空「自动」。 */
+const hasVideoRef = computed(() => props.videoRefs.some((r) => r.kind === 'video'))
+
 const uploadTitle = computed(() => {
   if (isVideo.value) {
     return videoRefsVacant.value ? '上传本机图片/视频/音频作为参考' : '各角色参考已满员'
@@ -355,6 +361,16 @@ function onFileChange(e: Event): void {
         @change="onFileChange"
       >
     </div>
+
+    <!-- 编辑型契约提示(Seedance 参考视频实测):比例/时长跟随输入视频,
+         强制指定会被上游在生成阶段拒绝;提示用户留空「自动」。 -->
+    <p
+      v-if="isVideo && hasVideoRef"
+      class="vref-hint"
+    >
+      含参考视频:任务可能被识别为「视频编辑」,输出比例与时长将跟随输入视频(需
+      4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
+    </p>
 
     <textarea
       :value="prompt"
@@ -657,6 +673,14 @@ function onFileChange(e: Event): void {
 
 .catalog-error button:hover {
   background: rgba(253, 230, 138, 0.12);
+}
+
+/* 编辑型契约提示:参考视频在场的单行小字,与预估行同款安静的视觉级别。 */
+.vref-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #fde68a;
+  line-height: 1.5;
 }
 
 /* 成本预估行:安静的单行小字,参数变化即时刷新。 */

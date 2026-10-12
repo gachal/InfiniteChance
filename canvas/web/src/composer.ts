@@ -207,9 +207,12 @@ export function withVideoRefRole(
   return list.map((r, i) => (i === index ? { ...r, role } : r))
 }
 
-/** 本机上传的默认角色(42 号票抽纯函数,上传预检与入条共用):图片在首帧
- * 空缺时默认首帧(与选中图片节点产物同款默认),否则参考图;视频/音频
- * 角色固定(24 号票)。 */
+/** 本机上传的默认角色(42 号票抽纯函数,上传预检与入条共用;44 号票修
+ * 静默落首帧):图片仅在参考条没有任何图片条目(首帧/参考图皆无)时
+ * 默认首帧(24 号票图生视频语义,与选中图片节点产物同款默认);一旦
+ * 条上已有图片条目——含用户从首帧手动切成的参考图——后续上传一律默认
+ * 参考图,否则首帧位的图被切走后,下一张上传图又会静默落回首帧。
+ * 视频/音频角色固定(24 号票)。 */
 export function defaultVideoRefRole(list: VideoComposerRef[], kind: VideoRefKind): VideoRefRole {
   if (kind === 'video') {
     return 'reference_video'
@@ -217,7 +220,9 @@ export function defaultVideoRefRole(list: VideoComposerRef[], kind: VideoRefKind
   if (kind === 'audio') {
     return 'reference_audio'
   }
-  return list.some((r) => r.role === 'first_frame') ? 'reference_image' : 'first_frame'
+  return list.some((r) => r.role === 'first_frame' || r.role === 'reference_image')
+    ? 'reference_image'
+    : 'first_frame'
 }
 
 /** 对话框发出的 video_refs:{url, kind, role} 原样上送,服务端解引用。 */
@@ -257,10 +262,14 @@ export interface DurationRange {
 }
 
 export function durationRangeFor(model: string): DurationRange {
-  if (model.includes('seedance-2-5')) {
+  // 两种命名形态都认:25 号票公开名带点(seedance-2.5)、渠道映射直传的
+  // 方舟模型 ID 带连字符(doubao-seedance-2-5-260628)。只认其一会让另一
+  // 形态静默落保守档 4–15,2.5 的 16–30 秒被发送校验拦下。
+  const m = model.toLowerCase()
+  if (m.includes('seedance-2.5') || m.includes('seedance-2-5')) {
     return { min: 4, max: 30 }
   }
-  if (model.includes('seedance-2-0')) {
+  if (m.includes('seedance-2.0') || m.includes('seedance-2-0')) {
     return { min: 4, max: 15 }
   }
   return { min: 4, max: 15 }
