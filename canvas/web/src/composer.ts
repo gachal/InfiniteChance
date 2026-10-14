@@ -264,8 +264,16 @@ export interface DurationRange {
 export function durationRangeFor(model: string): DurationRange {
   // 两种命名形态都认:25 号票公开名带点(seedance-2.5)、渠道映射直传的
   // 方舟模型 ID 带连字符(doubao-seedance-2-5-260628)。只认其一会让另一
-  // 形态静默落保守档 4–15,2.5 的 16–30 秒被发送校验拦下。
+  // 形态静默落保守档 4–15,2.5 的 16–30 秒被发送校验拦下。MiniMax H3 家族
+  // (45 号票)同款:公开名 minimax-h3 带连字符、上游名 MiniMax-H3 大写,
+  // toLowerCase 后一并命中;h3-max 区间更窄,须先判。
   const m = model.toLowerCase()
+  if (m.includes('minimax-h3-max') || m.includes('minimax-h3max')) {
+    return { min: 5, max: 15 }
+  }
+  if (m.includes('minimax-h3')) {
+    return { min: 4, max: 15 }
+  }
   if (m.includes('seedance-2.5') || m.includes('seedance-2-5')) {
     return { min: 4, max: 30 }
   }
@@ -292,14 +300,39 @@ export function parseDurationInput(
   return n
 }
 
-/** 视频分辨率预设:选中档位串直接作为 size 上送(second 轨计价系数表与
- * token 轨估算表都以这些字符串为键,契约零新增)。 */
+/** 视频分辨率预设(24 号票):选中档位串直接作为 size 上送(second 轨计价
+ * 系数表与 token 轨估算表都以这些字符串为键,契约零新增)。45 号票起按
+ * 模型分档:Seedance 官方档小写(480p/720p/1080p),MiniMax 官方档大写
+ * (480P/768P/2K)—— 档位串以各厂商官方枚举为准,原样透传不归一;此常量
+ * 即默认档(Seedance 及未知模型),MiniMax 走 resolutionPresetsFor。 */
 export const VIDEO_RESOLUTION_PRESETS: PresetOption[] = [
   { label: '自动分辨率', value: '' },
   { label: '480p', value: '480p' },
   { label: '720p', value: '720p' },
   { label: '1080p', value: '1080p' },
 ]
+
+/** 视频分辨率预设按模型收敛(45 号票,durationRangeFor 同款套路):MiniMax
+ * H3 官方档 768P/2K(H3-Max 另有 480P);其余模型回落默认档。模型切换后
+ * 由对话框把不再有效的选中档回落到「自动分辨率」。 */
+export function resolutionPresetsFor(model: string): PresetOption[] {
+  const m = model.toLowerCase()
+  if (m.includes('minimax-h3-max') || m.includes('minimax-h3max')) {
+    return [
+      { label: '自动分辨率', value: '' },
+      { label: '480P', value: '480P' },
+      { label: '768P', value: '768P' },
+    ]
+  }
+  if (m.includes('minimax-h3')) {
+    return [
+      { label: '自动分辨率', value: '' },
+      { label: '768P', value: '768P' },
+      { label: '2K', value: '2K' },
+    ]
+  }
+  return VIDEO_RESOLUTION_PRESETS
+}
 
 // ---- 提示词落节点(27 号票)----
 

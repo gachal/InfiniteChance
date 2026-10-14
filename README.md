@@ -1,5 +1,7 @@
 # 无限机缘(InfiniteChance)
 
+![InfiniteChance Banner](docs/images/banner.png)
+
 [English](README.en.md) | 简体中文
 
 **无限机缘** 是一套自用的 LLM Token 网关(OpenAI 兼容中转)+ 无限画布创作工具:网关侧把多家厂商渠道聚合成一个 OpenAI 兼容入口,统一计价、额度与多渠道熔断调度;画布侧把提示词、生图、生视频、图片/视频分析、Agent 编排为节点工作流,任务后台常跑、产物落素材库。单管理员、单用户形态,Docker 一键部署,另有单文件 SQLite 桌面版。领域术语表见 [CONTEXT.md](CONTEXT.md)。

@@ -39,6 +39,24 @@ const TypeTencentVod = "tencent-vod"
 // https://ark.cn-beijing.volcengine.com/api/v3 — 换 region 即换 BaseURL).
 const TypeVolcengineArk = "volcengine-ark"
 
+// TypeMiniMax marks MiniMax's native video API (45 号票): Bearer-key async
+// tasks — POST {base}/v2/video_generation 提交、GET {base}/v2/query/
+// video_generation/{id} 轮询、DELETE {base}/v2/video_generation/{id} 取消.
+// Single API key on the APIKey column like Ark; BaseURL is required and is
+// the bare host (version paths live in the adaptor/tester, 46 号票勘误) —
+// 中国站 https://api.minimaxi.com、国际站 https://api.minimax.io,两站 /v2
+// 路径同构,换站只换 BaseURL.
+const TypeMiniMax = "minimax"
+
+// TypeDashScope marks Alibaba Cloud Model Studio's DashScope async API
+// (46 号票): the shared video-synthesis task face behind 百炼-hosted
+// third-party models (MiniMax-H3、PixVerse、万相…). Bearer key on the
+// APIKey column; BaseURL is the workspace host root without any path
+// (e.g. https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com — the
+// /api/v1/... paths are appended by the adaptor and probe); submit needs
+// the X-DashScope-Async header and there is no public cancel API.
+const TypeDashScope = "dashscope"
+
 // Capability marks what a channel may relay. Scheduling only ever selects a
 // channel whose capabilities cover the request kind, so a chat-only vendor
 // never receives a mapped image model by accident (07 号票).
@@ -54,7 +72,7 @@ const (
 var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos}
 
 // SupportedTypes lists the channel types this build can relay and probe.
-var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk}
+var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope}
 
 // SupportedType reports whether t is a channel type this build understands.
 func SupportedType(t string) bool {

@@ -190,6 +190,16 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
     "size_tokens_per_second":{"480p":8664,"720p":21465,"1080p":48299},
     "default_tokens_per_second":21465
   }'
+
+# 配价示例:MiniMax H3 走 second 轨(官方按秒计价,系数键 = 官方档位串
+# 大写 768P/2K,基准价按中国站人民币价折算;调用与上完全同款,只换 model)
+curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "public_model":"minimax-h3","unit":"second",
+    "cny_per_call":0.57, "size_factors":{"768P":1.0,"2K":1.63}
+  }'
+# 阿里云百炼渠道(46 号票)沿用公开名 minimax-h3 时无需另配价 —— 价格
+# 按公开模型一份,原生(minimax 渠道)与百炼(dashscope 渠道)同价共用。
 ```
 
 ## 四、管理面(/admin,JWT)
@@ -243,6 +253,18 @@ curl -X DELETE $GATEWAY/admin/channels/2 -H "Authorization: Bearer $TOKEN"
 curl -X POST $GATEWAY/admin/channels/2/test -H "Authorization: Bearer $TOKEN"
 # → openai 渠道:{"ok":true,"latency_ms":231,"detail":"HTTP 200,发现 58 个模型"}
 # → tencent-vod 渠道:{"ok":true,"detail":"HTTP 200,凭据与网络正常(腾讯云应答 ResourceNotFound...)"}
+
+# 新建阿里云百炼渠道(46 号票;BaseURL = 工作空间域名根,不含路径)
+curl -X POST $GATEWAY/admin/channels -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "name":"bailian-main","type":"dashscope",
+    "base_url":"https://ws1234567890.cn-beijing.maas.aliyuncs.com",
+    "api_key":"sk-bailian-xxx",
+    "model_map":{"minimax-h3":"MiniMax/MiniMax-H3"},
+    "capabilities":["videos"],
+    "priority":10,"weight":1,"enabled":true
+  }'
+# → 连通测试:{"ok":true,"detail":"HTTP 404,凭据与网络正常(DashScope 应答 NotFoundTaskId)"}
 ```
 
 ### 4.2 API key 管理

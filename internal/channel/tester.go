@@ -58,6 +58,12 @@ func (t *Tester) Test(ctx context.Context, ch Channel) Result {
 	if ch.Type == TypeVolcengineArk {
 		return t.testVolcengineArk(ctx, ch)
 	}
+	if ch.Type == TypeMiniMax {
+		return t.testMiniMax(ctx, ch)
+	}
+	if ch.Type == TypeDashScope {
+		return t.testDashScope(ctx, ch)
+	}
 	if ch.APIKey == "" {
 		return Result{Error: "渠道未配置密钥,请先保存密钥再测试"}
 	}
@@ -195,6 +201,170 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(runes[:n]) + "…"
+}
+
+// testMiniMax probes one minimax channel with a GET for a task id that
+// cannot exist(Ark/VOD 假任务探测同款套路,45 号票):a business-level
+// "task not found / invalid task_id" answer (400/404) proves the whole chain
+// — network, endpoint, Bearer key — in one cheap call; 401/403 is the
+// decidable credential failure. Anything else (429/5xx/坏形状) is reported
+// verbatim. MiniMax 错误体佐证字段是 error.type(OpenAI 形但没有 code);
+// 不存在任务的具体状态码以真 key 实证为准,未实证前 400/404 都按业务错放行。
+func (t *Tester) testMiniMax(ctx context.Context, ch Channel) Result {
+	if ch.APIKey == "" {
+		return Result{Error: "渠道未配置密钥,请先保存密钥再测试"}
+	}
+	client := t.Client
+	if client == nil {
+		client = probeClient
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet,
+		strings.TrimRight(ch.BaseURL, "/")+"/v2/query/video_generation/infinitechance-probe-not-a-task", nil)
+	if err != nil {
+		return Result{Error: fmt.Sprintf("构造探测请求失败:%v", err)}
+	}
+	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
+	req.Header.Set("User-Agent", "infinitechance-probe")
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return Result{LatencyMS: latency, Error: fmt.Sprintf("连接上游失败:%v", err)}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorSnippet))
+	// MiniMax 错误体是 {"error":{"type","message","http_code"}},佐证取 type。
+	kind := ""
+	var env struct {
+		Error *struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &env) == nil && env.Error != nil {
+		kind = env.Error.Type
+	}
+	detail := func() string {
+		if kind != "" {
+			return fmt.Sprintf("HTTP %d,凭据与网络正常(MiniMax 应答 %s)", resp.StatusCode, kind)
+		}
+		return fmt.Sprintf("HTTP %d,凭据与网络正常", resp.StatusCode)
+	}
+	snippet := strings.TrimSpace(string(body))
+
+	switch {
+	case resp.StatusCode/100 == 2:
+		// 探测的 TaskId 必不存在;2xx 到不了,到了也算连通成功。
+		return Result{OK: true, LatencyMS: latency, Detail: detail()}
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
+		// 业务级「任务不存在 / invalid task_id」:凭据与连通全通。
+		return Result{OK: true, LatencyMS: latency, Detail: detail()}
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		reason := kind
+		if reason == "" {
+			reason = snippet
+		}
+		return Result{LatencyMS: latency, Error: fmt.Sprintf(
+			"凭据失败(HTTP %d):%s", resp.StatusCode, truncateRunes(reason, maxErrorSnippet))}
+	default:
+		if snippet == "" {
+			return Result{LatencyMS: latency,
+				Error: fmt.Sprintf("上游返回 HTTP %d(无响应体)", resp.StatusCode)}
+		}
+		return Result{LatencyMS: latency,
+			Error: fmt.Sprintf("上游返回 HTTP %d:%s", resp.StatusCode, truncateRunes(snippet, maxErrorSnippet))}
+	}
+}
+
+// testDashScope probes one dashscope channel with a GET for a task id that
+// cannot exist(Ark/MiniMax 假任务探测同款套路,46 号票):the DashScope
+// async face answers a missing task either with HTTP 404/400 or with a 2xx
+// body carrying output.task_status=UNKNOWN — both prove the whole chain
+// (network, endpoint, Bearer key) in one cheap call; 401/403 is the
+// decidable credential failure. Anything else (429/5xx/坏形状) is reported
+// verbatim. DashScope 错误体是顶层 {"code","message"}(非 OpenAI error
+// object 形),佐证取 code;具体错误码以真 key 实证为准,未实证前按
+// HTTP 状态分类、2xx 一律放行。
+func (t *Tester) testDashScope(ctx context.Context, ch Channel) Result {
+	if ch.APIKey == "" {
+		return Result{Error: "渠道未配置密钥,请先保存密钥再测试"}
+	}
+	client := t.Client
+	if client == nil {
+		client = probeClient
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet,
+		strings.TrimRight(ch.BaseURL, "/")+"/api/v1/tasks/infinitechance-probe-not-a-task", nil)
+	if err != nil {
+		return Result{Error: fmt.Sprintf("构造探测请求失败:%v", err)}
+	}
+	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
+	req.Header.Set("User-Agent", "infinitechance-probe")
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return Result{LatencyMS: latency, Error: fmt.Sprintf("连接上游失败:%v", err)}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorSnippet))
+	// 2xx 路径的任务不存在回答是 {"output":{…,"task_status":"UNKNOWN"}};
+	// 错误体是顶层 {"code","message","request_id"},佐证取 code。
+	kind := ""
+	var env struct {
+		Output *struct {
+			TaskStatus string `json:"task_status"`
+		} `json:"output"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &env) == nil {
+		if env.Output != nil && env.Output.TaskStatus != "" {
+			kind = env.Output.TaskStatus
+		} else if env.Code != "" {
+			kind = env.Code
+		}
+	}
+	detail := func() string {
+		if kind != "" {
+			return fmt.Sprintf("HTTP %d,凭据与网络正常(DashScope 应答 %s)", resp.StatusCode, kind)
+		}
+		return fmt.Sprintf("HTTP %d,凭据与网络正常", resp.StatusCode)
+	}
+	snippet := strings.TrimSpace(string(body))
+
+	switch {
+	case resp.StatusCode/100 == 2:
+		// 探测的 TaskId 必不存在;2xx(含 UNKNOWN 体)即「任务不存在」形态。
+		return Result{OK: true, LatencyMS: latency, Detail: detail()}
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
+		// 业务级「任务不存在 / invalid task_id」:凭据与连通全通。
+		return Result{OK: true, LatencyMS: latency, Detail: detail()}
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		reason := kind
+		if reason == "" {
+			reason = snippet
+		}
+		return Result{LatencyMS: latency, Error: fmt.Sprintf(
+			"凭据失败(HTTP %d):%s", resp.StatusCode, truncateRunes(reason, maxErrorSnippet))}
+	default:
+		if snippet == "" {
+			return Result{LatencyMS: latency,
+				Error: fmt.Sprintf("上游返回 HTTP %d(无响应体)", resp.StatusCode)}
+		}
+		return Result{LatencyMS: latency,
+			Error: fmt.Sprintf("上游返回 HTTP %d:%s", resp.StatusCode, truncateRunes(snippet, maxErrorSnippet))}
+	}
 }
 
 // testVolcengineArk probes one volcengine-ark channel with a GET for a task

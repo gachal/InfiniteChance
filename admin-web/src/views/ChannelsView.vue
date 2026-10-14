@@ -87,6 +87,14 @@ const isVod = computed(() => formState.type === 'tencent-vod');
 // 含版本路径;MVP 仅实现 videos 能力(表单上提示,不强制改勾选)。
 const isArk = computed(() => formState.type === 'volcengine-ark');
 
+// minimax(45 号票)同款形态:单 Bearer key、BaseURL 是裸域名(版本路径由
+// adaptor 拼接,46 号票勘误——不含 /v2),MVP 仅 videos 能力。
+const isMiniMax = computed(() => formState.type === 'minimax');
+
+// dashscope(46 号票):阿里云百炼的 DashScope 异步视频面,单百炼 API Key、
+// BaseURL 为工作空间域名根(不含路径),MVP 仅 videos 能力。
+const isDashScope = computed(() => formState.type === 'dashscope');
+
 const formRef = ref<FormInstance>();
 const formState = reactive<ChannelForm>(blankForm());
 
@@ -99,6 +107,8 @@ const typeOptions = [
   { label: 'OpenAI 兼容', value: 'openai' },
   { label: '腾讯云 VOD AIGC', value: 'tencent-vod' },
   { label: '火山方舟 Ark(Seedance)', value: 'volcengine-ark' },
+  { label: 'MiniMax(H3 视频生成)', value: 'minimax' },
+  { label: '阿里云百炼(DashScope 视频生成)', value: 'dashscope' },
 ];
 
 const columns = [
@@ -574,6 +584,22 @@ function secretSummary(ch: Channel): string {
             class="mb-2 mt-0 text-neutral-500"
           >
             volcengine-ark 当前仅实现生视频(videos);勾选其他能力不会被转发。
+          </p>
+          <p
+            v-else-if="isMiniMax"
+            class="mb-2 mt-0 text-neutral-500"
+          >
+            minimax 当前仅实现生视频(videos),BaseURL 填裸域名(中国站
+            https://api.minimaxi.com、国际站 https://api.minimax.io,/v2
+            路径由网关拼接);勾选其他能力不会被转发。
+          </p>
+          <p
+            v-else-if="isDashScope"
+            class="mb-2 mt-0 text-neutral-500"
+          >
+            dashscope 当前仅实现生视频(videos),BaseURL 填百炼工作空间域名根
+            (如 https://xxxx.cn-beijing.maas.aliyuncs.com,不含路径);密钥为
+            百炼 API Key;勾选其他能力不会被转发。
           </p>
           <CheckboxGroup
             v-model:value="formState.capabilities"

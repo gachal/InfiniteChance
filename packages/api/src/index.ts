@@ -34,11 +34,13 @@ export interface AdminIdentity {
   expires_at: string
 }
 
-/** Channel types this build can relay and probe (25 号票起三种):
+/** Channel types this build can relay and probe (45 号票起四种):
  * openai = OpenAI 兼容 Bearer;tencent-vod = 腾讯云 VOD AIGC(TC3 凭据在
  * config);volcengine-ark = 火山方舟 Seedance(单 Bearer key、MVP 仅
- * videos 能力)。 */
-export const CHANNEL_TYPES = ['openai', 'tencent-vod', 'volcengine-ark'] as const
+ * videos 能力);minimax = MiniMax 原生视频 API H3/H3-Max(单 Bearer key、
+ * MVP 仅 videos 能力);dashscope = 阿里云百炼 DashScope 视频面(单百炼
+ * API Key、BaseURL 为工作空间域名根、MVP 仅 videos 能力)。 */
+export const CHANNEL_TYPES = ['openai', 'tencent-vod', 'volcengine-ark', 'minimax', 'dashscope'] as const
 export type ChannelType = (typeof CHANNEL_TYPES)[number]
 
 /** A vendor channel as answered by the admin gateway APIs. The vendor

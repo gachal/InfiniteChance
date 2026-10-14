@@ -5,7 +5,7 @@
 // = 提交画布任务。视频模式 = 文生视频/图生视频/首尾帧/多参考的组合形态,
 // 参考组合自然成模式,无显式模式 tab;选中视频节点时模式锁定视频(视频
 // 产物不能当生图参考),底栏模式下拉的「图片生成」禁选。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
 
@@ -15,8 +15,8 @@ import {
   RESOLUTION_PRESETS,
   composeSize,
   durationRangeFor,
+  resolutionPresetsFor,
   rolesForKind,
-  VIDEO_RESOLUTION_PRESETS,
   VIDEO_ROLE_CAPS,
   VIDEO_ROLE_LABEL,
   videoPlaceholder,
@@ -82,8 +82,25 @@ const isVideo = computed(() => props.mode === 'video')
 const activeModels = computed(() => (isVideo.value ? props.videoModels : props.imageModels))
 
 /** 时长区间随所选模型收敛(官方校准:seedance 2.0 = 4–15,2.5 = 4–30;
- * 未知模型保守 4–15)。留空 = 自动(不传 seconds)。 */
+ * minimax-h3 = 4–15、h3-max = 5–15;未知模型保守 4–15)。留空 = 自动
+ * (不传 seconds)。 */
 const durationRange = computed(() => durationRangeFor(props.model))
+
+/** 视频分辨率档位随模型收敛(45 号票):MiniMax H3 官方档 768P/2K
+ * (H3-Max 另有 480P),Seedance 及未知模型走默认档;档位串以各厂商官方
+ * 枚举为准直传上游。 */
+const videoResolutionPresets = computed(() => resolutionPresetsFor(props.model))
+
+// 模型切换后,已选分辨率档可能不属于新模型(如 seedance 720p → H3 只有
+// 768P/2K):回落到「自动分辨率」而非静默持无效档,提交必被上游 400。
+watch(
+  () => props.model,
+  () => {
+    if (isVideo.value && !videoResolutionPresets.value.some((p) => p.value === props.resolution)) {
+      emit('update:resolution', '')
+    }
+  },
+)
 
 /** 失焦时把输入夹紧回区间(整数):留空保持自动,越界/小数就地归位。 */
 function onDurationBlur(e: Event): void {
@@ -446,7 +463,7 @@ function onFileChange(e: Event): void {
         @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
       >
         <option
-          v-for="p in VIDEO_RESOLUTION_PRESETS"
+          v-for="p in videoResolutionPresets"
           :key="p.value"
           :value="p.value"
         >

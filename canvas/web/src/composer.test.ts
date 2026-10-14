@@ -13,6 +13,7 @@ import {
   MAX_COMPOSER_REFS,
   mediaSyncPatch,
   parseDurationInput,
+  resolutionPresetsFor,
   resultNodeData,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
@@ -261,6 +262,17 @@ describe('videoPlaceholder / 视频预设', () => {
   it('video resolution presets carry auto first and tier strings', () => {
     expect(VIDEO_RESOLUTION_PRESETS.map((p) => p.value)).toEqual(['', '480p', '720p', '1080p'])
   })
+
+  it('resolutionPresetsFor narrows MiniMax H3 onto its official tiers (45 号票)', () => {
+    // MiniMax 官方档大写(768P/2K),与 Seedance 小写档并存;档位串以各
+    // 厂商官方枚举为准直传上游,不归一。
+    expect(resolutionPresetsFor('minimax-h3').map((p) => p.value)).toEqual(['', '768P', '2K'])
+    expect(resolutionPresetsFor('MiniMax-H3').map((p) => p.value)).toEqual(['', '768P', '2K'])
+    expect(resolutionPresetsFor('minimax-h3-max').map((p) => p.value)).toEqual(['', '480P', '768P'])
+    // 其余模型回落默认档(Seedance 及未知)。
+    expect(resolutionPresetsFor('seedance-2.5')).toBe(VIDEO_RESOLUTION_PRESETS)
+    expect(resolutionPresetsFor('wan-video')).toBe(VIDEO_RESOLUTION_PRESETS)
+  })
 })
 
 describe('durationRangeFor / parseDurationInput / 官方时长区间', () => {
@@ -268,6 +280,15 @@ describe('durationRangeFor / parseDurationInput / 官方时长区间', () => {
     expect(durationRangeFor('doubao-seedance-2-5-260628')).toEqual({ min: 4, max: 30 })
     expect(durationRangeFor('doubao-seedance-2-0-260128')).toEqual({ min: 4, max: 15 })
     expect(durationRangeFor('wan-video')).toEqual({ min: 4, max: 15 })
+  })
+
+  it('maps MiniMax H3 generations onto their official ranges (45 号票)', () => {
+    // 公开名带连字符、上游名大写,两种形态都认;h3-max 区间更窄。
+    expect(durationRangeFor('minimax-h3')).toEqual({ min: 4, max: 15 })
+    expect(durationRangeFor('MiniMax-H3')).toEqual({ min: 4, max: 15 })
+    expect(durationRangeFor('minimax-h3-max')).toEqual({ min: 5, max: 15 })
+    expect(parseDurationInput('4', durationRangeFor('minimax-h3'))).toBe(4)
+    expect(parseDurationInput('4', durationRangeFor('minimax-h3-max'))).toBeNull()
   })
 
   it('accepts the dotted public names from ticket 25 (seedance-2.5/2.0)', () => {
