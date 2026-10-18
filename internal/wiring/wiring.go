@@ -7,6 +7,8 @@
 package wiring
 
 import (
+	"log"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/gachal/InfiniteChance/internal/apikey"
@@ -66,6 +68,16 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 	settings.RegisterAdminRoutes(admin, &settings.Handlers{Store: s.Settings})
 	// 用量审计:请求级日志列表与按天/模型/渠道汇总(15 号票)。
 	usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: s.UsageLogs})
+	// 素材哈希回填与去重(48 号票):素材行与对象存储都就位才挂;store
+	// 须实现 BackfillStore(两方言 store 均实现)。
+	if s.Assets != nil && s.Storage != nil {
+		if bfs, ok := s.Assets.(asset.BackfillStore); ok {
+			asset.RegisterBackfillRoutes(admin.Group("/assets/hash-backfill"),
+				&asset.Backfill{Store: bfs, Storage: s.Storage})
+		} else {
+			log.Printf("wiring: asset store does not support hash backfill, /admin/assets/hash-backfill not mounted")
+		}
+	}
 
 	v1 := r.Group("/v1", apikey.RequireKey(s.Keys))
 	// relay_persist(23 号票):cloud store 与 asset 行都就位才装配;

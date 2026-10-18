@@ -95,6 +95,15 @@ func (f *fakeAssets) List(context.Context, asset.Filter) ([]asset.Listed, error)
 func (f *fakeAssets) Delete(context.Context, int64) error        { return asset.ErrNotFound }
 func (f *fakeAssets) TouchLastUsed(context.Context, int64) error { return nil }
 
+// 48 号票接口加宽的桩:转存链不查复用、不删行,恒空即可。
+func (f *fakeAssets) FindOldestByHash(context.Context, string) (asset.Asset, error) {
+	return asset.Asset{}, asset.ErrNotFound
+}
+
+func (f *fakeAssets) CountOthersOnObjectKey(context.Context, string, int64) (int, error) {
+	return 0, nil
+}
+
 func cosSnapshot(base string, persist bool) settings.StorageConfig {
 	return settings.StorageConfig{
 		Driver:       settings.DriverCOS,

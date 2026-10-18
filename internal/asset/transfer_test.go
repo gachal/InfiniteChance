@@ -177,3 +177,25 @@ func TestTransferRelayNon200IsAnError(t *testing.T) {
 		t.Fatal("404 product should fail the transfer")
 	}
 }
+
+// 48 号票:两条转存链写前算哈希随 Stored 返回,指纹与测试侧参考实现互证。
+func TestTransferAndRelayRecordContentHash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("pngbytes"))
+	}))
+	defer srv.Close()
+
+	canvasStored := mustTransfer(t, newTransferStore(t), 7, "ct_h", asset.KindImage, srv.URL+"/a.png")
+	relayStored, err := asset.TransferRelay(context.Background(), newTransferStore(t), http.DefaultClient, srv.URL+"/b.png")
+	if err != nil {
+		t.Fatalf("TransferRelay: %v", err)
+	}
+	want := sha256Hex([]byte("pngbytes"))
+	if canvasStored.ContentHash != want {
+		t.Errorf("Transfer hash = %q, want %q", canvasStored.ContentHash, want)
+	}
+	if relayStored.ContentHash != want {
+		t.Errorf("TransferRelay hash = %q, want %q", relayStored.ContentHash, want)
+	}
+}

@@ -125,6 +125,7 @@ func (p *ImagePersist) persistOne(ctx context.Context, st objectstore.Store, bas
 		ObjectKey:   stored.Key,
 		ContentType: stored.ContentType,
 		SizeBytes:   stored.SizeBytes,
+		ContentHash: stored.ContentHash, // 48 号票:转存链只落列不复用
 	}); err != nil {
 		if delErr := st.Delete(context.WithoutCancel(ctx), stored.Key); delErr != nil {
 			log.Printf("relay: cleanup persisted object %q after row failure: %v", stored.Key, delErr)

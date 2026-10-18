@@ -99,11 +99,40 @@ func (h *Handlers) Upload(c *gin.Context) {
 		return
 	}
 
-	key := uploadKey(time.Now(), contentType)
-	if err := h.Storage.Put(c.Request.Context(), key, f, fh.Size, contentType); err != nil {
-		log.Printf("asset: put upload %q: %v", key, err)
-		apierr.Internal(c, "素材保存失败,请稍后再试")
+	// 48 号票「先算后写」:嗅探已把句柄回卷到起点,整份字节先流过
+	// SHA-256 再决策 —— 命中同哈希的已有行就复用其对象,零字节上云。
+	contentHash, err := hashReader(f)
+	if err != nil {
+		log.Printf("asset: hash upload: %v", err)
+		apierr.InvalidRequest(c, "文件读取失败,请重试")
 		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		log.Printf("asset: rewind upload: %v", err)
+		apierr.InvalidRequest(c, "文件读取失败,请重试")
+		return
+	}
+
+	// 字节复用(48 号票,全前缀口径):按 content_hash 找最老已有行,
+	// 命中即新行指向该行的 object_key、不再写对象 —— 查找不限 uploads/,
+	// 上传行可以指向 canvases/ 或 relay/ 的对象(下载再上传的高频场景);
+	// 照常落行不拒收(两次上传两条素材记录、字节一份)。查重失败不拦
+	// 上传:退化为直写新对象。
+	key := ""
+	wroteObject := false
+	if oldest, err := h.Store.FindOldestByHash(c.Request.Context(), contentHash); err == nil && oldest.ObjectKey != "" {
+		key = oldest.ObjectKey
+	} else {
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			log.Printf("asset: find oldest by hash: %v", err)
+		}
+		key = uploadKey(time.Now(), contentType)
+		if err := h.Storage.Put(c.Request.Context(), key, f, fh.Size, contentType); err != nil {
+			log.Printf("asset: put upload %q: %v", key, err)
+			apierr.Internal(c, "素材保存失败,请稍后再试")
+			return
+		}
+		wroteObject = true
 	}
 
 	created, err := h.Store.Create(c.Request.Context(), Asset{
@@ -112,11 +141,15 @@ func (h *Handlers) Upload(c *gin.Context) {
 		ObjectKey:   key,
 		ContentType: contentType,
 		SizeBytes:   fh.Size,
+		ContentHash: contentHash,
 	})
 	if err != nil {
 		// 行没落成就把已写字节回收:不留孤儿对象(Delete 幂等,no-op 安全)。
-		if delErr := h.Storage.Delete(context.WithoutCancel(c.Request.Context()), key); delErr != nil {
-			log.Printf("asset: cleanup upload %q after row failure: %v", key, delErr)
+		// 复用分支的共享对象不是本次写的,动不得 —— 兄弟行还指着它。
+		if wroteObject {
+			if delErr := h.Storage.Delete(context.WithoutCancel(c.Request.Context()), key); delErr != nil {
+				log.Printf("asset: cleanup upload %q after row failure: %v", key, delErr)
+			}
 		}
 		log.Printf("asset: create upload row: %v", err)
 		apierr.Internal(c, "服务内部错误,请稍后再试")

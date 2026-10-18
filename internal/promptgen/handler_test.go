@@ -123,6 +123,15 @@ func (f *fakeAssets) TouchLastUsed(_ context.Context, id int64) error {
 	return nil
 }
 
+// 48 号票接口加宽的桩:解引用路径不查复用、不删行,恒空即可。
+func (f fakeAssets) FindOldestByHash(context.Context, string) (asset.Asset, error) {
+	return asset.Asset{}, asset.ErrNotFound
+}
+
+func (f fakeAssets) CountOthersOnObjectKey(context.Context, string, int64) (int, error) {
+	return 0, nil
+}
+
 // ---- test rig: routes wired exactly as canvas/server/main.go does ----
 
 type envParams struct {

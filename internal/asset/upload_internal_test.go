@@ -43,6 +43,15 @@ func (s *tinyStore) List(context.Context, Filter) ([]Listed, error) { return nil
 func (s *tinyStore) Delete(context.Context, int64) error            { return ErrNotFound }
 func (s *tinyStore) TouchLastUsed(context.Context, int64) error     { return ErrNotFound }
 
+// 48 号票接口加宽的桩:超限测试在哈希决策前就被拦下,恒空即可。
+func (s *tinyStore) FindOldestByHash(context.Context, string) (Asset, error) {
+	return Asset{}, ErrNotFound
+}
+
+func (s *tinyStore) CountOthersOnObjectKey(context.Context, string, int64) (int, error) {
+	return 0, nil
+}
+
 func TestUploadOversizeAnswersFileTooLarge(t *testing.T) {
 	old := maxUploadBytes
 	maxUploadBytes = 64

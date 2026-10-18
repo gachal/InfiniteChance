@@ -45,7 +45,9 @@ func PublicAddress(a Asset, publicBase string) (string, bool) {
 // when the vendor answered base64 — kept for provenance and vendor-facing
 // reuse (图生视频的参考图解析). 转存后的自有字节走 ObjectKey. LastUsedAt
 // 是「最近一次被服务端解引用」的时点(47 号票):初始 = 创建,任务参考与
-// Agent 媒体解析成功时刷新,驱动挑选场景的最近使用排序。
+// Agent 媒体解析成功时刷新,驱动挑选场景的最近使用排序。ContentHash 是字
+// 节的 SHA-256 十六进制指纹(48 号票):判同去重用,不是下载完整性校验;
+// 空 = 未算(历史行态),纯内部指纹,不进任何对外响应。
 type Asset struct {
 	ID          int64
 	Kind        string
@@ -57,6 +59,7 @@ type Asset struct {
 	ObjectKey   string
 	ContentType string
 	SizeBytes   int64
+	ContentHash string
 	CreatedAt   time.Time
 	LastUsedAt  time.Time
 }
@@ -85,7 +88,9 @@ type Listed struct {
 }
 
 // Store persists assets. 14 号票在 10 号票的写入/取回上扩过滤列表与删除;
-// 47 号票加 TouchLastUsed(解引用即算「用过」,供最近使用排序)。
+// 47 号票加 TouchLastUsed(解引用即算「用过」,供最近使用排序);48 号票
+// 加 FindOldestByHash(上传字节复用的查重)与 CountOthersOnObjectKey
+// (删除防护:共享对象的兄弟行计数)。
 type Store interface {
 	// Create stores one asset and returns it with ID and CreatedAt.
 	Create(ctx context.Context, a Asset) (Asset, error)
@@ -100,4 +105,11 @@ type Store interface {
 	// TouchLastUsed stamps one asset's last_used_at to now (47 号票的
 	// 「解引用即算」写入点);ErrNotFound when there is no row.
 	TouchLastUsed(ctx context.Context, id int64) error
+	// FindOldestByHash answers the oldest row carrying the content hash
+	// (ORDER BY id, LIMIT 1) or ErrNotFound (48 号票上传复用的查重点)。
+	FindOldestByHash(ctx context.Context, contentHash string) (Asset, error)
+	// CountOthersOnObjectKey answers how many rows besides excludeID point
+	// at the object key (48 号票删除防护:计数 > 0 = 字节仍有别的行共享,
+	// 只删行不删对象)。
+	CountOthersOnObjectKey(ctx context.Context, objectKey string, excludeID int64) (int, error)
 }

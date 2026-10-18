@@ -191,6 +191,15 @@ func (f *fakeAssets) TouchLastUsed(_ context.Context, id int64) error {
 	return nil
 }
 
+// 48 号票接口加宽的桩:handler/worker 测试不查复用、不删行,恒空即可。
+func (f fakeAssets) FindOldestByHash(context.Context, string) (asset.Asset, error) {
+	return asset.Asset{}, asset.ErrNotFound
+}
+
+func (f fakeAssets) CountOthersOnObjectKey(context.Context, string, int64) (int, error) {
+	return 0, nil
+}
+
 // fakePrices answers ByModel for one call-track and one token-track model.
 type fakePrices struct{}
 

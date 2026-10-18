@@ -88,3 +88,82 @@ func TestSQLiteAssetSchemaIsIdempotent(t *testing.T) {
 		t.Fatalf("second EnsureSchema: %v", err)
 	}
 }
+
+// 48 号票:存量桌面库(47 号票形态,缺 content_hash 列)经 PRAGMA table_info
+// 检查后原地 ALTER 加列,Create 带哈希照常可用 —— 桌面 app.db 跨版本保留。
+func TestSQLiteAssetSchemaMigratesContentHash(t *testing.T) {
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := canvas.NewSQLiteStore(db).EnsureSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// 47 号票定稿的表形状(无 content_hash)。
+	legacy := `
+	CREATE TABLE IF NOT EXISTS assets (
+		id           INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		kind         TEXT    NOT NULL,
+		canvas_id    INTEGER NOT NULL,
+		task_id      TEXT    NOT NULL DEFAULT '',
+		model        TEXT    NOT NULL DEFAULT '',
+		prompt       TEXT    NULL,
+		url          TEXT    NOT NULL,
+		object_key   TEXT    NOT NULL DEFAULT '',
+		content_type TEXT    NOT NULL DEFAULT '',
+		size_bytes   INTEGER NOT NULL DEFAULT 0,
+		created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+		last_used_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+	)`
+	if _, err := db.Exec(legacy); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+
+	s := NewSQLiteStore(db)
+	ctx := context.Background()
+	if err := s.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema over legacy table: %v", err)
+	}
+
+	// 加列已生效且幂等。
+	for i := 0; i < 2; i++ {
+		rows, err := db.Query(`PRAGMA table_info(assets)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notNull, pk int
+			var dfltValue any
+			if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			if name == "content_hash" {
+				found = true
+			}
+		}
+		rows.Close()
+		if !found {
+			t.Fatalf("pass %d: content_hash column missing after migration", i)
+		}
+	}
+
+	created, err := s.Create(ctx, Asset{
+		Kind: KindImage, CanvasID: 1, URL: "https://img.example/1.png",
+		ObjectKey: "uploads/20261018/m.png", ContentHash: "hash-m",
+	})
+	if err != nil {
+		t.Fatalf("Create with hash on migrated table: %v", err)
+	}
+	got, err := s.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ContentHash != "hash-m" {
+		t.Errorf("content_hash = %q, want hash-m", got.ContentHash)
+	}
+}

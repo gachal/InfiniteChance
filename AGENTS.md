@@ -72,7 +72,7 @@ go run ./canvas/server    # 宿主机直跑画布服务
 4. **错误形状**:中转面 `/v1` 统一 OpenAI error object(`invalid_api_key` / `insufficient_quota` / `model_unavailable` / `upstream_error` 等 code);管理面统一 `{"error":{"code","message"}}`。
 5. **路由鉴权面互不混用**:`/v1` 挂 `apikey.RequireKey`,`/admin` 挂 JWT 会话,`/auth` 公开。canvas 侧 `GET /assets/{id}/content` **故意不挂鉴权**(`<img>/<video>` 带不了 Authorization 头)——不要"修复"它;素材管理面照常挂 JWT。
 6. **data: URI 进不了网关媒体契约**:参考图、反推、分析的媒体引用一律拒绝内联,要求 http(s) 地址或素材内容寻址路径(服务端解出真实地址)。
-7. **素材对象键三分归档**:`canvases/{canvasID}/{taskID}/{kind}.{ext}` 任务产物、`uploads/{yyyymmdd}/{uuid}.{ext}` 用户上传、`relay/{yyyymmdd}/{uuid}.{ext}` 直连转存——新代码按语义选前缀,不混用。对象先删行后删不留孤儿字节;行落库失败要回收已写对象。
+7. **素材对象键三分归档**:`canvases/{canvasID}/{taskID}/{kind}.{ext}` 任务产物、`uploads/{yyyymmdd}/{uuid}.{ext}` 用户上传、`relay/{yyyymmdd}/{uuid}.{ext}` 直连转存——新代码按语义选前缀,不混用。对象先删行后删不留孤儿字节;行落库失败要回收已写对象。**48 号票增补**:内容去重的行级指向允许跨前缀(同哈希复用保留最老对象,uploads 行可指向 canvases/ 或 relay/ 的对象),前缀从此只表「首次写入来源」不表「行来源语义」;删除防护按对象键计数——`DELETE /assets/:id` 删行前按 `object_key` 数兄弟行,>0 只删行、=0 才物理删对象;canvases/relay 写入路径只落哈希不复用。
 8. **换道/熔断语义照 CONTEXT.md「调度与熔断」**:只有上游临时失败才换道(预扣原封带往下一渠道);客户端 4xx 与主动断开不换道不记熔断账;流一开不换道。不要在调用处自创重试逻辑。
 9. **上游产物 URL 是临时的(约 24h)**:任务成功即转存自有存储,`url` 列留厂商原址仅作出处;「LLM 可达地址」解析顺序 = 自有存储公网地址优先、厂商原址回落。
 10. **新渠道类型走 adaptor 模式**(在 `internal/relay`,现有 `openai` 与 `tencent-vod` 两类);**新对象存储平台 = 新驱动文件实现 `objectstore.Store` 接口**(原生 SDK × N 路线,已否决通用 S3 兼容层),键布局不变。

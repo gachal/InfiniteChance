@@ -25,18 +25,21 @@ const (
 	transferTimeout  = 5 * time.Minute
 )
 
-// Stored is one artifact's settled place in storage.
+// Stored is one artifact's settled place in storage. ContentHash 是字节的
+// SHA-256 十六进制(48 号票):调用方随素材行落列,纯内部指纹不出管理 API。
 type Stored struct {
 	Key         string
 	ContentType string
 	SizeBytes   int64
+	ContentHash string
 }
 
 // Transfer archives one generated artifact into object storage: a data: URI
 // is decoded in place, an http(s) URL is downloaded. The key files the
 // object under its canvas and task (图片/视频按画布/任务归档); the content
 // type is sanitized to bare mediatype. Callers finalize the task with the
-// returned facts, so 素材落库与任务终态仍同事务.
+// returned facts, so 素材落库与任务终态仍同事务。字节全量在手,Put 前算
+// 哈希随行返回(48 号票;产物与厂商转存字节唯一性极高,只落列不复用)。
 func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 	canvasID int64, taskID, kind, url string,
 ) (Stored, error) {
@@ -64,11 +67,12 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 	if contentType == "" || contentType == "application/octet-stream" {
 		contentType = defaultContentType(kind)
 	}
+	contentHash := hashBytes(payload) // 写前算:字节全量在手,先定指纹再落对象
 	key := ObjectKey(canvasID, taskID, kind, contentType)
 	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
 		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
 	}
-	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload))}, nil
+	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload)), ContentHash: contentHash}, nil
 }
 
 // TransferRelay archives one relay-delivered artifact (23 号票 relay_persist)
@@ -89,11 +93,12 @@ func TransferRelay(ctx context.Context, st objectstore.Store, hc *http.Client, u
 	if contentType == "" || contentType == "application/octet-stream" {
 		contentType = defaultContentType(KindImage)
 	}
+	contentHash := hashBytes(payload) // 写前算:同 Transfer
 	key := relayKey(time.Now(), contentType)
 	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
 		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
 	}
-	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload))}, nil
+	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload)), ContentHash: contentHash}, nil
 }
 
 // fetchArtifact downloads one http(s) artifact within the transfer bounds.

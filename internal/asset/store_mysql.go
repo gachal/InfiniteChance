@@ -15,6 +15,10 @@ func NewMySQLStore(db *sql.DB) *MySQLStore { return &MySQLStore{DB: db} }
 
 // url 列用 MEDIUMTEXT:厂商回 b64 时产物以 data: URI 落库(转存落地后
 // 新产物走 object_key,data: URI 只存在于历史行),几 MB 的内联图片要放得下。
+// content_hash 是 SHA-256 十六进制(64 字符,48 号票),空 = 未算(历史行
+// 态);两条普通索引服务 48 号票:idx_assets_hash 供上传查重与回填分组,
+// idx_assets_object_key 供删除防护的兄弟行计数(均不加唯一索引 —— 多行同
+// 哈希指向同一对象正是去重的合法结果)。
 const schema = `
 CREATE TABLE IF NOT EXISTS assets (
 	id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -27,12 +31,15 @@ CREATE TABLE IF NOT EXISTS assets (
 	object_key  VARCHAR(512) NOT NULL DEFAULT '',
 	content_type VARCHAR(100) NOT NULL DEFAULT '',
 	size_bytes  BIGINT       NOT NULL DEFAULT 0,
+	content_hash VARCHAR(64) NOT NULL DEFAULT '',
 	created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	last_used_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	KEY idx_assets_canvas (canvas_id, id),
 	KEY idx_assets_task (task_id),
 	KEY idx_assets_kind (kind, id),
-	KEY idx_assets_last_used (last_used_at, id)
+	KEY idx_assets_last_used (last_used_at, id),
+	KEY idx_assets_object_key (object_key),
+	KEY idx_assets_hash (content_hash)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
 // migrations widens tables created by earlier tickets in place (14 号票的
@@ -46,12 +53,17 @@ var migrations = []struct{ column, ddl string }{
 	{"content_type", "ALTER TABLE assets ADD COLUMN content_type VARCHAR(100) NOT NULL DEFAULT ''"},
 	{"size_bytes", "ALTER TABLE assets ADD COLUMN size_bytes BIGINT NOT NULL DEFAULT 0"},
 	{"last_used_at", "ALTER TABLE assets ADD COLUMN last_used_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)"},
+	{"content_hash", "ALTER TABLE assets ADD COLUMN content_hash VARCHAR(64) NOT NULL DEFAULT ''"},
 }
 
 // indexMigrations adds the secondary indexes the fresh schema carries; the
-// 47 号票的 last-used 排序索引长在 CREATE TABLE 里,存量表同样要在原地补上.
+// 47 号票的 last-used 排序索引与 48 号票的去重双索引(object_key 兄弟行
+// 计数、content_hash 上传查重与回填分组)长在 CREATE TABLE 里,存量表同样
+// 要在原地补上.
 var indexMigrations = []struct{ index, ddl string }{
 	{"idx_assets_last_used", "ALTER TABLE assets ADD INDEX idx_assets_last_used (last_used_at, id)"},
+	{"idx_assets_object_key", "ALTER TABLE assets ADD INDEX idx_assets_object_key (object_key)"},
+	{"idx_assets_hash", "ALTER TABLE assets ADD INDEX idx_assets_hash (content_hash)"},
 }
 
 // EnsureSchema creates the assets table when missing and widens an existing
@@ -96,7 +108,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 }
 
 const assetColumns = `id, kind, canvas_id, task_id, model, prompt, url,
-	object_key, content_type, size_bytes, created_at, last_used_at`
+	object_key, content_type, size_bytes, content_hash, created_at, last_used_at`
 
 func (s *MySQLStore) Create(ctx context.Context, a Asset) (Asset, error) {
 	var prompt any
@@ -104,9 +116,9 @@ func (s *MySQLStore) Create(ctx context.Context, a Asset) (Asset, error) {
 		prompt = a.Prompt
 	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes)
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, content_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes, a.ContentHash)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -155,8 +167,8 @@ func (s *MySQLStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	where, args := listWhere(f)
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT a.id, a.kind, a.canvas_id, a.task_id, a.model, a.prompt, a.url,
-			a.object_key, a.content_type, a.size_bytes, a.created_at, a.last_used_at, c.name
-		 FROM assets a LEFT JOIN canvases c ON c.id = a.canvas_id`+
+		a.object_key, a.content_type, a.size_bytes, a.content_hash, a.created_at, a.last_used_at, c.name
+		FROM assets a LEFT JOIN canvases c ON c.id = a.canvas_id`+
 			where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
@@ -169,7 +181,7 @@ func (s *MySQLStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 		var l Listed
 		var prompt, canvasName sql.NullString
 		if err := rows.Scan(&l.ID, &l.Kind, &l.CanvasID, &l.TaskID, &l.Model, &prompt,
-			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &l.CreatedAt, &l.LastUsedAt, &canvasName); err != nil {
+			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &l.ContentHash, &l.CreatedAt, &l.LastUsedAt, &canvasName); err != nil {
 			return nil, err
 		}
 		l.Prompt = prompt.String
@@ -234,9 +246,105 @@ func scanAsset(row rowScanner) (Asset, error) {
 	var a Asset
 	var prompt sql.NullString
 	if err := row.Scan(&a.ID, &a.Kind, &a.CanvasID, &a.TaskID, &a.Model, &prompt,
-		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &a.CreatedAt, &a.LastUsedAt); err != nil {
+		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &a.ContentHash, &a.CreatedAt, &a.LastUsedAt); err != nil {
 		return Asset{}, err
 	}
 	a.Prompt = prompt.String
 	return a, nil
+}
+
+// FindOldestByHash answers the oldest row carrying the hash (48 号票上传
+// 复用的查重点;ORDER BY id 即最老,组内保留最老对象的同一口径)。
+func (s *MySQLStore) FindOldestByHash(ctx context.Context, contentHash string) (Asset, error) {
+	row := s.DB.QueryRowContext(ctx,
+		`SELECT `+assetColumns+` FROM assets WHERE content_hash = ? ORDER BY id ASC LIMIT 1`, contentHash)
+	a, err := scanAsset(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Asset{}, ErrNotFound
+	}
+	return a, err
+}
+
+// CountOthersOnObjectKey answers the sibling-row count behind one object key
+// (48 号票删除防护;idx_assets_object_key 服务此查询)。
+func (s *MySQLStore) CountOthersOnObjectKey(ctx context.Context, objectKey string, excludeID int64) (int, error) {
+	var n int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assets WHERE object_key = ? AND id <> ?`, objectKey, excludeID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// ListWithoutHash pages un-hashed rows with an object key (48 号票回填的
+// 批次查询),游标 = afterID:对象读不动的行留在无哈希态也不会卡住推进,
+// 下一轮重跑自然重试。
+func (s *MySQLStore) ListWithoutHash(ctx context.Context, afterID int64, limit int) ([]Asset, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+assetColumns+` FROM assets
+		 WHERE content_hash = '' AND object_key <> '' AND id > ? ORDER BY id ASC LIMIT ?`,
+		afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAssets(rows)
+}
+
+// SetContentHash stamps one row's content hash (48 号票回填的落列)。
+func (s *MySQLStore) SetContentHash(ctx context.Context, id int64, contentHash string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE assets SET content_hash = ? WHERE id = ?`, contentHash, id)
+	return err
+}
+
+// ListByHash answers every row of one hash group, oldest first (48 号票
+// 回填的组内成员;首行即保留行)。
+func (s *MySQLStore) ListByHash(ctx context.Context, contentHash string) ([]Asset, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+assetColumns+` FROM assets WHERE content_hash = ? ORDER BY id ASC`, contentHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAssets(rows)
+}
+
+// DuplicateHashes answers the hashes carried by more than one row (48 号票
+// 回填的合并候选;组内保留与改指由调用方逐组推进)。
+func (s *MySQLStore) DuplicateHashes(ctx context.Context) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT content_hash FROM assets WHERE content_hash <> '' GROUP BY content_hash HAVING COUNT(*) > 1 ORDER BY MIN(id) ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// SetObjectKey repoints one row at another object key (48 号票回填的改指;
+// 调用方负责在改指成功后才删冗余对象)。
+func (s *MySQLStore) SetObjectKey(ctx context.Context, id int64, objectKey string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE assets SET object_key = ? WHERE id = ?`, objectKey, id)
+	return err
+}
+
+// scanAssets drains an assets query into rows (回填的批读共用).
+func scanAssets(rows *sql.Rows) ([]Asset, error) {
+	var out []Asset
+	for rows.Next() {
+		a, err := scanAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

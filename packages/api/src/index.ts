@@ -477,6 +477,16 @@ export interface StorageSettingsInput {
   }
 }
 
+/** 素材哈希回填进度快照(48 号票):running = 任务在跑;四项计数是本次
+ * 触发以来的累计,任务结束后的值保留到下次触发重置。 */
+export interface HashBackfillProgress {
+  running: boolean
+  scanned_rows: number
+  hashed_rows: number
+  repointed_rows: number
+  deleted_objects: number
+}
+
 // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
 
 /** 一条请求级用量行的状态:成功,或离开网关后的失败(上游错误摘要列区分
@@ -1007,6 +1017,18 @@ export class ApiClient {
       body: input,
     })
     return body.storage
+  }
+
+  // ---- 网关管理:素材哈希回填(挂 /admin/assets/hash-backfill,需 JWT 会话,48 号票)----
+
+  /** 触发哈希回填与去重(幂等:任务在跑时 no-op 回当前进度)。 */
+  startHashBackfill(): Promise<HashBackfillProgress> {
+    return this.request<HashBackfillProgress>('/admin/assets/hash-backfill', { method: 'POST' })
+  }
+
+  /** 读取哈希回填进度快照(轮询用)。 */
+  getHashBackfillProgress(): Promise<HashBackfillProgress> {
+    return this.request<HashBackfillProgress>('/admin/assets/hash-backfill')
   }
 
   private async request<T>(path: string, { method = 'GET', body, allow = [] }: RequestOptions = {}): Promise<T> {

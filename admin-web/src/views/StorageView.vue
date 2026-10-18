@@ -3,8 +3,9 @@
 // (36 号票):local 本地卷为缺省,oss/cos 各走原生 SDK。密钥只写不读
 // (渠道密钥同款:仅 has_* 与尾 4 位提示,留空保存 = 保留已存密钥);保存
 // 即时生效,画布侧按请求读表。relay_persist 开启要求所选云驱动已配
-// public_base_url。
-import { onMounted, reactive, ref, watch } from 'vue';
+// public_base_url。48 号票追加素材哈希回填:存量素材补算内容哈希并合并
+// 重复对象,手动触发、幂等可重跑、进度轮询(2s;关闭页面不影响任务)。
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -22,7 +23,7 @@ import {
   Switch,
 } from 'ant-design-vue';
 
-import { ApiError, type StorageSettings } from '@infinitechance/api';
+import { ApiError, type HashBackfillProgress, type StorageSettings } from '@infinitechance/api';
 
 import { authErrorMessage, useAuth } from '../auth';
 
@@ -154,6 +155,66 @@ function formatSavedAt(): string {
     return savedAt.value;
   }
 }
+
+// ---- 48 号票:素材哈希回填与去重 ----
+
+const backfill = reactive<HashBackfillProgress>({
+  running: false,
+  scanned_rows: 0,
+  hashed_rows: 0,
+  repointed_rows: 0,
+  deleted_objects: 0,
+});
+const backfillBusy = ref(false);
+const backfillError = ref('');
+// 有过任何动作才显示计数行,避免零值噪音。
+const backfillActive = computed(
+  () => backfill.scanned_rows > 0 || backfill.hashed_rows > 0 || backfill.repointed_rows > 0 || backfill.deleted_objects > 0,
+);
+let backfillTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopBackfillPolling(): void {
+  if (backfillTimer !== null) {
+    clearInterval(backfillTimer);
+    backfillTimer = null;
+  }
+}
+
+function applyBackfillProgress(p: HashBackfillProgress): void {
+  Object.assign(backfill, p);
+  if (!p.running) {
+    stopBackfillPolling();
+  }
+}
+
+async function pollBackfill(): Promise<void> {
+  try {
+    applyBackfillProgress(await auth.client.getHashBackfillProgress());
+  } catch (e) {
+    backfillError.value = e instanceof ApiError ? e.message : authErrorMessage(e);
+    stopBackfillPolling();
+  }
+}
+
+async function startBackfill(): Promise<void> {
+  if (backfillBusy.value || backfill.running) {
+    return;
+  }
+  backfillBusy.value = true;
+  backfillError.value = '';
+  try {
+    applyBackfillProgress(await auth.client.startHashBackfill());
+    if (backfill.running) {
+      backfillTimer = setInterval(() => void pollBackfill(), 2000);
+    }
+  } catch (e) {
+    backfillError.value = e instanceof ApiError ? e.message : authErrorMessage(e);
+  } finally {
+    backfillBusy.value = false;
+  }
+}
+
+onUnmounted(() => stopBackfillPolling());
 </script>
 
 <template>
@@ -319,6 +380,47 @@ function formatSavedAt(): string {
         </Button>
         <span class="text-neutral-500">保存后即时生效,无需重启服务</span>
       </Space>
+
+      <div class="mt-8 border-t border-neutral-200 pt-6">
+        <h3 class="m-0 mb-2 text-base font-medium">
+          素材哈希回填与去重
+        </h3>
+        <p class="mb-4 max-w-[640px] text-neutral-500">
+          对存量素材补算内容哈希(SHA-256 指纹)并合并重复对象:相同字节全库只留一份,
+          其余行改指同一对象后删除冗余字节。新上传已自动去重,存量合并在升级后手动触发一次即可。
+          回填会整库读一遍对象字节(云存储计读流量);幂等可重跑,任务在跑时再点不重复起任务,无独立取消。
+        </p>
+        <Space
+          align="center"
+          wrap
+        >
+          <Button
+            :loading="backfillBusy"
+            :disabled="backfill.running"
+            @click="startBackfill"
+          >
+            {{ backfill.running ? '回填进行中…' : '开始回填' }}
+          </Button>
+          <span
+            v-if="backfill.running"
+            class="text-neutral-500"
+          >正在后台推进,关闭页面不影响任务</span>
+        </Space>
+        <Alert
+          v-if="backfillError"
+          class="mt-4"
+          type="error"
+          show-icon
+          :message="backfillError"
+        />
+        <p
+          v-if="backfillActive"
+          class="mb-0 mt-4 text-neutral-600"
+        >
+          本次回填:已扫 {{ backfill.scanned_rows }} 行 · 已算哈希 {{ backfill.hashed_rows }} 行 ·
+          已改指 {{ backfill.repointed_rows }} 行 · 已删冗余对象 {{ backfill.deleted_objects }} 个
+        </p>
+      </div>
     </Form>
   </Page>
 </template>

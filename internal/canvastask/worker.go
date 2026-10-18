@@ -260,6 +260,7 @@ func (w *Worker) archive(ctx context.Context, t Task, url string) (asset.Asset, 
 	a.ObjectKey = stored.Key
 	a.ContentType = stored.ContentType
 	a.SizeBytes = stored.SizeBytes
+	a.ContentHash = stored.ContentHash // 48 号票:转存链只落列不复用
 	return a, nil
 }
 

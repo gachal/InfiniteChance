@@ -112,6 +112,39 @@ func (f *fakeStore) TouchLastUsed(_ context.Context, id int64) error {
 	return nil
 }
 
+// FindOldestByHash 48 号票上传复用的查重:内存实现按哈希找最老行。
+func (f *fakeStore) FindOldestByHash(_ context.Context, contentHash string) (asset.Asset, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var oldest asset.Asset
+	found := false
+	for _, a := range f.assets {
+		if a.ContentHash != contentHash {
+			continue
+		}
+		if !found || a.ID < oldest.ID {
+			oldest, found = a, true
+		}
+	}
+	if !found {
+		return asset.Asset{}, asset.ErrNotFound
+	}
+	return oldest, nil
+}
+
+// CountOthersOnObjectKey 48 号票删除防护的兄弟行计数。
+func (f *fakeStore) CountOthersOnObjectKey(_ context.Context, objectKey string, excludeID int64) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, a := range f.assets {
+		if a.ObjectKey == objectKey && a.ID != excludeID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func canvasNameOf(id int64) string {
 	if id == 7 {
 		return "主画布"

@@ -178,6 +178,88 @@ func TestMySQLAssetListFilterAndDelete(t *testing.T) {
 	}
 }
 
+// 48 号票:哈希查重、兄弟行计数与回填行访问在 MySQL 方言上同语义 ——
+// 回填主链由 SQLite 侧测试覆盖,这里锁方言一致性。
+func TestMySQLAssetHashDedupQueries(t *testing.T) {
+	store := openAssetTestDB(t)
+	ctx := context.Background()
+
+	a, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u1",
+		ObjectKey: "canvases/1/ct_a/image.png", ContentHash: "hash-a"})
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u2",
+		ObjectKey: "canvases/1/ct_b/image.png", ContentHash: "hash-a"})
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if _, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u3",
+		ObjectKey: "uploads/20261018/c.png", ContentHash: "hash-c"}); err != nil {
+		t.Fatalf("create c: %v", err)
+	}
+	unhashed, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u4",
+		ObjectKey: "uploads/20261018/pending.png"})
+	if err != nil {
+		t.Fatalf("create unhashed: %v", err)
+	}
+	if _, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1,
+		URL: "https://vendor.example/only.png"}); err != nil {
+		t.Fatalf("create vendor-only: %v", err)
+	}
+
+	// 查重:同哈希最老行、未命中 ErrNotFound。
+	oldest, err := store.FindOldestByHash(ctx, "hash-a")
+	if err != nil || oldest.ID != a.ID {
+		t.Fatalf("FindOldestByHash = %d/%v, want row a", oldest.ID, err)
+	}
+	if _, err := store.FindOldestByHash(ctx, "hash-missing"); !errors.Is(err, asset.ErrNotFound) {
+		t.Errorf("missing hash = %v, want ErrNotFound", err)
+	}
+
+	// 兄弟行计数:a/b 异键各为独占对象,互不为兄弟;改指共享后才计 1。
+	if n, err := store.CountOthersOnObjectKey(ctx, a.ObjectKey, a.ID); err != nil || n != 0 {
+		t.Errorf("siblings of a = %d/%v, want 0 (b points at another object)", n, err)
+	}
+	if err := store.SetObjectKey(ctx, b.ID, a.ObjectKey); err != nil {
+		t.Fatalf("SetObjectKey: %v", err)
+	}
+	if n, err := store.CountOthersOnObjectKey(ctx, a.ObjectKey, a.ID); err != nil || n != 1 {
+		t.Errorf("siblings of a after repoint = %d/%v, want 1 (row b now shares)", n, err)
+	}
+	if n, err := store.CountOthersOnObjectKey(ctx, a.ObjectKey, b.ID); err != nil || n != 1 {
+		t.Errorf("siblings of b = %d/%v, want 1 (row a)", n, err)
+	}
+
+	// 回填批读:只出无哈希且带对象键的行,游标按 id 推进。
+	rows, err := store.ListWithoutHash(ctx, 0, 100)
+	if err != nil || len(rows) != 1 || rows[0].ID != unhashed.ID {
+		t.Fatalf("ListWithoutHash = %+v/%v, want only the unhashed row", rows, err)
+	}
+	more, err := store.ListWithoutHash(ctx, unhashed.ID, 100)
+	if err != nil || len(more) != 0 {
+		t.Fatalf("cursor page = %+v/%v, want empty", more, err)
+	}
+
+	// 落列 → 查重可见。
+	if err := store.SetContentHash(ctx, unhashed.ID, "hash-u"); err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if got, _ := store.Get(ctx, unhashed.ID); got.ContentHash != "hash-u" {
+		t.Errorf("content_hash = %q, want hash-u", got.ContentHash)
+	}
+
+	// 分组与改指(b 已在兄弟计数段改指 a 的键,组内成员读取按序)。
+	dupes, err := store.DuplicateHashes(ctx)
+	if err != nil || len(dupes) != 1 || dupes[0] != "hash-a" {
+		t.Fatalf("DuplicateHashes = %v/%v, want [hash-a]", dupes, err)
+	}
+	members, err := store.ListByHash(ctx, "hash-a")
+	if err != nil || len(members) != 2 || members[0].ID != a.ID || members[1].ID != b.ID {
+		t.Fatalf("ListByHash = %+v/%v, want [a b] ascending", members, err)
+	}
+}
+
 func TestMySQLAssetLegacyRowMigratesWithDefaults(t *testing.T) {
 	store := openAssetTestDB(t)
 	ctx := context.Background()

@@ -309,7 +309,9 @@ const timeFormat = time.RFC3339Nano
 // Delete removes one asset: the object goes first, so a failed delete
 // leaves the row in place for a retry and no orphaned bytes outlive the
 // row. 历史行(无对象)直接删行;对象删除但行删除失败的窄缝里,预览按
-// 「内容不可用」降级,不报错。
+// 「内容不可用」降级,不报错。48 号票删除防护:删行前按 object_key 数
+// 兄弟行 —— 共享对象(上传复用/回填改指的结果)下 >0 只删行,其余行
+// 预览不坏;=0 才物理删对象。计数失败按防护处理,不冒删共享字节的险。
 func (h *Handlers) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id < 1 {
@@ -327,10 +329,18 @@ func (h *Handlers) Delete(c *gin.Context) {
 		return
 	}
 	if a.ObjectKey != "" && h.Storage != nil {
-		if err := h.Storage.Delete(c.Request.Context(), a.ObjectKey); err != nil {
-			log.Printf("asset: delete object %q of asset %d: %v", a.ObjectKey, id, err)
+		siblings, err := h.Store.CountOthersOnObjectKey(c.Request.Context(), a.ObjectKey, id)
+		if err != nil {
+			log.Printf("asset: count siblings on %q of asset %d: %v", a.ObjectKey, id, err)
 			apierr.Internal(c, "素材文件删除失败,请稍后再试")
 			return
+		}
+		if siblings == 0 {
+			if err := h.Storage.Delete(c.Request.Context(), a.ObjectKey); err != nil {
+				log.Printf("asset: delete object %q of asset %d: %v", a.ObjectKey, id, err)
+				apierr.Internal(c, "素材文件删除失败,请稍后再试")
+				return
+			}
 		}
 	}
 	if err := h.Store.Delete(c.Request.Context(), id); err != nil {
