@@ -19,6 +19,7 @@ import {
   recordThumbURL,
   truncatePrompt,
 } from '../records'
+import { useThumbFallback } from '../thumbnail'
 
 const props = defineProps<{
   /** 当前画布的任务流水,新到旧(与任务轮询同拍刷新:编辑器经
@@ -43,19 +44,30 @@ const expandedId = ref('')
 
 // 缩略图加载失败的任务行(素材被删/厂商临时地址过期):翻成不可用占位并
 // 收走插入按钮。AssetPanel 同款信任 content 地址、按需降级的纪律。
+// 49 号票起图片行缩略先行:缩略失败先回落原图,原图也失败才落「已失联」;
+// 视频行不换(首帧 <video> 语义不动),asset_id=0 的厂商直连行本就派生
+// 不出缩略地址,保持原图。
 const unavailable = reactive(new Set<string>())
+const thumbs = useThumbFallback()
 
 function toggleExpand(task: CanvasTask): void {
   expandedId.value = expandedId.value === task.id ? '' : task.id
 }
 
-/** 成功行的缩略图地址;已判失联的行不再发请求(空串由模板落占位)。 */
+/** 成功行的缩略图地址;已判失联的行不再发请求(空串由模板落占位)。图片
+ * 行走缩略派生,视频行与厂商直连行保持原地址。 */
 function thumbURL(task: CanvasTask): string {
-  return unavailable.has(task.id) ? '' : recordThumbURL(task)
+  if (unavailable.has(task.id)) {
+    return ''
+  }
+  const original = recordThumbURL(task)
+  return task.kind === 'video' ? original : thumbs.displayURL(original)
 }
 
 function onThumbError(task: CanvasTask): void {
-  unavailable.add(task.id)
+  if (task.kind === 'video' || !thumbs.onThumbError(recordThumbURL(task))) {
+    unavailable.add(task.id)
+  }
 }
 
 /** 行内插入按钮是否出现:成功、有素材引用、且地址未失联。 */

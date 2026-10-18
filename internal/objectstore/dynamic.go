@@ -157,6 +157,16 @@ func (d *Dynamic) Delete(ctx context.Context, key string) error {
 	return cloudErr
 }
 
+// ThumbnailParam delegates to the settings-selected driver (49 号票):local
+// (缺省/读取失败/驱动构造失败降级)恒答 "" — 调用方回落 content 端点,
+// 显示面退化为原图,与升级前行为逐字节一致。切驱动即时生效,无迁移。
+func (d *Dynamic) ThumbnailParam(ctx context.Context, longestEdge int) string {
+	if st := d.primary(ctx); st != nil {
+		return st.ThumbnailParam(ctx, longestEdge)
+	}
+	return ""
+}
+
 // 动态与两代云驱动都兑现同一接缝。
 var _ Store = (*Dynamic)(nil)
 var _ Store = (*OSS)(nil)

@@ -24,6 +24,7 @@ import {
   type VideoComposerRef,
   type VideoRefRole,
 } from '../composer'
+import { useThumbFallback } from '../thumbnail'
 
 const props = defineProps<{
   /** 当前模式:图片生成或视频生成(编辑器持有,切换不清空两套草稿)。 */
@@ -79,6 +80,10 @@ const emit = defineEmits<{
 }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
+
+// chip 缩略显示(49 号票):条目 url 是发送载荷原样保留,仅 <img> 的显示
+// 地址按内容寻址派生缩略,onerror 回落原图。
+const thumbs = useThumbFallback()
 
 const isVideo = computed(() => props.mode === 'video')
 const activeModels = computed(() => (isVideo.value ? props.videoModels : props.imageModels))
@@ -290,8 +295,9 @@ function onFileChange(e: Event): void {
         class="ref-chip"
       >
         <img
-          :src="r.url"
+          :src="thumbs.displayURL(r.url)"
           alt="参考图"
+          @error="thumbs.onThumbError(r.url)"
         >
         <button
           class="ref-remove"
@@ -346,8 +352,9 @@ function onFileChange(e: Event): void {
       >
         <img
           v-if="r.kind === 'image'"
-          :src="r.url"
+          :src="thumbs.displayURL(r.url)"
           alt="参考图"
+          @error="thumbs.onThumbError(r.url)"
         >
         <span
           v-else

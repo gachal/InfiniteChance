@@ -1,11 +1,13 @@
 package asset_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -258,6 +260,8 @@ func (f *failingStorage) Open(_ context.Context, _ string) (io.ReadCloser, error
 
 func (f *failingStorage) Delete(context.Context, string) error { return nil }
 
+func (f *failingStorage) ThumbnailParam(context.Context, int) string { return "" }
+
 // newFailingStorageEnv wires the routes over a store whose Open always
 // fails, mirroring newAssetEnv minus the real FileSystem.
 func newFailingStorageEnv(t *testing.T, openErr error) *assetEnv {
@@ -474,5 +478,200 @@ func TestDeleteRemovesObjectThenRow(t *testing.T) {
 	w = env.do(t, http.MethodDelete, idPath(created.ID, ""))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("second delete status = %d, want 404", w.Code)
+	}
+}
+
+// thumbStorage is a Store double whose ThumbnailParam answers a fixed
+// processing instruction — the shape of an active cloud driver with native
+// image processing (49 号票语义矩阵的「支持处理」侧)。
+type thumbStorage struct {
+	param string
+}
+
+func (s *thumbStorage) Put(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
+
+func (s *thumbStorage) Open(context.Context, string) (io.ReadCloser, error) {
+	return nil, fs.ErrNotExist
+}
+
+func (s *thumbStorage) Delete(context.Context, string) error { return nil }
+
+func (s *thumbStorage) ThumbnailParam(context.Context, int) string { return s.param }
+
+const testThumbParam = "?fake-process/thumbnail/768x768"
+
+// newThumbEnv wires the routes with a thumb-capable storage and a public
+// base; base is a func so tests can flip configuration between requests.
+func newThumbEnv(t *testing.T, param string) *assetEnv {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	store := newFakeStore()
+	base := "https://cdn.example.com/bucket/"
+	h := &asset.Handlers{
+		Store:         store,
+		Storage:       &thumbStorage{param: param},
+		PublicBaseURL: func(context.Context) string { return base },
+	}
+	r := gin.New()
+	asset.RegisterContentRoutes(r.Group("/assets"), h)
+	asset.RegisterLibraryRoutes(r.Group("/assets"), h)
+	return &assetEnv{engine: r, store: store}
+}
+
+// 语义矩阵第 2 支:图片行有 object_key 且活跃驱动支持处理、公网基座已配
+// → 302 到基座 + 对象键 + 处理参数,object_key 与桶地址不出 API 的契约
+// 靠相对路径维持。
+func TestThumbRedirectsToCloudProcessedURL(t *testing.T) {
+	env := newThumbEnv(t, testThumbParam)
+	created, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 7, URL: "https://img.example/old.png",
+		ObjectKey: "canvases/7/ct_t/image.png", ContentType: "image/png", SizeBytes: 9,
+	})
+
+	w := env.do(t, http.MethodGet, idPath(created.ID, "/thumb"))
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	want := "https://cdn.example.com/bucket/canvases/7/ct_t/image.png" + testThumbParam
+	if loc := w.Header().Get("Location"); loc != want {
+		t.Errorf("location = %q, want %q", loc, want)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc == "" {
+		t.Errorf("cache-control empty, want a short max-age")
+	}
+}
+
+// 语义矩阵第 1 支:行不存在 → 404(同 content)。
+func TestThumbMissingRowAnswersNotFound(t *testing.T) {
+	env := newThumbEnv(t, testThumbParam)
+	w := env.do(t, http.MethodGet, idPath(4242, "/thumb"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// 语义矩阵第 3 支的逐格:其余一切 → 302 回 content(content 的既有语义
+// 全量兜底,前端 <img> 不感知差别)。期望地址 = handler 里的相对路径形态
+// (/api 前缀),与测试路由组的挂载前缀无关。
+func TestThumbFallsBackToContent(t *testing.T) {
+	cases := []struct {
+		name      string
+		kind      string
+		url       string
+		objectKey string
+		stored    bool
+		env       *assetEnv
+	}{
+		{"local driver(参数空)", asset.KindImage, "https://img.example/x.png", "canvases/1/ct_x/blob.bin", true, newAssetEnv(t)},
+		{"无 object_key 的历史行", asset.KindImage, "https://img.example/legacy.png", "", false, newThumbEnv(t, testThumbParam)},
+		{"data: URI 行", asset.KindImage, "data:image/png;base64,aGk=", "", false, newThumbEnv(t, testThumbParam)},
+		{"非图片 kind 的防御分支", asset.KindVideo, "https://vid.example/x.mp4", "canvases/1/ct_x/blob.bin", false, newThumbEnv(t, testThumbParam)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			created, _ := tc.env.store.Create(context.Background(), asset.Asset{
+				Kind: tc.kind, CanvasID: 1, URL: tc.url,
+				ObjectKey: tc.objectKey, ContentType: "application/octet-stream", SizeBytes: 3,
+			})
+			if tc.stored {
+				_ = tc.env.storage.Put(context.Background(), tc.objectKey, strings.NewReader("abc"), 3, "application/octet-stream")
+			}
+			w := tc.env.do(t, http.MethodGet, idPath(created.ID, "/thumb"))
+			if w.Code != http.StatusFound {
+				t.Fatalf("status = %d, want 302", w.Code)
+			}
+			if loc := w.Header().Get("Location"); loc != "/api"+idPath(created.ID, "/content") {
+				t.Errorf("location = %q, want %q", loc, "/api"+idPath(created.ID, "/content"))
+			}
+		})
+	}
+}
+
+// 公网基座未配置时同样回落 content:拼不出云处理 URL,不虚构地址。
+func TestThumbWithoutPublicBaseFallsBackToContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newFakeStore()
+	h := &asset.Handlers{
+		Store:         store,
+		Storage:       &thumbStorage{param: testThumbParam},
+		PublicBaseURL: func(context.Context) string { return "" },
+	}
+	r := gin.New()
+	asset.RegisterContentRoutes(r.Group("/assets"), h)
+	env := &assetEnv{engine: r, store: store}
+
+	created, _ := store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindImage, CanvasID: 1, URL: "https://img.example/x.png",
+		ObjectKey: "canvases/1/ct_nb/image.png", ContentType: "image/png",
+	})
+	w := env.do(t, http.MethodGet, idPath(created.ID, "/thumb"))
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/api"+idPath(created.ID, "/content") {
+		t.Errorf("location = %q, want the content path", loc)
+	}
+}
+
+// 非法 id:400(与 content 同款)。
+func TestThumbInvalidIDAnswersBadRequest(t *testing.T) {
+	env := newThumbEnv(t, testThumbParam)
+	w := env.do(t, http.MethodGet, "/assets/abc/thumb")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// 列表与上传响应都带 thumbnail_url(相对路径,所有 kind 恒下发 —— 前端
+// 零判空,兜底语义收在端点内)。
+func TestListAndUploadCarryThumbnailURL(t *testing.T) {
+	env := newAssetEnv(t)
+	created, _ := env.store.Create(context.Background(), asset.Asset{
+		Kind: asset.KindVideo, CanvasID: 1, URL: "https://vid.example/x.mp4",
+		ObjectKey: "canvases/1/ct_v/x.mp4", ContentType: "video/mp4",
+	})
+
+	w := env.do(t, http.MethodGet, "/assets")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200", w.Code)
+	}
+	var body struct {
+		Assets []struct {
+			ID           int64  `json:"id"`
+			ThumbnailURL string `json:"thumbnail_url"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Assets) != 1 || body.Assets[0].ThumbnailURL != "/api"+idPath(created.ID, "/thumb") {
+		t.Errorf("list thumbnail_url = %+v, want %q", body.Assets, "/api"+idPath(created.ID, "/thumb"))
+	}
+
+	uploadBody := &bytes.Buffer{}
+	writer := multipart.NewWriter(uploadBody)
+	_ = writer.WriteField("kind", "image")
+	part, _ := writer.CreateFormFile("file", "pic.png")
+	_, _ = part.Write([]byte("\x89PNG\r\n\x1a\ntestbytes"))
+	writer.Close()
+	req := httptest.NewRequest(http.MethodPost, "/assets/upload", uploadBody)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	env.engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, want 201", rec.Code)
+	}
+	var up struct {
+		Asset struct {
+			ThumbnailURL string `json:"thumbnail_url"`
+		} `json:"asset"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	if up.Asset.ThumbnailURL == "" {
+		t.Errorf("upload response missing thumbnail_url")
 	}
 }

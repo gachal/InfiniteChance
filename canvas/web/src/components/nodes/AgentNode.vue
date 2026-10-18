@@ -24,6 +24,7 @@ import {
   readyAgentMediaRefs,
 } from '../../agentMedia'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import { useThumbFallback } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
 
 const props = defineProps<{
@@ -252,6 +253,10 @@ const rounds = computed(() => agentRoundCount(history.value))
 const attachments = computed(() => props.attachments)
 const hasConversation = computed(() => history.value.length > 0 || attachments.value.length > 0)
 
+// 附件图片 chip 的缩略显示(49 号票):m.ref 是发送载荷,只换 <img> 的
+// 显示地址,onerror 回落原图。
+const thumbs = useThumbFallback()
+
 const canSend = computed(
   () =>
     input.value.trim().length > 0 &&
@@ -356,8 +361,9 @@ function onDeliver(): void {
         >
           <img
             v-if="m.state === 'ready' && m.kind === 'image'"
-            :src="m.ref"
+            :src="m.ref ? thumbs.displayURL(m.ref) : ''"
             alt="附件图片"
+            @error="m.ref ? thumbs.onThumbError(m.ref) : undefined"
           >
           <span
             v-else

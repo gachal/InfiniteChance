@@ -126,3 +126,11 @@ func TestFileSystemPutReplacesExistingObject(t *testing.T) {
 		t.Errorf("object = %q, want the replacement", got)
 	}
 }
+
+// local 卷恒不支持缩略(49 号票):调用方回落 content,显示原图。
+func TestFileSystemThumbnailParamAlwaysEmpty(t *testing.T) {
+	st := newTestStore(t)
+	if got := st.ThumbnailParam(context.Background(), 768); got != "" {
+		t.Fatalf("local param = %q, want empty", got)
+	}
+}

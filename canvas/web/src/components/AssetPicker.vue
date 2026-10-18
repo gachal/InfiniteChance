@@ -10,6 +10,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ApiError, type AssetRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
+import { useThumbFallback } from '../thumbnail'
 
 /** 素材种类词表(与素材域 kind 同形)。 */
 export type PickerKind = 'image' | 'video' | 'audio'
@@ -103,6 +104,10 @@ function kindLabel(k: PickerKind): string {
   return k === 'image' ? '图片' : k === 'video' ? '视频' : '音频'
 }
 
+// 图片条目缩略显示(49 号票):onerror 回落 content_url;点选/取消链路
+// 只传 AssetRecord,不受显示面影响。
+const thumbs = useThumbFallback()
+
 const isSelected = (a: AssetRecord): boolean => props.selectedAssetIds.includes(a.id)
 
 function onPick(a: AssetRecord): void {
@@ -185,10 +190,11 @@ onMounted(refresh)
       >
         <img
           v-if="a.kind === 'image'"
-          :src="a.content_url"
+          :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
           class="thumb"
           loading="lazy"
           alt="素材缩略图"
+          @error="thumbs.onThumbError(a.content_url)"
         >
         <!-- 音频没有缩略图:给试听条占缩略位(素材面板同款);点击不触发
              卡片的选择/取消。 -->

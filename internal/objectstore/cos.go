@@ -125,6 +125,16 @@ func (s *COS) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// ThumbnailParam renders the CI-native thumbnail instruction (49 号票):
+// 限定框内等比缩小、`>` 只缩不放,不转格式(GIF 动画与 PNG alpha 天然
+// 保真)—— 归属数据万象 CI,需桶侧开通并绑定,按处理次数计费。
+func (s *COS) ThumbnailParam(_ context.Context, longestEdge int) string {
+	if longestEdge <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("?imageMogr2/thumbnail/%dx%d>", longestEdge, longestEdge)
+}
+
 // isCOSNotFound maps the SDK's not-found shapes onto the store contract:
 // Open answers an fs.ErrNotExist-compatible error for unknown keys, which
 // Dynamic uses as the「云未命中 → 回退本地」signal。SDK 的 IsNotFoundError

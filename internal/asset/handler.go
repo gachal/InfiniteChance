@@ -1,7 +1,9 @@
 package asset
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -21,19 +23,34 @@ import (
 var transferClient = &http.Client{Timeout: transferTimeout}
 
 // Handlers serves the creator asset endpoints. 10 号票落了内容寻址;14 号票
-// 的素材库管理(列表/过滤/删除/下载)在同一组 Handlers 上继续长。
+// 的素材库管理(列表/过滤/删除/下载)在同一组 Handlers 上继续长;49 号票
+// 的缩略端点用 PublicBaseURL 解析活跃驱动的公网基座。
 type Handlers struct {
 	Store Store
 	// Storage backs preview/download for transferred artifacts; nil keeps
 	// the legacy behavior (redirect to the stored URL / inline data: URI).
 	Storage objectstore.Store
+	// PublicBaseURL answers the active driver's public base (settings 注入,
+	// 19 号票接缝);nil = 未接线,缩略端点恒回落 content。
+	PublicBaseURL func(ctx context.Context) string
 }
+
+// thumbnailEdge is the one-tier thumbnail semantic (49 号票):等比缩小到
+// 768 限定框内、只缩不放、不转格式 —— 各云驱动据此拼各自的参数串。
+const thumbnailEdge = 768
+
+// thumbCacheMaxAge lets browsers reuse a thumb redirect briefly: the target
+// (public base + object key + params) is stable until the driver flips,
+// and the frontend onerror fallback covers a stale target anyway.
+const thumbCacheMaxAge = 300
 
 // RegisterContentRoutes mounts (relative to the group, which the binary
 // mounts at /assets OUTSIDE the JWT group):
 //
 //	GET /:id/content — the artifact: storage bytes, 302 to its URL, or
 //	                   inline for data URIs; ?download=1 sends attachment
+//	GET /:id/thumb   — display-layer thumbnail: 302 to the cloud-processed
+//	                   URL, or 302 back to content (49 号票,同款不挂 JWT)
 //
 // The content route deliberately sits OUTSIDE the JWT group: nodes preview
 // artifacts with plain <img>/<video> tags, and media elements cannot attach
@@ -41,9 +58,11 @@ type Handlers struct {
 // the vendor's CDN serves publicly — so reading one by id is not a secret;
 // every mutating or enumerating asset surface (below) stays behind auth,
 // and the redirect is not an open redirect: the target is the stored URL of
-// that row.
+// that row. thumb shares the same reasoning — it only ever redirects to the
+// row's own object address or back to content.
 func RegisterContentRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.GET("/:id/content", h.Content)
+	group.GET("/:id/thumb", h.Thumb)
 }
 
 // RegisterLibraryRoutes mounts the library surfaces (relative to the group,
@@ -59,22 +78,25 @@ func RegisterLibraryRoutes(group *gin.RouterGroup, h *Handlers) {
 }
 
 // listJSON is the wire form of one list row: content_url 恒为内容寻址路径
-// (预览与跨画布复用统一走它),url 仅排障时关心的原始地址;last_used_at
-// 是 47 号票「解引用即算」的时点,前端挑选场景按它排最近使用.
+// (预览与跨画布复用统一走它),url 仅排障时关心的原始地址;thumbnail_url
+// 是显示层缩略的相对路径(49 号票,所有 kind 恒下发 —— 兜底语义收在
+// thumb 端点内,前端零判空);last_used_at 是 47 号票「解引用即算」的时点,
+// 前端挑选场景按它排最近使用.
 type listJSON struct {
-	ID          int64  `json:"id"`
-	Kind        string `json:"kind"`
-	CanvasID    int64  `json:"canvas_id"`
-	CanvasName  string `json:"canvas_name"`
-	TaskID      string `json:"task_id"`
-	Model       string `json:"model"`
-	Prompt      string `json:"prompt"`
-	URL         string `json:"url"`
-	ContentType string `json:"content_type"`
-	SizeBytes   int64  `json:"size_bytes"`
-	ContentURL  string `json:"content_url"`
-	CreatedAt   string `json:"created_at"`
-	LastUsedAt  string `json:"last_used_at"`
+	ID           int64  `json:"id"`
+	Kind         string `json:"kind"`
+	CanvasID     int64  `json:"canvas_id"`
+	CanvasName   string `json:"canvas_name"`
+	TaskID       string `json:"task_id"`
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	URL          string `json:"url"`
+	ContentType  string `json:"content_type"`
+	SizeBytes    int64  `json:"size_bytes"`
+	ContentURL   string `json:"content_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	CreatedAt    string `json:"created_at"`
+	LastUsedAt   string `json:"last_used_at"`
 }
 
 // Content serves the artifact for <img>/<video> previews and downloads.
@@ -157,6 +179,70 @@ func (h *Handlers) Content(c *gin.Context) {
 		return
 	}
 	c.Data(http.StatusOK, mimeType, payload)
+}
+
+// Thumb serves the display-layer thumbnail as a pure 302 (49 号票):存储里
+// 每张图仍只有原字节一份,缩略是「读时的 URL 变换」—— 云厂商原生图片
+// 处理按活跃驱动拼参,不落第二份字节。语义矩阵:
+//
+//  1. 行不存在 → 404(同 content);
+//  2. 图片行有 object_key 且活跃驱动支持处理、公网基座已配 → 302
+//     public_base_url + object_key + 处理参数(带短 Cache-Control);
+//  3. 其余一切(历史行、data: URI、local 驱动、非图片 kind 的防御分支、
+//     公网基座未配)→ 302 到 content,content 的既有语义全量兜底。
+//
+// 与 content 同组、刻意不挂 JWT(10 号票同理由:<img> 带不了 Authorization
+// 头);重定向目标恒为该行自身对象地址或 content,非开放重定向。已知降级
+// 路径(不做存在性探测):驱动切换前仅存 local 的存量对象,云驱动活跃时
+// 缩略 URL 打到云侧 404 —— 前端 onerror 回落兜底。
+func (h *Handlers) Thumb(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id < 1 {
+		apierr.InvalidRequest(c, "素材 id 必须是正整数")
+		return
+	}
+	a, err := h.Store.Get(c.Request.Context(), id)
+	if errors.Is(err, ErrNotFound) {
+		apierr.NotFound(c, "素材不存在")
+		return
+	}
+	if err != nil {
+		log.Printf("asset: get %d: %v", id, err)
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return
+	}
+
+	if target, ok := h.thumbnailTarget(c.Request.Context(), a); ok {
+		c.Header("Cache-Control", fmt.Sprintf("private, max-age=%d", thumbCacheMaxAge))
+		c.Redirect(http.StatusFound, target)
+		return
+	}
+	// content 的相对路径保持同形:dev 代理 / 部署 nginx / 桌面 webmux 三
+	// 形态都把 /api 前缀导向画布服务。
+	c.Redirect(http.StatusFound, contentPath(a.ID))
+}
+
+// thumbnailTarget answers the cloud-processed thumbnail URL when the row,
+// driver, and public base all qualify (语义矩阵第 2 支);anything else
+// answers false — the caller falls back to content. 拼接复用 PublicAddress
+// 的「基座 + 对象键」规则(18 号票先例),不另写一份。
+func (h *Handlers) thumbnailTarget(ctx context.Context, a Asset) (string, bool) {
+	if a.Kind != KindImage || h.Storage == nil || h.PublicBaseURL == nil {
+		return "", false
+	}
+	param := h.Storage.ThumbnailParam(ctx, thumbnailEdge)
+	if param == "" {
+		return "", false
+	}
+	base := strings.TrimSpace(h.PublicBaseURL(ctx))
+	if base == "" {
+		return "", false
+	}
+	addr, ok := PublicAddress(a, base)
+	if !ok {
+		return "", false
+	}
+	return addr + param, true
 }
 
 // isHTTPURL reports whether u is an absolute http(s) address — the only
@@ -286,13 +372,14 @@ func assetListJSON(a Asset, canvasName string) listJSON {
 	return listJSON{
 		ID: a.ID, Kind: a.Kind, CanvasID: a.CanvasID,
 		CanvasName: canvasName, TaskID: a.TaskID, Model: a.Model,
-		Prompt:      a.Prompt,
-		URL:         a.URL,
-		ContentType: a.ContentType,
-		SizeBytes:   a.SizeBytes,
-		ContentURL:  contentPath(a.ID),
-		CreatedAt:   a.CreatedAt.Format(timeFormat),
-		LastUsedAt:  a.LastUsedAt.Format(timeFormat),
+		Prompt:       a.Prompt,
+		URL:          a.URL,
+		ContentType:  a.ContentType,
+		SizeBytes:    a.SizeBytes,
+		ContentURL:   contentPath(a.ID),
+		ThumbnailURL: thumbPath(a.ID),
+		CreatedAt:    a.CreatedAt.Format(timeFormat),
+		LastUsedAt:   a.LastUsedAt.Format(timeFormat),
 	}
 }
 
@@ -301,6 +388,13 @@ func assetListJSON(a Asset, canvasName string) listJSON {
 // 这个相对路径 —— 跨画布复用同一素材 = 引用同一路径。
 func contentPath(id int64) string {
 	return "/api/assets/" + strconv.FormatInt(id, 10) + "/content"
+}
+
+// thumbPath is the display-layer thumbnail address (49 号票):同一相对路径
+// 形态,浏览器按 302 落地云处理 URL 或 content 兜底 —— object_key 与桶
+// 地址继续不出 API。
+func thumbPath(id int64) string {
+	return "/api/assets/" + strconv.FormatInt(id, 10) + "/thumb"
 }
 
 // timeFormat 与前端的时间契约:RFC3339(JSON 生态的标准形状).

@@ -171,3 +171,20 @@ func TestIsCOSNotFoundShapes(t *testing.T) {
 		t.Fatal("plain error is not not-found")
 	}
 }
+
+// ThumbnailParam 是纯 URL 变换(49 号票):imageMogr2 thumbnail 限定框 +
+// `>` 只缩不放;非正边长答空(调用方回落 content)。
+func TestCOSThumbnailParam(t *testing.T) {
+	st, err := NewCOS(settings.COSConfig{Endpoint: "cos.ap-guangzhou.myqcloud.com",
+		Bucket: "demo-1250000000", SecretID: "ID", SecretKey: "SK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "?imageMogr2/thumbnail/768x768>"
+	if got := st.ThumbnailParam(context.Background(), 768); got != want {
+		t.Fatalf("param = %q, want %q", got, want)
+	}
+	if got := st.ThumbnailParam(context.Background(), -1); got != "" {
+		t.Fatalf("negative edge param = %q, want empty", got)
+	}
+}

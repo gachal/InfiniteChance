@@ -19,6 +19,8 @@ type memStore struct {
 	mu    sync.Mutex
 	objs  map[string][]byte
 	calls []string // "put:key" / "open:key" / "delete:key"
+	// thumbParam 注入 ThumbnailParam 的返回值(nil = 恒空,local 语义)。
+	thumbParam *string
 }
 
 func newMemStore() *memStore { return &memStore{objs: map[string][]byte{}} }
@@ -69,6 +71,15 @@ func (m *memStore) Delete(_ context.Context, key string) error {
 	defer m.mu.Unlock()
 	delete(m.objs, key)
 	return nil
+}
+
+// thumbnailParam 可注入:路由套件用它区分「local 恒空」与「活跃驱动的
+// 参数」两条路径。
+func (m *memStore) ThumbnailParam(context.Context, int) string {
+	if m.thumbParam != nil {
+		return *m.thumbParam
+	}
+	return ""
 }
 
 // fixedReader answers the settings row from mutable state, with an
@@ -352,5 +363,34 @@ func TestDynamicCloudSnapshot(t *testing.T) {
 	reader.err = errors.New("boom")
 	if st, cfg := d.Cloud(ctx); st != nil || cfg.RelayPersist {
 		t.Fatalf("failed read cloud = %v cfg %+v, want nil store", st, cfg)
+	}
+}
+
+// ThumbnailParam 委派活跃驱动(49 号票):local/读失败/降级恒空 —— 调用方
+// 回落 content;切驱动后参数串跟着换。
+func TestDynamicThumbnailParamDelegates(t *testing.T) {
+	ctx := context.Background()
+
+	reader := &fixedReader{cfg: settings.StorageConfig{Driver: settings.DriverLocal}}
+	d, _, remote := newDynamicTest(reader)
+	if got := d.ThumbnailParam(ctx, 768); got != "" {
+		t.Fatalf("local thumbnail param = %q, want empty", got)
+	}
+
+	cloudParam := "?fake-process"
+	remote.thumbParam = &cloudParam
+	reader.set(settings.StorageConfig{Driver: settings.DriverOSS, OSS: ossCfg()})
+	if got := d.ThumbnailParam(ctx, 768); got != cloudParam {
+		t.Fatalf("oss thumbnail param = %q, want %q", got, cloudParam)
+	}
+
+	reader.set(settings.StorageConfig{Driver: settings.DriverLocal})
+	if got := d.ThumbnailParam(ctx, 768); got != "" {
+		t.Fatalf("back to local thumbnail param = %q, want empty", got)
+	}
+
+	reader.err = errors.New("db down")
+	if got := d.ThumbnailParam(ctx, 768); got != "" {
+		t.Fatalf("failed read thumbnail param = %q, want empty", got)
 	}
 }

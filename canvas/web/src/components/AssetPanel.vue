@@ -8,6 +8,7 @@ import { onMounted, ref } from 'vue'
 import { ApiError, type AssetRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
+import { useThumbFallback } from '../thumbnail'
 
 const emit = defineEmits<{
   insert: [asset: AssetRecord]
@@ -76,6 +77,10 @@ function downloadURL(a: AssetRecord): string {
   return `${a.content_url}?download=1`
 }
 
+// 图片缩略走 thumbnail_url(49 号票):缩略失败回落原图地址,下载/插入
+// 链路不动。
+const thumbs = useThumbFallback()
+
 onMounted(refresh)
 </script>
 
@@ -127,10 +132,11 @@ onMounted(refresh)
       >
         <img
           v-if="a.kind === 'image'"
-          :src="a.content_url"
+          :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
           class="thumb"
           loading="lazy"
           alt="素材缩略图"
+          @error="thumbs.onThumbError(a.content_url)"
         >
         <video
           v-else-if="a.kind === 'video'"

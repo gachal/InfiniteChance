@@ -8,6 +8,7 @@
 import { ref } from 'vue'
 
 import type { AgentChatMessage } from '../graph'
+import { useThumbFallback } from '../thumbnail'
 
 defineProps<{
   messages: AgentChatMessage[]
@@ -19,8 +20,10 @@ const emit = defineEmits<{
 }>()
 
 // 缩略图加载失败的媒体项(素材已删/地址失效):按「消息序号:媒体序号」
-// 记录,翻成占位;面板按节点重挂,无需清理。
+// 记录,翻成占位;面板按节点重挂,无需清理。49 号票起图片缩略先行:缩略
+// 失败先回落原图(md.ref 是发送载荷,只换显示面),原图也失败才落占位。
 const broken = ref(new Set<string>())
+const thumbs = useThumbFallback()
 
 function keyOf(messageIndex: number, mediaIndex: number): string {
   return `${messageIndex}:${mediaIndex}`
@@ -28,6 +31,18 @@ function keyOf(messageIndex: number, mediaIndex: number): string {
 
 function markBroken(messageIndex: number, mediaIndex: number): void {
   broken.value = new Set([...broken.value, keyOf(messageIndex, mediaIndex)])
+}
+
+/** user 轮图片的显示地址:缩略优先,回落簿记录的行保持原图(md.ref)。 */
+function imageSrc(ref: string): string {
+  return thumbs.displayURL(ref)
+}
+
+/** 图片加载失败:缩略失败换原图重载,原图也失败才落「素材不可用」。 */
+function onImageError(ref: string, messageIndex: number, mediaIndex: number): void {
+  if (!thumbs.onThumbError(ref)) {
+    markBroken(messageIndex, mediaIndex)
+  }
 }
 </script>
 
@@ -81,10 +96,10 @@ function markBroken(messageIndex: number, mediaIndex: number): void {
           >
             <img
               v-if="md.kind === 'image' && !broken.has(keyOf(mi, di))"
-              :src="md.ref"
+              :src="imageSrc(md.ref)"
               class="media-thumb"
               alt="会话附件"
-              @error="markBroken(mi, di)"
+              @error="onImageError(md.ref, mi, di)"
             >
             <video
               v-else-if="md.kind === 'video' && !broken.has(keyOf(mi, di))"

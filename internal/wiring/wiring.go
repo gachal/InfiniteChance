@@ -164,8 +164,9 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 
 	// 素材内容寻址例外 —— 节点用 <img>/<video> 预览,带不了
 	// Authorization 头(见 asset 包);素材库的列表/删除挂 JWT 会话,
-	// 画布素材面板与管理端素材页共用。
-	assetHandlers := &asset.Handlers{Store: s.Assets, Storage: storage}
+	// 画布素材面板与管理端素材页共用。thumb 端点(49 号票)同组同理由,
+	// PublicBaseURL 与画布任务/提示词生成共用同一 settings 提供者。
+	assetHandlers := &asset.Handlers{Store: s.Assets, Storage: storage, PublicBaseURL: publicBase}
 	asset.RegisterContentRoutes(r.Group("/assets"), assetHandlers)
 	asset.RegisterLibraryRoutes(r.Group("/assets", auth.RequireAuth(issuer)), assetHandlers)
 }

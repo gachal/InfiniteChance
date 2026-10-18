@@ -389,9 +389,10 @@ export interface PrevizCamera {
 
 /** 一条素材:生成产物在素材库中的引用。content_url 恒为内容寻址路径
  * (预览与跨画布复用统一走它),url 是原始厂商地址(或历史 data: URI),
- * 仅排障时关心。canvas_name 来自来源画布,画布已删时为空。last_used_at
- * 是「最近一次被服务端解引用」的时点(47 号票,初始 = created_at),驱动
- * 挑选场景的最近使用排序。 */
+ * 仅排障时关心。thumbnail_url 是显示层缩略的相对路径(49 号票,所有 kind
+ * 恒下发 —— 服务端 302 端点内部兜底到 content,前端零判空)。canvas_name
+ * 来自来源画布,画布已删时为空。last_used_at 是「最近一次被服务端解引用」
+ * 的时点(47 号票,初始 = created_at),驱动挑选场景的最近使用排序。 */
 export interface AssetRecord {
   id: number
   kind: 'image' | 'video' | 'audio'
@@ -404,6 +405,7 @@ export interface AssetRecord {
   content_type: string
   size_bytes: number
   content_url: string
+  thumbnail_url: string
   created_at: string
   last_used_at: string
 }

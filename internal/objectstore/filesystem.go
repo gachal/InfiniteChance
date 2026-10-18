@@ -119,3 +119,8 @@ func (s *FileSystem) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
+
+// ThumbnailParam is a permanent no-op: the local volume has no image
+// processing (49 号票,local 恒不支持)—— callers keep serving the original
+// bytes, 显示面与桌面版语义不受影响.
+func (s *FileSystem) ThumbnailParam(context.Context, int) string { return "" }

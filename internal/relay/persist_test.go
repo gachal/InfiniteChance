@@ -68,6 +68,8 @@ func (f *fakeCloud) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (f *fakeCloud) ThumbnailParam(context.Context, int) string { return "" }
+
 // fakeAssets records Create calls and can fail on demand.
 type fakeAssets struct {
 	mu      sync.Mutex

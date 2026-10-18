@@ -25,4 +25,12 @@ type Store interface {
 	// Delete removes the object; deleting an absent key is a no-op so
 	// callers can retry row deletion without object-state preambles.
 	Delete(ctx context.Context, key string) error
+	// ThumbnailParam answers the driver's native image-processing query
+	// string for a fit-inside-square thumbnail that only shrinks and never
+	// converts format (49 号票:COS imageMogr2 / OSS x-oss-process)。The
+	// answer carries its own leading "?" and is appended to
+	// public_base_url + object_key by the caller; drivers without native
+	// image processing (local 卷、未知驱动)answer "" — the caller keeps
+	// serving the original bytes. longestEdge <= 0 likewise answers "".
+	ThumbnailParam(ctx context.Context, longestEdge int) string
 }

@@ -10,6 +10,7 @@ import type { CanvasTask } from '@infinitechance/api'
 
 import type { MediaNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import { useThumbFallback } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
 import MediaPrompt from './MediaPrompt.vue'
 
@@ -61,7 +62,9 @@ const hasReference = computed(() => {
 
 // 产物加载失败(素材被删除、对象被清理):显示占位而非破图 —— 删除素材
 // 不应让引用它的画布报错(14 号票)。url 变化(重新生成/插入新素材)时
-// 复位再试。
+// 复位再试。显示 src 走缩略(49 号票):缩略失败先回落原图,原图也失败
+// 才落「素材不可用」;下载与灯箱仍用 data.url 原图。
+const thumbs = useThumbFallback()
 const loadFailed = ref(false)
 watch(
   () => props.data.url,
@@ -69,6 +72,15 @@ watch(
     loadFailed.value = false
   },
 )
+
+/** 媒体区的显示地址:缩略优先,回落簿记录的行保持原图。 */
+const displayURL = computed(() => thumbs.displayURL(props.data.url ?? ''))
+
+function onImageError(): void {
+  if (!thumbs.onThumbError(props.data.url ?? '')) {
+    loadFailed.value = true
+  }
+}
 
 const canAnalyze = computed(
   () => hasReference.value && analyzeModel.value !== '' && !props.analyzing,
@@ -120,9 +132,9 @@ function submitAnalyze(): void {
       @click="emit('preview')"
     >
       <img
-        :src="data.url"
+        :src="displayURL"
         alt="图片节点产物"
-        @error="loadFailed = true"
+        @error="onImageError"
       >
       <a
         class="download"

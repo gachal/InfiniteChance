@@ -115,6 +115,18 @@ function contentURL(a: AssetRecord): string {
   return `/canvas-api/assets/${a.id}/content`;
 }
 
+// 表格缩略(49 号票):同款前缀规则自拼 thumb 路径,onerror 回落 content;
+// 大图预览弹窗保持原图不动。
+const thumbFallen = ref(new Set<number>());
+
+function thumbURL(a: AssetRecord): string {
+  return thumbFallen.value.has(a.id) ? contentURL(a) : `/canvas-api/assets/${a.id}/thumb`;
+}
+
+function onThumbError(a: AssetRecord): void {
+  thumbFallen.value = new Set([...thumbFallen.value, a.id]);
+}
+
 function downloadURL(a: AssetRecord): string {
   return `${contentURL(a)}?download=1`;
 }
@@ -233,9 +245,10 @@ onMounted(() => {
             <img
               v-if="record.kind === 'image'"
               class="h-16 w-24 cursor-zoom-in rounded object-cover"
-              :src="contentURL(record as AssetRecord)"
+              :src="thumbURL(record as AssetRecord)"
               :alt="`素材 ${record.id}`"
               loading="lazy"
+              @error="onThumbError(record as AssetRecord)"
               @click="preview = record as AssetRecord"
             >
             <video

@@ -164,3 +164,19 @@ func TestOSSIncompleteConfigRejected(t *testing.T) {
 		}
 	}
 }
+
+// ThumbnailParam 是纯 URL 变换(49 号票):m_lfit + limit_1 = 限定框内
+// 等比只缩不放;非正边长答空(调用方回落 content)。
+func TestOSSThumbnailParam(t *testing.T) {
+	st, err := NewOSS(settings.OSSConfig{Endpoint: "e", Bucket: "b", AccessKey: "AK", SecretKey: "SK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "?x-oss-process=image/resize,m_lfit,w_768,h_768,limit_1"
+	if got := st.ThumbnailParam(context.Background(), 768); got != want {
+		t.Fatalf("param = %q, want %q", got, want)
+	}
+	if got := st.ThumbnailParam(context.Background(), 0); got != "" {
+		t.Fatalf("zero edge param = %q, want empty", got)
+	}
+}

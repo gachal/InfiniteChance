@@ -101,6 +101,16 @@ func (s *OSS) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// ThumbnailParam renders the OSS-native resize instruction (49 号票):
+// m_lfit 等比适配限定框、limit_1 只缩不放,不转格式 —— IMG 是 OSS 内置
+// 能力(按次计费),无需桶侧开通。
+func (s *OSS) ThumbnailParam(_ context.Context, longestEdge int) string {
+	if longestEdge <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("?x-oss-process=image/resize,m_lfit,w_%d,h_%d,limit_1", longestEdge, longestEdge)
+}
+
 // isOSSNotFound maps the SDK's not-found shapes onto the store contract:
 // Open answers an fs.ErrNotExist-compatible error for unknown keys, which
 // Dynamic uses as the「OSS 未命中 → 回退本地」signal.
