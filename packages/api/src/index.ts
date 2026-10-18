@@ -389,7 +389,9 @@ export interface PrevizCamera {
 
 /** 一条素材:生成产物在素材库中的引用。content_url 恒为内容寻址路径
  * (预览与跨画布复用统一走它),url 是原始厂商地址(或历史 data: URI),
- * 仅排障时关心。canvas_name 来自来源画布,画布已删时为空。 */
+ * 仅排障时关心。canvas_name 来自来源画布,画布已删时为空。last_used_at
+ * 是「最近一次被服务端解引用」的时点(47 号票,初始 = created_at),驱动
+ * 挑选场景的最近使用排序。 */
 export interface AssetRecord {
   id: number
   kind: 'image' | 'video' | 'audio'
@@ -403,12 +405,15 @@ export interface AssetRecord {
   size_bytes: number
   content_url: string
   created_at: string
+  last_used_at: string
 }
 
-/** 素材列表的过滤与分页:全部缺省 = 不过滤,后端默认一页 50 条。 */
+/** 素材列表的过滤与分页:全部缺省 = 不过滤,后端默认一页 50 条。
+ * sort = 'last_used' 走最近使用序(47 号票挑选场景),缺省创建序。 */
 export interface ListAssetsParams {
   kind?: 'image' | 'video' | 'audio'
   canvas_id?: number
+  sort?: 'last_used'
   limit?: number
   offset?: number
 }
@@ -925,7 +930,8 @@ export class ApiClient {
 
   // ---- 素材库(挂 /assets,canvas/server;列表/删除需 JWT 会话,14 号票)----
 
-  /** 素材库列表,最新在前:画布素材面板与管理端素材页共用。 */
+  /** 素材库列表,最新在前:画布素材面板与管理端素材页共用;sort =
+   * 'last_used' 走最近使用序(47 号票挑选场景)。 */
   async listAssets(params: ListAssetsParams = {}): Promise<AssetRecord[]> {
     const query = new URLSearchParams()
     if (params.kind) {
@@ -933,6 +939,9 @@ export class ApiClient {
     }
     if (params.canvas_id !== undefined) {
       query.set('canvas_id', String(params.canvas_id))
+    }
+    if (params.sort) {
+      query.set('sort', params.sort)
     }
     if (params.limit !== undefined) {
       query.set('limit', String(params.limit))

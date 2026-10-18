@@ -1,18 +1,28 @@
 <script setup lang="ts">
-// 素材选择面板(32 号票):Agent 节点「素材库」按钮唤起的轻量选择面板,
-// 复用既有 GET /assets 列表 API;按 kind 过滤(仅图片/视频,音频不可作
-// 会话附件)、缩略点选、可多选 —— 点选即挂到该节点的待发附件(ready 引
-// 用,上限由编辑器按同款纪律拒收),再点一次取消。生成对话框的素材库
-// 挑选仍留「待补」,本面板不连带。
+// 通用素材选择器(47 号票,32 号票 AgentMediaPicker 泛化):Agent 节点
+// 「素材库」与生成对话框(图片/视频模式)共用一块右缘面板,复用既有
+// GET /assets 列表 API,按最近使用排序(服务端解引用刷新,47 号票口径)。
+// kind 白名单收窄可选面(视频模式含音频,Agent 附件仍限图/视频)、缩略
+// 点选、可多选 —— 点选挂到调用方(ready 引用,上限由调用方按同款纪律
+// 拒收),再点一次取消。
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError, type AssetRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 
+/** 素材种类词表(与素材域 kind 同形)。 */
+export type PickerKind = 'image' | 'video' | 'audio'
+
 const props = defineProps<{
-  /** 已挂到该节点的素材 id(上传与库选两路一致),驱动已选高亮。 */
+  /** 面板标题(Agent 用「选择参考素材」,对话框用「挑选参考素材」)。 */
+  title: string
+  /** kind 白名单:只列这些种类;>1 种时顶部出过滤档。 */
+  kindWhitelist: PickerKind[]
+  /** 已选素材 id,驱动已选高亮。 */
   selectedAssetIds: number[]
+  /** 面板说明行;空 = 不显示。 */
+  hint?: string
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +33,7 @@ const emit = defineEmits<{
 const { client } = useAuth()
 
 const assets = ref<AssetRecord[]>([])
-const kind = ref<'' | 'image' | 'video'>('')
+const kind = ref<'' | PickerKind>('')
 const loading = ref(false)
 const error = ref('')
 
@@ -32,8 +42,19 @@ const pageSize = 30
 
 const hasMore = () => assets.value.length >= pageSize && assets.value.length % pageSize === 0
 
-// 音频不可作会话附件:列表就地过滤,不出现不可选的卡片。
-const visibleAssets = computed(() => assets.value.filter((a) => a.kind !== 'audio'))
+/** 过滤档只在多白名单时出现(单一种类没有可切的);「全部」= 白名单全体。 */
+const kindTabs = computed<('' | PickerKind)[]>(() =>
+  props.kindWhitelist.length > 1 ? ['', ...props.kindWhitelist] : [''],
+)
+
+/** 白名单外的种类就地过滤,不出现不可选的卡片。 */
+const visibleAssets = computed(() => assets.value.filter((a) => props.kindWhitelist.includes(a.kind)))
+
+const emptyText = computed(() =>
+  props.kindWhitelist.includes('audio')
+    ? '素材库还没有可选的素材。'
+    : '素材库还没有可用的图片/视频。',
+)
 
 async function refresh(): Promise<void> {
   loading.value = true
@@ -41,6 +62,7 @@ async function refresh(): Promise<void> {
   try {
     assets.value = await client.listAssets({
       kind: kind.value === '' ? undefined : kind.value,
+      sort: 'last_used',
       limit: pageSize,
       offset: 0,
     })
@@ -60,6 +82,7 @@ async function loadMore(): Promise<void> {
   try {
     const more = await client.listAssets({
       kind: kind.value === '' ? undefined : kind.value,
+      sort: 'last_used',
       limit: pageSize,
       offset: assets.value.length,
     })
@@ -71,19 +94,19 @@ async function loadMore(): Promise<void> {
   }
 }
 
-function setKind(k: '' | 'image' | 'video'): void {
+function setKind(k: '' | PickerKind): void {
   kind.value = k
   void refresh()
 }
 
-function kindLabel(k: 'image' | 'video' | 'audio'): string {
+function kindLabel(k: PickerKind): string {
   return k === 'image' ? '图片' : k === 'video' ? '视频' : '音频'
 }
 
 const isSelected = (a: AssetRecord): boolean => props.selectedAssetIds.includes(a.id)
 
 function onPick(a: AssetRecord): void {
-  if (a.kind !== 'image' && a.kind !== 'video') {
+  if (!props.kindWhitelist.includes(a.kind)) {
     return
   }
   emit('toggle', a)
@@ -94,11 +117,11 @@ onMounted(refresh)
 
 <template>
   <aside
-    class="agent-picker"
-    aria-label="选择会话附件素材"
+    class="asset-picker"
+    :aria-label="title"
   >
     <header class="panel-head">
-      <h3>选择参考素材</h3>
+      <h3>{{ title }}</h3>
       <div class="head-actions">
         <button
           class="close"
@@ -109,13 +132,19 @@ onMounted(refresh)
         </button>
       </div>
     </header>
-    <p class="panel-hint">
-      点选挂为会话附件,再点取消;单条消息 ≤4 图 + ≤1 视频。
+    <p
+      v-if="hint"
+      class="panel-hint"
+    >
+      {{ hint }}
     </p>
 
-    <div class="kind-filter">
+    <div
+      v-if="kindTabs.length > 1"
+      class="kind-filter"
+    >
       <button
-        v-for="k in (['', 'image', 'video'] as const)"
+        v-for="k in kindTabs"
         :key="k"
         type="button"
         :class="{ active: kind === k }"
@@ -142,7 +171,7 @@ onMounted(refresh)
       v-else-if="visibleAssets.length === 0"
       class="panel-empty"
     >
-      素材库还没有可用的图片/视频。
+      {{ emptyText }}
     </p>
 
     <ul class="asset-list">
@@ -151,7 +180,7 @@ onMounted(refresh)
         :key="a.id"
         class="asset-card"
         :class="{ selected: isSelected(a) }"
-        :title="isSelected(a) ? '取消选择' : '选为会话附件'"
+        :title="isSelected(a) ? '取消选择' : '选为参考'"
         @click="onPick(a)"
       >
         <img
@@ -161,6 +190,16 @@ onMounted(refresh)
           loading="lazy"
           alt="素材缩略图"
         >
+        <!-- 音频没有缩略图:给试听条占缩略位(素材面板同款);点击不触发
+             卡片的选择/取消。 -->
+        <audio
+          v-else-if="a.kind === 'audio'"
+          :src="a.content_url"
+          class="audio-thumb"
+          controls
+          preload="none"
+          @click.stop
+        />
         <video
           v-else
           :src="a.content_url"
@@ -195,7 +234,7 @@ onMounted(refresh)
 </template>
 
 <style scoped>
-.agent-picker {
+.asset-picker {
   position: absolute;
   top: 0;
   right: 0;
@@ -312,6 +351,13 @@ onMounted(refresh)
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
   display: block;
+}
+
+/* 音频卡片:试听条占缩略位。 */
+.audio-thumb {
+  width: 100%;
+  height: 36px;
+  align-self: center;
 }
 
 .meta {

@@ -63,6 +63,7 @@ type CanvasGetter interface {
 // address the asset row holds.
 type AssetGetter interface {
 	Get(ctx context.Context, id int64) (asset.Asset, error)
+	TouchLastUsed(ctx context.Context, id int64) error
 }
 
 // ModelPricer is the slice of the pricing store the handlers need: the
@@ -713,7 +714,8 @@ const assetContentPrefix = "/api/assets/"
 // 拼 public_base_url,永久)优先,厂商原址(约 24h 过期)回落;an inline
 // data: URI — carried directly or stored in the asset row — is refused
 // (12 号票对参考图的同款决策),与其让几 MB 的请求体在网关预扣/上游拒收处
-// 炸难懂的错,不如在解析时就说明原因。
+// 炸难懂的错,不如在解析时就说明原因。素材行解析成功即 touch last_used_at
+// (47 号票「解引用即算」,Agent 媒体附件/反推/分析共用此入口)。
 func (h *Handlers) resolveMedia(ctx context.Context, ref string, kind string) (string, error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		return ref, nil
@@ -741,6 +743,7 @@ func (h *Handlers) resolveMedia(ctx context.Context, ref string, kind string) (s
 		return "", errMediaAssetKind
 	}
 	if addr, ok := asset.PublicAddress(a, h.publicBaseURL(ctx)); ok {
+		h.touchAsset(ctx, a.ID)
 		return addr, nil
 	}
 	if a.URL == "" {
@@ -751,7 +754,16 @@ func (h *Handlers) resolveMedia(ctx context.Context, ref string, kind string) (s
 	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
 		return "", errMediaAssetInline
 	}
+	h.touchAsset(ctx, a.ID)
 	return a.URL, nil
+}
+
+// touchAsset 记录一次「素材被服务端解引用」(47 号票):排序信号而非一致性
+// 事实,尽力而为 —— 失败只留日志,不拦消息发送;行已消失(并发删除)不算错。
+func (h *Handlers) touchAsset(ctx context.Context, id int64) {
+	if err := h.Assets.TouchLastUsed(ctx, id); err != nil && !errors.Is(err, asset.ErrNotFound) {
+		log.Printf("promptgen: touch asset %d last_used: %v", id, err)
+	}
 }
 
 // publicBaseURL reads the configured public base through the optional

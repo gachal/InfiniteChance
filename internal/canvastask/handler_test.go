@@ -167,6 +167,8 @@ type fakeAssets struct {
 	// override 按素材 id 覆盖默认行:18 号票的解析顺序测试用它注入
 	// 上传素材(url 为空、只有自有字节)等形状。
 	override map[int64]asset.Asset
+	// touched 记录 TouchLastUsed 的调用序(47 号票「解引用即算」断言面)。
+	touched []int64
 }
 
 func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
@@ -182,6 +184,11 @@ func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
 	default:
 		return asset.Asset{}, asset.ErrNotFound
 	}
+}
+
+func (f *fakeAssets) TouchLastUsed(_ context.Context, id int64) error {
+	f.touched = append(f.touched, id)
+	return nil
 }
 
 // fakePrices answers ByModel for one call-track and one token-track model.
@@ -226,16 +233,17 @@ func (fakePrices) List(_ context.Context) ([]pricing.Price, error) {
 type handlerEnv struct {
 	engine  *gin.Engine
 	tasks   *fakeTasks
+	assets  *fakeAssets
 	gateway *okGateway
 }
 
 func newHandlerEnv(gateway *okGateway) *handlerEnv {
-	return newHandlerEnvWith(gateway, fakeAssets{}, "")
+	return newHandlerEnvWith(gateway, &fakeAssets{}, "")
 }
 
 // newHandlerEnvWith additionally injects the asset double and the object
 // storage's public base URL (18 号票解析顺序;空串 = 未配置,现状行为)。
-func newHandlerEnvWith(gateway *okGateway, assets fakeAssets, publicBase string) *handlerEnv {
+func newHandlerEnvWith(gateway *okGateway, assets *fakeAssets, publicBase string) *handlerEnv {
 	gin.SetMode(gin.TestMode)
 	tasks := newFakeTasks()
 	r := gin.New()
@@ -255,7 +263,7 @@ func newHandlerEnvWith(gateway *okGateway, assets fakeAssets, publicBase string)
 	})
 	canvastask.RegisterModelRoutes(r.Group("/image-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
 	canvastask.RegisterVideoModelRoutes(r.Group("/video-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
-	return &handlerEnv{engine: r, tasks: tasks, gateway: gateway}
+	return &handlerEnv{engine: r, tasks: tasks, assets: assets, gateway: gateway}
 }
 
 func (e *handlerEnv) do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
@@ -548,7 +556,7 @@ func TestHandlerCreateVideoTaskRefs(t *testing.T) {
 		9: {ID: 9, Kind: asset.KindAudio, URL: "https://img.example/voice.mp3",
 			ObjectKey: "uploads/20260930/a.mp3"},
 	}}
-	env := newHandlerEnvWith(&okGateway{url: "x"}, assets, "")
+	env := newHandlerEnvWith(&okGateway{url: "x"}, &assets, "")
 
 	post := func(body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -898,6 +906,47 @@ func TestHandlerVideoTaskResolvesAssetReference(t *testing.T) {
 	}
 }
 
+// 47 号票「解引用即算」:素材行的成功解析 touch last_used_at,http(s) 直传
+// (无素材行)与解析失败(404)不计。
+func TestHandlerTaskReferenceTouchesAsset(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
+
+	// 单串参考图(12 号票旧形态)解引用 → touch 素材 5。
+	if w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/5/content"}`); w.Code != http.StatusCreated {
+		t.Fatalf("image_url submit = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if got := env.assets.touched; len(got) != 1 || got[0] != 5 {
+		t.Fatalf("touched = %v, want [5]", got)
+	}
+
+	// video_refs 多参考逐条 touch;http(s) 直传与 data URI 拒收不计。
+	if w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","video_refs":[
+		{"url":"/api/assets/5/content","kind":"image","role":"reference_image"},
+		{"url":"https://img.example/direct.png","kind":"image","role":"first_frame"}]}`); w.Code != http.StatusCreated {
+		t.Fatalf("video_refs submit = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if got := env.assets.touched; len(got) != 2 || got[1] != 5 {
+		t.Fatalf("touched after video_refs = %v, want a second [5] (direct URL untouched)", got)
+	}
+
+	// 素材不存在:400/404 拒收,不 touch。
+	if w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/99/content"}`); w.Code != http.StatusNotFound {
+		t.Fatalf("missing asset submit = %d, want 404", w.Code)
+	}
+	if got := len(env.assets.touched); got != 2 {
+		t.Fatalf("touched after failed submit = %d entries, want unchanged", got)
+	}
+
+	// 角色与素材种类不符(47 号票「校验失败不 touch」):拒收不刷新最近使用。
+	if w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","video_refs":[
+		{"url":"/api/assets/5/content","kind":"video","role":"reference_video"}]}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("kind-mismatch submit = %d body %s, want 400", w.Code, w.Body.String())
+	}
+	if got := len(env.assets.touched); got != 2 {
+		t.Fatalf("touched after kind-mismatch = %d entries, want unchanged", got)
+	}
+}
+
 func TestHandlerVideoTaskReferenceValidations(t *testing.T) {
 	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
 
@@ -925,7 +974,7 @@ func TestHandlerVideoTaskReferenceValidations(t *testing.T) {
 
 func TestHandlerVideoTaskReferencePrefersPublicAddress(t *testing.T) {
 	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
-		fakeAssets{}, "https://assets.example.org")
+		&fakeAssets{}, "https://assets.example.org")
 
 	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/5/content"}`)
 	if w.Code != http.StatusCreated {
@@ -954,14 +1003,14 @@ func TestHandlerVideoTaskUploadedAssetAsReference(t *testing.T) {
 	}
 
 	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
-		fakeAssets{override: uploaded}, "https://assets.example.org")
+		&fakeAssets{override: uploaded}, "https://assets.example.org")
 	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/9/content"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
 	}
 
 	env = newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
-		fakeAssets{override: uploaded}, "")
+		&fakeAssets{override: uploaded}, "")
 	w = env.postTask(t, `{"node_id":"n","prompt":"p","model":"vid-m","kind":"video","image_url":"/api/assets/9/content"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body %s, want 400 without a public base", w.Code, w.Body.String())
@@ -972,7 +1021,7 @@ func TestHandlerVideoTaskUploadedAssetAsReference(t *testing.T) {
 
 func TestHandlerCreateImageTaskWithReferences(t *testing.T) {
 	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
-		fakeAssets{}, "https://assets.example.org")
+		&fakeAssets{}, "https://assets.example.org")
 
 	// 内容寻址引用解出公网地址、厂商地址原样透传,顺序保留。
 	w := env.postTask(t, `{"node_id":"image-2-1","prompt":"把背景换成雪原","model":"img-m",
@@ -1019,7 +1068,7 @@ func TestHandlerCreateImageTaskWithReferences(t *testing.T) {
 
 func TestHandlerImageTaskReferenceValidations(t *testing.T) {
 	env := newHandlerEnvWith(&okGateway{url: "https://img.example/ok.png"},
-		fakeAssets{}, "https://assets.example.org")
+		&fakeAssets{}, "https://assets.example.org")
 
 	cases := []struct {
 		name string

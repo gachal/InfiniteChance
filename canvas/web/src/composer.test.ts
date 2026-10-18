@@ -4,6 +4,7 @@ import {
   appendComposerRef,
   appendVideoRef,
   composerImageUrls,
+  composerRefFromAsset,
   composerVideoRefs,
   composeSize,
   defaultVideoRefRole,
@@ -19,6 +20,7 @@ import {
   RESOLUTION_PRESETS,
   rolesForKind,
   taskUrlFor,
+  videoRefFromAsset,
   VIDEO_REFS_TOTAL_CAP,
   VIDEO_RESOLUTION_PRESETS,
   videoPlaceholder,
@@ -403,3 +405,31 @@ function makeTask(overrides: Partial<TaskForNodeSync> = {}): TaskForNodeSync {
     ...overrides,
   }
 }
+
+describe('composerRefFromAsset(47 号票素材库挑选)', () => {
+  it('builds a content-addressed ref carrying the asset id', () => {
+    expect(composerRefFromAsset({ id: 5, kind: 'image', content_url: '/api/assets/5/content' })).toEqual({
+      url: '/api/assets/5/content',
+      asset_id: 5,
+    })
+  })
+})
+
+describe('videoRefFromAsset(47 号票素材库挑选)', () => {
+  it('applies the 44 号票 default role rules per item', () => {
+    // 空白条多选图:第一张落首帧。
+    const first = videoRefFromAsset({ id: 1, kind: 'image', content_url: '/api/assets/1/content' }, [])
+    expect(first).toEqual({ url: '/api/assets/1/content', kind: 'image', role: 'first_frame', asset_id: 1 })
+    // 已有图片条目:后续图落参考图;视频/音频角色固定。
+    const list = [first]
+    expect(videoRefFromAsset({ id: 2, kind: 'image', content_url: '/api/assets/2/content' }, list).role).toBe(
+      'reference_image',
+    )
+    expect(videoRefFromAsset({ id: 3, kind: 'video', content_url: '/api/assets/3/content' }, list).role).toBe(
+      'reference_video',
+    )
+    expect(videoRefFromAsset({ id: 4, kind: 'audio', content_url: '/api/assets/4/content' }, list).role).toBe(
+      'reference_audio',
+    )
+  })
+})

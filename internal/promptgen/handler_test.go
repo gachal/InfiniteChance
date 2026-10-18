@@ -106,6 +106,8 @@ func (f *stubGateway) StreamChat(_ context.Context, req promptgen.ChatRequest, o
 
 type fakeAssets struct {
 	byID map[int64]asset.Asset
+	// touched 记录 TouchLastUsed 的调用序(47 号票「解引用即算」断言面)。
+	touched []int64
 }
 
 func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
@@ -116,11 +118,16 @@ func (f fakeAssets) Get(_ context.Context, id int64) (asset.Asset, error) {
 	return a, nil
 }
 
+func (f *fakeAssets) TouchLastUsed(_ context.Context, id int64) error {
+	f.touched = append(f.touched, id)
+	return nil
+}
+
 // ---- test rig: routes wired exactly as canvas/server/main.go does ----
 
 type envParams struct {
 	templates     fakeTemplates
-	assets        fakeAssets
+	assets        *fakeAssets
 	gateway       promptgen.Gateway
 	publicBaseURL func(ctx context.Context) string
 }
@@ -139,7 +146,7 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			1: {ID: 1, Name: "文生图-中文", Description: "按主题写英文生图提示词", Template: "请为主题「{topic}」写一段英文文生图提示词,只输出提示词本身。", Target: prompttemplate.TargetImage, Enabled: true},
 			2: {ID: 2, Name: "已停用模板", Template: "{topic}", Enabled: false},
 		}},
-		assets: fakeAssets{byID: map[int64]asset.Asset{
+		assets: &fakeAssets{byID: map[int64]asset.Asset{
 			5: {ID: 5, Kind: asset.KindVideo, CanvasID: 7, URL: "https://cdn.example.com/generated.mp4"},
 			6: {ID: 6, Kind: asset.KindImage, CanvasID: 7, URL: "https://cdn.example.com/pic.png"},
 			7: {ID: 7, Kind: asset.KindVideo, CanvasID: 7, URL: "data:video/mp4;base64,AAAA"},
@@ -422,6 +429,10 @@ func TestGenerateFirstRoundWithMediaRidesInstruction(t *testing.T) {
 	}
 	if !reflect.DeepEqual(req.Conversation, want) {
 		t.Errorf("conversation = %+v, want the instruction as one multimodal turn", req.Conversation)
+	}
+	// 47 号票「解引用即算」:素材行成功解析即 touch,http(s) 直传不计。
+	if got := env.params.assets.touched; len(got) != 1 || got[0] != 6 {
+		t.Errorf("touched = %v, want [6]", got)
 	}
 }
 

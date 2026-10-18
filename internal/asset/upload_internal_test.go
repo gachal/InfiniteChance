@@ -41,6 +41,7 @@ func (s *tinyStore) Create(_ context.Context, a Asset) (Asset, error) {
 func (s *tinyStore) Get(context.Context, int64) (Asset, error)      { return Asset{}, ErrNotFound }
 func (s *tinyStore) List(context.Context, Filter) ([]Listed, error) { return nil, nil }
 func (s *tinyStore) Delete(context.Context, int64) error            { return ErrNotFound }
+func (s *tinyStore) TouchLastUsed(context.Context, int64) error     { return ErrNotFound }
 
 func TestUploadOversizeAnswersFileTooLarge(t *testing.T) {
 	old := maxUploadBytes

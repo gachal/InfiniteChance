@@ -92,7 +92,8 @@ func (f *fakeAssets) Get(context.Context, int64) (asset.Asset, error) {
 func (f *fakeAssets) List(context.Context, asset.Filter) ([]asset.Listed, error) {
 	return nil, nil
 }
-func (f *fakeAssets) Delete(context.Context, int64) error { return asset.ErrNotFound }
+func (f *fakeAssets) Delete(context.Context, int64) error        { return asset.ErrNotFound }
+func (f *fakeAssets) TouchLastUsed(context.Context, int64) error { return nil }
 
 func cosSnapshot(base string, persist bool) settings.StorageConfig {
 	return settings.StorageConfig{

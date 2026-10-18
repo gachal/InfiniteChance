@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,8 @@ type fakeStore struct {
 	mu     sync.Mutex
 	assets map[int64]asset.Asset
 	seq    int64
+	// touched 记录 TouchLastUsed 的调用序(47 号票「解引用即算」的断言面)。
+	touched []int64
 	// createErr makes Create fail (upload tests: 行落库失败时对象字节要回收).
 	createErr error
 }
@@ -43,6 +46,7 @@ func (f *fakeStore) Create(_ context.Context, a asset.Asset) (asset.Asset, error
 	f.seq++
 	a.ID = f.seq
 	a.CreatedAt = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	a.LastUsedAt = a.CreatedAt
 	f.assets[a.ID] = a
 	return a, nil
 }
@@ -74,6 +78,14 @@ func (f *fakeStore) List(_ context.Context, fl asset.Filter) ([]asset.Listed, er
 		}
 		out = append(out, asset.Listed{Asset: a, CanvasName: canvasNameOf(a.CanvasID)})
 	}
+	if fl.Sort == asset.SortLastUsed {
+		sort.SliceStable(out, func(i, j int) bool {
+			if !out[i].LastUsedAt.Equal(out[j].LastUsedAt) {
+				return out[i].LastUsedAt.After(out[j].LastUsedAt)
+			}
+			return out[i].ID > out[j].ID
+		})
+	}
 	return out, nil
 }
 
@@ -84,6 +96,19 @@ func (f *fakeStore) Delete(_ context.Context, id int64) error {
 		return asset.ErrNotFound
 	}
 	delete(f.assets, id)
+	return nil
+}
+
+func (f *fakeStore) TouchLastUsed(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.assets[id]
+	if !ok {
+		return asset.ErrNotFound
+	}
+	a.LastUsedAt = time.Date(2026, 10, 18, 8, 0, 0, 0, time.UTC)
+	f.assets[id] = a
+	f.touched = append(f.touched, id)
 	return nil
 }
 
@@ -337,6 +362,58 @@ func TestListFiltersByKindAndCanvas(t *testing.T) {
 	want := "/api/assets/" + strconv.FormatInt(body.Assets[0].ID, 10) + "/content"
 	if body.Assets[0].ContentURL != want {
 		t.Errorf("content_url = %q, want the content-addressed path", body.Assets[0].ContentURL)
+	}
+}
+
+func TestListSortLastUsedPutsTouchedFirst(t *testing.T) {
+	env := newAssetEnv(t)
+	ctx := context.Background()
+	first, _ := env.store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 7, URL: "u1"})
+	second, _ := env.store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 7, URL: "u2"})
+
+	// 缺省:创建序(id DESC),与历史契约一致。
+	w := env.do(t, http.MethodGet, "/assets")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var body struct {
+		Assets []struct {
+			ID         int64  `json:"id"`
+			LastUsedAt string `json:"last_used_at"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if len(body.Assets) != 2 || body.Assets[0].ID != second.ID {
+		t.Fatalf("default order = %+v, want id DESC", body.Assets)
+	}
+	if body.Assets[0].LastUsedAt == "" {
+		t.Errorf("last_used_at missing from the wire shape")
+	}
+
+	// 解引用 touch 后,sort=last_used 把老素材提到最前。
+	if err := env.store.TouchLastUsed(ctx, first.ID); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	w = env.do(t, http.MethodGet, "/assets?sort=last_used")
+	if w.Code != http.StatusOK {
+		t.Fatalf("sorted status = %d", w.Code)
+	}
+	body.Assets = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("sorted response not JSON: %v", err)
+	}
+	if len(body.Assets) != 2 || body.Assets[0].ID != first.ID || body.Assets[1].ID != second.ID {
+		t.Fatalf("last_used order = %+v, want touched first", body.Assets)
+	}
+}
+
+func TestListRejectsUnknownSort(t *testing.T) {
+	env := newAssetEnv(t)
+	w := env.do(t, http.MethodGet, "/assets?sort=popular")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("unknown sort status = %d, want 400", w.Code)
 	}
 }
 

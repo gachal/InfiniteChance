@@ -71,6 +71,8 @@ const emit = defineEmits<{
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
   upload: [file: File]
+  /** 素材库挑选(47 号票):打开/关闭素材选择面板,落条由编辑器接线。 */
+  'pick-assets': []
   /** 目录禁用态里的「重试」:编辑器重新拉取模型目录。 */
   'retry-catalogs': []
   send: []
@@ -235,6 +237,14 @@ const uploadTitle = computed(() => {
   return refsFull.value ? `最多 ${MAX_COMPOSER_REFS} 张参考图` : '上传本机图片作为参考图'
 })
 
+/** 素材库入口(47 号票)与上传按钮同一可用面:参考条满员时禁选。 */
+const pickAssetsTitle = computed(() => {
+  if (isVideo.value) {
+    return videoRefsVacant.value ? '从素材库挑选图片/视频/音频作为参考' : '各角色参考已满员'
+  }
+  return refsFull.value ? `最多 ${MAX_COMPOSER_REFS} 张参考图` : '从素材库挑选图片作为参考图'
+})
+
 /** 参考上传:kind 由编辑器按文件 MIME/扩展名判断(图片模式下恒 image),
  * 服务端按魔数最终裁决。 */
 function onFileChange(e: Event): void {
@@ -303,6 +313,16 @@ function onFileChange(e: Event): void {
       >
         {{ uploading ? '…' : '+' }}
       </button>
+      <button
+        class="ref-library"
+        type="button"
+        :disabled="uploading || refsFull || disabledReason !== ''"
+        :title="pickAssetsTitle"
+        aria-label="从素材库挑选参考图"
+        @click="emit('pick-assets')"
+      >
+        库
+      </button>
       <input
         ref="fileInput"
         type="file"
@@ -369,6 +389,16 @@ function onFileChange(e: Event): void {
         @click="fileInput?.click()"
       >
         {{ uploading ? '…' : '+' }}
+      </button>
+      <button
+        class="ref-library"
+        type="button"
+        :disabled="uploading || !videoRefsVacant"
+        :title="pickAssetsTitle"
+        aria-label="从素材库挑选参考"
+        @click="emit('pick-assets')"
+      >
+        库
       </button>
       <input
         ref="fileInput"
@@ -651,6 +681,24 @@ function onFileChange(e: Event): void {
 }
 
 .ref-add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 素材库入口(47 号票):与「+」同尺寸的次级按钮,实线边框区分本机上传。 */
+.ref-library {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  background: transparent;
+  color: #aab1c5;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.ref-library:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

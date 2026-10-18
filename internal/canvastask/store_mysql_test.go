@@ -98,7 +98,7 @@ func TestMySQLCanvasTaskSchemaIsIdempotent(t *testing.T) {
 	}
 }
 
-// 37 号票:background 列在 MySQL 侧同样保真往返;空串 = 不传(缺省落 '')。
+// 37 号票:background 列在 MySQL 侧同样保真往返;空串 = 不传(缺省落 ”)。
 func TestMySQLCanvasTaskBackgroundRoundTrip(t *testing.T) {
 	store, _ := openTaskTestDB(t)
 	ctx := context.Background()

@@ -59,7 +59,8 @@ func RegisterLibraryRoutes(group *gin.RouterGroup, h *Handlers) {
 }
 
 // listJSON is the wire form of one list row: content_url 恒为内容寻址路径
-// (预览与跨画布复用统一走它),url 仅排障时关心的原始地址.
+// (预览与跨画布复用统一走它),url 仅排障时关心的原始地址;last_used_at
+// 是 47 号票「解引用即算」的时点,前端挑选场景按它排最近使用.
 type listJSON struct {
 	ID          int64  `json:"id"`
 	Kind        string `json:"kind"`
@@ -73,6 +74,7 @@ type listJSON struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	ContentURL  string `json:"content_url"`
 	CreatedAt   string `json:"created_at"`
+	LastUsedAt  string `json:"last_used_at"`
 }
 
 // Content serves the artifact for <img>/<video> previews and downloads.
@@ -224,10 +226,20 @@ func (h *Handlers) setDisposition(c *gin.Context, a Asset) {
 
 // List answers the library, newest first. kind 过滤取 image/video/audio
 // 之外的值一律空结果而非报错 —— 前端的下拉里不会有别的值,宽度留给将来.
+// sort = last_used 走最近使用序(47 号票挑选场景),缺省与其它值保持
+// id DESC 的创建序(管理端审计视角不变);未知 sort 值显式 400,不静默
+// 当缺省 —— 静默会让「想按最近使用排却拿到创建序」无从排查.
 func (h *Handlers) List(c *gin.Context) {
 	f := Filter{
 		Kind:  strings.TrimSpace(c.Query("kind")),
 		Limit: defaultListLimit,
+	}
+	if v := strings.TrimSpace(c.Query("sort")); v != "" {
+		if v != SortLastUsed {
+			apierr.InvalidRequest(c, "sort 仅支持 last_used")
+			return
+		}
+		f.Sort = v
 	}
 	if v := c.Query("canvas_id"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -280,6 +292,7 @@ func assetListJSON(a Asset, canvasName string) listJSON {
 		SizeBytes:   a.SizeBytes,
 		ContentURL:  contentPath(a.ID),
 		CreatedAt:   a.CreatedAt.Format(timeFormat),
+		LastUsedAt:  a.LastUsedAt.Format(timeFormat),
 	}
 }
 

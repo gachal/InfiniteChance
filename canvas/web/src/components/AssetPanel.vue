@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 素材面板(14 号票):画布内浏览历史素材并把素材插入当前画布 —— 插入的
 // 节点持有素材的内容寻址引用(asset_id + content_url),跨画布复用同一
-// 素材而非复制字节。列表/过滤由服务端 /assets 提供,拉取失败不打扰画布。
+// 素材而非复制字节。列表/过滤由服务端 /assets 提供,按最近使用排序
+// (47 号票;管理端素材页保持创建序),拉取失败不打扰画布。
 import { onMounted, ref } from 'vue'
 
 import { ApiError, type AssetRecord } from '@infinitechance/api'
@@ -30,6 +31,7 @@ async function refresh(): Promise<void> {
   try {
     assets.value = await client.listAssets({
       kind: kind.value === '' ? undefined : kind.value,
+      sort: 'last_used',
       limit: pageSize,
       offset: 0,
     })
@@ -49,6 +51,7 @@ async function loadMore(): Promise<void> {
   try {
     const more = await client.listAssets({
       kind: kind.value === '' ? undefined : kind.value,
+      sort: 'last_used',
       limit: pageSize,
       offset: assets.value.length,
     })

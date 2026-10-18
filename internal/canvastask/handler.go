@@ -50,9 +50,11 @@ type CanvasGetter interface {
 
 // AssetGetter is the slice of the asset store the handlers need: a video
 // reference in the content-addressed form resolves through it to the
-// vendor address the asset row holds (14 号票起节点普遍持有素材引用).
+// vendor address the asset row holds (14 号票起节点普遍持有素材引用);
+// TouchLastUsed 是 47 号票「解引用即算」的写入点,同一切片内顺带暴露.
 type AssetGetter interface {
 	Get(ctx context.Context, id int64) (asset.Asset, error)
+	TouchLastUsed(ctx context.Context, id int64) error
 }
 
 // ModelPricer is the slice of the pricing store the handlers need: the
@@ -548,55 +550,73 @@ const assetContentPrefix = "/api/assets/"
 
 // resolveMediaURL maps one media reference to the address the vendor fetches
 // —— 图生图参考图与视频参考(24 号票)共用的解引用:http(s) 原样透传
-// (素材行 kind 答 "",无从查证);素材内容寻址路径经素材表按 18 号票顺序
-// 解出(自有存储公网地址优先、厂商原址约 24h 回落),并顺带回答素材行的
-// kind 供角色校验;内联 data: URI(直带或落过素材行的)都拒 —— 12 号票
-// 「data URI 进不了网关媒体契约」。空串由调用方各自拒(两种契约的空值
-// 语义不同),长度上限同样由调用方在解出的地址上统一把关。
-func (h *Handlers) resolveMediaURL(ctx context.Context, ref string) (addr, assetKind string, err error) {
+// (素材行 kind 答 "",id 答 0,无从查证);素材内容寻址路径经素材表按
+// 18 号票顺序解出(自有存储公网地址优先、厂商原址约 24h 回落),并顺带
+// 回答素材行的 kind 与 id 供角色校验与 47 号票的 touch;内联 data: URI
+// (直带或落过素材行的)都拒 —— 12 号票「data URI 进不了网关媒体契约」。
+// 空串由调用方各自拒(两种契约的空值语义不同),长度上限同样由调用方在
+// 解出的地址上统一把关。touch 由调用方在各自校验全部通过后执行
+// (47 号票「校验失败不 touch」);任务行存的是已解析地址,重试复用行内
+// 地址不再二次解引用,不重复计。
+func (h *Handlers) resolveMediaURL(ctx context.Context, ref string) (addr, assetKind string, assetID int64, err error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
-		return ref, "", nil
+		return ref, "", 0, nil
 	}
 	if strings.HasPrefix(ref, "data:") {
-		return "", "", errImageRefInline
+		return "", "", 0, errImageRefInline
 	}
 	rest, ok := strings.CutPrefix(ref, assetContentPrefix)
 	if !ok || !strings.HasSuffix(rest, "/content") {
-		return "", "", errImageRefMalformed
+		return "", "", 0, errImageRefMalformed
 	}
 	rest = strings.TrimSuffix(rest, "/content")
 	id, err := strconv.ParseInt(rest, 10, 64)
 	if err != nil || id < 1 {
-		return "", "", errImageRefMalformed
+		return "", "", 0, errImageRefMalformed
 	}
 	if h.Assets == nil {
-		return "", "", errImageAssetMissing
+		return "", "", 0, errImageAssetMissing
 	}
 	a, err := h.Assets.Get(ctx, id)
 	if errors.Is(err, asset.ErrNotFound) {
-		return "", "", errImageAssetMissing
+		return "", "", 0, errImageAssetMissing
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 	if addr, ok := asset.PublicAddress(a, h.publicBaseURL(ctx)); ok {
-		return addr, a.Kind, nil
+		return addr, a.Kind, a.ID, nil
 	}
 	if !strings.HasPrefix(a.URL, "http://") && !strings.HasPrefix(a.URL, "https://") {
-		return "", "", errImageAssetNoURL
+		return "", "", 0, errImageAssetNoURL
 	}
-	return a.URL, a.Kind, nil
+	return a.URL, a.Kind, a.ID, nil
+}
+
+// touchAsset 记录一次「素材被服务端解引用」(47 号票):排序信号而非一致性
+// 事实,尽力而为 —— 失败只留日志,不拦生成;行已消失(并发删除)不算错。
+func (h *Handlers) touchAsset(ctx context.Context, id int64) {
+	if err := h.Assets.TouchLastUsed(ctx, id); err != nil && !errors.Is(err, asset.ErrNotFound) {
+		log.Printf("canvastask: touch asset %d last_used: %v", id, err)
+	}
 }
 
 // resolveImageRef maps the editor's reference image to the address the
 // vendor fetches(图生视频单串/图生图列表共用):解引用与 kind 回答见
-// resolveMediaURL,这里只多拒空串。
+// resolveMediaURL,这里只多拒空串;解出素材行即 touch(47 号票)—— 调用
+// 方随后的地址长度校验是请求形状检查,不是素材语义校验,不回滚 touch。
 func (h *Handlers) resolveImageRef(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", errImageRefEmpty
 	}
-	addr, _, err := h.resolveMediaURL(ctx, ref)
-	return addr, err
+	addr, _, assetID, err := h.resolveMediaURL(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	if assetID > 0 {
+		h.touchAsset(ctx, assetID)
+	}
+	return addr, nil
 }
 
 // publicBaseURL reads the configured public base through the optional
@@ -614,7 +634,8 @@ func (h *Handlers) publicBaseURL(ctx context.Context) string {
 // addressed asset must carry the kind the role demands —— 首帧给了视频素
 // 材这类结构错误在落任务行之前就拒掉(http(s) 地址无从查证,声明 kind
 // 已与角色对齐)。角色数量上限由调用方在组装列表时按 maxVideoRefsByRole
-// 计数把关(这里只看单条形状)。
+// 计数把关(这里只看单条形状)。全部校验通过才 touch(47 号票「校验失败
+// 不 touch」—— kind 不符或地址超长的拒收不刷新最近使用)。
 func (h *Handlers) resolveVideoRef(ctx context.Context, in videoRefIn) (VideoRef, error) {
 	url := strings.TrimSpace(in.URL)
 	role := strings.TrimSpace(in.Role)
@@ -626,7 +647,7 @@ func (h *Handlers) resolveVideoRef(ctx context.Context, in videoRefIn) (VideoRef
 	if !ok || kind != wantKind {
 		return VideoRef{}, errVideoRefBadRole
 	}
-	addr, assetKind, err := h.resolveMediaURL(ctx, url)
+	addr, assetKind, assetID, err := h.resolveMediaURL(ctx, url)
 	if err != nil {
 		return VideoRef{}, err
 	}
@@ -635,6 +656,9 @@ func (h *Handlers) resolveVideoRef(ctx context.Context, in videoRefIn) (VideoRef
 	}
 	if assetKind != "" && assetKind != wantKind {
 		return VideoRef{}, errVideoAssetKind
+	}
+	if assetID > 0 {
+		h.touchAsset(ctx, assetID)
 	}
 	return VideoRef{URL: addr, Kind: kind, Role: role}, nil
 }

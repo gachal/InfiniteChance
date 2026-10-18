@@ -44,6 +44,7 @@ import {
   appendComposerRef,
   appendVideoRef,
   composerImageUrls,
+  composerRefFromAsset,
   composerVideoRefs,
   composeSize,
   defaultVideoRefRole,
@@ -54,6 +55,7 @@ import {
   parseDurationInput,
   resultNodeData,
   taskUrlFor,
+  videoRefFromAsset,
   VIDEO_REFS_TOTAL_CAP,
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
@@ -69,7 +71,7 @@ import { canInsertRecord } from '../records'
 import { newNodeAnchor } from '../placement'
 import AssetPanel from '../components/AssetPanel.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
-import AgentMediaPicker from '../components/AgentMediaPicker.vue'
+import AssetPicker from '../components/AssetPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import MediaLightbox from '../components/MediaLightbox.vue'
@@ -523,6 +525,13 @@ const videoComposerRefs = computed<VideoComposerRef[]>(() => {
  * 保留但禁用并说明原因(38 号票评审,替换旧的「无模型即隐藏」)。 */
 const composerVisible = computed(() => composerNode.value !== null)
 
+// 对话框消失(取消选中)时素材挑选面板随行关闭 —— 它是对话框的伴生面。
+watch(composerVisible, (visible) => {
+  if (!visible) {
+    composerPickerOpen.value = false
+  }
+})
+
 /** 对话框禁用原因:空 = 正常可用。目录未加载完(首屏竞态)不算失败。 */
 const composerDisabledReason = computed(() => {
   if (composerMode.value === 'video') {
@@ -671,6 +680,22 @@ function videoUploadKindOf(file: File): VideoRefKind {
   return 'image'
 }
 
+/** 视频参考条满员预检(42 号票守卫,上传与素材库挑选共用):该 kind 按
+ * 默认角色能否再收一条,不能收时返回用户文案,能收返回 null。 */
+function videoRefCapBlocked(refs: VideoComposerRef[], kind: VideoRefKind): string | null {
+  const role = defaultVideoRefRole(refs, kind)
+  const roleFull = refs.filter((r) => r.role === role).length >= VIDEO_ROLE_CAPS[role]
+  const totalFull = refs.filter((r) => isReferenceRole(r.role)).length >= VIDEO_REFS_TOTAL_CAP
+  if (!roleFull && !totalFull) {
+    return null
+  }
+  return totalFull && !roleFull
+    ? '参考条已满员(参考图/参考视频/参考音频合计最多 9 条)'
+    : kind === 'image'
+      ? '图片参考已满员(首帧/尾帧各 1,参考图最多 9)'
+      : `${kind === 'video' ? '视频' : '音频'}参考已满员`
+}
+
 /** 参考上传(视频模式):图片/视频/音频入库后按默认角色进条(defaultVideoRefRole:
  * 图片在首帧空缺时默认首帧,否则参考图;视频/音频角色固定)。上传前先按
  * 「默认角色能否收下」预检(42 号票:含参考条目合计 ≤9 的总量守卫),该
@@ -682,17 +707,9 @@ async function onComposerUploadVideo(file: File): Promise<void> {
   }
   const kind = videoUploadKindOf(file)
   const refs = videoComposerRefs.value
-  const role = defaultVideoRefRole(refs, kind)
-  const roleFull = refs.filter((r) => r.role === role).length >= VIDEO_ROLE_CAPS[role]
-  const totalFull =
-    refs.filter((r) => isReferenceRole(r.role)).length >= VIDEO_REFS_TOTAL_CAP
-  if (roleFull || totalFull) {
-    generateError.value =
-      totalFull && !roleFull
-        ? '参考条已满员(参考图/参考视频/参考音频合计最多 9 条)'
-        : kind === 'image'
-          ? '图片参考已满员(首帧/尾帧各 1,参考图最多 9)'
-          : `${kind === 'video' ? '视频' : '音频'}参考已满员`
+  const blocked = videoRefCapBlocked(refs, kind)
+  if (blocked) {
+    generateError.value = blocked
     return
   }
   refUploading.value = true
@@ -710,6 +727,87 @@ async function onComposerUploadVideo(file: File): Promise<void> {
   } finally {
     refUploading.value = false
   }
+}
+
+// ---- 素材库挑选(47 号票):对话框两模式从素材库直接落参考条 ----
+
+const composerPickerOpen = ref(false)
+
+/** kind 白名单随模式:图片模式仅图片;视频模式图/视频/音频三类(顶部
+ * 过滤档,「全部」= 三类)。 */
+const composerPickerKinds = computed<Array<'image' | 'video' | 'audio'>>(() =>
+  composerMode.value === 'video' ? ['image', 'video', 'audio'] : ['image'],
+)
+
+const composerPickerHint = computed(() =>
+  composerMode.value === 'video'
+    ? '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。'
+    : '点选挂为参考图,再点取消。',
+)
+
+/** 已选高亮 = 当前模式参考条上的素材 id(选中节点产物 + 上传/挑选条目)。 */
+const composerPickerSelectedIds = computed<number[]>(() => {
+  const ids = composerMode.value === 'video' ? videoComposerRefs.value : composerRefs.value
+  return ids.map((r) => r.asset_id).filter((id): id is number => id != null)
+})
+
+function toggleComposerPicker(): void {
+  composerPickerOpen.value = !composerPickerOpen.value
+  if (composerPickerOpen.value) {
+    // 面板同占画布右缘,互斥打开(32 号票纪律)。
+    assetPanelOpen.value = false
+    recordsPanelOpen.value = false
+    historyNodeId.value = ''
+    pickerNodeId.value = ''
+  }
+}
+
+/** 从参考条摘掉一条素材挑选:选中节点产物 chip 按 asset_id 拆下
+ * (detached 语义与移除按钮同款),上传/挑选条目按 asset_id 移除。 */
+function detachComposerAsset(a: AssetRecord): void {
+  if (composerMode.value === 'video') {
+    const node = composerNode.value
+    const data = node?.data as MediaNodeData | undefined
+    const hasSelectionChip =
+      !detachedVideoFromSelection.value && !!(node && data?.url && isRelayableRef(data.url))
+    if (hasSelectionChip && data?.asset_id === a.id) {
+      detachedVideoFromSelection.value = true
+      return
+    }
+    uploadedVideoRefs.value = uploadedVideoRefs.value.filter((r) => r.asset_id !== a.id)
+    return
+  }
+  const node = composerNode.value
+  const data = node?.data as MediaNodeData | undefined
+  const hasSelectionChip =
+    !detachedFromSelection.value && !!(node && data?.url && isRelayableRef(data.url))
+  if (hasSelectionChip && data?.asset_id === a.id) {
+    detachedFromSelection.value = true
+    return
+  }
+  uploadedRefs.value = uploadedRefs.value.filter((r) => r.asset_id !== a.id)
+}
+
+/** 素材库点选(对话框):已在条上 = 摘下;不在 = 按 44 号票默认角色规则
+ * 落条(多选连选逐条应用:空白条多选图时第一张落首帧、其余落参考图),
+ * 上限守卫与上传同款,超限整条拒收。 */
+function onComposerPickToggle(a: AssetRecord): void {
+  const selectedIds = composerPickerSelectedIds.value
+  if (selectedIds.includes(a.id)) {
+    detachComposerAsset(a)
+    return
+  }
+  if (composerMode.value === 'video') {
+    const refs = videoComposerRefs.value
+    const blocked = videoRefCapBlocked(refs, a.kind as VideoRefKind)
+    if (blocked) {
+      generateError.value = blocked
+      return
+    }
+    uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, videoRefFromAsset(a, refs))
+    return
+  }
+  uploadedRefs.value = appendComposerRef(uploadedRefs.value, composerRefFromAsset(a))
 }
 
 /** 草稿更新的模式分发:video 分支写视频草稿,image 分支写图片草稿
@@ -1177,6 +1275,7 @@ function openAgentHistory(nodeId: string): void {
   pickerNodeId.value = ''
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  composerPickerOpen.value = false
 }
 
 function openAgentPicker(nodeId: string): void {
@@ -1188,6 +1287,7 @@ function openAgentPicker(nodeId: string): void {
   historyNodeId.value = ''
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  composerPickerOpen.value = false
 }
 
 /** 清空会话(历史面板顶部按钮):与新会话同一语义,清后节点可重新开始。 */
@@ -1509,6 +1609,10 @@ function onGlobalKeydown(e: KeyboardEvent): void {
       recordsPanelOpen.value = false
       return
     }
+    if (composerPickerOpen.value) {
+      composerPickerOpen.value = false
+      return
+    }
     if (pickerNodeId.value) {
       pickerNodeId.value = ''
       return
@@ -1726,11 +1830,13 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
 const assetPanelOpen = ref(false)
 const recordsPanelOpen = ref(false)
 
-// 面板同占画布右缘,互斥打开(32 号票起含 Agent 的历史/素材选择面板)。
+// 面板同占画布右缘,互斥打开(32 号票起含 Agent 的历史/素材选择面板与
+// 47 号票的对话框素材挑选面板)。
 function toggleAssetPanel(): void {
   assetPanelOpen.value = !assetPanelOpen.value
   if (assetPanelOpen.value) {
     recordsPanelOpen.value = false
+    composerPickerOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
   }
@@ -1740,6 +1846,7 @@ function toggleRecordsPanel(): void {
   recordsPanelOpen.value = !recordsPanelOpen.value
   if (recordsPanelOpen.value) {
     assetPanelOpen.value = false
+    composerPickerOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
   }
@@ -2289,6 +2396,7 @@ function backToList(): void {
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"
         @upload="onComposerUpload"
+        @pick-assets="toggleComposerPicker"
         @retry-catalogs="refreshModelCatalogs"
         @send="onComposerSend"
       />
@@ -2311,9 +2419,25 @@ function backToList(): void {
         @clear="clearAgentHistory(historyNode.id)"
         @close="historyNodeId = ''"
       />
-      <AgentMediaPicker
-        v-if="pickerNode"
+      <!-- 47 号票:对话框素材挑选面板(与 composer 伴生,key 带模式 --
+           模式切换重挂,白名单与过滤档随行重置);32 号票 Agent 素材选择
+           面板泛化为同一组件。两面板互斥(右缘面板纪律)。 -->
+      <AssetPicker
+        v-if="composerPickerOpen"
+        :key="`composer-picker-${composerMode}`"
+        title="挑选参考素材"
+        :kind-whitelist="composerPickerKinds"
+        :hint="composerPickerHint"
+        :selected-asset-ids="composerPickerSelectedIds"
+        @toggle="onComposerPickToggle"
+        @close="composerPickerOpen = false"
+      />
+      <AssetPicker
+        v-else-if="pickerNode"
         :key="`picker-${pickerNode.id}`"
+        title="选择参考素材"
+        :kind-whitelist="['image', 'video']"
+        hint="点选挂为会话附件,再点取消;单条消息 ≤4 图 + ≤1 视频。"
         :selected-asset-ids="pickerSelectedIds"
         @toggle="onAgentPickToggle(pickerNode.id, $event)"
         @close="pickerNodeId = ''"

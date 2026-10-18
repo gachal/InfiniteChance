@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS assets (
 	object_key   TEXT    NOT NULL DEFAULT '',
 	content_type TEXT    NOT NULL DEFAULT '',
 	size_bytes   INTEGER NOT NULL DEFAULT 0,
-	created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+	created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+	last_used_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
 
 // sqliteIndexes 是 MySQL 版表内 KEY idx_… 的 SQLite 对应物:MySQL 的
@@ -46,6 +47,7 @@ var sqliteIndexes = []string{
 	`CREATE INDEX IF NOT EXISTS idx_assets_canvas ON assets (canvas_id, id)`,
 	`CREATE INDEX IF NOT EXISTS idx_assets_task ON assets (task_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets (kind, id)`,
+	`CREATE INDEX IF NOT EXISTS idx_assets_last_used ON assets (last_used_at, id)`,
 }
 
 // EnsureSchema creates the assets table and its indexes when missing. The
@@ -69,11 +71,14 @@ func (s *SQLiteStore) Create(ctx context.Context, a Asset) (Asset, error) {
 	if a.Prompt != "" {
 		prompt = a.Prompt
 	}
+	// last_used_at 显式与 created_at 同值写入:初始「从未使用」= 创建时刻
+	// (47 号票),同一条 NOW 免依赖 SQLite 默认表达式的语句内恒等。
+	now := sqlitedb.FormatTime(time.Now())
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, created_at, last_used_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes,
-		sqlitedb.FormatTime(time.Now()))
+		now, now)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -94,9 +99,11 @@ func (s *SQLiteStore) Get(ctx context.Context, id int64) (Asset, error) {
 	return a, err
 }
 
-// List answers assets newest first under the filter. The canvas join is a
-// LEFT JOIN: 素材比画布活得久,画布行没了素材照列,名字空着即可。LIMIT/
-// OFFSET 分页与 MySQL 版同形;listWhere 过滤拼接两边共用。
+// List answers assets newest first under the filter; sort = SortLastUsed
+// turns the order into last_used_at DESC(47 号票挑选场景的最近使用序),
+// id DESC 在两个口径里都作平局裁决。The canvas join is a LEFT JOIN: 素材比
+// 画布活得久,画布行没了素材照列,名字空着即可。LIMIT/OFFSET 分页与
+// MySQL 版同形;listWhere 过滤拼接两边共用。
 func (s *SQLiteStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	limit := f.Limit
 	if limit <= 0 {
@@ -109,12 +116,16 @@ func (s *SQLiteStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	if offset < 0 {
 		offset = 0
 	}
+	orderBy := " ORDER BY a.id DESC"
+	if f.Sort == SortLastUsed {
+		orderBy = " ORDER BY a.last_used_at DESC, a.id DESC"
+	}
 	where, args := listWhere(f)
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT a.id, a.kind, a.canvas_id, a.task_id, a.model, a.prompt, a.url,
-			a.object_key, a.content_type, a.size_bytes, a.created_at, c.name
+			a.object_key, a.content_type, a.size_bytes, a.created_at, a.last_used_at, c.name
 		 FROM assets a LEFT JOIN canvases c ON c.id = a.canvas_id`+
-			where+` ORDER BY a.id DESC LIMIT ? OFFSET ?`,
+			where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
 		return nil, err
@@ -124,12 +135,15 @@ func (s *SQLiteStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	var out []Listed
 	for rows.Next() {
 		var l Listed
-		var prompt, createdAt, canvasName sql.NullString
+		var prompt, createdAt, lastUsedAt, canvasName sql.NullString
 		if err := rows.Scan(&l.ID, &l.Kind, &l.CanvasID, &l.TaskID, &l.Model, &prompt,
-			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &createdAt, &canvasName); err != nil {
+			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &createdAt, &lastUsedAt, &canvasName); err != nil {
 			return nil, err
 		}
 		if l.CreatedAt, err = sqlitedb.ParseTime(createdAt.String); err != nil {
+			return nil, err
+		}
+		if l.LastUsedAt, err = sqlitedb.ParseTime(lastUsedAt.String); err != nil {
 			return nil, err
 		}
 		l.Prompt = prompt.String
@@ -154,13 +168,31 @@ func (s *SQLiteStore) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// TouchLastUsed stamps one asset's last_used_at to now(47 号票「解引用即算」
+// 的 SQLite 写入点),与 MySQLStore 的 NOW(6) 同语义。
+func (s *SQLiteStore) TouchLastUsed(ctx context.Context, id int64) error {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE assets SET last_used_at = ? WHERE id = ?`, sqlitedb.FormatTime(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // scanSQLiteAsset 是 scanAsset 的 SQLite 版:created_at 是 TEXT,读出转回
 // time.Time,保持与 MySQL 版相同的 Go 返回类型。
 func scanSQLiteAsset(row rowScanner) (Asset, error) {
 	var a Asset
-	var prompt, createdAt sql.NullString
+	var prompt, createdAt, lastUsedAt sql.NullString
 	if err := row.Scan(&a.ID, &a.Kind, &a.CanvasID, &a.TaskID, &a.Model, &prompt,
-		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &createdAt); err != nil {
+		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &createdAt, &lastUsedAt); err != nil {
 		return Asset{}, err
 	}
 	a.Prompt = prompt.String
@@ -169,5 +201,10 @@ func scanSQLiteAsset(row rowScanner) (Asset, error) {
 		return Asset{}, err
 	}
 	a.CreatedAt = t
+	u, err := sqlitedb.ParseTime(lastUsedAt.String)
+	if err != nil {
+		return Asset{}, err
+	}
+	a.LastUsedAt = u
 	return a, nil
 }

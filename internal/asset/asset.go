@@ -43,7 +43,9 @@ func PublicAddress(a Asset, publicBase string) (string, bool) {
 // Prompt keep the generation facts for previews and future re-runs. URL is
 // the artifact's original address — the vendor http(s) URL, or a data: URI
 // when the vendor answered base64 — kept for provenance and vendor-facing
-// reuse (图生视频的参考图解析). 转存后的自有字节走 ObjectKey.
+// reuse (图生视频的参考图解析). 转存后的自有字节走 ObjectKey. LastUsedAt
+// 是「最近一次被服务端解引用」的时点(47 号票):初始 = 创建,任务参考与
+// Agent 媒体解析成功时刷新,驱动挑选场景的最近使用排序。
 type Asset struct {
 	ID          int64
 	Kind        string
@@ -56,13 +58,20 @@ type Asset struct {
 	ContentType string
 	SizeBytes   int64
 	CreatedAt   time.Time
+	LastUsedAt  time.Time
 }
+
+// SortLastUsed asks List to order by last_used_at DESC (recently used
+// first), id DESC breaking ties. The zero value keeps the historical
+// newest-first (id DESC) order — 管理端审计视角不变.
+const SortLastUsed = "last_used"
 
 // Filter narrows List. Zero fields mean "no constraint"; Limit <= 0 means
 // the handler default.
 type Filter struct {
 	Kind     string
 	CanvasID int64
+	Sort     string
 	Limit    int
 	Offset   int
 }
@@ -75,7 +84,8 @@ type Listed struct {
 	CanvasName string
 }
 
-// Store persists assets. 14 号票在 10 号票的写入/取回上扩过滤列表与删除。
+// Store persists assets. 14 号票在 10 号票的写入/取回上扩过滤列表与删除;
+// 47 号票加 TouchLastUsed(解引用即算「用过」,供最近使用排序)。
 type Store interface {
 	// Create stores one asset and returns it with ID and CreatedAt.
 	Create(ctx context.Context, a Asset) (Asset, error)
@@ -87,4 +97,7 @@ type Store interface {
 	// Delete removes the row (the caller owns the object's lifecycle);
 	// ErrNotFound when there is no row.
 	Delete(ctx context.Context, id int64) error
+	// TouchLastUsed stamps one asset's last_used_at to now (47 号票的
+	// 「解引用即算」写入点);ErrNotFound when there is no row.
+	TouchLastUsed(ctx context.Context, id int64) error
 }

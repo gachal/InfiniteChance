@@ -42,6 +42,28 @@ export function composerImageUrls(refs: ComposerRef[]): string[] {
   return refs.map((r) => r.url)
 }
 
+// ---- 素材库挑选(47 号票)----
+
+/** 素材库挑选的最小素材形状:结构上兼容 @infinitechance/api 的
+ * AssetRecord,不依赖 api 包(测试可自造轻量对象,27 号票同款纪律)。 */
+export interface AssetLike {
+  id: number
+  kind: VideoRefKind
+  content_url: string
+}
+
+/** 素材行 → 图片模式参考条条目:asset_id + 内容寻址路径(与素材面板
+ * 插入同语义,服务端解出真实地址)。 */
+export function composerRefFromAsset(a: AssetLike): ComposerRef {
+  return { url: a.content_url, asset_id: a.id }
+}
+
+/** 素材行 → 视频参考条条目:角色按 44 号票默认角色规则随当前条态定
+ * (空白条首张图落首帧、已有图条目落参考图;视频/音频角色固定)。 */
+export function videoRefFromAsset(a: AssetLike, list: VideoComposerRef[]): VideoComposerRef {
+  return { url: a.content_url, kind: a.kind, role: defaultVideoRefRole(list, a.kind), asset_id: a.id }
+}
+
 /** 比例与分辨率预设(21 号票修订:拆成两个下拉,新增 4:3/3:4 与
  * 1K/2K/4K)。两者组合成具体的 size 串走既有透传契约;「自动 × 自动」
  * = 不传 size(维持各上游自身缺省),不认的组合由上游 4xx 透出、节点上

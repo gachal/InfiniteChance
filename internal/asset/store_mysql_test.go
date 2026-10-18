@@ -200,3 +200,55 @@ func TestMySQLAssetLegacyRowMigratesWithDefaults(t *testing.T) {
 			got.ObjectKey, got.ContentType, got.SizeBytes)
 	}
 }
+
+// 47 号票:last_used_at 初始 = created_at,TouchLastUsed 刷新,sort=last_used
+// 把最近使用的排前面,缺省仍 id DESC。
+func TestMySQLAssetLastUsedSort(t *testing.T) {
+	store := openAssetTestDB(t)
+	ctx := context.Background()
+
+	first, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "https://img.example/1.png"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	second, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "https://img.example/2.png"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if first.LastUsedAt.IsZero() || !first.LastUsedAt.Equal(first.CreatedAt) {
+		t.Errorf("initial last_used_at = %v, want created_at %v", first.LastUsedAt, first.CreatedAt)
+	}
+
+	// 缺省:创建序(id DESC)。
+	rows, err := store.List(ctx, asset.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != second.ID || rows[1].ID != first.ID {
+		t.Fatalf("default order = %d,%d, want id DESC", rows[0].ID, rows[1].ID)
+	}
+
+	// 用过的素材(先创建的老素材)升到最前;行内时间戳刷新。
+	if err := store.TouchLastUsed(ctx, first.ID); err != nil {
+		t.Fatalf("TouchLastUsed: %v", err)
+	}
+	touched, err := store.Get(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("Get after touch: %v", err)
+	}
+	if !touched.LastUsedAt.After(touched.CreatedAt) {
+		t.Errorf("last_used_at = %v, want refreshed past created_at %v", touched.LastUsedAt, touched.CreatedAt)
+	}
+	rows, err = store.List(ctx, asset.Filter{Sort: asset.SortLastUsed})
+	if err != nil {
+		t.Fatalf("List sorted: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != first.ID || rows[1].ID != second.ID {
+		t.Fatalf("last_used order = %d,%d, want touched first", rows[0].ID, rows[1].ID)
+	}
+
+	// 未知 id:ErrNotFound(解引用侧并发删除不算错)。
+	if err := store.TouchLastUsed(ctx, 999999); !errors.Is(err, asset.ErrNotFound) {
+		t.Errorf("touch missing = %v, want ErrNotFound", err)
+	}
+}
