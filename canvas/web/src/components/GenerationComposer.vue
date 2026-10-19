@@ -71,6 +71,9 @@ const emit = defineEmits<{
   'update:duration': [value: string]
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
+  /** 参考条 chip 点击预览:图片看大图、视频进灯箱播放(编辑器级灯箱单
+   * 实例承接);预览对象无源节点语义,灯箱截帧入口随之收起。 */
+  'preview-ref': [payload: { kind: 'image' | 'video'; url: string }]
   upload: [file: File]
   /** 素材库挑选(47 号票):打开/关闭素材选择面板,落条由编辑器接线。 */
   'pick-assets': []
@@ -297,6 +300,8 @@ function onFileChange(e: Event): void {
         <img
           :src="thumbs.displayURL(r.url)"
           alt="参考图"
+          title="点击预览大图"
+          @click="emit('preview-ref', { kind: 'image', url: r.url })"
           @error="thumbs.onThumbError(r.url)"
         >
         <button
@@ -354,12 +359,24 @@ function onFileChange(e: Event): void {
           v-if="r.kind === 'image'"
           :src="thumbs.displayURL(r.url)"
           alt="参考图"
+          title="点击预览大图"
+          @click="emit('preview-ref', { kind: 'image', url: r.url })"
           @error="thumbs.onThumbError(r.url)"
         >
+        <button
+          v-else-if="r.kind === 'video'"
+          class="vref-icon"
+          type="button"
+          title="点击播放"
+          aria-label="播放参考视频"
+          @click="emit('preview-ref', { kind: 'video', url: r.url })"
+        >
+          ▶
+        </button>
         <span
           v-else
           class="vref-icon"
-        >{{ r.kind === 'video' ? '▶' : '♪' }}</span>
+        >♪</span>
         <select
           v-if="r.kind === 'image'"
           class="vref-role"
@@ -605,6 +622,7 @@ function onFileChange(e: Event): void {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   display: block;
+  cursor: zoom-in;
 }
 
 /* 视频参考 chip:图片缩略或图标占位,角色标记贴在底部。 */
@@ -624,6 +642,7 @@ function onFileChange(e: Event): void {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   display: block;
+  cursor: zoom-in;
 }
 
 .vref-icon {
@@ -636,6 +655,18 @@ function onFileChange(e: Event): void {
   background: rgba(255, 255, 255, 0.05);
   color: #aab1c5;
   font-size: 18px;
+}
+
+/* 参考视频 chip 的播放入口 button 化(键盘可达),视觉与音频图标占位一致。 */
+button.vref-icon {
+  padding: 0;
+  font: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+button.vref-icon:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .vref-role {

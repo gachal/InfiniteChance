@@ -2395,6 +2395,7 @@ function backToList(): void {
         @update:duration="videoDuration = $event"
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"
+        @preview-ref="openPreview($event.kind, $event.url, '')"
         @upload="onComposerUpload"
         @pick-assets="toggleComposerPicker"
         @retry-catalogs="refreshModelCatalogs"
@@ -2458,11 +2459,13 @@ function backToList(): void {
         @close="previzEditorNodeId = ''"
       />
       <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body);41 号票
-           截帧事件在此入素材 + 落画布,失败文案走轻提示。 -->
+           截帧事件在此入素材 + 落画布,失败文案走轻提示。参考条 chip 的预览
+           (nodeId 空)无源节点,截帧入口收起。 -->
       <MediaLightbox
         v-if="lightbox"
         :kind="lightbox.kind"
         :url="lightbox.url"
+        :can-capture="!!lightbox.nodeId"
         @close="lightbox = null"
         @capture="onLightboxCapture"
         @capture-error="showNotice($event)"
