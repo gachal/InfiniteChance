@@ -22,11 +22,15 @@ export type { PrevizCamera, PrevizObject, PrevizObjectKind } from '@infinitechan
 /** Agent 节点数据(29 号票,提示词节点的升级取代):text 是当前提示词
  * 草稿(生成落点,可手编,也是投递的内容);skill_id 是 `/` 选中的技能
  * (目录刷新收回,悬空按未选处理);messages 是多轮对话历史,20 轮上限
- * 超出截断最旧 —— 换技能 = 开新会话(清历史重算)。 */
+ * 超出截断最旧 —— 换技能 = 开新会话(清历史重算)。character_ids 是
+ * 注入的角色(52 号票,按选择序,显式 chip 不做自动检测):每轮请求随
+ * character_ids 上送、服务端取角色最新数据渲染设定段 —— 已发送轮次的
+ * 文本固化在 messages 里,角色后改不影响旧对话;换技能/新会话连带清空。 */
 export interface AgentNodeData {
   text: string
   skill_id?: number
   messages?: AgentChatMessage[]
+  character_ids?: number[]
 }
 
 /** 图片/视频节点数据:生成产物或占位;url 为空表示还没有产物。14 号票起
@@ -64,9 +68,22 @@ export interface PrevizNodeData {
   latest?: { url: string; asset_id: number }
 }
 
-export type CanvasNodeData = AgentNodeData | MediaNodeData | AnalysisNodeData | PrevizNodeData
+/** 角色引用节点数据(52 号票):只存角色 id **不存快照** —— one source
+ * of truth 彻底贯彻,角色改名/换封面/加变体后节点随目录刷新即变;0 =
+ * 未绑定(新节点待选)。渲染数据由编辑器按画布 ip_id 拉角色目录供给,
+ * 目录里找不到(已删/跨 IP)落「角色不可用」占位,可删节点或换绑。 */
+export interface CharacterNodeData {
+  character_id: number
+}
 
-export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz'
+export type CanvasNodeData =
+  | AgentNodeData
+  | MediaNodeData
+  | AnalysisNodeData
+  | PrevizNodeData
+  | CharacterNodeData
+
+export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -74,7 +91,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'image' ||
     value === 'video' ||
     value === 'analysis' ||
-    value === 'previz'
+    value === 'previz' ||
+    value === 'character'
   )
 }
 
@@ -88,11 +106,13 @@ export const NODE_TYPE_APPLICABILITY: Record<CanvasNodeType, 'all' | CanvasTypeI
   video: 'all',
   analysis: 'all',
   previz: 'all',
+  // 角色跨媒介是本质属性(52 号票 grilling 定案):引用节点全画布类型可用。
+  character: 'all',
 }
 
 /** 某画布类型可用的节点类型清单:通用节点恒在,特色节点按声明过滤。 */
 export function nodeTypesForCanvasType(canvasType: string): CanvasNodeType[] {
-  const all: CanvasNodeType[] = ['agent', 'image', 'video', 'analysis', 'previz']
+  const all: CanvasNodeType[] = ['agent', 'image', 'video', 'analysis', 'previz', 'character']
   return all.filter((t) => {
     const a = NODE_TYPE_APPLICABILITY[t]
     return a === 'all' || a.includes(canvasType as CanvasTypeId)
@@ -111,7 +131,8 @@ export function normalizeNodeType(value: unknown): CanvasNodeType {
 
 /** 新节点的初始数据。分析节点由视频/图片节点上的「分析」动作创建
  * (文本后填),不从工具栏直接添加;预演台自带默认场景(一个人形 +
- * 一个机位),添加即可见可渲染。 */
+ * 一个机位),添加即可见可渲染;角色节点 character_id = 0(未绑定),
+ * 绑定走节点卡上的选择器(52 号票)。 */
 export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'agent' || type === 'analysis') {
     return { text: '' }
@@ -119,6 +140,9 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'previz') {
     const scene = defaultPrevizScene()
     return { objects: scene.objects, cameras: scene.cameras, active_camera_id: scene.activeCameraId }
+  }
+  if (type === 'character') {
+    return { character_id: 0 }
   }
   return { url: '', note: '' }
 }
@@ -129,6 +153,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   video: '视频',
   analysis: '分析',
   previz: '预演台',
+  character: '角色',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出

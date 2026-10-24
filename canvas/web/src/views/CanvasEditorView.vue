@@ -1,9 +1,9 @@
 <script setup lang="ts">
-// 画布编辑器:vue-flow 五类节点(Agent/图片/视频/分析;29 号票提示词
-// 节点升级为 Agent 并就地迁移;39 号票追加预演台)、节点旁 + 按钮的两击
-// 连线(30 号票)、整图防抖自动保存与版本冲突处理(09 号票);文生图任务
-// 编排的客户端侧(10 号票):生成动作 → 结果节点先落库再提交 → 轮询
-// 任务 → 产物写回节点。
+// 画布编辑器:vue-flow 六类节点(Agent/图片/视频/分析;29 号票提示词
+// 节点升级为 Agent 并就地迁移;39 号票追加预演台;52 号票追加角色引用
+// 节点)、节点旁 + 按钮的两击连线(30 号票)、整图防抖自动保存与版本冲突
+// 处理(09 号票);文生图任务编排的客户端侧(10 号票):生成动作 → 结果
+// 节点先落库再提交 → 轮询任务 → 产物写回节点。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
@@ -16,6 +16,7 @@ import {
   type AssetRecord,
   type CanvasDetail,
   type CanvasTask,
+  type CharacterRecord,
   type ModelPriceSummary,
   type PromptTemplateOption,
 } from '@infinitechance/api'
@@ -26,6 +27,7 @@ import {
   type AgentChatMessage,
   type AgentNodeData,
   appendAgentTurn,
+  type CharacterNodeData,
   initialData,
   NODE_TYPE_LABEL,
   normalizeNodeType,
@@ -65,6 +67,7 @@ import {
   type VideoRefRole,
 } from '../composer'
 import { canvasTypeLabel } from '../canvasTypes'
+import { characterImageContentURL } from '../characters'
 import { nodeTypesForCanvasType } from '../graph'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
@@ -80,6 +83,7 @@ import MediaLightbox from '../components/MediaLightbox.vue'
 import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
+import CharacterNode from '../components/nodes/CharacterNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PrevizNode from '../components/nodes/PrevizNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
@@ -1024,6 +1028,40 @@ async function refreshCatalogs(): Promise<void> {
   }
 }
 
+// ---- 本 IP 角色目录(52 号票)----
+
+// 角色引用节点与 Agent 角色 chip 共用的目录源:按画布 ip_id 拉全树
+// (51 号票目录 API)。节点只存 character_id 不存快照,渲染数据全从这
+// 份目录解析 —— 目录刷新(重开画布/窗口聚焦)后角色改名、换封面、加
+// 变体,节点即变,这就是「不存快照」的实证面。加载失败保持空目录:
+// 节点落「角色不可用」占位(可换绑/删节点),不拦画布其他编辑。
+const ipCharacters = ref<CharacterRecord[]>([])
+
+async function refreshIPCharacters(): Promise<void> {
+  if (canvasIPID.value <= 0) {
+    return
+  }
+  try {
+    ipCharacters.value = await client.listIPCharacters(canvasIPID.value)
+  } catch {
+    /* 拉不到就保持现状,下次聚焦再试 */
+  }
+}
+
+/** 角色节点绑定/换绑:data 只写 character_id(52 号票「不存快照」)。 */
+function onCharacterBind(nodeId: string, characterId: number): void {
+  updateNodeData(nodeId, { character_id: characterId } satisfies Partial<CharacterNodeData>)
+  markChanged()
+}
+
+/** 落图节点 = 素材插入语义(52 号票):选中设定图按 asset_id + 内容寻址
+ * 路径插为独立图片节点落视口中心,不复制字节、不连线 —— 设定图进生成
+ * 链的桥(落图后经对话框参考条/首帧消费)。 */
+function onCharacterLandImage(image: { asset_id: number }): void {
+  insertAssetRef('image', image.asset_id, characterImageContentURL(image.asset_id))
+  showNotice('已把设定图落为图片节点(视口中心)')
+}
+
 /** Agent 会话的一轮(29 号票;31 号票起走流式;32 号票带媒体):输入作
  * 本轮主题/修改意见,media 为本轮附件引用,服务端把技能渲染文本作首条
  * 指令、拼历史与本轮输入经网关聊天流式生成。增量实时写节点文本区(不标
@@ -1039,6 +1077,7 @@ async function onGeneratePrompt(
     model: string
     media: AgentChatMedia[]
     history: AgentChatMessage[]
+    character_ids: number[]
   },
 ): Promise<void> {
   if (promptGenerating.value) {
@@ -1063,6 +1102,7 @@ async function onGeneratePrompt(
         model: payload.model,
         ...(payload.media.length > 0 ? { media: payload.media } : {}),
         ...(payload.history.length > 0 ? { history: payload.history } : {}),
+        ...(payload.character_ids.length > 0 ? { character_ids: payload.character_ids } : {}),
       },
       (delta) => {
         text += delta
@@ -1092,12 +1132,13 @@ async function onGeneratePrompt(
 }
 
 /** 技能变更(选中/移除/悬空收回)= 开新会话:写 skill_id 并清空对话
- * 历史与未发送附件(换技能清历史重算);文本草稿保留,已投递文本不受
- * 影响。 */
+ * 历史与未发送附件,连带清角色 chip(52 号票:换技能清历史重算,注入
+ * 的角色设定随会话一起作废);文本草稿保留,已投递文本不受影响。 */
 function onSkillChange(nodeId: string, skillId: number | null): void {
   updateNodeData(nodeId, {
     ...(skillId != null ? { skill_id: skillId } : { skill_id: undefined }),
     messages: [],
+    character_ids: undefined,
   })
   clearAgentAttachments(nodeId)
   markChanged()
@@ -1247,11 +1288,19 @@ function onAgentDetach(nodeId: string, id: number): void {
   setAgentAttachments(nodeId, agentAttachmentsOf(nodeId).filter((m) => m.id !== id))
 }
 
-/** 新会话(32 号票显式入口):清空对话历史与未发送附件,技能不变 ——
- * 此前唯一清历史途径是换技能,太隐蔽。 */
+/** 新会话(32 号票显式入口):清空对话历史、未发送附件与角色 chip
+ * (52 号票:新会话不背旧会话的注入配置),技能不变 —— 此前唯一清历史
+ * 途径是换技能,太隐蔽。 */
 function onAgentNewSession(nodeId: string): void {
-  updateNodeData(nodeId, { messages: [] })
+  updateNodeData(nodeId, { messages: [], character_ids: undefined })
   clearAgentAttachments(nodeId)
+  markChanged()
+}
+
+/** Agent 角色 chip 变更(52 号票):选择序落节点 data,换技能/新会话由
+ * 上面两个入口连带清空。 */
+function onAgentCharactersChange(nodeId: string, ids: number[]): void {
+  updateNodeData(nodeId, { character_ids: ids.length > 0 ? ids : undefined })
   markChanged()
 }
 
@@ -1756,7 +1805,7 @@ function addNode(type: CanvasNodeType): void {
 }
 
 /** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫/
- * 预演台粉),38 号票评审补的导航面沿用同一语义色系。 */
+ * 预演台粉/角色青),38 号票评审补的导航面沿用同一语义色系。 */
 function miniMapNodeColor(node: { type?: string | null }): string {
   switch (normalizeNodeType(node.type ?? undefined)) {
     case 'agent':
@@ -1767,6 +1816,8 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#facc15'
     case 'previz':
       return '#f472b6'
+    case 'character':
+      return '#2dd4bf'
     default:
       return '#a78bfa'
   }
@@ -2078,19 +2129,23 @@ function beforeUnload(e: BeforeUnloadEvent): void {
 
 onMounted(() => {
   // 任务同步必须等整图加载落地之后再开始:抢先回来的一次同步会被
-  // applyServerGraph 的 setNodes 整个覆盖掉。
+  // applyServerGraph 的 setNodes 整个覆盖掉。角色目录同理 —— ip_id 要
+  // 等画布详情回来才有。
   void loadCanvas().finally(() => {
     void taskSync.start()
+    void refreshIPCharacters()
   })
   refreshModelCatalogs()
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
+  window.addEventListener('focus', refreshIPCharacters)
   window.addEventListener('beforeunload', beforeUnload)
   window.addEventListener('keydown', onGlobalKeydown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
+  window.removeEventListener('focus', refreshIPCharacters)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (historyTimer !== undefined) {
     clearTimeout(historyTimer)
@@ -2101,8 +2156,8 @@ onBeforeUnmount(() => {
   taskSync.stop()
 })
 
-/** 添加面板的节点清单:按画布类型过滤(50 号票机制;现有节点全通用,
- * 行为暂无差异 —— 分析节点不经面板添加,照旧排除)。 */
+/** 添加面板的节点清单:按画布类型过滤(50 号票机制;52 号票起角色引用
+ * 节点也是通用节点)—— 分析节点不经面板添加,照旧排除。 */
 const addableNodeTypes = computed(() =>
   nodeTypesForCanvasType(canvasType.value).filter((t) => t !== 'analysis'),
 )
@@ -2305,6 +2360,7 @@ function backToList(): void {
             :data="nodeProps.data"
             :skills="promptTemplates"
             :chat-models="promptModels"
+            :characters="ipCharacters"
             :prompt-generating="promptGenerating"
             :has-downstream="downstreamHasMedia.has(nodeProps.id)"
             :attachments="agentAttachments[nodeProps.id] ?? []"
@@ -2314,6 +2370,7 @@ function backToList(): void {
             @text-change="onTextChange(nodeProps.id, $event)"
             @send="onGeneratePrompt(nodeProps.id, $event)"
             @skill-change="onSkillChange(nodeProps.id, $event)"
+            @characters-change="onAgentCharactersChange(nodeProps.id, $event)"
             @deliver="onDeliver(nodeProps.id)"
             @attach-files="onAgentAttachFiles(nodeProps.id, $event)"
             @detach-attachment="onAgentDetach(nodeProps.id, $event)"
@@ -2381,6 +2438,18 @@ function backToList(): void {
             @edit="previzEditorNodeId = nodeProps.id"
             @drop="onPrevizDrop(nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
+          />
+        </template>
+        <!-- 52 号票:角色引用节点 —— 参照卡,不渲染把手(不作任何连线的
+             源与目标);绑定/换绑与落图动作经事件回编辑器。 -->
+        <template #node-character="nodeProps">
+          <CharacterNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :characters="ipCharacters"
+            @bind="onCharacterBind(nodeProps.id, $event)"
+            @land-image="onCharacterLandImage($event)"
           />
         </template>
       </VueFlow>
@@ -2868,6 +2937,12 @@ function backToList(): void {
 .add-previz {
   background: rgba(244, 114, 182, 0.16);
   color: #f472b6;
+}
+
+/* 52 号票:角色引用节点入添加组,青色与节点描边/小地图同源。 */
+.add-character {
+  background: rgba(45, 212, 191, 0.16);
+  color: #2dd4bf;
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是

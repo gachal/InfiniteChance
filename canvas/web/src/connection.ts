@@ -14,7 +14,10 @@ import type { CanvasNodeType } from './graph'
  * - image/video → image/video  迭代来源(21 号票)
  * - previz → image             渲染帧落点(39 号票,落画布成图片节点)
  * analysis 不作为任何连线的源;previz 不作为任何连线的目标(输入是用户
- * 摆的场景,不接上游);其余组合(agent→agent、previz→video 等)拒连。
+ * 摆的场景,不接上游);character 不作任何连线的源与目标(52 号票:它是
+ * 钉在画布上的设定参照卡,组件不渲染把手 —— 设定图进生成链走「落图节
+ * 点」的素材插入语义,不走连线);其余组合(agent→agent、previz→video
+ * 等)拒连。
  */
 export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   agent: ['image', 'video'],
@@ -22,6 +25,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   video: ['agent', 'image', 'video', 'analysis'],
   analysis: [],
   previz: ['image'],
+  character: [],
 }
 
 /** source 类型到 target 类型能否建立新连线;未知/缺失类型一律拒绝。 */

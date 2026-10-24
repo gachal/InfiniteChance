@@ -23,6 +23,8 @@ describe('normalizeNodeType', () => {
     expect(normalizeNodeType('video')).toBe('video')
     expect(normalizeNodeType('analysis')).toBe('analysis')
     expect(normalizeNodeType('previz')).toBe('previz')
+    // 52 号票:角色引用节点是第六种类型,原样通过(不作旧值迁移)。
+    expect(normalizeNodeType('character')).toBe('character')
   })
 
   it('falls back to agent for unknown types', () => {
@@ -50,6 +52,13 @@ describe('isCanvasNodeType / initialData', () => {
     expect(scene.objects).toHaveLength(1)
     expect(scene.cameras).toHaveLength(1)
     expect(scene.active_camera_id).toBe(scene.cameras[0].id)
+  })
+
+  it('seeds character nodes with an unbound id (52 号票)', () => {
+    // 只存 id 不存快照:新节点 character_id = 0(未绑),绑定后编辑器按
+    // 画布 ip_id 的角色目录实时解析 —— 角色改名/换封面节点即变。
+    expect(isCanvasNodeType('character')).toBe(true)
+    expect(initialData('character')).toEqual({ character_id: 0 })
   })
 })
 

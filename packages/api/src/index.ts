@@ -449,7 +449,9 @@ export interface AgentChatMessage {
  * topic 为本轮输入(主题或修改意见);media 为本轮附件引用(内容寻址
  * 路径或厂商 http(s) 地址,≤4 图 + ≤1 视频);history 为此前的对话轮次
  * (不含本轮,不含首条指令 —— 那由服务端按技能即时渲染,user 轮可带
- * media);model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
+ * media);character_ids 为本轮注入的角色(52 号票,可选,按选择序 ——
+ * 服务端校验存在与 IP 归属后把「【角色设定】」段拼进首条指令,每轮取
+ * 角色最新数据);model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
 export interface GeneratePromptInput {
   node_id?: string
   template_id?: number
@@ -457,6 +459,7 @@ export interface GeneratePromptInput {
   model: string
   media?: AgentChatMedia[]
   history?: AgentChatMessage[]
+  character_ids?: number[]
 }
 
 /** 生成提示词的响应:文本由编辑器写入 Agent 节点文本区并沿连线投递。 */

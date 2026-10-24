@@ -5,19 +5,28 @@
 // 输入即主题/修改意见,回车提交;多轮历史存节点 data(换技能 = 开新会话)。
 // 32 号票:输入区旁媒体附件双入口(本机上传 / 从素材库选),待发附件
 // chips 显示上传中/失败态、逐个可移除,发送只带就绪引用;「历史」按钮开
-// 会话历史面板、「新会话」显式清历史。附件清单是编辑器持有的 UI 态,经
-// props 下发、事件上抛;生成成功由编辑器沿连线自动投递。不直接改 props:
-// 文本变更与技能变更上抛给编辑器,由 updateNodeData 应用。
+// 会话历史面板、「新会话」显式清历史。52 号票:技能 chip 旁新增角色 chip
+// —— 显式入口唤起本 IP 角色选择浮层,点选成可删 chip、可多枚(按选择
+// 序),不做消息自动检测;发送随 character_ids 上送,服务端取角色最新数据
+// 渲染设定段。附件清单是编辑器持有的 UI 态,经 props 下发、事件上抛;生成
+// 成功由编辑器沿连线自动投递。不直接改 props:文本变更与技能/角色变更上抛
+// 给编辑器,由 updateNodeData 应用。
 import { computed, nextTick, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
-import type { AgentChatMedia, PromptTemplateOption, SkillTarget } from '@infinitechance/api'
+import type {
+  AgentChatMedia,
+  CharacterRecord,
+  PromptTemplateOption,
+  SkillTarget,
+} from '@infinitechance/api'
 
 import {
   type AgentChatMessage,
   type AgentNodeData,
   agentRoundCount,
 } from '../../graph'
+import { toggleCharacterChip } from '../../characters'
 import {
   type PendingAgentMedia,
   isAgentMediaUploading,
@@ -35,6 +44,8 @@ const props = defineProps<{
   skills: PromptTemplateOption[]
   /** 可用的 token 轨聊天模型(编辑器从 /prompt-models 拉取)。 */
   chatModels: string[]
+  /** 本 IP 的角色目录(52 号票角色 chip 与注入的候选清单)。 */
+  characters: CharacterRecord[]
   /** 提示词生成的在途标记(编辑器级状态)。 */
   promptGenerating: boolean
   /** 本节点下游连线上是否存在媒体节点(决定「投递」是否可用)。 */
@@ -57,8 +68,11 @@ const emit = defineEmits<{
     model: string
     media: AgentChatMedia[]
     history: AgentChatMessage[]
+    character_ids: number[]
   }]
   'skill-change': [skillId: number | null]
+  /** 角色 chip 变更(52 号票):ids 按选择序,编辑器落节点 data。 */
+  'characters-change': [ids: number[]]
   deliver: []
   /** 本机文件选作附件(32 号票):编辑器上传入素材库后挂 chip。 */
   'attach-files': [files: File[]]
@@ -68,7 +82,7 @@ const emit = defineEmits<{
   'open-picker': []
   /** 开/关会话历史面板(绑定本节点)。 */
   'open-history': []
-  /** 新会话:清历史与未发送附件(技能不变)。 */
+  /** 新会话:清历史、未发送附件与角色 chip(技能不变)。 */
   'new-session': []
   /** 左右 + 按钮点击(30 号票两击连线):side 决定本节点作 source 还是 target。 */
   'connect-start': [side: ConnectSide]
@@ -105,6 +119,48 @@ watch(
     }
   },
 )
+
+// ---- 角色 chip(52 号票)----
+
+// 已选角色按 data.character_ids 的顺序解析(选择序即注入序);角色已被
+// 删/跨 IP(目录里找不到)时按目录刷新把悬空 id 收回 —— 与技能 chip 的
+// 「悬空收回」同一语义。
+const selectedCharacters = computed<CharacterRecord[]>(() => {
+  const ids = props.data.character_ids ?? []
+  const picked: CharacterRecord[] = []
+  for (const id of ids) {
+    const c = props.characters.find((ch) => ch.id === id)
+    if (c) {
+      picked.push(c)
+    }
+  }
+  return picked
+})
+
+watch(
+  () => props.characters,
+  (list) => {
+    const ids = props.data.character_ids ?? []
+    const kept = ids.filter((id) => list.some((c) => c.id === id))
+    if (kept.length !== ids.length) {
+      emit('characters-change', kept)
+    }
+  },
+)
+
+const characterOverlayOpen = ref(false)
+
+function toggleCharacter(characterId: number): void {
+  // 浮层保持打开可连选;移除走 chip 上的 ×。
+  emit('characters-change', toggleCharacterChip(props.data.character_ids ?? [], characterId))
+}
+
+function removeCharacter(characterId: number): void {
+  emit(
+    'characters-change',
+    (props.data.character_ids ?? []).filter((id) => id !== characterId),
+  )
+}
 
 // ---- 输入行与技能浮层 ----
 
@@ -249,9 +305,11 @@ const history = computed(() => props.data.messages ?? [])
 const rounds = computed(() => agentRoundCount(history.value))
 
 // 待发附件:发送只带就绪引用;还有上传在途时不可发送(引用没就绪);
-// 有历史或未发送附件时「新会话」才有意义。
+// 有历史、未发送附件或角色 chip 时「新会话」才有意义。
 const attachments = computed(() => props.attachments)
-const hasConversation = computed(() => history.value.length > 0 || attachments.value.length > 0)
+const hasConversation = computed(
+  () => history.value.length > 0 || attachments.value.length > 0 || (props.data.character_ids?.length ?? 0) > 0,
+)
 
 // 附件图片 chip 的缩略显示(49 号票):m.ref 是发送载荷,只换 <img> 的
 // 显示地址,onerror 回落原图。
@@ -289,6 +347,7 @@ function submit(): void {
     model: chatModel.value,
     media: readyAgentMediaRefs(attachments.value),
     history: history.value,
+    character_ids: props.data.character_ids ?? [],
   })
   input.value = ''
 }
@@ -325,11 +384,16 @@ function onDeliver(): void {
     />
 
     <div class="chat">
+      <!-- 技能 chip 与角色 chip 同排(52 号票):技能单枚、角色可多枚
+           (按选择序),都可删;删技能 = 开新会话,删角色只收回注入。 -->
       <div
-        v-if="activeSkill"
+        v-if="activeSkill || selectedCharacters.length > 0"
         class="chip-row"
       >
-        <span class="chip">
+        <span
+          v-if="activeSkill"
+          class="chip"
+        >
           <span
             class="chip-target"
             :data-target="activeSkill.target"
@@ -340,6 +404,25 @@ function onDeliver(): void {
             type="button"
             title="移除技能(开启新会话)"
             @click="removeSkill"
+          >
+            ×
+          </button>
+        </span>
+        <span
+          v-for="c in selectedCharacters"
+          :key="c.id"
+          class="chip character-chip"
+        >
+          <span class="chip-target char">角色</span>
+          <span
+            class="chip-name"
+            :title="c.alias ? `${c.name}(${c.alias})` : c.name"
+          >{{ c.name }}</span>
+          <button
+            class="chip-x"
+            type="button"
+            title="移除角色注入"
+            @click="removeCharacter(c.id)"
           >
             ×
           </button>
@@ -395,8 +478,18 @@ function onDeliver(): void {
       </div>
 
       <!-- 32 号票:附件双入口(本机上传 / 素材库选)+ 历史面板与新会话
-           入口;上限 ≤4 图 + ≤1 视频,拒收提示由编辑器横幅给出。 -->
+           入口;52 号票起「角色」按钮唤起本 IP 角色选择浮层。上限 ≤4 图 +
+           ≤1 视频,拒收提示由编辑器横幅给出。 -->
       <div class="tools-row">
+        <button
+          class="tool"
+          type="button"
+          :class="{ on: characterOverlayOpen }"
+          title="选择本 IP 角色注入设定文本(可多选,按选择序注入)"
+          @click="characterOverlayOpen = !characterOverlayOpen"
+        >
+          角色
+        </button>
         <button
           class="tool"
           type="button"
@@ -543,6 +636,39 @@ function onDeliver(): void {
           </li>
         </ul>
       </div>
+      <!-- 52 号票:角色选择浮层(与技能浮层同形,不随输入清空 —— 连选
+           后按「角色」按钮收起;点选即切 chip,已选高亮)。 -->
+      <div
+        v-if="characterOverlayOpen"
+        class="skill-overlay character-overlay"
+      >
+        <ul class="skill-list">
+          <li
+            v-for="c in characters"
+            :key="c.id"
+            :class="{ on: (data.character_ids ?? []).includes(c.id) }"
+            @mousedown.prevent="toggleCharacter(c.id)"
+          >
+            <span class="skill-line">
+              <span class="skill-name">{{ c.name }}<template v-if="c.alias">({{ c.alias }})</template></span>
+              <span
+                v-if="(data.character_ids ?? []).includes(c.id)"
+                class="badge"
+              >已选</span>
+            </span>
+            <span
+              v-if="c.description"
+              class="skill-desc"
+            >{{ c.description }}</span>
+          </li>
+          <li
+            v-if="characters.length === 0"
+            class="empty"
+          >
+            本 IP 还没有角色,先到 IP 详情页创建
+          </li>
+        </ul>
+      </div>
     </div>
 
     <!-- 30 号票:左右常驻 + 按钮,两击连线的唯一入口;Handle 已视觉
@@ -659,6 +785,21 @@ textarea:focus {
 
 .chip-x:hover {
   color: #ff8f8f;
+}
+
+/* 52 号票:角色 chip 与技能 chip 同排,徽章换青色系与角色节点同源。 */
+.character-chip {
+  max-width: 160px;
+}
+
+.chip-target.char {
+  background: rgba(45, 212, 191, 0.16);
+  color: #5eead4;
+}
+
+/* 52 号票:角色浮层比技能浮层略高,容纳角色简介。 */
+.character-overlay .skill-list {
+  max-height: 220px;
 }
 
 /* 32 号票:待发附件 chips —— 图片 chip 是缩略,视频/上传中/失败是徽章。 */

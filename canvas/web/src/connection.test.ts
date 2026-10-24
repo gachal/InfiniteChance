@@ -46,6 +46,19 @@ describe('canConnect', () => {
     expect(EDGE_MATRIX.analysis).toEqual([])
   })
 
+  it('keeps the character node out of the edge matrix entirely (52 号票)', () => {
+    // 角色引用节点 = 钉在画布上的设定参照卡:不作任何连线的源与目标
+    // (组件也不渲染把手),「本镜头主角」类语义显式不做。
+    expect(EDGE_MATRIX.character).toEqual([])
+    expect(canConnect('character', 'image')).toBe(false)
+    expect(canConnect('image', 'character')).toBe(false)
+    expect(canConnect('agent', 'character')).toBe(false)
+    expect(canConnect('character', 'character')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('character')
+    }
+  })
+
   it('lets previz feed image nodes only, and never receive an edge', () => {
     expect(EDGE_MATRIX.previz).toEqual(['image'])
     for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
