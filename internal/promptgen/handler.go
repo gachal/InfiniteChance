@@ -40,6 +40,12 @@ const (
 	maxMediaVideosPerMessage = 1
 )
 
+// maxCharacterSectionRunes 是回传固化设定段的长度上限(52 号票历史固化):
+// 固化段只会是本服务自己渲染的文本,上界 = 单请求 20 个角色 × 满额字段
+// (名字/别名 255 + 简介 1024 + 设定 20000 + 段框架)的渲染结果,再留
+// 余量取整 —— 合法回传永不触顶,超限即客户端异常,按明显失控整单拒绝。
+const maxCharacterSectionRunes = 500000
+
 // missingAssetSessionHint 拼在素材缺失错误后的行动指引(32 号票):历史
 // 媒体全量重发,历史里引用的素材被删后每一轮都会撞同一个 404,指路开新
 // 会话而不是静默降级。
@@ -60,8 +66,9 @@ type CanvasGetter interface {
 }
 
 // CharacterSource is the slice of the character store the handlers need
-// (52 号票设定文本注入):Agent 会话按 character_ids 逐个取角色最新数据,
-// 校验存在性与 IP 归属后渲染设定段。只取角色级字段,不碰变体/设定图。
+// (52 号票设定文本注入):会话首轮按 character_ids 逐个取角色最新数据,
+// 校验存在性与 IP 归属后渲染设定段;后续轮次回传固化段(历史固化),
+// 不再走本接口。只取角色级字段,不碰变体/设定图。
 type CharacterSource interface {
 	GetCharacter(ctx context.Context, id int64) (character.Character, error)
 }
@@ -136,7 +143,15 @@ type generateInput struct {
 	Media []chatMediaIn `json:"media"`
 	// CharacterIDs 是本轮注入的角色(52 号票,可选):按选择序逐个取最新
 	// 角色数据渲染「【角色设定】」段拼进首条指令;空/缺省 = 不注入。
+	// 历史固化(52 号票)后它只在会话首轮(或注入配置变更后的首轮)上送
+	// —— 后续轮次改带 CharacterSection 回传已固化文本。
 	CharacterIDs []int64 `json:"character_ids"`
+	// CharacterSection 是已固化的「【角色设定】」段(52 号票历史固化,
+	// 可选):客户端把首轮响应带回的设定段随节点 data 持久,后续轮次原样
+	// 回传,服务端逐字复用、不再访问角色目录 —— 会话中途角色改名/改设定
+	// 乃至删除都不影响已发生对话;空 = 按 CharacterIDs 取最新数据渲染
+	// (新会话/注入配置变更后的首轮)。非空时优先于 CharacterIDs。
+	CharacterSection string `json:"character_section"`
 }
 
 // chatMediaIn is one media attachment on a conversation turn (32 号票):
@@ -370,12 +385,20 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 		return generatePrep{}, false
 	}
 
-	// 角色设定注入(52 号票):流前校验 —— 存在性(404)与 IP 归属
-	// (400)逐个过,全部通过才渲染设定段;历史与本轮输入取的是同一份
-	// 最新角色数据(历史固化只靠 messages 里的已发文本)。
-	characterSection, ok := h.resolveCharacterSection(c, cv.IPID, in.CharacterIDs)
-	if !ok {
+	// 角色设定注入(52 号票 + 历史固化):固化段非空时逐字使用 —— 它是
+	// 本会话已发送轮次的设定文本(历史事实),角色后改不影响已发生对话,
+	// 不再访问角色目录(角色已删照常回放);空 = 按 character_ids 取最新
+	// 角色数据渲染(新会话/注入配置变更后的首轮)。两者同给时固化段优先。
+	characterSection := strings.TrimSpace(in.CharacterSection)
+	if utf8.RuneCountInString(characterSection) > maxCharacterSectionRunes {
+		apierr.InvalidRequest(c, fmt.Sprintf("character_section 最多 %d 个字符", maxCharacterSectionRunes))
 		return generatePrep{}, false
+	}
+	if characterSection == "" {
+		characterSection, ok = h.resolveCharacterSection(c, cv.IPID, in.CharacterIDs)
+		if !ok {
+			return generatePrep{}, false
+		}
 	}
 
 	// 32 号票:history 与本轮的媒体逐条解引用(http(s) 直传 / 内容寻址
@@ -512,7 +535,10 @@ func (h *Handlers) Generate(c *gin.Context) {
 		apierr.Write(c, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"text": result.Content})
+	// 响应随行带回本轮实际注入的设定段(52 号票历史固化):首轮注入时
+	// 编辑器把它持久进节点 data,后续轮次原样回传 —— 渲染只在服务端,
+	// 客户端只搬运。未注入时为空串。
+	c.JSON(http.StatusOK, gin.H{"text": result.Content, "character_section": prep.characterSection})
 }
 
 // sseDataFrame 是一帧 SSE data 事件的前缀;载荷恒为 JSON(换行已转义),
@@ -521,11 +547,13 @@ var sseDataFrame = []byte("data: ")
 
 // GenerateStream relays the same conversation as Generate but as server-sent
 // events (31 号票):deltas reach the editor while the model is still writing.
-// 帧形状 —— data: {"delta":"…"} 增量、data: {"error":{code,message}} 流中
-// 失败、data: [DONE] 成功收尾。X-Accel-Buffering: no 让 nginx 按请求关
-// proxy_buffering(gzip_types 不含 text/event-stream,无压缩缓冲),部署反
-// 代与 dev 代理都无需另配。失败语义:已下发的增量不回收 —— 编辑器保留部
-// 分文本,不追加历史不投递;网关已按聊天轨完成记账/退款。
+// 帧形状 —— data: {"character_section":"…"} 本轮注入的设定段(52 号票历史
+// 固化,仅注入时出现在流首)、data: {"delta":"…"} 增量、data:
+// {"error":{code,message}} 流中失败、data: [DONE] 成功收尾。
+// X-Accel-Buffering: no 让 nginx 按请求关 proxy_buffering(gzip_types 不含
+// text/event-stream,无压缩缓冲),部署反代与 dev 代理都无需另配。失败语义:
+// 已下发的增量不回收 —— 编辑器保留部分文本,不追加历史不投递;网关已按
+// 聊天轨完成记账/退款。
 func (h *Handlers) GenerateStream(c *gin.Context) {
 	prep, ok := h.prepareGenerate(c)
 	if !ok {
@@ -545,6 +573,15 @@ func (h *Handlers) GenerateStream(c *gin.Context) {
 		out = append(out, '\n', '\n')
 		_, _ = c.Writer.Write(out)
 		c.Writer.Flush()
+	}
+
+	// 设定段随流带回(52 号票历史固化):与同步响应同形 —— 注入时编辑器
+	// 据此把设定文本持久进节点 data,后续轮次原样回传。增量之前先发,旧
+	// 客户端不认识的帧按既定纪律跳过不打断。
+	if prep.characterSection != "" {
+		if body, mErr := json.Marshal(gin.H{"character_section": prep.characterSection}); mErr == nil {
+			writeEvent(body)
+		}
 	}
 
 	err := h.Gateway.StreamChat(c.Request.Context(), ChatRequest{

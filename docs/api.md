@@ -442,8 +442,11 @@ curl -X POST $CANVAS/canvases/1/tasks/ct_1a2b3c/cancel -H "Authorization: Bearer
 # 52 号票起可选 character_ids[](按选择序,≤20 个):服务端校验角色存在
 # (404 character_not_found)与 IP 归属(character.ip_id == canvas.ip_id,
 # 400 character_ip_mismatch)后,把「【角色设定】」段拼在技能文本之后、
-# 仍属首条指令,只带角色级字段;结果写回 Agent 节点文本区并沿连线投递
-# 下游媒体节点)
+# 仍属首条指令,只带角色级字段;历史固化(52 号票):响应随行带
+# character_section = 本轮实际注入的设定段,同一会话的后续轮次把它原样
+# 回传(此时不再带 character_ids,服务端逐字复用、不取角色目录 —— 角色
+# 后改不影响已发生对话;空 = 首轮按 character_ids 取最新数据渲染);结果
+# 写回 Agent 节点文本区并沿连线投递下游媒体节点)
 curl -X POST $CANVAS/canvases/1/generate-prompt -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"node_id":"n_agent_1","template_id":1,"topic":"参考这个角色再改一版","model":"gpt-4o",
@@ -452,14 +455,16 @@ curl -X POST $CANVAS/canvases/1/generate-prompt -H "Authorization: Bearer $TOKEN
        "history":[{"role":"user","content":"智能家居",
                    "media":[{"ref":"/api/assets/5/content","kind":"video"}]},
                   {"role":"assistant","content":"...上一轮提示词..."}]}'
-# → {"text":"..."}
+# → {"text":"...","character_section":"【角色设定】\n名字:..."}(未注入时
+#   character_section 为空串)
 
 # 生成提示词 · 流式(31 号票,请求体与同步端点完全同形(含 32 号票
-# media/history[].media 与 52 号票 character_ids),响应为 SSE):
-# data: {"delta":"…"} 增量 → data: [DONE] 收尾;流中途失败发
-# data: {"error":{code,message}}。校验前置:没过完校验(含媒体与角色
-# 校验)不给流,失败仍是普通 JSON 错误形状。响应带 X-Accel-Buffering: no,
-# 反代无需另配。
+# media/history[].media 与 52 号票 character_ids/character_section),
+# 响应为 SSE):注入角色时流首帧 data: {"character_section":"…"}(与同步
+# 响应同形),其后 data: {"delta":"…"} 增量 → data: [DONE] 收尾;流中途
+# 失败发 data: {"error":{code,message}}。校验前置:没过完校验(含媒体与
+# 角色校验)不给流,失败仍是普通 JSON 错误形状。响应带 X-Accel-Buffering:
+# no,反代无需另配。
 curl -N -X POST $CANVAS/canvases/1/generate-prompt/stream -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"node_id":"n_agent_1","template_id":1,"topic":"把色调改暖","model":"gpt-4o"}'

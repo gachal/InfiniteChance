@@ -450,8 +450,12 @@ export interface AgentChatMessage {
  * 路径或厂商 http(s) 地址,≤4 图 + ≤1 视频);history 为此前的对话轮次
  * (不含本轮,不含首条指令 —— 那由服务端按技能即时渲染,user 轮可带
  * media);character_ids 为本轮注入的角色(52 号票,可选,按选择序 ——
- * 服务端校验存在与 IP 归属后把「【角色设定】」段拼进首条指令,每轮取
- * 角色最新数据);model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
+ * 服务端校验存在与 IP 归属后把「【角色设定】」段拼进首条指令;只在会话
+ * 首轮或注入配置变更后的首轮上送,取角色最新数据);character_section 为
+ * 已固化的设定段(52 号票历史固化,可选)—— 后续轮次把首轮响应带回的
+ * 段原样回传,服务端逐字复用不再取角色目录,会话中途角色后改不影响已
+ * 发生对话;与 character_ids 同给时固化段优先。model 是 token 轨聊天模型;
+ * node_id 可选,用于用量归因。 */
 export interface GeneratePromptInput {
   node_id?: string
   template_id?: number
@@ -460,11 +464,16 @@ export interface GeneratePromptInput {
   media?: AgentChatMedia[]
   history?: AgentChatMessage[]
   character_ids?: number[]
+  character_section?: string
 }
 
-/** 生成提示词的响应:文本由编辑器写入 Agent 节点文本区并沿连线投递。 */
+/** 生成提示词的响应:text 由编辑器写入 Agent 节点文本区并沿连线投递;
+ * character_section 是本轮实际注入的「【角色设定】」段(52 号票历史固化)
+ * —— 编辑器把它持久进节点 data,同一会话的后续轮次原样回传;未注入时
+ * 缺省(同步端点回空串)。 */
 export interface GeneratePromptResult {
   text: string
+  character_section?: string
 }
 
 /** 视频反推提示词的请求体(13 号票):video_url 是视频节点持有的地址
@@ -1101,14 +1110,16 @@ export class ApiClient {
   }
 
   /** 生成提示词的流式变体(31 号票):POST /canvases/:id/generate-prompt/stream,
-   * SSE 响应逐帧把增量交给 onDelta,`data: [DONE]` 收尾时返回累计全文;
-   * `data: {"error":{code,message}}` 中途失败抛 ApiError。校验类失败仍是
-   * 普通 JSON 错误响应(非 2xx → ApiError),流断在半途(无 DONE)同样抛错。 */
+   * SSE 响应逐帧把增量交给 onDelta,`data: [DONE]` 收尾时返回 { text: 累计
+   * 全文, character_section: 本轮注入的设定段(52 号票历史固化,流首帧
+   * 才带)};`data: {"error":{code,message}}` 中途失败抛 ApiError。校验类
+   * 失败仍是普通 JSON 错误响应(非 2xx → ApiError),流断在半途(无 DONE)
+   * 同样抛错。 */
   async generatePromptStream(
     canvasId: number,
     input: GeneratePromptInput,
     onDelta: (delta: string) => void,
-  ): Promise<string> {
+  ): Promise<GeneratePromptResult> {
     const headers = new Headers({ 'Content-Type': 'application/json' })
     const token = this.getToken?.()
     if (token) {
@@ -1136,6 +1147,7 @@ export class ApiClient {
     const decoder = new TextDecoder()
     let buffer = ''
     let text = ''
+    let characterSection: string | undefined
     let finished = false
     for (;;) {
       const { done, value } = await reader.read()
@@ -1159,9 +1171,16 @@ export class ApiClient {
           break
         }
         try {
-          const parsed = JSON.parse(payload) as { delta?: string; error?: { code?: string; message?: string } }
+          const parsed = JSON.parse(payload) as {
+            delta?: string
+            error?: { code?: string; message?: string }
+            character_section?: string
+          }
           if (parsed.error) {
             throw new ApiError(502, parsed.error.code ?? 'upstream_error', parsed.error.message ?? '生成失败')
+          }
+          if (typeof parsed.character_section === 'string') {
+            characterSection = parsed.character_section
           }
           if (parsed.delta) {
             text += parsed.delta
@@ -1175,7 +1194,7 @@ export class ApiClient {
         }
       }
       if (finished) {
-        return text
+        return characterSection === undefined ? { text } : { text, character_section: characterSection }
       }
     }
     // 流断在半途(无 DONE):已交增量不作成功,由调用方决定去留。

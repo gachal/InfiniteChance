@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_MAX_HISTORY_MESSAGES,
   type AgentChatMessage,
+  agentCharacterInjection,
   agentRoundCount,
   appendAgentTurn,
   initialData,
@@ -112,5 +113,24 @@ describe('agentRoundCount', () => {
         { role: 'assistant', content: 'd' },
       ]),
     ).toBe(2)
+  })
+})
+
+describe('agentCharacterInjection(52 号票历史固化)', () => {
+  it('replays the frozen section alone once materialized', () => {
+    // 有固化段只回传固化段:character_ids 不上送,服务端逐字复用、不取
+    // 角色目录 —— 会话中途角色后改不影响已发生对话。
+    expect(agentCharacterInjection([11, 12], '【角色设定】\n名字:林小满')).toEqual({
+      character_section: '【角色设定】\n名字:林小满',
+    })
+  })
+
+  it('sends character_ids on the first round of a session', () => {
+    // 无固化段且有选择:上送 ids,服务端取最新角色数据渲染(新会话首轮)。
+    expect(agentCharacterInjection([11, 12], undefined)).toEqual({ character_ids: [11, 12] })
+  })
+
+  it('sends nothing without a selection', () => {
+    expect(agentCharacterInjection([], undefined)).toEqual({})
   })
 })

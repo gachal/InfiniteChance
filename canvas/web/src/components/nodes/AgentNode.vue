@@ -7,10 +7,11 @@
 // chips 显示上传中/失败态、逐个可移除,发送只带就绪引用;「历史」按钮开
 // 会话历史面板、「新会话」显式清历史。52 号票:技能 chip 旁新增角色 chip
 // —— 显式入口唤起本 IP 角色选择浮层,点选成可删 chip、可多枚(按选择
-// 序),不做消息自动检测;发送随 character_ids 上送,服务端取角色最新数据
-// 渲染设定段。附件清单是编辑器持有的 UI 态,经 props 下发、事件上抛;生成
-// 成功由编辑器沿连线自动投递。不直接改 props:文本变更与技能/角色变更上抛
-// 给编辑器,由 updateNodeData 应用。
+// 序),不做消息自动检测;发送载荷带 character_ids 与已固化段
+// character_section,由编辑器按 agentCharacterInjection 裁决上送(历史
+// 固化:后续轮次回传首轮固化文本,服务端逐字复用)。附件清单是编辑器持有
+// 的 UI 态,经 props 下发、事件上抛;生成成功由编辑器沿连线自动投递。不
+// 直接改 props:文本变更与技能/角色变更上抛给编辑器,由 updateNodeData 应用。
 import { computed, nextTick, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
@@ -69,6 +70,9 @@ const emit = defineEmits<{
     media: AgentChatMedia[]
     history: AgentChatMessage[]
     character_ids: number[]
+    /** 已固化的「【角色设定】」段(52 号票历史固化):非空时编辑器只回传
+     * 它,不再上送 character_ids(服务端逐字复用,不取角色目录)。 */
+    character_section?: string
   }]
   'skill-change': [skillId: number | null]
   /** 角色 chip 变更(52 号票):ids 按选择序,编辑器落节点 data。 */
@@ -348,6 +352,7 @@ function submit(): void {
     media: readyAgentMediaRefs(attachments.value),
     history: history.value,
     character_ids: props.data.character_ids ?? [],
+    ...(props.data.character_section ? { character_section: props.data.character_section } : {}),
   })
   input.value = ''
 }

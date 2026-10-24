@@ -595,11 +595,25 @@ describe('ApiClient prompt generation (canvas)', () => {
     const deltas: string[] = []
     await expect(
       client.generatePromptStream(7, { topic: '任意', model: 'chat-m' }, (d) => deltas.push(d)),
-    ).resolves.toBe('a neon cyberpunk city')
+    ).resolves.toEqual({ text: 'a neon cyberpunk city' })
     expect(deltas).toEqual(['a neon ', 'cyberpunk city'])
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('/api/canvases/7/generate-prompt/stream')
     expect((init as RequestInit).method).toBe('POST')
+  })
+
+  it('generatePromptStream carries the character section frame through (52 号票历史固化)', async () => {
+    const raw =
+      'data: {"character_section":"【角色设定】\\n名字:林小满"}\n\n' +
+      'data: {"delta":"a neon "}\n\n' +
+      'data: [DONE]\n\n'
+    const client = clientWithBase(sseFetch(raw))
+
+    const deltas: string[] = []
+    await expect(
+      client.generatePromptStream(7, { topic: '任意', model: 'chat-m' }, (d) => deltas.push(d)),
+    ).resolves.toEqual({ text: 'a neon ', character_section: '【角色设定】\n名字:林小满' })
+    expect(deltas).toEqual(['a neon '])
   })
 
   it('generatePromptStream throws on a mid-stream error frame', async () => {

@@ -388,8 +388,8 @@ func TestGenerateInjectsCharacterSectionAfterSkillText(t *testing.T) {
 }
 
 // TestGenerateMultiCharacterSectionsFollowSelectionOrder 验证多角色按选择序
-// 各自成段拼接,历史与本轮输入仍跟在首条之后 —— 每轮请求取角色最新数据,
-// 已发生轮次不受影响。
+// 各自成段拼接,历史与本轮输入仍跟在首条之后(首轮注入,固化段随响应
+// 带回 —— 见 TestGenerateMaterializedSectionReplaysFrozenText)。
 func TestGenerateMultiCharacterSectionsFollowSelectionOrder(t *testing.T) {
 	env := newHandlerEnv(t, nil)
 
@@ -502,6 +502,202 @@ func TestGenerateStreamInjectsSameCharacterSection(t *testing.T) {
 	if req.Conversation[0].Content != want {
 		t.Errorf("instruction = %q, want the same injected shape as the sync endpoint", req.Conversation[0].Content)
 	}
+	// 固化段随流首帧带回(52 号票历史固化):客户端据此持久进节点 data。
+	var section struct {
+		CharacterSection string `json:"character_section"`
+	}
+	firstFrame := strings.SplitN(raw, "\n\n", 2)[0]
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(firstFrame, "data: ")), &section); err != nil {
+		t.Fatalf("parse first frame %q: %v", firstFrame, err)
+	}
+	if section.CharacterSection != "【角色设定】\n名字:林小满\n别名:小满\n简介:16 岁的机械师学徒\n设定:\n银色短发,工装裤,左手是机械义肢。" {
+		t.Errorf("first frame = %q, want the rendered character section", firstFrame)
+	}
+}
+
+// ---- generate-prompt · 历史固化(52 号票)----
+
+// TestGenerateMaterializedSectionReplaysFrozenText 验证历史固化:首轮按
+// character_ids 渲染并把设定段随响应带回;同一会话中途角色被改名改设定
+// 乃至删除,后续轮次回传固化段 —— 首条指令的设定文本与首轮逐字相同,
+// 服务端不再访问角色目录(已删角色照常回放,不回 404);新会话(不带
+// 固化段)仍取最新数据。同步与流式两端点同形。
+func TestGenerateMaterializedSectionReplaysFrozenText(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	// 首轮:注入 11 号角色,响应带回当轮设定段。
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id":   1,
+		"topic":         "赛博朋克城市",
+		"model":         "chat-m",
+		"character_ids": []int64{11},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	var first struct {
+		Text             string `json:"text"`
+		CharacterSection string `json:"character_section"`
+	}
+	if err := json.Unmarshal([]byte(raw), &first); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	frozen := "【角色设定】\n名字:林小满\n别名:小满\n简介:16 岁的机械师学徒\n设定:\n银色短发,工装裤,左手是机械义肢。"
+	if first.CharacterSection != frozen {
+		t.Fatalf("character_section = %q, want the rendered section", first.CharacterSection)
+	}
+
+	// 会话中途:角色被改名改设定,随后删除。
+	edited := env.params.characters.byID[11]
+	edited.Name = "改名后的林小满"
+	edited.Detail = "设定已经完全不同了。"
+	env.params.characters.byID[11] = edited
+	delete(env.params.characters.byID, 11)
+
+	// 第二轮:同一会话 —— 固化段原样回传、不再带 character_ids。
+	res, raw = env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id":       1,
+		"topic":             "把色调改暖",
+		"model":             "chat-m",
+		"character_section": first.CharacterSection,
+		"history": []map[string]string{
+			{"role": "user", "content": "赛博朋克城市"},
+			{"role": "assistant", "content": first.Text},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200(角色已删不拦固化回放); body = %s", res.StatusCode, raw)
+	}
+	var second struct {
+		CharacterSection string `json:"character_section"`
+	}
+	if err := json.Unmarshal([]byte(raw), &second); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if second.CharacterSection != frozen {
+		t.Errorf("character_section = %q, want the frozen section echoed", second.CharacterSection)
+	}
+	requests := env.params.gateway.(*stubGateway).requests
+	if len(requests) != 2 {
+		t.Fatalf("gateway calls = %d, want 2", len(requests))
+	}
+	conv := requests[1].Conversation
+	if len(conv) != 4 {
+		t.Fatalf("conversation = %+v, want instruction + history + current input", conv)
+	}
+	wantFirst := "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。\n\n" + frozen
+	if conv[0].Content != wantFirst {
+		t.Errorf("instruction = %q, want the frozen section replayed verbatim", conv[0].Content)
+	}
+	if !strings.Contains(conv[0].Content, "林小满") || strings.Contains(conv[0].Content, "改名后") {
+		t.Errorf("instruction = %q, want the round-1 text unchanged after the mid-session edit", conv[0].Content)
+	}
+
+	// 新会话:不带固化段、只带 character_ids —— 角色已删,404 如实拒绝
+	// (固化只保护已发生的对话,不保护新的注入)。
+	res, raw = env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id":   1,
+		"topic":         "全新主题",
+		"model":         "chat-m",
+		"character_ids": []int64{11},
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", res.StatusCode, raw)
+	}
+	if code, _ := errorBody(t, raw); code != "character_not_found" {
+		t.Errorf("code = %q, want character_not_found", code)
+	}
+}
+
+// TestGenerateStreamReplaysMaterializedSection 验证流式端点与同步同形:
+// 固化段回传走同一套裁决(逐字复用、不碰目录),设定段帧出现在流首。
+func TestGenerateStreamReplaysMaterializedSection(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	// 角色在会话中途被删除:固化回放不受影响。
+	delete(env.params.characters.byID, 11)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"template_id":       1,
+		"topic":             "把色调改暖",
+		"model":             "chat-m",
+		"character_section": "【角色设定】\n名字:林小满\n别名:小满\n简介:首轮的简介\n设定:\n首轮的设定。",
+		"history": []map[string]string{
+			{"role": "user", "content": "赛博朋克城市"},
+			{"role": "assistant", "content": "a neon cyberpunk city"},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	// 流首帧是设定段,其后才是增量与 [DONE]。
+	want := "data: {\"character_section\":\"【角色设定】\\n名字:林小满\\n别名:小满\\n简介:首轮的简介\\n设定:\\n首轮的设定。\"}\n\n" +
+		"data: {\"delta\":\"a neon \"}\n\ndata: {\"delta\":\"cyberpunk city\"}\n\ndata: [DONE]\n\n"
+	if raw != want {
+		t.Errorf("body = %q, want the section frame ahead of the deltas", raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	wantFirst := "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。\n\n" +
+		"【角色设定】\n名字:林小满\n别名:小满\n简介:首轮的简介\n设定:\n首轮的设定。"
+	if req.Conversation[0].Content != wantFirst {
+		t.Errorf("instruction = %q, want the frozen section replayed verbatim", req.Conversation[0].Content)
+	}
+}
+
+// TestGenerateMaterializedSectionTakesPrecedenceOverIds 验证同给时的裁决:
+// 固化段优先 —— 首条指令用回传文本,character_ids 指向的最新数据不进会话
+// (客户端不会同发,契约仍要钉死,不留给实现含糊的空间)。
+func TestGenerateMaterializedSectionTakesPrecedenceOverIds(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	frozen := "【角色设定】\n名字:林小满\n别名:小满\n简介:首轮的简介\n设定:\n首轮的设定。"
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"topic":             "任意",
+		"model":             "chat-m",
+		"character_section": frozen,
+		"character_ids":     []int64{11},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if !strings.HasSuffix(req.Conversation[0].Content, frozen) {
+		t.Errorf("instruction = %q, want the frozen section to win", req.Conversation[0].Content)
+	}
+	if strings.Contains(req.Conversation[0].Content, "16 岁的机械师学徒") {
+		t.Errorf("instruction = %q, want the latest store data to stay out", req.Conversation[0].Content)
+	}
+}
+
+// TestGenerateCharacterSectionValidation 验证固化段的形状护栏:纯空白按
+// 缺省处理(回落 character_ids 渲染),超长整单拒绝。
+func TestGenerateCharacterSectionValidation(t *testing.T) {
+	t.Run("blank section falls back to ids render", func(t *testing.T) {
+		env := newHandlerEnv(t, nil)
+		res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+			"topic":             "任意",
+			"model":             "chat-m",
+			"character_section": "   ",
+			"character_ids":     []int64{11},
+		})
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+		}
+		req := env.params.gateway.(*stubGateway).requests[0]
+		if !strings.Contains(req.Conversation[0].Content, "银色短发") {
+			t.Errorf("instruction = %q, want a fresh render from character_ids", req.Conversation[0].Content)
+		}
+	})
+	t.Run("oversized section answers 400", func(t *testing.T) {
+		env := newHandlerEnv(t, nil)
+		res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+			"topic":             "任意",
+			"model":             "chat-m",
+			"character_section": strings.Repeat("长", 500001),
+		})
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+		}
+	})
 }
 
 // ---- generate-prompt/stream(31 号票:SSE 流式变体)----

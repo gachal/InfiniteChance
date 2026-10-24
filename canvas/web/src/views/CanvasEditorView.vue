@@ -26,6 +26,7 @@ import {
   type AgentChatMedia,
   type AgentChatMessage,
   type AgentNodeData,
+  agentCharacterInjection,
   appendAgentTurn,
   type CharacterNodeData,
   initialData,
@@ -1066,9 +1067,11 @@ function onCharacterLandImage(image: { asset_id: number }): void {
  * 本轮主题/修改意见,media 为本轮附件引用,服务端把技能渲染文本作首条
  * 指令、拼历史与本轮输入经网关聊天流式生成。增量实时写节点文本区(不标
  * 脏,autosave 防抖不被高频打扰);收尾一次性落盘 —— 成功追加对话历史
- * (20 轮上限截断最旧,媒体随轮进历史)、清空待发附件并沿连线自动投递,
- * 失败保留已流出文本与待发附件(不回滚、不追加历史不投递)。技能刚被删/
- * 停用时立刻刷新目录,悬空 chip 当场收回。 */
+ * (20 轮上限截断最旧,媒体随轮进历史)、持久固化设定段(52 号票历史
+ * 固化:本轮响应带回的「【角色设定】」段落进节点 data,后续轮次经
+ * agentCharacterInjection 原样回传 —— 会话中途角色后改不影响已发生对话)、
+ * 清空待发附件并沿连线自动投递,失败保留已流出文本与待发附件(不回滚、
+ * 不追加历史不投递)。技能刚被删/停用时立刻刷新目录,悬空 chip 当场收回。 */
 async function onGeneratePrompt(
   nodeId: string,
   payload: {
@@ -1078,6 +1081,7 @@ async function onGeneratePrompt(
     media: AgentChatMedia[]
     history: AgentChatMessage[]
     character_ids: number[]
+    character_section?: string
   },
 ): Promise<void> {
   if (promptGenerating.value) {
@@ -1102,15 +1106,21 @@ async function onGeneratePrompt(
         model: payload.model,
         ...(payload.media.length > 0 ? { media: payload.media } : {}),
         ...(payload.history.length > 0 ? { history: payload.history } : {}),
-        ...(payload.character_ids.length > 0 ? { character_ids: payload.character_ids } : {}),
+        // 角色注入(52 号票历史固化):有固化段回传固化段,否则首轮带
+        // character_ids 取最新数据渲染。
+        ...agentCharacterInjection(payload.character_ids, payload.character_section),
       },
       (delta) => {
         text += delta
         updateNodeData(nodeId, { text })
       },
     )
-    const messages = appendAgentTurn(payload.history, payload.topic, full, payload.media)
-    updateNodeData(nodeId, { text: full, messages })
+    const messages = appendAgentTurn(payload.history, payload.topic, full.text, payload.media)
+    updateNodeData(nodeId, {
+      text: full.text,
+      messages,
+      character_section: full.character_section || undefined,
+    })
     // 发送成功即清空进历史:待发附件的引用已随本轮进 messages。
     clearAgentAttachments(nodeId)
     markChanged()
@@ -1132,13 +1142,15 @@ async function onGeneratePrompt(
 }
 
 /** 技能变更(选中/移除/悬空收回)= 开新会话:写 skill_id 并清空对话
- * 历史与未发送附件,连带清角色 chip(52 号票:换技能清历史重算,注入
- * 的角色设定随会话一起作废);文本草稿保留,已投递文本不受影响。 */
+ * 历史与未发送附件,连带清角色 chip 与固化段(52 号票:换技能清历史
+ * 重算,注入的角色设定随会话一起作废 —— 固化段属会话状态,同作废,
+ * 新会话首轮按最新角色数据重新渲染);文本草稿保留,已投递文本不受影响。 */
 function onSkillChange(nodeId: string, skillId: number | null): void {
   updateNodeData(nodeId, {
     ...(skillId != null ? { skill_id: skillId } : { skill_id: undefined }),
     messages: [],
     character_ids: undefined,
+    character_section: undefined,
   })
   clearAgentAttachments(nodeId)
   markChanged()
@@ -1288,19 +1300,24 @@ function onAgentDetach(nodeId: string, id: number): void {
   setAgentAttachments(nodeId, agentAttachmentsOf(nodeId).filter((m) => m.id !== id))
 }
 
-/** 新会话(32 号票显式入口):清空对话历史、未发送附件与角色 chip
- * (52 号票:新会话不背旧会话的注入配置),技能不变 —— 此前唯一清历史
- * 途径是换技能,太隐蔽。 */
+/** 新会话(32 号票显式入口):清空对话历史、未发送附件、角色 chip 与
+ * 固化段(52 号票:新会话不背旧会话的注入配置,固化段同作废),技能
+ * 不变 —— 此前唯一清历史途径是换技能,太隐蔽。 */
 function onAgentNewSession(nodeId: string): void {
-  updateNodeData(nodeId, { messages: [], character_ids: undefined })
+  updateNodeData(nodeId, { messages: [], character_ids: undefined, character_section: undefined })
   clearAgentAttachments(nodeId)
   markChanged()
 }
 
 /** Agent 角色 chip 变更(52 号票):选择序落节点 data,换技能/新会话由
- * 上面两个入口连带清空。 */
+ * 上面两个入口连带清空。chip 变更即注入配置变更,固化段一并作废 ——
+ * 下一轮按当前选择重新取最新角色数据渲染(已发送轮次的文本不受影响,
+ * 历史固化只保护已发生的对话)。 */
 function onAgentCharactersChange(nodeId: string, ids: number[]): void {
-  updateNodeData(nodeId, { character_ids: ids.length > 0 ? ids : undefined })
+  updateNodeData(nodeId, {
+    character_ids: ids.length > 0 ? ids : undefined,
+    character_section: undefined,
+  })
   markChanged()
 }
 

@@ -23,14 +23,35 @@ export type { PrevizCamera, PrevizObject, PrevizObjectKind } from '@infinitechan
  * 草稿(生成落点,可手编,也是投递的内容);skill_id 是 `/` 选中的技能
  * (目录刷新收回,悬空按未选处理);messages 是多轮对话历史,20 轮上限
  * 超出截断最旧 —— 换技能 = 开新会话(清历史重算)。character_ids 是
- * 注入的角色(52 号票,按选择序,显式 chip 不做自动检测):每轮请求随
- * character_ids 上送、服务端取角色最新数据渲染设定段 —— 已发送轮次的
- * 文本固化在 messages 里,角色后改不影响旧对话;换技能/新会话连带清空。 */
+ * 注入的角色(52 号票,按选择序,显式 chip 不做自动检测);character_section
+ * 是本会话已固化的「【角色设定】」段(52 号票历史固化):首轮发送时服务端
+ * 按当时角色数据渲染并随响应带回,持久进节点 data,后续轮次经
+ * agentCharacterInjection 原样回传、服务端逐字复用 —— 会话中途角色改名/
+ * 改设定乃至删除都不影响已发生对话;chip 变更/换技能/新会话清空固化段,
+ * 下一轮重新按最新角色数据渲染。 */
 export interface AgentNodeData {
   text: string
   skill_id?: number
   messages?: AgentChatMessage[]
   character_ids?: number[]
+  character_section?: string
+}
+
+/** 本轮请求的角色注入载荷(52 号票历史固化):有固化段只回传固化段
+ * (character_ids 不上送 —— 服务端逐字复用,不取角色目录,角色后改
+ * 不影响已发生对话);无固化段且有选择时上送 character_ids(新会话或
+ * 注入配置变更后的首轮,服务端取最新数据渲染);两者皆无 = 不注入。 */
+export function agentCharacterInjection(
+  characterIds: number[],
+  characterSection: string | undefined,
+): { character_ids?: number[]; character_section?: string } {
+  if (characterSection) {
+    return { character_section: characterSection }
+  }
+  if (characterIds.length > 0) {
+    return { character_ids: characterIds }
+  }
+  return {}
 }
 
 /** 图片/视频节点数据:生成产物或占位;url 为空表示还没有产物。14 号票起
