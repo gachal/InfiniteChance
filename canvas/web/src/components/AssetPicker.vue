@@ -15,6 +15,7 @@ import { ApiError, type AssetRecord, type CharacterRecord } from '@infinitechanc
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
+import { useAssetListQuery } from '../composables/useAssetList'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
 
 /** 素材种类词表(与素材域 kind 同形)。 */
@@ -56,15 +57,15 @@ const charactersError = ref('')
 /** 角色视图只在带 IP 归属且白名单含图片时出现(设定图全是图片)。 */
 const showViewSwitch = computed(() => props.ipId !== undefined && props.kindWhitelist.includes('image'))
 
-/** 归属视图:'ip' = 本 IP + 全局(缺省),'all' = 全库。 */
-const scope = ref<'ip' | 'all'>('ip')
+// 归属视图、列表参数与分页窗口与 AssetPanel 同一套(评审修复提取至
+// useAssetListQuery,单一来源)。
+const { scope, listParams, hasMore } = useAssetListQuery({
+  ipId: () => props.ipId,
+  kind,
+  count: () => assets.value.length,
+})
 
 const showScopeToggle = computed(() => props.ipId !== undefined && view.value === 'asset')
-
-// 分页窗口:一页 30 条,「加载更多」向后翻页(与素材面板同款)。
-const pageSize = 30
-
-const hasMore = () => assets.value.length >= pageSize && assets.value.length % pageSize === 0
 
 /** 过滤档只在多白名单时出现(单一种类没有可切的);「全部」= 白名单全体。 */
 const kindTabs = computed<('' | PickerKind)[]>(() =>
@@ -79,17 +80,6 @@ const emptyText = computed(() =>
     ? '素材库还没有可选的素材。'
     : '素材库还没有可用的图片/视频。',
 )
-
-function listParams(offset: number) {
-  return {
-    kind: kind.value === '' ? undefined : kind.value,
-    scope: (props.ipId !== undefined ? scope.value : 'all') as 'ip' | 'all',
-    ip_id: props.ipId !== undefined && scope.value === 'ip' ? props.ipId : undefined,
-    sort: 'last_used' as const,
-    limit: pageSize,
-    offset,
-  }
-}
 
 async function refresh(): Promise<void> {
   if (view.value === 'character') {

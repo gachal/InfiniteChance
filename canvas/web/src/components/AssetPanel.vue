@@ -13,6 +13,7 @@ import { ApiError, type AssetRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
+import { useAssetListQuery, type AssetListKind } from '../composables/useAssetList'
 
 const props = withDefaults(
   defineProps<{
@@ -33,34 +34,23 @@ const emit = defineEmits<{
 const { client } = useAuth()
 
 const assets = ref<AssetRecord[]>([])
-const kind = ref<'' | 'image' | 'video' | 'audio'>('')
+const kind = ref<AssetListKind>('')
 const loading = ref(false)
 const error = ref('')
 const uploading = ref(false)
 const uploadInput = ref<HTMLInputElement | null>(null)
 
-/** 归属视图:'ip' = 本 IP + 全局(缺省),'all' = 全库。 */
-const scope = ref<'ip' | 'all'>('ip')
+// 归属视图、列表参数与分页窗口与 AssetPicker 同一套(评审修复提取至
+// useAssetListQuery,单一来源)。
+const { scope, listParams, hasMore } = useAssetListQuery({
+  ipId: () => props.ipId,
+  kind,
+  count: () => assets.value.length,
+})
 
 const scopeChoices = computed(() =>
   props.ipId !== undefined ? ([{ v: 'ip', label: '本 IP + 全局' }, { v: 'all', label: '全部' }] as const) : ([{ v: 'all', label: '全部' }] as const),
 )
-
-// 分页窗口:一页 30 条,「加载更多」向后翻页;上一页拉满才可能出现下一页。
-const pageSize = 30
-
-const hasMore = () => assets.value.length >= pageSize && assets.value.length % pageSize === 0
-
-function listParams(offset: number) {
-  return {
-    kind: kind.value === '' ? undefined : kind.value,
-    scope: (props.ipId !== undefined ? scope.value : 'all') as 'ip' | 'all',
-    ip_id: props.ipId !== undefined && scope.value === 'ip' ? props.ipId : undefined,
-    sort: 'last_used' as const,
-    limit: pageSize,
-    offset,
-  }
-}
 
 async function refresh(): Promise<void> {
   loading.value = true

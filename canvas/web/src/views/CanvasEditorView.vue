@@ -124,8 +124,10 @@ const {
 const canvasName = ref('')
 // IP 归属与画布类型(50 号票):面包屑「IP 名 / 画布名」+ 类型徽章的
 // 数据源;ipId 同时是编辑器内全部上传的固定归属(画布内上传传画布 IP,
-// 不可改)。
+// 不可改)。uploadIPId 是全部 uploadAsset 调用的归属参数单一来源
+// (0 = 无 IP 维度,按全局上传)。
 const canvasIPID = ref(0)
+const uploadIPId = computed(() => canvasIPID.value || undefined)
 const canvasIPName = ref('')
 const canvasType = ref('general')
 const loadError = ref('')
@@ -663,7 +665,7 @@ async function onComposerUpload(file: File): Promise<void> {
   refUploading.value = true
   generateError.value = ''
   try {
-    const a = await client.uploadAsset(file, 'image', canvasIPID.value || undefined)
+    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
     uploadedRefs.value = appendComposerRef(uploadedRefs.value, { url: a.content_url, asset_id: a.id })
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
@@ -728,7 +730,7 @@ async function onComposerUploadVideo(file: File): Promise<void> {
   refUploading.value = true
   generateError.value = ''
   try {
-    const a = await client.uploadAsset(file, kind, canvasIPID.value || undefined)
+    const a = await client.uploadAsset(file, kind, uploadIPId.value)
     uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, {
       url: a.content_url,
       kind,
@@ -1251,7 +1253,7 @@ async function onAgentAttachFiles(nodeId: string, files: File[]): Promise<void> 
       const pending: PendingAgentMedia = { id: nextAgentMediaId(), kind, state: 'uploading' }
       setAgentAttachments(nodeId, [...agentAttachmentsOf(nodeId), pending])
       try {
-        const a = await client.uploadAsset(file, kind, canvasIPID.value || undefined)
+        const a = await client.uploadAsset(file, kind, uploadIPId.value)
         setAgentAttachments(
           nodeId,
           agentAttachmentsOf(nodeId).map((m) =>
@@ -1548,7 +1550,7 @@ async function onPrevizRender(nodeId: string, blob: Blob): Promise<void> {
   generateError.value = ''
   try {
     const file = new File([blob], 'previz.png', { type: 'image/png' })
-    const a = await client.uploadAsset(file, 'image', canvasIPID.value || undefined)
+    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
     updateNodeData(nodeId, { latest: { url: a.content_url, asset_id: a.id } })
     markChanged()
   } catch (e) {
@@ -1867,7 +1869,7 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
   }
   try {
     const file = new File([blob], `frame-${seconds.toFixed(1)}s.jpg`, { type: 'image/jpeg' })
-    const a = await client.uploadAsset(file, 'image', canvasIPID.value || undefined)
+    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
     nodeSeq += 1
     const newId = `image-${Date.now()}-${nodeSeq}`
     const lane = flowEdges.value.filter((e) => e.source === sourceId).length
@@ -2006,7 +2008,7 @@ async function onUploadChange(e: Event): Promise<void> {
   uploading.value = true
   generateError.value = ''
   try {
-    const a = await client.uploadAsset(file, uploadKindOf(file), canvasIPID.value || undefined)
+    const a = await client.uploadAsset(file, uploadKindOf(file), uploadIPId.value)
     insertAsset(a)
   } catch (err) {
     generateError.value = err instanceof ApiError ? err.message : '上传失败,请稍后再试'
