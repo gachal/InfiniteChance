@@ -1,7 +1,7 @@
 # 54 ネーム分镜稿节点
 
 Type: feat
-Status: drafted(2026-10-24 grilling 定案;通用画布回归后(53 号票)与絵コンテ同为通用新节点,共享块内核)
+Status: implemented(2026-10-24;feat/universal-canvas)。定案背景:通用画布回归后(53 号票)与絵コンテ同为通用新节点,共享块内核
 
 ## Question
 

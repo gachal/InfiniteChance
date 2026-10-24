@@ -1,7 +1,7 @@
 # 55 游戏关卡卡节点
 
 Type: feat
-Status: drafted(2026-10-24 grilling 定案;通用画布回归后(53 号票)为通用新节点)
+Status: implemented(2026-10-24;feat/universal-canvas)。定案背景:通用画布回归后(53 号票)为通用新节点
 
 ## Question
 

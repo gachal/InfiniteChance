@@ -1,7 +1,7 @@
 # 53 通用画布回归与絵コンテ分镜节点
 
 Type: feat
-Status: drafted(2026-10-24 grilling 定案;推翻 50 号票「画布类型 + 特色节点」结构,见 [ADR 0005](../../../docs/adr/0005-universal-canvas-and-node-grouping.md))
+Status: implemented(2026-10-24;feat/universal-canvas,A/B 两段与评审修复均已并入)。定案背景:同日 grilling 推翻 50 号票「画布类型 + 特色节点」结构,见 [ADR 0005](../../../docs/adr/0005-universal-canvas-and-node-grouping.md)
 
 ## Question
 
