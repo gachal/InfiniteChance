@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { EDGE_MATRIX, canConnect } from './connection'
 
 describe('canConnect', () => {
-  it('admits the five semantic edge kinds', () => {
-    // 五种语义:投递(agent→媒体)、反推(视频→agent)、分析(媒体→分析)、
-    // 迭代(媒体→媒体)、渲染帧落点(预演台→图片,39 号票)。
+  it('admits the seven semantic edge kinds', () => {
+    // 七种语义:投递(agent→媒体)、反推(视频→agent)、分析(媒体→分析)、
+    // 迭代(媒体→媒体)、渲染帧落点(预演台→图片,39 号票)、分镜画面落点
+    // (絵コンテ→图片,53 号票)、格画面落点(ネーム→图片,54 号票);
+    // 絵コンテ/ネーム两条在下方各票专属用例里单独断言。
     expect(canConnect('agent', 'image')).toBe(true)
     expect(canConnect('agent', 'video')).toBe(true)
     expect(canConnect('video', 'agent')).toBe(true)
@@ -94,7 +96,6 @@ describe('canConnect', () => {
       expect(EDGE_MATRIX[source]).not.toContain('name')
     }
   })
-})
 
   it('keeps the level node out of the edge matrix entirely (55 号票)', () => {
     // 关卡卡 = 文档型工件(55 号票):卡内直接编辑,无来源/投递语义,
@@ -109,3 +110,4 @@ describe('canConnect', () => {
       expect(EDGE_MATRIX[source]).not.toContain('level')
     }
   })
+})

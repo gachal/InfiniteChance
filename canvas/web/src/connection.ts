@@ -7,7 +7,7 @@
 import type { CanvasNodeType } from './graph'
 
 /**
- * 合法矩阵(源类型 → 可达目标类型),语义收敛为六种(CONTEXT.md「连线」):
+ * 合法矩阵(源类型 → 可达目标类型),语义收敛为七种(CONTEXT.md「连线」):
  * - agent → image/video        提示词投递通道(29 号票推模式)
  * - video → agent              反推来源(13 号票)
  * - image/video → analysis     分析来源(17 号票)
