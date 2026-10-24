@@ -4,7 +4,7 @@
 // 节点)、节点旁 + 按钮的两击连线(30 号票)、整图防抖自动保存与版本冲突
 // 处理(09 号票);文生图任务编排的客户端侧(10 号票):生成动作 → 结果
 // 节点先落库再提交 → 轮询任务 → 产物写回节点。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -1630,38 +1630,43 @@ function onStoryboardTitleChange(nodeId: string, title: string): void {
   markChanged()
 }
 
-/** 画面槽本机上传:经 /api/assets/upload 入素材库(挂画布 IP,键落
- * uploads/ 档),成功后按素材 id 回填本 cut —— 与预演台渲染帧同语义;
- * 回填时以节点 data 现值为准(编辑层改动不丢),素材行删除后槽落
- * 「素材不可用」占位(既有契约)。 */
-async function onStoryboardUpload(nodeId: string, cutIndex: number, file: File): Promise<void> {
-  if (storyboardUploading.value) {
+/** 画面槽本机上传的共享骨架(絵コンテ/ネーム同构,评审合并):在途守卫 →
+ * /api/assets/upload 入素材库(挂画布 IP,键落 uploads/ 档)→ apply 以节点
+ * data 现值为准生成补丁回填(编辑层在途改动不丢)→ 失败统一报错;节点已
+ * 被删(编辑层开着时删节点的窄窗)静默丢弃,素材行删除后槽落「素材不可用」
+ * 占位(既有契约)。关卡卡不走这里:满员预检与回填拒收是另一套守卫语义,
+ * 硬套要改行为,维持独立实现。 */
+async function uploadFrameAsset(
+  inFlight: Ref<boolean>,
+  nodeId: string,
+  file: File,
+  apply: (data: unknown, assetId: number) => Record<string, unknown>,
+): Promise<void> {
+  if (inFlight.value) {
     return
   }
-  storyboardUploading.value = true
+  inFlight.value = true
   generateError.value = ''
   try {
     const a = await client.uploadAsset(file, 'image', uploadIPId.value)
-    const data = findNode(nodeId)?.data as StoryboardNodeData | undefined
+    const data = findNode(nodeId)?.data
     if (data) {
-      updateNodeData(nodeId, {
-        cuts: data.cuts.map((c, i) => (i === cutIndex ? { ...c, asset_id: a.id } : c)),
-      })
+      updateNodeData(nodeId, apply(data, a.id))
       markChanged()
     }
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
   } finally {
-    storyboardUploading.value = false
+    inFlight.value = false
   }
 }
 
-/** 落图节点(53 号票,预演台落画布同构):cut 画面落为右侧新图片节点
- * (asset 引用 + 内容寻址,prompt 空)并连线(storyboard → 图片来源边);
- * 多次落图沿出边数纵向级联偏移防叠卡;无画面的 cut 在槽上已禁用入口。 */
-function onStoryboardDrop(nodeId: string, cutIndex: number): void {
+/** 落图节点的共享骨架(53/54 号票同构,评审合并):槽画面落为右侧新图片
+ * 节点(asset 引用 + 内容寻址,prompt 空)并连线(来源边);多次落图沿
+ * 出边数纵向级联偏移防叠卡;无画面的槽在入口已禁用,这里再守一道。 */
+function dropFrameNode(nodeId: string, assetIdOf: (data: unknown) => number): void {
   const node = findNode(nodeId)
-  const assetId = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]?.asset_id ?? 0
+  const assetId = node ? assetIdOf(node.data) : 0
   if (!node || assetId <= 0) {
     return
   }
@@ -1683,6 +1688,21 @@ function onStoryboardDrop(nodeId: string, cutIndex: number): void {
   }
   connectNodes(nodeId, newId)
   // addNodes/连线各自触发变更事件,那边已 markDirty,这里无需重复。
+}
+
+/** 画面槽本机上传:经 uploadFrameAsset 入库,成功后按素材 id 回填本 cut
+ * —— 与预演台渲染帧同语义。 */
+function onStoryboardUpload(nodeId: string, cutIndex: number, file: File): Promise<void> {
+  return uploadFrameAsset(storyboardUploading, nodeId, file, (raw, assetId) => {
+    const data = raw as StoryboardNodeData
+    return { cuts: data.cuts.map((c, i) => (i === cutIndex ? { ...c, asset_id: assetId } : c)) }
+  })
+}
+
+/** 落图节点(53 号票,预演台落画布同构):cut 画面落为图片节点并连线
+ * (storyboard → 图片来源边);机制在上方 dropFrameNode。 */
+function onStoryboardDrop(nodeId: string, cutIndex: number): void {
+  dropFrameNode(nodeId, (raw) => (raw as StoryboardNodeData).cuts[cutIndex]?.asset_id ?? 0)
 }
 
 /** 编辑层 upload 事件的落点(双参数事件经命名 handler 中转,避开模板
@@ -1724,73 +1744,36 @@ function onNameTitleChange(nodeId: string, title: string): void {
   markChanged()
 }
 
-/** 画面槽本机上传:经 /api/assets/upload 入素材库(挂画布 IP,键落
- * uploads/ 档),成功后按素材 id 回填本格 —— 与絵コンテ上传同语义;
- * 回填时以节点 data 现值为准(编辑层改动不丢),素材行删除后槽落
- * 「素材不可用」占位(既有契约)。 */
-async function onNameUpload(
+/** 画面槽本机上传:经 uploadFrameAsset 入库,成功后按素材 id 回填本格
+ * —— 与絵コンテ上传同语义。 */
+function onNameUpload(
   nodeId: string,
   pageIndex: number,
   panelIndex: number,
   file: File,
 ): Promise<void> {
-  if (nameUploading.value) {
-    return
-  }
-  nameUploading.value = true
-  generateError.value = ''
-  try {
-    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
-    const data = findNode(nodeId)?.data as NameNodeData | undefined
-    if (data) {
-      updateNodeData(nodeId, {
-        pages: data.pages.map((p, i) =>
-          i === pageIndex
-            ? {
-                ...p,
-                panels: p.panels.map((n, j) => (j === panelIndex ? { ...n, asset_id: a.id } : n)),
-              }
-            : p,
-        ),
-      })
-      markChanged()
+  return uploadFrameAsset(nameUploading, nodeId, file, (raw, assetId) => {
+    const data = raw as NameNodeData
+    return {
+      pages: data.pages.map((p, i) =>
+        i === pageIndex
+          ? {
+              ...p,
+              panels: p.panels.map((n, j) => (j === panelIndex ? { ...n, asset_id: assetId } : n)),
+            }
+          : p,
+      ),
     }
-  } catch (e) {
-    generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
-  } finally {
-    nameUploading.value = false
-  }
+  })
 }
 
-/** 落图节点(54 号票,絵コンテ落图同构):格画面落为右侧新图片节点
- * (asset 引用 + 内容寻址,prompt 空)并连线(name → 图片来源边,53 号
- * 票 storyboard → 图片同族);多次落图沿出边数纵向级联偏移防叠卡;无
- * 画面的格在槽上已禁用入口。 */
+/** 落图节点(54 号票,絵コンテ落图同构):格画面落为图片节点并连线
+ * (name → 图片来源边,storyboard 同族);机制在上方 dropFrameNode。 */
 function onNameDrop(nodeId: string, pageIndex: number, panelIndex: number): void {
-  const node = findNode(nodeId)
-  const assetId =
-    (node?.data as NameNodeData | undefined)?.pages[pageIndex]?.panels[panelIndex]?.asset_id ?? 0
-  if (!node || assetId <= 0) {
-    return
-  }
-  nodeSeq += 1
-  const newId = `image-${Date.now()}-${nodeSeq}`
-  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
-  removeSelectedNodes(getSelectedNodes.value)
-  addNodes([
-    {
-      id: newId,
-      type: 'image',
-      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
-      data: { url: frameContentURL(assetId), asset_id: assetId, note: '' } satisfies MediaNodeData,
-    },
-  ])
-  const added = findNode(newId)
-  if (added) {
-    addSelectedNodes([added])
-  }
-  connectNodes(nodeId, newId)
-  // addNodes/连线各自触发变更事件,那边已 markDirty,这里无需重复。
+  dropFrameNode(
+    nodeId,
+    (raw) => (raw as NameNodeData).pages[pageIndex]?.panels[panelIndex]?.asset_id ?? 0,
+  )
 }
 
 /** 编辑层 upload/drop 事件的落点(多参数事件经命名 handler 中转,避开
