@@ -36,6 +36,8 @@ import {
   type CanvasNodeType,
   type MediaNodeData,
   type PrevizNodeData,
+  type StoryboardCut,
+  type StoryboardNodeData,
 } from '../graph'
 import {
   type PendingAgentMedia,
@@ -68,6 +70,7 @@ import {
   type VideoRefRole,
 } from '../composer'
 import { characterImageContentURL } from '../characters'
+import { frameContentURL } from '../storyboard'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
@@ -80,11 +83,13 @@ import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import MediaLightbox from '../components/MediaLightbox.vue'
 import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
+import StoryboardEditorLayer from '../components/StoryboardEditorLayer.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import CharacterNode from '../components/nodes/CharacterNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
 import PrevizNode from '../components/nodes/PrevizNode.vue'
+import StoryboardNode from '../components/nodes/StoryboardNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 
 const route = useRoute()
@@ -1585,6 +1590,100 @@ function onPrevizDrop(nodeId: string): void {
   // addNodes/连线各自触发变更事件,那边已 markDirty,这里无需重复。
 }
 
+// ---- 絵コンテ(53 号票)----
+
+// 53 号票:全屏分镜编辑层绑定的节点('' = 关闭)。与预演台编辑层同族:
+// 不卸载画布,cut 改动走 onStoryboardSceneChange 同一条落盘链;节点被删
+// 时 computed 就地关层。
+const storyboardEditorNodeId = ref('')
+const storyboardEditorNode = computed(() => {
+  const node = storyboardEditorNodeId.value ? findNode(storyboardEditorNodeId.value) : undefined
+  return node ? { id: node.id, data: node.data as StoryboardNodeData } : null
+})
+
+// 画面槽本机上传在途(编辑器级全局,任一在途即禁用各槽上传按钮)。
+const storyboardUploading = ref(false)
+
+/** cut/板名数据落盘:updateNodeData 浅合并(cuts 整包替换,数组换新由
+ * 编辑层纯函数保证),自动保存免费获得(整图 JSON 随节点 data 先例)。 */
+function onStoryboardSceneChange(
+  nodeId: string,
+  patch: { title: string; cuts: StoryboardCut[] },
+): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
+/** 板名编辑(板卡输入框逐键上抛):与编辑层同一条落盘链。 */
+function onStoryboardTitleChange(nodeId: string, title: string): void {
+  updateNodeData(nodeId, { title })
+  markChanged()
+}
+
+/** 画面槽本机上传:经 /api/assets/upload 入素材库(挂画布 IP,键落
+ * uploads/ 档),成功后按素材 id 回填本 cut —— 与预演台渲染帧同语义;
+ * 回填时以节点 data 现值为准(编辑层改动不丢),素材行删除后槽落
+ * 「素材不可用」占位(既有契约)。 */
+async function onStoryboardUpload(nodeId: string, cutIndex: number, file: File): Promise<void> {
+  if (storyboardUploading.value) {
+    return
+  }
+  storyboardUploading.value = true
+  generateError.value = ''
+  try {
+    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
+    const data = findNode(nodeId)?.data as StoryboardNodeData | undefined
+    if (data) {
+      updateNodeData(nodeId, {
+        cuts: data.cuts.map((c, i) => (i === cutIndex ? { ...c, asset_id: a.id } : c)),
+      })
+      markChanged()
+    }
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
+  } finally {
+    storyboardUploading.value = false
+  }
+}
+
+/** 落图节点(53 号票,预演台落画布同构):cut 画面落为右侧新图片节点
+ * (asset 引用 + 内容寻址,prompt 空)并连线(storyboard → 图片来源边);
+ * 多次落图沿出边数纵向级联偏移防叠卡;无画面的 cut 在槽上已禁用入口。 */
+function onStoryboardDrop(nodeId: string, cutIndex: number): void {
+  const node = findNode(nodeId)
+  const assetId = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]?.asset_id ?? 0
+  if (!node || assetId <= 0) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `image-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'image',
+      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
+      data: { url: frameContentURL(assetId), asset_id: assetId, note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  // addNodes/连线各自触发变更事件,那边已 markDirty,这里无需重复。
+}
+
+/** 编辑层 upload 事件的落点(双参数事件经命名 handler 中转,避开模板
+ * 闭包里的可空收窄):节点已被删(编辑层开着时删节点的窄窗)就静默丢弃。 */
+function onStoryboardLayerUpload(cutIndex: number, file: File): void {
+  const editor = storyboardEditorNode.value
+  if (editor) {
+    void onStoryboardUpload(editor.id, cutIndex, file)
+  }
+}
+
 // ---- 两击连线(30 号票)----
 
 // 连线唯一入口 = 节点旁常驻 + 按钮:点击进入连接态,预连线跟随鼠标,点
@@ -1605,7 +1704,7 @@ const connection = useConnection({
   onReject: ({ sourceType, targetType }) => {
     const label = (t?: string) => NODE_TYPE_LABEL[normalizeNodeType(t)] ?? t ?? '未知节点'
     showNotice(
-      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体、预演台→图片)`,
+      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体、预演台→图片、分镜→图片)`,
     )
   },
 })
@@ -1821,7 +1920,7 @@ function addNode(type: CanvasNodeType): void {
 }
 
 /** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫/
- * 预演台粉/角色青),38 号票评审补的导航面沿用同一语义色系。 */
+ * 预演台粉/角色青/絵コンテ橙),38 号票评审补的导航面沿用同一语义色系。 */
 function miniMapNodeColor(node: { type?: string | null }): string {
   switch (normalizeNodeType(node.type ?? undefined)) {
     case 'agent':
@@ -1834,6 +1933,8 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#f472b6'
     case 'character':
       return '#2dd4bf'
+    case 'storyboard':
+      return '#fb923c'
     default:
       return '#a78bfa'
   }
@@ -2171,9 +2272,12 @@ onBeforeUnmount(() => {
   taskSync.stop()
 })
 
-/** 添加面板的节点清单(53 号票 A 段:画布回归通用,全节点全画布可见,
- * 50 号票的按类型过滤机制退役)—— 分析节点不经面板添加,照旧排除。 */
-const addableNodeTypes: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character']
+/** 工具栏添加按钮的两组(53 号票,ADR 0005 组织下沉):「创作」= 媒介
+ * 生产节点(analysis 仍仅由动作创建,不经面板);「规划」= 规划工件
+ * 节点,54/55 落地前先只有絵コンテ。纯展示分组,无语义过滤 —— 全节点
+ * 全画布可用(53 号票 A 段)。 */
+const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character']
+const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard']
 
 function backToList(): void {
   // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
@@ -2459,6 +2563,19 @@ function backToList(): void {
             @land-image="onCharacterLandImage($event)"
           />
         </template>
+        <!-- 53 号票:絵コンテ板卡,整卡点击进全屏编辑层;板名卡上直编,
+             落图与画面三入口在编辑层。 -->
+        <template #node-storyboard="nodeProps">
+          <StoryboardNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :connect-state="connection.stateOf(nodeProps.id)"
+            @edit="storyboardEditorNodeId = nodeProps.id"
+            @title-change="onStoryboardTitleChange(nodeProps.id, $event)"
+            @connect-start="connection.start(nodeProps.id, $event)"
+          />
+        </template>
       </VueFlow>
       <!-- 30 号票:连接态预连线(画布区屏幕坐标;pointer-events none,
            不挡任何底层交互)。 -->
@@ -2573,6 +2690,20 @@ function backToList(): void {
         @preview="openPreview('image', previzEditorNode.data.latest?.url ?? '', previzEditorNode.id)"
         @close="previzEditorNodeId = ''"
       />
+      <!-- 53 号票:絵コンテ全屏编辑层(Teleport 到 body),cut/板名整包
+           走同一条 scene-change 落盘链;画面三入口(素材库/上传/落图)在
+           层内,素材挑选面板挂层右缘。 -->
+      <StoryboardEditorLayer
+        v-if="storyboardEditorNode"
+        :key="`storyboard-${storyboardEditorNode.id}`"
+        :data="storyboardEditorNode.data"
+        :ip-id="canvasIPID || undefined"
+        :uploading="storyboardUploading"
+        @scene-change="onStoryboardSceneChange(storyboardEditorNode.id, $event)"
+        @upload="onStoryboardLayerUpload"
+        @drop="onStoryboardDrop(storyboardEditorNode.id, $event)"
+        @close="storyboardEditorNodeId = ''"
+      />
       <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body);41 号票
            截帧事件在此入素材 + 落画布,失败文案走轻提示。参考条 chip 的预览
            (nodeId 空)无源节点,截帧入口收起。 -->
@@ -2598,8 +2729,11 @@ function backToList(): void {
     <footer class="toolbar">
       <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送。</span>
       <span class="add-group">
+        <!-- 53 号票:添加按钮分「创作/规划」两组,组间分隔线(纯展示分组,
+             无语义过滤);素材库/生成记录/上传是容器动作,缀在组后。 -->
+        <span class="group-label">创作</span>
         <button
-          v-for="t in addableNodeTypes"
+          v-for="t in CREATE_NODE_TYPES"
           :key="t"
           :class="`add-${t}`"
           type="button"
@@ -2607,6 +2741,24 @@ function backToList(): void {
         >
           + {{ NODE_TYPE_LABEL[t] }}
         </button>
+        <span
+          class="group-sep"
+          aria-hidden="true"
+        />
+        <span class="group-label">规划</span>
+        <button
+          v-for="t in PLAN_NODE_TYPES"
+          :key="t"
+          :class="`add-${t}`"
+          type="button"
+          @click="addNode(t)"
+        >
+          + {{ NODE_TYPE_LABEL[t] }}
+        </button>
+        <span
+          class="group-sep"
+          aria-hidden="true"
+        />
         <button
           class="add-asset"
           type="button"
@@ -2915,6 +3067,22 @@ function backToList(): void {
   cursor: pointer;
 }
 
+/* 53 号票:创作/规划两组的组名与组间分隔线(纯展示分组)。 */
+.group-label {
+  align-self: center;
+  color: #6f7690;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.group-sep {
+  align-self: stretch;
+  margin: 4px 2px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .add-agent {
   background: rgba(122, 162, 247, 0.2);
   color: #7aa2f7;
@@ -2939,6 +3107,12 @@ function backToList(): void {
 .add-character {
   background: rgba(45, 212, 191, 0.16);
   color: #2dd4bf;
+}
+
+/* 53 号票:絵コンテ入「规划」组,橙色与节点描边/小地图同源。 */
+.add-storyboard {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fb923c;
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是

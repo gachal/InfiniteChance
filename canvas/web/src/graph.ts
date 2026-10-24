@@ -12,6 +12,7 @@ import type {
 } from '@infinitechance/api'
 
 import { defaultPrevizScene } from './previz'
+import { defaultStoryboard } from './storyboard'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
@@ -96,14 +97,37 @@ export interface CharacterNodeData {
   character_id: number
 }
 
+/** 絵コンテ单个 cut(53 号票):画面持素材引用(0 = 空画面;内容寻址
+ * 路径由展示层按 id 拼装,素材被删落「素材不可用」占位);时长秒可空
+ * (「还没定」,汇总时跳过);lines 是台词/音效多行文本;camera_moves
+ * 是运镜白名单多选(前端持有,后端存串不校验);note 一行备注。序号
+ * 不持久 —— 显示时生成 1..N,删插自动重排。 */
+export interface StoryboardCut {
+  asset_id: number
+  seconds?: number
+  lines: string
+  camera_moves: string[]
+  note?: string
+}
+
+/** 絵コンテ节点数据(53 号票,第七种节点类型「规划」组):板名 + cut
+ * 列表随节点 data 存整图 JSON(预演台先例)。title 空 = 展示层回落
+ * 「絵コンテ」;cuts 可删到空 —— 板是画布工作件而非库实体,删节点只删
+ * 图 JSON 里的节点,素材行不动。 */
+export interface StoryboardNodeData {
+  title?: string
+  cuts: StoryboardCut[]
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
   | AnalysisNodeData
   | PrevizNodeData
   | CharacterNodeData
+  | StoryboardNodeData
 
-export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character'
+export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character' | 'storyboard'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -112,7 +136,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'video' ||
     value === 'analysis' ||
     value === 'previz' ||
-    value === 'character'
+    value === 'character' ||
+    value === 'storyboard'
   )
 }
 
@@ -129,7 +154,8 @@ export function normalizeNodeType(value: unknown): CanvasNodeType {
 /** 新节点的初始数据。分析节点由视频/图片节点上的「分析」动作创建
  * (文本后填),不从工具栏直接添加;预演台自带默认场景(一个人形 +
  * 一个机位),添加即可见可渲染;角色节点 character_id = 0(未绑定),
- * 绑定走节点卡上的选择器(52 号票)。 */
+ * 绑定走节点卡上的选择器(52 号票);絵コンテ自带 1 个空 cut(53 号
+ * 票,添加即可编辑)。 */
 export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'agent' || type === 'analysis') {
     return { text: '' }
@@ -141,6 +167,9 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'character') {
     return { character_id: 0 }
   }
+  if (type === 'storyboard') {
+    return defaultStoryboard()
+  }
   return { url: '', note: '' }
 }
 
@@ -151,6 +180,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   analysis: '分析',
   previz: '预演台',
   character: '角色',
+  storyboard: '絵コンテ',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出

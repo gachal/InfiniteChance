@@ -65,4 +65,18 @@ describe('canConnect', () => {
       expect(EDGE_MATRIX[source]).not.toContain('previz')
     }
   })
+
+  it('lets storyboard feed image nodes only, and never receive an edge (53 号票)', () => {
+    // 絵コンテ落图 = 来源语义(预演台 → 图片同族):cut 画面落成图片节点
+    // 并连线;作任何连线的目标都非法 —— 画面槽的回填走素材引用,不走边。
+    expect(EDGE_MATRIX.storyboard).toEqual(['image'])
+    expect(canConnect('storyboard', 'image')).toBe(true)
+    expect(canConnect('storyboard', 'video')).toBe(false)
+    expect(canConnect('storyboard', 'analysis')).toBe(false)
+    expect(canConnect('storyboard', 'agent')).toBe(false)
+    expect(canConnect('storyboard', 'storyboard')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('storyboard')
+    }
+  })
 })

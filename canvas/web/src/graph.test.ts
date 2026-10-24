@@ -8,6 +8,7 @@ import {
   appendAgentTurn,
   initialData,
   isCanvasNodeType,
+  NODE_TYPE_LABEL,
   normalizeNodeType,
 } from './graph'
 
@@ -26,6 +27,8 @@ describe('normalizeNodeType', () => {
     expect(normalizeNodeType('previz')).toBe('previz')
     // 52 号票:角色引用节点是第六种类型,原样通过(不作旧值迁移)。
     expect(normalizeNodeType('character')).toBe('character')
+    // 53 号票:絵コンテ是第七种类型(规划组),原样通过。
+    expect(normalizeNodeType('storyboard')).toBe('storyboard')
   })
 
   it('falls back to agent for unknown types', () => {
@@ -60,6 +63,15 @@ describe('isCanvasNodeType / initialData', () => {
     // 画布 ip_id 的角色目录实时解析 —— 角色改名/换封面节点即变。
     expect(isCanvasNodeType('character')).toBe(true)
     expect(initialData('character')).toEqual({ character_id: 0 })
+  })
+
+  it('seeds storyboard nodes with one empty cut (53 号票)', () => {
+    // 添加即带 1 个空 cut;序号显示时生成 1..N 不持久,板名展示层回落。
+    expect(isCanvasNodeType('storyboard')).toBe(true)
+    const data = initialData('storyboard') as { title?: string; cuts: unknown[] }
+    expect(data.title).toBe('')
+    expect(data.cuts).toHaveLength(1)
+    expect(NODE_TYPE_LABEL.storyboard).toBe('絵コンテ')
   })
 })
 

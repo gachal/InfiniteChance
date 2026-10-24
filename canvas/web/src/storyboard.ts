@@ -1,0 +1,96 @@
+/**
+ * 絵コンテ(分镜板)的纯逻辑(53 号票):cut 的数据形状、增删移、运镜
+ * 多选切换、时长汇总。组件只做渲染与交互,这里集中可单测的判定 —— 与
+ * previz.ts 同族(整图 JSON 随节点 data,自动保存免费获得);54 号票
+ * ネーム复用编辑层骨架与画面槽交互,数据结构各自定义、不强行归一。
+ */
+import type { StoryboardCut, StoryboardNodeData } from './graph'
+
+/** 运镜白名单(53 号票):前端持有,后端存串不校验(51 号 label 同哲学);
+ * 将来管理端可配显式另票。初始集:推/拉/摇/移/跟/固定/手持/变焦。 */
+export const CAMERA_MOVE_OPTIONS = ['推', '拉', '摇', '移', '跟', '固定', '手持', '变焦'] as const
+
+export type CameraMove = (typeof CAMERA_MOVE_OPTIONS)[number]
+
+/** 新 cut 的空形状:画面空(asset_id = 0)、时长未填、台词空、无运镜、
+ * 无备注。 */
+export function emptyStoryboardCut(): StoryboardCut {
+  return { asset_id: 0, lines: '', camera_moves: [] }
+}
+
+/** 新分镜板的初始 data:板名空(展示层回落「絵コンテ」)+ 1 个空 cut
+ * (添加即可编辑,预演台「添加即可见」先例)。 */
+export function defaultStoryboard(): StoryboardNodeData {
+  return { title: '', cuts: [emptyStoryboardCut()] }
+}
+
+/** 追加一个空 cut:返回新数组,不改入参(数组换新纯函数纪律)。 */
+export function appendCut(cuts: StoryboardCut[]): StoryboardCut[] {
+  return [...cuts, emptyStoryboardCut()]
+}
+
+/** 按下标删除 cut:**无「最后不可删」守卫** —— 板是画布工作件而非库
+ * 实体,cut 可删到空(与角色变体的守卫相反,53 号票定案)。 */
+export function removeCut(cuts: StoryboardCut[], index: number): StoryboardCut[] {
+  return cuts.filter((_, i) => i !== index)
+}
+
+/** 上移/下移一个 cut(delta = -1 | 1);越界或空表原样返回(编辑层排序
+ * 用按钮不做拖拽,40 号票手势冲突教训;序号显示时生成 1..N,删插自动
+ * 重排,不持久)。 */
+export function moveCut(cuts: StoryboardCut[], index: number, delta: -1 | 1): StoryboardCut[] {
+  const target = index + delta
+  if (index < 0 || index >= cuts.length || target < 0 || target >= cuts.length) {
+    return cuts
+  }
+  const next = [...cuts]
+  const [item] = next.splice(index, 1)
+  next.splice(target, 0, item)
+  return next
+}
+
+/** 运镜 chip 多选切换:选中 → 移除,未选 → 追加;换新对象不改入参。 */
+export function toggleCameraMove(cut: StoryboardCut, move: string): StoryboardCut {
+  const selected = cut.camera_moves.includes(move)
+  return {
+    ...cut,
+    camera_moves: selected
+      ? cut.camera_moves.filter((m) => m !== move)
+      : [...cut.camera_moves, move],
+  }
+}
+
+/** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。 */
+const SECONDS_MAX = 3600
+
+/** 时长输入的失焦夹紧:空串/非数字 → 未填(undefined,汇总时跳过);
+ * 负数夹到 0、超上限夹到 3600、小数取整。 */
+export function clampSecondsInput(raw: string): number | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') {
+    return undefined
+  }
+  const value = Number(trimmed)
+  if (!Number.isFinite(value)) {
+    return undefined
+  }
+  return Math.min(Math.max(Math.round(value), 0), SECONDS_MAX)
+}
+
+/** 板内时长合计:只求非空 cut 的和(时长可空是「还没定」,不是 0)。 */
+export function totalSeconds(cuts: StoryboardCut[]): number {
+  return cuts.reduce((sum, c) => sum + (c.seconds ?? 0), 0)
+}
+
+/** 合计的展示格式 M:SS(秒两位补零,分钟不补):65s → 1:05。 */
+export function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** cut 画面的内容寻址地址(展示层按素材 id 拼装,服务端解出真实地址;
+ * 素材行被删时 404,展示面落「素材不可用」占位)。 */
+export function frameContentURL(assetId: number): string {
+  return `/api/assets/${assetId}/content`
+}
