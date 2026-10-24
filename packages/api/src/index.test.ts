@@ -355,6 +355,9 @@ describe('ApiClient canvases', () => {
     id: 2,
     name: '第一张画布',
     version: 4,
+    ip_id: 3,
+    ip_name: '默认 IP',
+    type: 'animation',
     created_at: '2026-09-03T08:00:00Z',
     updated_at: '2026-09-03T09:30:00Z',
   }
@@ -376,16 +379,16 @@ describe('ApiClient canvases', () => {
     )
   })
 
-  it('createCanvas POSTs the name and returns the created detail', async () => {
+  it('createCanvas POSTs the name + ip_id and returns the created detail', async () => {
     const detail: CanvasDetail = { ...summary, graph: { nodes: [], edges: [] } }
     const fetchImpl = stubFetch(201, detail)
     const client = clientWithBase(fetchImpl)
 
-    await expect(client.createCanvas('第一张画布')).resolves.toEqual(detail)
+    await expect(client.createCanvas({ name: '第一张画布', ip_id: 3 })).resolves.toEqual(detail)
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('/api/canvases')
     expect((init as RequestInit).method).toBe('POST')
-    expect((init as RequestInit).body).toBe(JSON.stringify({ name: '第一张画布' }))
+    expect((init as RequestInit).body).toBe(JSON.stringify({ name: '第一张画布', ip_id: 3 }))
   })
 
   it('getCanvas GETs the id path and returns detail with graph', async () => {

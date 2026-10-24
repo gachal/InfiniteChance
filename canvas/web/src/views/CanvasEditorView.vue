@@ -64,6 +64,8 @@ import {
   type VideoRefKind,
   type VideoRefRole,
 } from '../composer'
+import { canvasTypeLabel } from '../canvasTypes'
+import { nodeTypesForCanvasType } from '../graph'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
@@ -115,6 +117,12 @@ const {
 } = useVueFlow()
 
 const canvasName = ref('')
+// IP 归属与画布类型(50 号票):面包屑「IP 名 / 画布名」+ 类型徽章的
+// 数据源;ipId 同时是编辑器内全部上传的固定归属(画布内上传传画布 IP,
+// 不可改)。
+const canvasIPID = ref(0)
+const canvasIPName = ref('')
+const canvasType = ref('general')
 const loadError = ref('')
 const loading = ref(true)
 const missing = ref(false)
@@ -650,7 +658,7 @@ async function onComposerUpload(file: File): Promise<void> {
   refUploading.value = true
   generateError.value = ''
   try {
-    const a = await client.uploadAsset(file, 'image')
+    const a = await client.uploadAsset(file, 'image', canvasIPID.value || undefined)
     uploadedRefs.value = appendComposerRef(uploadedRefs.value, { url: a.content_url, asset_id: a.id })
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
@@ -715,7 +723,7 @@ async function onComposerUploadVideo(file: File): Promise<void> {
   refUploading.value = true
   generateError.value = ''
   try {
-    const a = await client.uploadAsset(file, kind)
+    const a = await client.uploadAsset(file, kind, canvasIPID.value || undefined)
     uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, {
       url: a.content_url,
       kind,
@@ -1190,7 +1198,7 @@ async function onAgentAttachFiles(nodeId: string, files: File[]): Promise<void> 
       const pending: PendingAgentMedia = { id: nextAgentMediaId(), kind, state: 'uploading' }
       setAgentAttachments(nodeId, [...agentAttachmentsOf(nodeId), pending])
       try {
-        const a = await client.uploadAsset(file, kind)
+        const a = await client.uploadAsset(file, kind, canvasIPID.value || undefined)
         setAgentAttachments(
           nodeId,
           agentAttachmentsOf(nodeId).map((m) =>
@@ -1474,7 +1482,7 @@ async function onPrevizRender(nodeId: string, blob: Blob): Promise<void> {
   generateError.value = ''
   try {
     const file = new File([blob], 'previz.png', { type: 'image/png' })
-    const a = await client.uploadAsset(file, 'image')
+    const a = await client.uploadAsset(file, 'image', canvasIPID.value || undefined)
     updateNodeData(nodeId, { latest: { url: a.content_url, asset_id: a.id } })
     markChanged()
   } catch (e) {
@@ -1791,7 +1799,7 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
   }
   try {
     const file = new File([blob], `frame-${seconds.toFixed(1)}s.jpg`, { type: 'image/jpeg' })
-    const a = await client.uploadAsset(file, 'image')
+    const a = await client.uploadAsset(file, 'image', canvasIPID.value || undefined)
     nodeSeq += 1
     const newId = `image-${Date.now()}-${nodeSeq}`
     const lane = flowEdges.value.filter((e) => e.source === sourceId).length
@@ -1930,7 +1938,7 @@ async function onUploadChange(e: Event): Promise<void> {
   uploading.value = true
   generateError.value = ''
   try {
-    const a = await client.uploadAsset(file, uploadKindOf(file))
+    const a = await client.uploadAsset(file, uploadKindOf(file), canvasIPID.value || undefined)
     insertAsset(a)
   } catch (err) {
     generateError.value = err instanceof ApiError ? err.message : '上传失败,请稍后再试'
@@ -1965,6 +1973,9 @@ async function loadCanvas(): Promise<void> {
 /** 以服务器返回的整图为权威覆盖本地(初次加载与冲突重载共用)。 */
 async function applyServerGraph(detail: CanvasDetail): Promise<void> {
   canvasName.value = detail.name
+  canvasIPID.value = detail.ip_id
+  canvasIPName.value = detail.ip_name
+  canvasType.value = detail.type
   setNodes(normalizeNodes(detail))
   setEdges(detail.graph.edges as unknown as Edge[])
   await nextTick()
@@ -2090,21 +2101,39 @@ onBeforeUnmount(() => {
   taskSync.stop()
 })
 
+/** 添加面板的节点清单:按画布类型过滤(50 号票机制;现有节点全通用,
+ * 行为暂无差异 —— 分析节点不经面板添加,照旧排除)。 */
+const addableNodeTypes = computed(() =>
+  nodeTypesForCanvasType(canvasType.value).filter((t) => t !== 'analysis'),
+)
+
 function backToList(): void {
-  void router.push({ name: 'canvases' })
+  // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
+  if (canvasIPID.value > 0) {
+    void router.push({ name: 'ip-detail', params: { id: canvasIPID.value } })
+    return
+  }
+  void router.push({ name: 'ips' })
 }
 </script>
 
 <template>
   <div class="editor">
     <header class="topbar">
+      <!-- 50 号票面包屑:「IP 名 / 画布名」,IP 段点击回详情页;类型徽章
+           随行(数据来自 GET /canvases/:id 的新增字段)。 -->
       <button
-        class="ghost"
+        class="ghost breadcrumb-ip"
         type="button"
+        :title="canvasIPID > 0 ? `回到「${canvasIPName || 'IP'}」详情` : '回到 IP 列表'"
         @click="backToList"
       >
-        ← 画布列表
+        ← {{ canvasIPID > 0 && canvasIPName ? canvasIPName : 'IP 列表' }}
       </button>
+      <span
+        v-if="canvasIPID > 0 && canvasIPName"
+        class="breadcrumb-sep"
+      >/</span>
 
       <template v-if="renaming">
         <form
@@ -2142,6 +2171,12 @@ function backToList(): void {
           {{ canvasName || '未命名画布' }}
         </button>
       </template>
+      <span
+        class="type-badge"
+        :title="`画布类型:${canvasTypeLabel(canvasType)}`"
+      >
+        {{ canvasTypeLabel(canvasType) }}
+      </span>
 
       <span
         class="save-state"
@@ -2403,6 +2438,8 @@ function backToList(): void {
       />
       <AssetPanel
         v-if="assetPanelOpen"
+        :ip-id="canvasIPID || undefined"
+        :upload-ip-id="canvasIPID || undefined"
         @insert="insertAsset"
       />
       <GenerationRecordsPanel
@@ -2430,6 +2467,7 @@ function backToList(): void {
         :kind-whitelist="composerPickerKinds"
         :hint="composerPickerHint"
         :selected-asset-ids="composerPickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
         @toggle="onComposerPickToggle"
         @close="composerPickerOpen = false"
       />
@@ -2440,6 +2478,7 @@ function backToList(): void {
         :kind-whitelist="['image', 'video']"
         hint="点选挂为会话附件,再点取消;单条消息 ≤4 图 + ≤1 视频。"
         :selected-asset-ids="pickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
         @toggle="onAgentPickToggle(pickerNode.id, $event)"
         @close="pickerNodeId = ''"
       />
@@ -2484,7 +2523,7 @@ function backToList(): void {
       <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送。</span>
       <span class="add-group">
         <button
-          v-for="t in (['agent', 'image', 'video', 'previz'] as const)"
+          v-for="t in addableNodeTypes"
           :key="t"
           :class="`add-${t}`"
           type="button"
@@ -2534,6 +2573,23 @@ function backToList(): void {
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+.breadcrumb-sep {
+  color: #4c5468;
+  font-size: 14px;
+  margin: 0 -4px;
+}
+
+.type-badge {
+  flex-shrink: 0;
+  border: 1px solid rgba(122, 162, 247, 0.4);
+  background: rgba(76, 110, 245, 0.18);
+  color: #a5b4fc;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .topbar {

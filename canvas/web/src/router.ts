@@ -1,7 +1,9 @@
 /**
- * 路由与登录守卫:未登录访问受保护页面跳转登录,未初始化时跳转初始化引导,
- * 登录/初始化完成后回到画布列表。守卫逻辑与 admin-web 一致,
- * 只是账号体系由 canvas/server 提供(共享网关的 admin_accounts 与 JWT_SECRET)。
+ * 路由与登录守卫(50 号票三层化):`/` = IP 卡片墙 → `/ip/:id` = IP 详情
+ * (画布按类型分组 + 素材区)→ `/canvas/:id` = 编辑器。未登录访问受保护
+ * 页面跳转登录,未初始化时跳转初始化引导,登录/初始化完成后回到 IP 层。
+ * 守卫逻辑与 admin-web 一致,只是账号体系由 canvas/server 提供(共享网关
+ * 的 admin_accounts 与 JWT_SECRET)。
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -13,8 +15,14 @@ export const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'canvases',
-      component: () => import('./views/CanvasListView.vue'),
+      name: 'ips',
+      component: () => import('./views/IpListView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/ip/:id',
+      name: 'ip-detail',
+      component: () => import('./views/IpDetailView.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -25,7 +33,7 @@ export const router = createRouter({
     },
     { path: '/login', name: 'login', component: () => import('./views/LoginView.vue') },
     { path: '/init', name: 'init', component: () => import('./views/InitView.vue') },
-    { path: '/:pathMatch(.*)*', redirect: { name: 'canvases' } },
+    { path: '/:pathMatch(.*)*', redirect: { name: 'ips' } },
   ],
 })
 
@@ -50,7 +58,7 @@ router.beforeEach(async (to) => {
 
   if (to.name === 'login') {
     if (auth.isAuthenticated.value) {
-      return { name: 'canvases' }
+      return { name: 'ips' }
     }
     return auth.initialized.value === false ? { name: 'init' } : true
   }

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 素材管理(14 号票,antd 重写 36 号票):画布管理区的素材库页 —— 按类型/
-// 来源画布过滤、预览、下载、删除。素材挂在 canvas/server(对象文件在画布
-// 服务的存储卷上),这里的列表与删除走 canvasClient;删除素材后引用它的
-// 画布节点会显示占位而非报错。
+// 来源画布/IP 归属过滤、预览、下载、删除。素材挂在 canvas/server(对象文件
+// 在画布服务的存储卷上),这里的列表与删除走 canvasClient;删除素材后引用
+// 它的画布节点会显示占位而非报错。IP 列与过滤是 50 号票:ip_id=0 显示
+// 「全局」,过滤走 scope(ip=本 IP+全局 / global=仅全局)。
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
@@ -22,6 +23,7 @@ import {
   ApiError,
   type AssetRecord,
   type CanvasSummary,
+  type IPRecord,
 } from '@infinitechance/api';
 
 import { useAuth } from '../auth';
@@ -30,8 +32,12 @@ const { canvasClient } = useAuth();
 
 const assets = ref<AssetRecord[]>([]);
 const canvases = ref<CanvasSummary[]>([]);
+const ips = ref<IPRecord[]>([]);
 const kindFilter = ref<'' | 'audio' | 'image' | 'video'>('');
 const canvasFilter = ref<number | ''>('');
+// IP 归属过滤:'' = 全部(不过滤),0 = 仅全局(scope=global),>0 = 该 IP
+// + 全局两段(scope=ip)。
+const ipFilter = ref<'' | number>('');
 const loading = ref(false);
 const error = ref('');
 const deletingId = ref<null | number>(null);
@@ -44,6 +50,7 @@ const pageSize = 30;
 const columns = [
   { key: 'thumb', title: '预览', width: 130 },
   { key: 'kind', title: '类型', width: 80 },
+  { key: 'ip', title: 'IP 归属', width: 130 },
   { key: 'canvas', title: '来源画布', width: 150 },
   { dataIndex: 'model', key: 'model', title: '模型', width: 150 },
   { key: 'size', title: '大小', width: 90 },
@@ -57,10 +64,27 @@ const canvasName = computed(() => {
   return (id: number) => map.get(id) ?? '';
 });
 
+/** IP 归属列:0 = 全局(直连产物与历史行);名字缺行兜底 #id。 */
+function ipLabel(a: AssetRecord): string {
+  if (a.ip_id === 0) {
+    return '全局';
+  }
+  return a.ip_name || `IP #${a.ip_id}`;
+}
+
+const ipOptions = computed(() => [
+  { label: '全部 IP', value: '' },
+  { label: '全局(未归属)', value: '0' },
+  ...ips.value.map((ip) => ({ label: ip.name, value: String(ip.id) })),
+]);
+
 function listParams(offset: number) {
   return {
     canvas_id: canvasFilter.value === '' ? undefined : canvasFilter.value,
     kind: kindFilter.value === '' ? undefined : kindFilter.value,
+    scope:
+      ipFilter.value === '' ? undefined : ipFilter.value === 0 ? ('global' as const) : ('ip' as const),
+    ip_id: ipFilter.value === '' || ipFilter.value === 0 ? undefined : ipFilter.value,
     limit: pageSize,
     offset,
   };
@@ -103,6 +127,11 @@ function setKind(k: '' | 'audio' | 'image' | 'video'): void {
 
 function setCanvasId(v: null | string): void {
   canvasFilter.value = v === null || v === '' ? '' : Number(v);
+  void refresh();
+}
+
+function setIPFilter(v: null | string): void {
+  ipFilter.value = v === null || v === '' ? '' : Number(v);
   void refresh();
 }
 
@@ -181,6 +210,15 @@ onMounted(() => {
     .catch(() => {
       /* 来源画布下拉拉不到就保持空,不影响列表与过滤 */
     });
+  // IP 名单(50 号票过滤下拉);canvas 管理区共用 canvasClient。
+  void canvasClient
+    .listIPs()
+    .then((list) => {
+      ips.value = list;
+    })
+    .catch(() => {
+      /* IP 下拉拉不到就保持空,不影响列表与过滤 */
+    });
 });
 </script>
 
@@ -214,6 +252,15 @@ onMounted(() => {
           :value="canvasFilter === '' ? undefined : String(canvasFilter)"
           :options="canvases.map((c) => ({ label: c.name, value: String(c.id) }))"
           @change="setCanvasId($event as null | string)"
+        />
+        <Select
+          class="w-44"
+          allow-clear
+          placeholder="全部 IP"
+          aria-label="按 IP 归属过滤"
+          :value="ipFilter === '' ? undefined : String(ipFilter)"
+          :options="ipOptions"
+          @change="setIPFilter($event as null | string)"
         />
         <Button
           :loading="loading"
@@ -272,6 +319,10 @@ onMounted(() => {
 
           <template v-else-if="column.key === 'kind'">
             {{ kindLabel(record.kind) }}
+          </template>
+
+          <template v-else-if="column.key === 'ip'">
+            {{ ipLabel(record as AssetRecord) }}
           </template>
 
           <template v-else-if="column.key === 'canvas'">

@@ -168,11 +168,16 @@ export interface CanvasGraph {
   edges: unknown[]
 }
 
-/** 列表项:不带图(整图文档可能很大,列表页只需要名字)。 */
+/** 列表项:不带图(整图文档可能很大,列表页只需要名字)。ip_id/ip_name/
+ * type 是 50 号票的分组面 —— 画布必归属 IP,type 是注册表驱动的媒介标签
+ * (后端不校验枚举,可能回落任意串)。 */
 export interface CanvasSummary {
   id: number
   name: string
   version: number
+  ip_id: number
+  ip_name: string
+  type: string
   created_at: string
   updated_at: string
 }
@@ -180,6 +185,57 @@ export interface CanvasSummary {
 /** 画布详情:含整图 JSON。 */
 export interface CanvasDetail extends CanvasSummary {
   graph: CanvasGraph
+}
+
+/** 画布列表过滤(50 号票):ip_id 缺省 = 全部。 */
+export interface ListCanvasesParams {
+  ip_id?: number
+}
+
+/** 新建画布(50 号票):ip_id 必填(画布必归属 IP);type 缺省 general,
+ * 后端不校验枚举值照存。 */
+export interface CreateCanvasInput {
+  name: string
+  ip_id: number
+  type?: string
+}
+
+/** 画布部分更新(50 号票 PATCH):name/type/ip_id 任选;ip_id 即「画布
+ * 移动」—— 只改归属,历史素材行不回填(旧产物留在原 IP 名下)。 */
+export interface PatchCanvasInput {
+  name?: string
+  type?: string
+  ip_id?: number
+}
+
+// ---- IP 企划(canvas/server,挂 /ips,需 JWT 会话,50 号票)----
+
+/** 一个 IP 企划:创作侧第一层容器(ACG 企划/作品宇宙),下挂多张画布。
+ * cover_asset_id 引用素材行(0 = 无封面,卡片回落「渐变+首字」占位);
+ * canvas_count / latest_at 是列表投影(名下画布数、最近更新时点 —— 排序
+ * 键 = IP 自身与名下画布 max(updated_at) 取大者,新到旧)。 */
+export interface IPRecord {
+  id: number
+  name: string
+  description: string
+  cover_asset_id: number
+  canvas_count: number
+  latest_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateIPInput {
+  name: string
+  description?: string
+  cover_asset_id?: number
+}
+
+/** IP 部分更新:字段任选;cover_asset_id 显式 0 = 清除封面。 */
+export interface PatchIPInput {
+  name?: string
+  description?: string
+  cover_asset_id?: number
 }
 
 /** 自动保存成功后的版本指针,下一次保存必须带上它。 */
@@ -392,7 +448,9 @@ export interface PrevizCamera {
  * 仅排障时关心。thumbnail_url 是显示层缩略的相对路径(49 号票,所有 kind
  * 恒下发 —— 服务端 302 端点内部兜底到 content,前端零判空)。canvas_name
  * 来自来源画布,画布已删时为空。last_used_at 是「最近一次被服务端解引用」
- * 的时点(47 号票,初始 = created_at),驱动挑选场景的最近使用排序。 */
+ * 的时点(47 号票,初始 = created_at),驱动挑选场景的最近使用排序。
+ * ip_id/ip_name 是 IP 归属(50 号票):0 = 全局(直连产物与历史行),
+ * ip_name 是展示事实(join ips),ip_id==0 时为空。 */
 export interface AssetRecord {
   id: number
   kind: 'image' | 'video' | 'audio'
@@ -406,15 +464,21 @@ export interface AssetRecord {
   size_bytes: number
   content_url: string
   thumbnail_url: string
+  ip_id: number
+  ip_name: string
   created_at: string
   last_used_at: string
 }
 
 /** 素材列表的过滤与分页:全部缺省 = 不过滤,后端默认一页 50 条。
- * sort = 'last_used' 走最近使用序(47 号票挑选场景),缺省创建序。 */
+ * sort = 'last_used' 走最近使用序(47 号票挑选场景),缺省创建序。
+ * IP 归属过滤(50 号票):scope='ip' 语义 = 本 IP + 全局两段(须带
+ * ip_id);'global' 仅全局;'all' 不过滤;带 ip_id 不带 scope 按 'ip' 处理。 */
 export interface ListAssetsParams {
   kind?: 'image' | 'video' | 'audio'
   canvas_id?: number
+  scope?: 'ip' | 'global' | 'all'
+  ip_id?: number
   sort?: 'last_used'
   limit?: number
   offset?: number
@@ -736,21 +800,29 @@ export class ApiClient {
 
   // ---- 画布(挂 /canvases,需 JWT 会话)----
 
-  async listCanvases(): Promise<CanvasSummary[]> {
-    const body = await this.request<{ canvases: CanvasSummary[] }>('/canvases')
+  /** 画布列表,最新在前;params.ip_id 过滤单个 IP 名下(50 号票详情页)。 */
+  async listCanvases(params: ListCanvasesParams = {}): Promise<CanvasSummary[]> {
+    const qs = params.ip_id !== undefined ? `?ip_id=${params.ip_id}` : ''
+    const body = await this.request<{ canvases: CanvasSummary[] }>(`/canvases${qs}`)
     return body.canvases
   }
 
-  createCanvas(name: string): Promise<CanvasDetail> {
-    return this.request<CanvasDetail>('/canvases', { method: 'POST', body: { name } })
+  /** 新建画布(50 号票):必带 ip_id;type 缺省 general,原样透传。 */
+  createCanvas(input: CreateCanvasInput): Promise<CanvasDetail> {
+    return this.request<CanvasDetail>('/canvases', { method: 'POST', body: input })
   }
 
   getCanvas(id: number): Promise<CanvasDetail> {
     return this.request<CanvasDetail>(`/canvases/${id}`)
   }
 
+  /** 画布部分更新(50 号票 PATCH):改名/改类型/移动 IP 任选。 */
+  patchCanvas(id: number, input: PatchCanvasInput): Promise<CanvasDetail> {
+    return this.request<CanvasDetail>(`/canvases/${id}`, { method: 'PATCH', body: input })
+  }
+
   renameCanvas(id: number, name: string): Promise<CanvasDetail> {
-    return this.request<CanvasDetail>(`/canvases/${id}`, { method: 'PATCH', body: { name } })
+    return this.patchCanvas(id, { name })
   }
 
   async deleteCanvas(id: number): Promise<void> {
@@ -764,6 +836,32 @@ export class ApiClient {
       method: 'PUT',
       body: { graph, version: expectedVersion },
     })
+  }
+
+  // ---- IP 企划(挂 /ips,需 JWT 会话,50 号票)----
+
+  /** IP 列表(带画布数,排序 = IP 与名下画布最近更新取大者,新到旧)。 */
+  async listIPs(): Promise<IPRecord[]> {
+    const body = await this.request<{ ips: IPRecord[] }>('/ips')
+    return body.ips
+  }
+
+  createIP(input: CreateIPInput): Promise<IPRecord> {
+    return this.request<IPRecord>('/ips', { method: 'POST', body: input })
+  }
+
+  getIP(id: number): Promise<IPRecord> {
+    return this.request<IPRecord>(`/ips/${id}`)
+  }
+
+  /** IP 部分更新;cover_asset_id 显式 0 = 清除封面。 */
+  patchIP(id: number, input: PatchIPInput): Promise<IPRecord> {
+    return this.request<IPRecord>(`/ips/${id}`, { method: 'PATCH', body: input })
+  }
+
+  /** 删除 IP:名下有画布或有直接素材时后端 409 ip_not_empty(不级联)。 */
+  async deleteIP(id: number): Promise<void> {
+    await this.request<void>(`/ips/${id}`, { method: 'DELETE' })
   }
 
   // ---- 画布生成任务(挂 /canvases/:id/tasks,需 JWT 会话)----
@@ -943,7 +1041,8 @@ export class ApiClient {
   // ---- 素材库(挂 /assets,canvas/server;列表/删除需 JWT 会话,14 号票)----
 
   /** 素材库列表,最新在前:画布素材面板与管理端素材页共用;sort =
-   * 'last_used' 走最近使用序(47 号票挑选场景)。 */
+   * 'last_used' 走最近使用序(47 号票挑选场景);scope/ip_id 是 IP 归属
+   * 过滤(50 号票,scope='ip' = 本 IP + 全局)。 */
   async listAssets(params: ListAssetsParams = {}): Promise<AssetRecord[]> {
     const query = new URLSearchParams()
     if (params.kind) {
@@ -951,6 +1050,12 @@ export class ApiClient {
     }
     if (params.canvas_id !== undefined) {
       query.set('canvas_id', String(params.canvas_id))
+    }
+    if (params.scope) {
+      query.set('scope', params.scope)
+    }
+    if (params.ip_id !== undefined) {
+      query.set('ip_id', String(params.ip_id))
     }
     if (params.sort) {
       query.set('sort', params.sort)
@@ -971,14 +1076,18 @@ export class ApiClient {
     await this.request<void>(`/assets/${id}`, { method: 'DELETE' })
   }
 
-  /** 上传素材(18 号票;24 号票追加音频):multipart 把本机图片/视频/
-   * 音频送进素材库,响应即新素材行 —— content_url 可直接落媒体节点或进
-   * 对话框参考条(与素材面板插入同语义)。kind 声明意图,服务端按魔数
-   * 嗅探裁决真实类型。 */
-  uploadAsset(file: File, kind: 'image' | 'video' | 'audio'): Promise<AssetRecord> {
+  /** 上传素材(18 号票;24 号票追加音频;50 号票加可选 ipId):multipart
+   * 把本机图片/视频/音频送进素材库,响应即新素材行 —— content_url 可直接
+   * 落媒体节点或进对话框参考条(与素材面板插入同语义)。kind 声明意图,
+   * 服务端按魔数嗅探裁决真实类型;ipId 缺省 = 全局(画布内上传固定传画布
+   * 的 IP,IP 详情页上传传该 IP)。 */
+  uploadAsset(file: File, kind: 'image' | 'video' | 'audio', ipId?: number): Promise<AssetRecord> {
     const form = new FormData()
     form.set('kind', kind)
     form.set('file', file)
+    if (ipId !== undefined) {
+      form.set('ip_id', String(ipId))
+    }
     return this.request<{ asset: AssetRecord }>('/assets/upload', {
       method: 'POST',
       body: form,

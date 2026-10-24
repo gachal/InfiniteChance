@@ -4,7 +4,8 @@
 // GET /assets 列表 API,按最近使用排序(服务端解引用刷新,47 号票口径)。
 // kind 白名单收窄可选面(视频模式含音频,Agent 附件仍限图/视频)、缩略
 // 点选、可多选 —— 点选挂到调用方(ready 引用,上限由调用方按同款纪律
-// 拒收),再点一次取消。
+// 拒收),再点一次取消。50 号票加 IP 归属过滤:ipId 提供时 scope 在
+// 「本 IP + 全局」(缺省)与「全部」间切换。
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError, type AssetRecord } from '@infinitechance/api'
@@ -24,6 +25,8 @@ const props = defineProps<{
   selectedAssetIds: number[]
   /** 面板说明行;空 = 不显示。 */
   hint?: string
+  /** 「本 IP」归属(50 号票);缺省 = 无 IP 维度,恒全库。 */
+  ipId?: number
 }>()
 
 const emit = defineEmits<{
@@ -37,6 +40,11 @@ const assets = ref<AssetRecord[]>([])
 const kind = ref<'' | PickerKind>('')
 const loading = ref(false)
 const error = ref('')
+
+/** 归属视图:'ip' = 本 IP + 全局(缺省),'all' = 全库。 */
+const scope = ref<'ip' | 'all'>('ip')
+
+const showScopeToggle = computed(() => props.ipId !== undefined)
 
 // 分页窗口:一页 30 条,「加载更多」向后翻页(与素材面板同款)。
 const pageSize = 30
@@ -57,16 +65,22 @@ const emptyText = computed(() =>
     : '素材库还没有可用的图片/视频。',
 )
 
+function listParams(offset: number) {
+  return {
+    kind: kind.value === '' ? undefined : kind.value,
+    scope: (props.ipId !== undefined ? scope.value : 'all') as 'ip' | 'all',
+    ip_id: props.ipId !== undefined && scope.value === 'ip' ? props.ipId : undefined,
+    sort: 'last_used' as const,
+    limit: pageSize,
+    offset,
+  }
+}
+
 async function refresh(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    assets.value = await client.listAssets({
-      kind: kind.value === '' ? undefined : kind.value,
-      sort: 'last_used',
-      limit: pageSize,
-      offset: 0,
-    })
+    assets.value = await client.listAssets(listParams(0))
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '无法加载素材,请稍后再试'
   } finally {
@@ -81,12 +95,7 @@ async function loadMore(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const more = await client.listAssets({
-      kind: kind.value === '' ? undefined : kind.value,
-      sort: 'last_used',
-      limit: pageSize,
-      offset: assets.value.length,
-    })
+    const more = await client.listAssets(listParams(assets.value.length))
     assets.value.push(...more)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '无法加载更多素材,请稍后再试'
@@ -97,6 +106,11 @@ async function loadMore(): Promise<void> {
 
 function setKind(k: '' | PickerKind): void {
   kind.value = k
+  void refresh()
+}
+
+function setScope(s: 'ip' | 'all'): void {
+  scope.value = s
   void refresh()
 }
 
@@ -143,6 +157,27 @@ onMounted(refresh)
     >
       {{ hint }}
     </p>
+
+    <!-- IP 归属视图切换(50 号票):缺省「本 IP + 全局」,可切全库。 -->
+    <div
+      v-if="showScopeToggle"
+      class="scope-filter"
+    >
+      <button
+        type="button"
+        :class="{ active: scope === 'ip' }"
+        @click="setScope('ip')"
+      >
+        本 IP + 全局
+      </button>
+      <button
+        type="button"
+        :class="{ active: scope === 'all' }"
+        @click="setScope('all')"
+      >
+        全部
+      </button>
+    </div>
 
     <div
       v-if="kindTabs.length > 1"
@@ -289,11 +324,13 @@ onMounted(refresh)
   font-size: 12px;
 }
 
-.kind-filter {
+.kind-filter,
+.scope-filter {
   display: flex;
   gap: 4px;
 }
 
+.scope-filter button,
 .kind-filter button {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: transparent;
@@ -304,6 +341,7 @@ onMounted(refresh)
   cursor: pointer;
 }
 
+.scope-filter button.active,
 .kind-filter button.active {
   background: rgba(76, 110, 245, 0.25);
   color: inherit;

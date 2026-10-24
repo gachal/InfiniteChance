@@ -3,12 +3,28 @@
 // 节点持有素材的内容寻址引用(asset_id + content_url),跨画布复用同一
 // 素材而非复制字节。列表/过滤由服务端 /assets 提供,按最近使用排序
 // (47 号票;管理端素材页保持创建序),拉取失败不打扰画布。
-import { onMounted, ref } from 'vue'
+// 50 号票加 IP 归属过滤:scope 在「本 IP + 全局」与「全部」间切换(缺省
+// 本 IP + 全局);ipId 声明「本 IP」;uploadIpId 提供时面板出上传入口
+// (上传固定带该 IP —— 画布内 = 画布的 IP,IP 详情页 = 该 IP);selectable
+// 关掉插入按钮(纯浏览形态,IP 详情页素材区用)。
+import { computed, onMounted, ref } from 'vue'
 
 import { ApiError, type AssetRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
+
+const props = withDefaults(
+  defineProps<{
+    /** 「本 IP」归属的 IP id(50 号票);缺省 = 无 IP 维度,恒全部。 */
+    ipId?: number
+    /** 提供时面板出上传入口,上传固定带该 IP。 */
+    uploadIpId?: number
+    /** false = 纯浏览,不出「插入」按钮。 */
+    selectable?: boolean
+  }>(),
+  { ipId: undefined, uploadIpId: undefined, selectable: true },
+)
 
 const emit = defineEmits<{
   insert: [asset: AssetRecord]
@@ -20,22 +36,37 @@ const assets = ref<AssetRecord[]>([])
 const kind = ref<'' | 'image' | 'video' | 'audio'>('')
 const loading = ref(false)
 const error = ref('')
+const uploading = ref(false)
+const uploadInput = ref<HTMLInputElement | null>(null)
+
+/** 归属视图:'ip' = 本 IP + 全局(缺省),'all' = 全库。 */
+const scope = ref<'ip' | 'all'>('ip')
+
+const scopeChoices = computed(() =>
+  props.ipId !== undefined ? ([{ v: 'ip', label: '本 IP + 全局' }, { v: 'all', label: '全部' }] as const) : ([{ v: 'all', label: '全部' }] as const),
+)
 
 // 分页窗口:一页 30 条,「加载更多」向后翻页;上一页拉满才可能出现下一页。
 const pageSize = 30
 
 const hasMore = () => assets.value.length >= pageSize && assets.value.length % pageSize === 0
 
+function listParams(offset: number) {
+  return {
+    kind: kind.value === '' ? undefined : kind.value,
+    scope: (props.ipId !== undefined ? scope.value : 'all') as 'ip' | 'all',
+    ip_id: props.ipId !== undefined && scope.value === 'ip' ? props.ipId : undefined,
+    sort: 'last_used' as const,
+    limit: pageSize,
+    offset,
+  }
+}
+
 async function refresh(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    assets.value = await client.listAssets({
-      kind: kind.value === '' ? undefined : kind.value,
-      sort: 'last_used',
-      limit: pageSize,
-      offset: 0,
-    })
+    assets.value = await client.listAssets(listParams(0))
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '无法加载素材,请稍后再试'
   } finally {
@@ -50,12 +81,7 @@ async function loadMore(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const more = await client.listAssets({
-      kind: kind.value === '' ? undefined : kind.value,
-      sort: 'last_used',
-      limit: pageSize,
-      offset: assets.value.length,
-    })
+    const more = await client.listAssets(listParams(assets.value.length))
     assets.value.push(...more)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '无法加载更多素材,请稍后再试'
@@ -67,6 +93,40 @@ async function loadMore(): Promise<void> {
 function setKind(k: '' | 'image' | 'video' | 'audio'): void {
   kind.value = k
   void refresh()
+}
+
+function setScope(s: 'ip' | 'all'): void {
+  scope.value = s
+  void refresh()
+}
+
+/** 面板内上传(50 号票):固定带面板声明的 IP(缺省 = 全局,历史口径)。 */
+async function onUploadChange(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || uploading.value) {
+    return
+  }
+  uploading.value = true
+  error.value = ''
+  try {
+    const a = await client.uploadAsset(
+      file,
+      file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image',
+      props.uploadIpId,
+    )
+    // 刷新取最新序;上传成功的行在最前(最近使用 = 创建时刻)。
+    await refresh()
+    if (a.kind !== 'audio' && props.selectable) {
+      // 图片/视频可直接插入(与列表插入同语义);音频只入库不插。
+      emit('insert', a)
+    }
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
+  } finally {
+    uploading.value = false
+  }
 }
 
 function kindLabel(k: 'image' | 'video' | 'audio'): string {
@@ -91,18 +151,55 @@ onMounted(refresh)
   >
     <header class="panel-head">
       <h3>素材库</h3>
-      <div class="kind-filter">
-        <button
-          v-for="k in (['', 'image', 'video', 'audio'] as const)"
-          :key="k"
-          type="button"
-          :class="{ active: kind === k }"
-          @click="setKind(k)"
+      <div class="head-filters">
+        <div
+          v-if="ipId !== undefined"
+          class="scope-filter"
         >
-          {{ k === '' ? '全部' : kindLabel(k) }}
-        </button>
+          <button
+            v-for="c in scopeChoices"
+            :key="c.v"
+            type="button"
+            :class="{ active: scope === c.v }"
+            @click="setScope(c.v)"
+          >
+            {{ c.label }}
+          </button>
+        </div>
+        <div class="kind-filter">
+          <button
+            v-for="k in (['', 'image', 'video', 'audio'] as const)"
+            :key="k"
+            type="button"
+            :class="{ active: kind === k }"
+            @click="setKind(k)"
+          >
+            {{ k === '' ? '全部' : kindLabel(k) }}
+          </button>
+        </div>
       </div>
     </header>
+
+    <div
+      v-if="uploadIpId !== undefined"
+      class="upload-row"
+    >
+      <button
+        type="button"
+        class="upload"
+        :disabled="uploading"
+        @click="uploadInput?.click()"
+      >
+        {{ uploading ? '上传中…' : '上传本机图片/视频' }}
+      </button>
+      <input
+        ref="uploadInput"
+        type="file"
+        accept="image/*,video/*,audio/*"
+        class="sr-input"
+        @change="onUploadChange"
+      >
+    </div>
 
     <p
       v-if="error"
@@ -163,9 +260,14 @@ onMounted(refresh)
           <span class="origin">
             {{ kindLabel(a.kind) }}
             <template v-if="a.canvas_name">· 来自「{{ a.canvas_name }}」</template>
+            <template v-if="a.ip_id === 0">· 全局</template>
+            <template v-else-if="a.ip_name">· {{ a.ip_name }}</template>
           </span>
         </div>
-        <div class="actions">
+        <div
+          v-if="selectable"
+          class="actions"
+        >
           <button
             v-if="a.kind !== 'audio'"
             type="button"
@@ -225,12 +327,21 @@ onMounted(refresh)
   font-size: 15px;
 }
 
+.head-filters {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.scope-filter,
 .kind-filter {
   display: flex;
   gap: 4px;
 }
 
-.kind-filter button {
+.scope-filter button,
+.kind-filter button,
+.upload {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: transparent;
   color: #aab1c5;
@@ -240,10 +351,34 @@ onMounted(refresh)
   cursor: pointer;
 }
 
+.scope-filter button.active,
 .kind-filter button.active {
   background: rgba(76, 110, 245, 0.25);
   color: inherit;
   border-color: rgba(76, 110, 245, 0.6);
+}
+
+.upload-row {
+  display: flex;
+}
+
+.upload {
+  flex: 1;
+  padding: 7px;
+}
+
+.upload:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 面板内上传的隐藏文件输入(按钮代点)。 */
+.sr-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .panel-error {
