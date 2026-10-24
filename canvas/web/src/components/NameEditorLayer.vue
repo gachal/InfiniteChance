@@ -24,6 +24,7 @@ import {
   removePage,
   removePanel,
 } from '../name'
+import { followMove, followRemove } from '../list'
 import AssetPicker from './AssetPicker.vue'
 import StoryboardFrameSlot from './StoryboardFrameSlot.vue'
 
@@ -82,19 +83,25 @@ function addPage(): void {
 
 function removePageAt(index: number): void {
   emitScene({ pages: removePage(props.data.pages, index) })
-  if (pickerFor.value !== null) {
-    if (pickerFor.value.page === index) {
-      pickerFor.value = null
-    } else if (pickerFor.value.page > index) {
-      pickerFor.value = { page: pickerFor.value.page - 1, panel: pickerFor.value.panel }
-    }
+  // 面板下标跟随(list.ts 纯函数,絵コンテ层同语义):删的正是面板所在页
+  // → 关面板;删更早的页 → 面板页号前移一格位不丢。
+  const p = pickerFor.value
+  if (p !== null) {
+    const page = followRemove(p.page, index)
+    pickerFor.value = page === null ? null : { page, panel: p.panel }
   }
 }
 
 function movePageAt(index: number, delta: -1 | 1): void {
-  emitScene({ pages: movePage(props.data.pages, index, delta) })
-  if (pickerFor.value?.page === index) {
-    pickerFor.value = { page: index + delta, panel: pickerFor.value.panel }
+  const moved = movePage(props.data.pages, index, delta)
+  emitScene({ pages: moved })
+  // 未动(越界交换)面板不动;动了则被移页跟到新位、被换的相邻页同步换位
+  // (list.ts followMove,评审修复补齐相邻页跟随)。
+  if (moved !== props.data.pages) {
+    const p = pickerFor.value
+    if (p !== null) {
+      pickerFor.value = { page: followMove(p.page, index, delta), panel: p.panel }
+    }
   }
 }
 
@@ -106,21 +113,26 @@ function addPanel(pageIndex: number): void {
 
 function removePanelAt(pageIndex: number, panelIndex: number): void {
   patchPage(pageIndex, { panels: removePanel(props.data.pages[pageIndex].panels, panelIndex) })
-  if (pickerFor.value?.page === pageIndex) {
-    if (pickerFor.value.panel === panelIndex) {
-      pickerFor.value = null
-    } else if (pickerFor.value.panel > panelIndex) {
-      pickerFor.value = { page: pageIndex, panel: pickerFor.value.panel - 1 }
-    }
+  // 面板下标跟随(list.ts 纯函数,语义同页级):删的正是面板格 → 关面板;
+  // 删同页更早的格 → 面板格号前移一位。
+  const p = pickerFor.value
+  if (p !== null && p.page === pageIndex) {
+    const panel = followRemove(p.panel, panelIndex)
+    pickerFor.value = panel === null ? null : { page: pageIndex, panel }
   }
 }
 
 function movePanelAt(pageIndex: number, panelIndex: number, delta: -1 | 1): void {
-  patchPage(pageIndex, {
-    panels: movePanel(props.data.pages[pageIndex].panels, panelIndex, delta),
-  })
-  if (pickerFor.value?.page === pageIndex && pickerFor.value.panel === panelIndex) {
-    pickerFor.value = { page: pageIndex, panel: panelIndex + delta }
+  const panels = props.data.pages[pageIndex].panels
+  const moved = movePanel(panels, panelIndex, delta)
+  patchPage(pageIndex, { panels: moved })
+  // 未动(越界交换)面板不动;动了则被移格跟到新位、被换的相邻格同步换位
+  // (list.ts followMove,评审修复补齐相邻格跟随)。
+  if (moved !== panels) {
+    const p = pickerFor.value
+    if (p !== null && p.page === pageIndex) {
+      pickerFor.value = { page: pageIndex, panel: followMove(p.panel, panelIndex, delta) }
+    }
   }
 }
 

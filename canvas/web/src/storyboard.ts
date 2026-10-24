@@ -5,6 +5,7 @@
  * ネーム复用编辑层骨架与画面槽交互,数据结构各自定义、不强行归一。
  */
 import type { StoryboardCut, StoryboardNodeData } from './graph'
+import { moveItem, removeAt } from './list'
 
 /** 运镜白名单(53 号票):前端持有,后端存串不校验(51 号 label 同哲学);
  * 将来管理端可配显式另票。初始集:推/拉/摇/移/跟/固定/手持/变焦。 */
@@ -30,23 +31,17 @@ export function appendCut(cuts: StoryboardCut[]): StoryboardCut[] {
 }
 
 /** 按下标删除 cut:**无「最后不可删」守卫** —— 板是画布工作件而非库
- * 实体,cut 可删到空(与角色变体的守卫相反,53 号票定案)。 */
+ * 实体,cut 可删到空(与角色变体的守卫相反,53 号票定案);机制在
+ * list.ts removeAt(与ネーム页格/关卡节拍共享)。 */
 export function removeCut(cuts: StoryboardCut[], index: number): StoryboardCut[] {
-  return cuts.filter((_, i) => i !== index)
+  return removeAt(cuts, index)
 }
 
 /** 上移/下移一个 cut(delta = -1 | 1);越界或空表原样返回(编辑层排序
  * 用按钮不做拖拽,40 号票手势冲突教训;序号显示时生成 1..N,删插自动
- * 重排,不持久)。 */
+ * 重排,不持久);机制在 list.ts moveItem(同上共享)。 */
 export function moveCut(cuts: StoryboardCut[], index: number, delta: -1 | 1): StoryboardCut[] {
-  const target = index + delta
-  if (index < 0 || index >= cuts.length || target < 0 || target >= cuts.length) {
-    return cuts
-  }
-  const next = [...cuts]
-  const [item] = next.splice(index, 1)
-  next.splice(target, 0, item)
-  return next
+  return moveItem(cuts, index, delta)
 }
 
 /** 运镜 chip 多选切换:选中 → 移除,未选 → 追加;换新对象不改入参。 */

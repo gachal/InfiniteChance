@@ -5,6 +5,7 @@
  * 型工件,卡内直接编辑不开编辑层(53 号票定案),纯函数直接服务卡面。
  */
 import type { LevelNodeData } from './graph'
+import { moveItem, removeAt } from './list'
 
 /** 新关卡的初始 data:名称「新关卡」(添加即命名,票面缺省)+ 空节拍 +
  * 空画面槽;goal/detail 可空不落键(ネーム页标题「不落键」同纪律)。 */
@@ -19,23 +20,17 @@ export function appendBeat(beats: string[]): string[] {
 }
 
 /** 按下标删除节拍:无「最后不可删」守卫 —— 关卡是画布工作件而非库实体,
- * 节拍可删到空(与絵コンテ cut / ネーム页同 53/54 号票定案)。 */
+ * 节拍可删到空(与絵コンテ cut / ネーム页同 53/54 号票定案);机制在
+ * list.ts removeAt(三域共享)。 */
 export function removeBeat(beats: string[], index: number): string[] {
-  return beats.filter((_, i) => i !== index)
+  return removeAt(beats, index)
 }
 
 /** 上移/下移一拍(delta = -1 | 1);越界或空表原样返回(卡内编辑排序用
  * 按钮不做拖拽,40 号票手势冲突教训;序号显示时生成 1..N,删插自动重排,
- * 不持久)。 */
+ * 不持久);机制在 list.ts moveItem(同上共享)。 */
 export function moveBeat(beats: string[], index: number, delta: -1 | 1): string[] {
-  const target = index + delta
-  if (index < 0 || index >= beats.length || target < 0 || target >= beats.length) {
-    return beats
-  }
-  const next = [...beats]
-  const [item] = next.splice(index, 1)
-  next.splice(target, 0, item)
-  return next
+  return moveItem(beats, index, delta)
 }
 
 /** 画面槽上限(55 号票):素材引用列表最多 9 条,与参考图口径一致

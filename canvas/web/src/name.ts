@@ -6,6 +6,7 @@
  * 各自定义不强行归一(53 号票定案)。
  */
 import type { NameNodeData, NamePage, NamePanel } from './graph'
+import { moveItem, removeAt } from './list'
 
 /** 新格的空形状:画面空(asset_id = 0)、台词空、大格起步(コマ割り以
  * 大格推进为主,小格是节奏调剂,切档走 togglePanelSize)。 */
@@ -31,23 +32,17 @@ export function appendPage(pages: NamePage[]): NamePage[] {
 }
 
 /** 按下标删除页:**无「最后不可删」守卫** —— 板是画布工作件而非库
- * 实体,页可删到空(板可空页,与絵コンテ cut 同 53 号票定案)。 */
+ * 实体,页可删到空(板可空页,与絵コンテ cut 同 53 号票定案);机制在
+ * list.ts removeAt(与絵コンテ cut/关卡节拍共享)。 */
 export function removePage(pages: NamePage[], index: number): NamePage[] {
-  return pages.filter((_, i) => i !== index)
+  return removeAt(pages, index)
 }
 
 /** 上移/下移一页(delta = -1 | 1);越界或空表原样返回(编辑层排序用
  * 按钮不做拖拽,40 号票手势冲突教训;页序号显示时生成 1..N,删插自动
- * 重排,不持久)。 */
+ * 重排,不持久);机制在 list.ts moveItem(同上共享)。 */
 export function movePage(pages: NamePage[], index: number, delta: -1 | 1): NamePage[] {
-  const target = index + delta
-  if (index < 0 || index >= pages.length || target < 0 || target >= pages.length) {
-    return pages
-  }
-  const next = [...pages]
-  const [item] = next.splice(index, 1)
-  next.splice(target, 0, item)
-  return next
+  return moveItem(pages, index, delta)
 }
 
 /** 追加一个空格(追加到页尾):返回新数组,不改入参。 */
@@ -56,21 +51,15 @@ export function appendPanel(panels: NamePanel[]): NamePanel[] {
 }
 
 /** 按下标删除格:无「最后不可删」守卫 —— 格可删到空,空页保留在板上
- * (删页走页级删除,两级语义分开)。 */
+ * (删页走页级删除,两级语义分开);机制在 list.ts removeAt。 */
 export function removePanel(panels: NamePanel[], index: number): NamePanel[] {
-  return panels.filter((_, i) => i !== index)
+  return removeAt(panels, index)
 }
 
-/** 上移/下移一格(delta = -1 | 1);越界或空表原样返回。 */
+/** 上移/下移一格(delta = -1 | 1);越界或空表原样返回;机制在
+ * list.ts moveItem。 */
 export function movePanel(panels: NamePanel[], index: number, delta: -1 | 1): NamePanel[] {
-  const target = index + delta
-  if (index < 0 || index >= panels.length || target < 0 || target >= panels.length) {
-    return panels
-  }
-  const next = [...panels]
-  const [item] = next.splice(index, 1)
-  next.splice(target, 0, item)
-  return next
+  return moveItem(panels, index, delta)
 }
 
 /** 大小格切换:large ↔ small 两档换新对象不改入参(コマ割り节奏的

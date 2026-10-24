@@ -22,6 +22,7 @@ import {
   removeCut,
   toggleCameraMove,
 } from '../storyboard'
+import { followMove, followRemove } from '../list'
 import AssetPicker from './AssetPicker.vue'
 import StoryboardFrameSlot from './StoryboardFrameSlot.vue'
 
@@ -83,15 +84,19 @@ function addCut(): void {
 function removeCutAt(index: number): void {
   // 无「最后不可删」守卫:cut 可删到空(与角色变体守卫相反,53 号票定案)。
   emitScene({ cuts: removeCut(props.data.cuts, index) })
-  if (pickerFor.value === index) {
-    pickerFor.value = null
-  }
+  // 面板下标跟随(与ネーム层同语义,list.ts 纯函数):删的正是面板行 →
+  // 关面板;删更早的 cut → 面板行前移一位,不静默改绑下一 cut(评审修复)。
+  pickerFor.value = followRemove(pickerFor.value, index)
 }
 
 function moveCutAt(index: number, delta: -1 | 1): void {
-  emitScene({ cuts: moveCut(props.data.cuts, index, delta) })
-  if (pickerFor.value === index) {
-    pickerFor.value = index + delta
+  const moved = moveCut(props.data.cuts, index, delta)
+  emitScene({ cuts: moved })
+  // 未动(越界交换)面板不动;动了则被移行跟到新位、被换的相邻行同步换位
+  // (list.ts followMove,评审修复补齐相邻行跟随)。
+  const p = pickerFor.value
+  if (moved !== props.data.cuts && p !== null) {
+    pickerFor.value = followMove(p, index, delta)
   }
 }
 
