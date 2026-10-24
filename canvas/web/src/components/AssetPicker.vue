@@ -5,13 +5,17 @@
 // kind 白名单收窄可选面(视频模式含音频,Agent 附件仍限图/视频)、缩略
 // 点选、可多选 —— 点选挂到调用方(ready 引用,上限由调用方按同款纪律
 // 拒收),再点一次取消。50 号票加 IP 归属过滤:ipId 提供时 scope 在
-// 「本 IP + 全局」(缺省)与「全部」间切换。
+// 「本 IP + 全局」(缺省)与「全部」间切换。51 号票加「角色」视图:
+// 角色 → 变体两级分组列设定图,点选进参考条/附件条与普通素材同款 chip 流
+// (合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址,服务端零改动;
+// chip 不带角色标注 —— MVP 它就是素材)。
 import { computed, onMounted, ref } from 'vue'
 
-import { ApiError, type AssetRecord } from '@infinitechance/api'
+import { ApiError, type AssetRecord, type CharacterRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
+import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
 
 /** 素材种类词表(与素材域 kind 同形)。 */
 export type PickerKind = 'image' | 'video' | 'audio'
@@ -25,7 +29,8 @@ const props = defineProps<{
   selectedAssetIds: number[]
   /** 面板说明行;空 = 不显示。 */
   hint?: string
-  /** 「本 IP」归属(50 号票);缺省 = 无 IP 维度,恒全库。 */
+  /** 「本 IP」归属(50 号票);缺省 = 无 IP 维度,恒全库(也不出角色视图
+   * —— 角色是 IP 级实体,51 号票)。 */
   ipId?: number
 }>()
 
@@ -41,10 +46,20 @@ const kind = ref<'' | PickerKind>('')
 const loading = ref(false)
 const error = ref('')
 
+// ---- 角色视图(51 号票):'asset' = 素材库平铺(缺省,行为不变),
+// 'character' = 角色 → 变体两级分组的设定图。 ----
+const view = ref<'asset' | 'character'>('asset')
+const characters = ref<CharacterRecord[]>([])
+const charactersLoading = ref(false)
+const charactersError = ref('')
+
+/** 角色视图只在带 IP 归属且白名单含图片时出现(设定图全是图片)。 */
+const showViewSwitch = computed(() => props.ipId !== undefined && props.kindWhitelist.includes('image'))
+
 /** 归属视图:'ip' = 本 IP + 全局(缺省),'all' = 全库。 */
 const scope = ref<'ip' | 'all'>('ip')
 
-const showScopeToggle = computed(() => props.ipId !== undefined)
+const showScopeToggle = computed(() => props.ipId !== undefined && view.value === 'asset')
 
 // 分页窗口:一页 30 条,「加载更多」向后翻页(与素材面板同款)。
 const pageSize = 30
@@ -77,6 +92,10 @@ function listParams(offset: number) {
 }
 
 async function refresh(): Promise<void> {
+  if (view.value === 'character') {
+    await refreshCharacters()
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -86,6 +105,26 @@ async function refresh(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+async function refreshCharacters(): Promise<void> {
+  if (props.ipId === undefined) {
+    return
+  }
+  charactersLoading.value = true
+  charactersError.value = ''
+  try {
+    characters.value = await client.listIPCharacters(props.ipId)
+  } catch (e) {
+    charactersError.value = e instanceof ApiError ? e.message : '无法加载角色,请稍后再试'
+  } finally {
+    charactersLoading.value = false
+  }
+}
+
+function setView(v: 'asset' | 'character'): void {
+  view.value = v
+  void refresh()
 }
 
 async function loadMore(): Promise<void> {
@@ -131,6 +170,52 @@ function onPick(a: AssetRecord): void {
   emit('toggle', a)
 }
 
+/** 角色设定图 → 合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址
+ * (51 号票,服务端零改动);chip 不带角色标注 —— 载荷与普通素材同形。
+ * 角色视图只列图片,kind 恒 image。 */
+function characterAsset(assetId: number): AssetRecord {
+  return {
+    id: assetId,
+    kind: 'image',
+    canvas_id: 0,
+    canvas_name: '',
+    task_id: '',
+    model: '',
+    prompt: '',
+    url: '',
+    content_type: 'image',
+    size_bytes: 0,
+    content_url: characterImageContentURL(assetId),
+    thumbnail_url: characterImageThumbURL(assetId),
+    ip_id: props.ipId ?? 0,
+    ip_name: '',
+    created_at: '',
+    last_used_at: '',
+  }
+}
+
+/** 角色视图的已选高亮按素材 id(同一素材锚进多个变体去重展示)。 */
+const isCharacterAssetSelected = (assetId: number): boolean => props.selectedAssetIds.includes(assetId)
+
+function onPickCharacterAsset(assetId: number): void {
+  onPick(characterAsset(assetId))
+}
+
+/** 变体内展示序:视图类置前(51 号票主资产口径),组内保持 sort+id。 */
+function orderedVariantImages(v: CharacterRecord['variants'][number]) {
+  return [...v.images.filter((i) => isViewLabel(i.label)), ...v.images.filter((i) => !isViewLabel(i.label))]
+}
+
+/** 角色视图的缩略两阶段回落簿:缩略失败回原图,原图也失败落「素材不可用」
+ * 占位(素材行被删的图行保留在树里,展示面按可达性降级)。 */
+const brokenCharacterAssets = ref(new Set<number>())
+
+function onCharacterThumbError(assetId: number): void {
+  if (!thumbs.onThumbError(characterImageContentURL(assetId))) {
+    brokenCharacterAssets.value = new Set([...brokenCharacterAssets.value, assetId])
+  }
+}
+
 onMounted(refresh)
 </script>
 
@@ -158,119 +243,239 @@ onMounted(refresh)
       {{ hint }}
     </p>
 
-    <!-- IP 归属视图切换(50 号票):缺省「本 IP + 全局」,可切全库。 -->
+    <!-- 视图切换(51 号票):素材库平铺(缺省,47 号票行为不变)与
+         角色 → 变体两级分组的设定图;只带 IP 归属且白名单含图片时出现。 -->
     <div
-      v-if="showScopeToggle"
-      class="scope-filter"
+      v-if="showViewSwitch"
+      class="view-switch"
     >
       <button
         type="button"
-        :class="{ active: scope === 'ip' }"
-        @click="setScope('ip')"
+        :class="{ active: view === 'asset' }"
+        @click="setView('asset')"
       >
-        本 IP + 全局
+        素材
       </button>
       <button
         type="button"
-        :class="{ active: scope === 'all' }"
-        @click="setScope('all')"
+        :class="{ active: view === 'character' }"
+        @click="setView('character')"
       >
-        全部
+        角色
       </button>
     </div>
 
-    <div
-      v-if="kindTabs.length > 1"
-      class="kind-filter"
-    >
-      <button
-        v-for="k in kindTabs"
-        :key="k"
-        type="button"
-        :class="{ active: kind === k }"
-        @click="setKind(k)"
+    <template v-if="view === 'asset'">
+      <!-- IP 归属视图切换(50 号票):缺省「本 IP + 全局」,可切全库。 -->
+      <div
+        v-if="showScopeToggle"
+        class="scope-filter"
       >
-        {{ k === '' ? '全部' : kindLabel(k) }}
-      </button>
-    </div>
-
-    <p
-      v-if="error"
-      class="panel-error"
-      role="alert"
-    >
-      {{ error }}
-    </p>
-    <p
-      v-else-if="loading && assets.length === 0"
-      class="panel-empty"
-    >
-      加载素材…
-    </p>
-    <p
-      v-else-if="visibleAssets.length === 0"
-      class="panel-empty"
-    >
-      {{ emptyText }}
-    </p>
-
-    <ul class="asset-list">
-      <li
-        v-for="a in visibleAssets"
-        :key="a.id"
-        class="asset-card"
-        :class="{ selected: isSelected(a) }"
-        :title="isSelected(a) ? '取消选择' : '选为参考'"
-        @click="onPick(a)"
-      >
-        <img
-          v-if="a.kind === 'image'"
-          :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
-          class="thumb"
-          loading="lazy"
-          alt="素材缩略图"
-          @error="thumbs.onThumbError(a.content_url)"
+        <button
+          type="button"
+          :class="{ active: scope === 'ip' }"
+          @click="setScope('ip')"
         >
-        <!-- 音频没有缩略图:给试听条占缩略位(素材面板同款);点击不触发
-             卡片的选择/取消。 -->
-        <audio
-          v-else-if="a.kind === 'audio'"
-          :src="a.content_url"
-          class="audio-thumb"
-          controls
-          preload="none"
-          @click.stop
-        />
-        <video
-          v-else
-          :src="a.content_url"
-          class="thumb"
-          muted
-          preload="metadata"
-        />
-        <div class="meta">
-          <span class="kind-tag">{{ kindLabel(a.kind) }}</span>
-          <span
-            class="prompt"
-            :title="a.prompt"
-          >{{ a.prompt || '(无提示词)' }}</span>
-        </div>
-        <span
-          v-if="isSelected(a)"
-          class="picked"
-        >✓</span>
-      </li>
-    </ul>
+          本 IP + 全局
+        </button>
+        <button
+          type="button"
+          :class="{ active: scope === 'all' }"
+          @click="setScope('all')"
+        >
+          全部
+        </button>
+      </div>
 
-    <button
-      v-if="hasMore()"
-      type="button"
-      class="more"
-      :disabled="loading"
-      @click="loadMore"
-    >
-      {{ loading ? '加载中…' : '加载更多' }}
-    </button>
+      <div
+        v-if="kindTabs.length > 1"
+        class="kind-filter"
+      >
+        <button
+          v-for="k in kindTabs"
+          :key="k"
+          type="button"
+          :class="{ active: kind === k }"
+          @click="setKind(k)"
+        >
+          {{ k === '' ? '全部' : kindLabel(k) }}
+        </button>
+      </div>
+
+      <p
+        v-if="error"
+        class="panel-error"
+        role="alert"
+      >
+        {{ error }}
+      </p>
+      <p
+        v-else-if="loading && assets.length === 0"
+        class="panel-empty"
+      >
+        加载素材…
+      </p>
+      <p
+        v-else-if="visibleAssets.length === 0"
+        class="panel-empty"
+      >
+        {{ emptyText }}
+      </p>
+
+      <ul class="asset-list">
+        <li
+          v-for="a in visibleAssets"
+          :key="a.id"
+          class="asset-card"
+          :class="{ selected: isSelected(a) }"
+          :title="isSelected(a) ? '取消选择' : '选为参考'"
+          @click="onPick(a)"
+        >
+          <img
+            v-if="a.kind === 'image'"
+            :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
+            class="thumb"
+            loading="lazy"
+            alt="素材缩略图"
+            @error="thumbs.onThumbError(a.content_url)"
+          >
+          <!-- 音频没有缩略图:给试听条占缩略位(素材面板同款);点击不触发
+               卡片的选择/取消。 -->
+          <audio
+            v-else-if="a.kind === 'audio'"
+            :src="a.content_url"
+            class="audio-thumb"
+            controls
+            preload="none"
+            @click.stop
+          />
+          <video
+            v-else
+            :src="a.content_url"
+            class="thumb"
+            muted
+            preload="metadata"
+          />
+          <div class="meta">
+            <span class="kind-tag">{{ kindLabel(a.kind) }}</span>
+            <span
+              class="prompt"
+              :title="a.prompt"
+            >{{ a.prompt || '(无提示词)' }}</span>
+          </div>
+          <span
+            v-if="isSelected(a)"
+            class="picked"
+          >✓</span>
+        </li>
+      </ul>
+
+      <button
+        v-if="hasMore()"
+        type="button"
+        class="more"
+        :disabled="loading"
+        @click="loadMore"
+      >
+        {{ loading ? '加载中…' : '加载更多' }}
+      </button>
+    </template>
+
+    <!-- 角色视图(51 号票):角色 → 变体两级分组列设定图,点选与普通素材
+         同款 toggle(chip 不带角色标注,载荷 = asset_id + 内容寻址)。 -->
+    <template v-else>
+      <p
+        v-if="charactersError"
+        class="panel-error"
+        role="alert"
+      >
+        {{ charactersError }}
+      </p>
+      <p
+        v-else-if="charactersLoading"
+        class="panel-empty"
+      >
+        加载角色…
+      </p>
+      <p
+        v-else-if="characters.length === 0"
+        class="panel-empty"
+      >
+        本 IP 还没有角色 —— 先在 IP 详情页创建。
+      </p>
+      <template v-else>
+        <section
+          v-for="c in characters"
+          :key="c.id"
+          class="character-group"
+        >
+          <h4 class="character-name">
+            {{ c.name }}
+            <span
+              v-if="c.alias"
+              class="character-alias"
+            >{{ c.alias }}</span>
+          </h4>
+          <div
+            v-for="v in c.variants"
+            :key="v.id"
+            class="variant-group"
+          >
+            <p class="variant-name">
+              {{ v.name }}
+              <span
+                v-if="v.note"
+                class="variant-note"
+              >{{ v.note }}</span>
+            </p>
+            <ul
+              v-if="v.images.length > 0"
+              class="asset-list"
+            >
+              <li
+                v-for="img in orderedVariantImages(v)"
+                :key="img.id"
+                class="asset-card"
+                :class="{ selected: isCharacterAssetSelected(img.asset_id) }"
+                :title="isCharacterAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
+                @click="onPickCharacterAsset(img.asset_id)"
+              >
+                <span
+                  v-if="brokenCharacterAssets.has(img.asset_id)"
+                  class="character-unavailable"
+                >
+                  素材不可用
+                </span>
+                <img
+                  v-else
+                  :src="thumbs.displayURL(characterImageContentURL(img.asset_id), characterImageThumbURL(img.asset_id))"
+                  class="thumb"
+                  loading="lazy"
+                  alt="设定图"
+                  @error="onCharacterThumbError(img.asset_id)"
+                >
+                <div class="meta">
+                  <span
+                    class="kind-tag"
+                    :class="{ 'view-label': isViewLabel(img.label) }"
+                  >{{ img.label || '设定图' }}</span>
+                </div>
+                <span
+                  v-if="isCharacterAssetSelected(img.asset_id)"
+                  class="picked"
+                >✓</span>
+              </li>
+            </ul>
+            <p
+              v-else
+              class="variant-empty"
+            >
+              该变体还没有设定图
+            </p>
+          </div>
+        </section>
+      </template>
+    </template>
   </aside>
 </template>
 
@@ -331,7 +536,8 @@ onMounted(refresh)
 }
 
 .scope-filter button,
-.kind-filter button {
+.kind-filter button,
+.view-switch button {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: transparent;
   color: #aab1c5;
@@ -342,10 +548,62 @@ onMounted(refresh)
 }
 
 .scope-filter button.active,
-.kind-filter button.active {
+.kind-filter button.active,
+.view-switch button.active {
   background: rgba(76, 110, 245, 0.25);
   color: inherit;
   border-color: rgba(76, 110, 245, 0.6);
+}
+
+/* 角色视图(51 号票):角色 → 变体两级分组。 */
+.character-group {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.character-name {
+  margin: 0;
+  font-size: 14px;
+}
+
+.character-alias {
+  color: #8b91a7;
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.variant-group .variant-name {
+  margin: 0 0 6px;
+  color: #aab1c5;
+  font-size: 12px;
+}
+
+.variant-group .variant-note {
+  color: #6f7690;
+  margin-left: 6px;
+}
+
+.variant-empty {
+  margin: 0;
+  color: #6f7690;
+  font-size: 12px;
+}
+
+.character-unavailable {
+  display: grid;
+  place-items: center;
+  height: 84px;
+  color: #8b91a7;
+  font-size: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+}
+
+.kind-tag.view-label {
+  color: #d3b571;
 }
 
 .panel-error,

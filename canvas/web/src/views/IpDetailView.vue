@@ -4,16 +4,25 @@
 // POST 带 ip_id + type 直进编辑器;画布区按类型分组展示(空类型不显示),
 // 行内操作:打开/重命名/移动到其他 IP/删除(移动只改归属,历史素材不回填
 // —— 票面口径,这里只发起请求);素材区复用素材面板(scope=ip,上传带
-// 该 IP)。
+// 该 IP)。角色区(51 号票)插在画布区与素材区之间:角色卡墙(首图投影
+// cover_asset_id + 名称/别名/变体与图计数)+ 新建角色对话框 + 详情抽屉
+// (CharacterDrawer 自管数据,卡墙经 changed 事件同步)。
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ApiError, type CanvasSummary, type IPRecord } from '@infinitechance/api'
+import {
+  ApiError,
+  type CanvasSummary,
+  type CharacterRecord,
+  type IPRecord,
+} from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
+import { characterImageContentURL, characterImageThumbURL } from '../characters'
 import { CANVAS_TYPES, canvasTypeLabel } from '../canvasTypes'
 import AssetPanel from '../components/AssetPanel.vue'
+import CharacterDrawer from '../components/CharacterDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,6 +104,7 @@ onMounted(() => {
   }
   void refresh()
   void loadOtherIPs()
+  void loadCharacters()
 })
 
 function openCreate(type: string): void {
@@ -240,11 +250,106 @@ async function removeIP(): Promise<void> {
 /** 其他 IP 名单(移动画布的下拉;不含画布当前所属)。 */
 const otherIPs = ref<IPRecord[]>([])
 
+// ---- 角色区(51 号票):卡墙 + 新建对话框 + 详情抽屉 ----
+
+const characters = ref<CharacterRecord[]>([])
+const charactersLoading = ref(false)
+const charactersError = ref('')
+
+// 新建角色:名称必填 + 别名/简介/详细设定。
+const createCharacterOpen = ref(false)
+const characterName = ref('')
+const characterAlias = ref('')
+const characterDescription = ref('')
+const characterDetail = ref('')
+const creatingCharacter = ref(false)
+
+// 详情抽屉:按角色 id 换 key 重挂(CharacterDrawer 自取数据)。
+const drawerCharacterId = ref<number | null>(null)
+
+/** 角色卡的图计数(全部变体的设定图总数)。 */
+const imageCount = (c: CharacterRecord): number =>
+  c.variants.reduce((sum, v) => sum + v.images.length, 0)
+
+async function loadCharacters(): Promise<void> {
+  charactersLoading.value = true
+  charactersError.value = ''
+  try {
+    characters.value = await client.listIPCharacters(ipId.value)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      clearSession()
+      await router.replace({ name: 'login' })
+      return
+    }
+    charactersError.value = e instanceof ApiError ? e.message : '无法加载角色,请稍后再试'
+  } finally {
+    charactersLoading.value = false
+  }
+}
+
+function openCreateCharacter(): void {
+  characterName.value = ''
+  characterAlias.value = ''
+  characterDescription.value = ''
+  characterDetail.value = ''
+  actionError.value = ''
+  createCharacterOpen.value = true
+}
+
+async function submitCreateCharacter(): Promise<void> {
+  const name = characterName.value.trim()
+  if (!name || creatingCharacter.value) {
+    return
+  }
+  creatingCharacter.value = true
+  actionError.value = ''
+  try {
+    const created = await client.createCharacter(ipId.value, {
+      name,
+      alias: characterAlias.value.trim(),
+      description: characterDescription.value.trim(),
+      detail: characterDetail.value,
+    })
+    createCharacterOpen.value = false
+    await loadCharacters()
+    drawerCharacterId.value = created.id
+  } catch (e) {
+    actionError.value = e instanceof ApiError ? e.message : '创建角色失败,请稍后再试'
+  } finally {
+    creatingCharacter.value = false
+  }
+}
+
+/** 角色封面缩略的两阶段回落(缩略失败回原图,原图再失败落占位)。 */
+function onCharacterCoverError(c: CharacterRecord): void {
+  thumbs.onThumbError(characterImageContentURL(c.cover_asset_id))
+}
+
+function characterCoverThumb(c: CharacterRecord): string {
+  return characterImageThumbURL(c.cover_asset_id)
+}
+
+function characterCoverContent(c: CharacterRecord): string {
+  return characterImageContentURL(c.cover_asset_id)
+}
+
 async function loadOtherIPs(): Promise<void> {
   try {
     otherIPs.value = await client.listIPs()
   } catch {
     /* 拉不到就隐藏移动入口的下拉数据,不影响其他操作 */
+  }
+}
+
+/** 抽屉内的任何变更(CharacterDrawer 自取后回抛的最新角色)同步进卡墙:
+ * 排序键 updated_at 在服务端随动作推进,直接按 id 替换。 */
+function onDrawerChanged(fresh: CharacterRecord): void {
+  const index = characters.value.findIndex((c) => c.id === fresh.id)
+  if (index >= 0) {
+    characters.value.splice(index, 1, fresh)
+  } else {
+    characters.value.unshift(fresh)
   }
 }
 
@@ -513,6 +618,85 @@ function back(): void {
         </ul>
       </section>
 
+      <!-- 角色区(51 号票):IP 级角色实体,插在画布区与素材区之间。
+           卡墙 = 首图投影 cover_asset_id + 名称/别名/变体与图计数。 -->
+      <section class="character-section">
+        <div class="section-head">
+          <h2>角色</h2>
+          <span class="section-count">{{ characters.length }}</span>
+          <button
+            type="button"
+            class="ghost"
+            @click="openCreateCharacter"
+          >
+            + 新建角色
+          </button>
+        </div>
+        <p
+          v-if="charactersError"
+          class="feedback error"
+          role="alert"
+        >
+          {{ charactersError }}
+          <button
+            class="ghost"
+            type="button"
+            @click="loadCharacters"
+          >
+            重试
+          </button>
+        </p>
+        <p
+          v-else-if="charactersLoading"
+          class="feedback"
+        >
+          加载角色…
+        </p>
+        <p
+          v-else-if="characters.length === 0"
+          class="feedback"
+        >
+          还没有角色 —— 新建一个,从三视图开始立人设。
+        </p>
+        <ul
+          v-else
+          class="character-wall"
+        >
+          <li
+            v-for="c in characters"
+            :key="c.id"
+          >
+            <button
+              type="button"
+              class="character-card"
+              @click="drawerCharacterId = c.id"
+            >
+              <span class="character-cover">
+                <img
+                  v-if="c.cover_asset_id > 0"
+                  :src="thumbs.displayURL(characterCoverContent(c), characterCoverThumb(c))"
+                  alt="角色首图"
+                  loading="lazy"
+                  @error="onCharacterCoverError(c)"
+                >
+                <span
+                  v-else
+                  class="cover-fallback small"
+                >{{ c.name.slice(0, 1) }}</span>
+              </span>
+              <span class="character-name">
+                {{ c.name }}
+                <em
+                  v-if="c.alias"
+                  class="character-alias"
+                >{{ c.alias }}</em>
+              </span>
+              <span class="character-meta">{{ c.variants.length }} 造型 · {{ imageCount(c) }} 图</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+
       <!-- 素材区:复用素材面板,scope=ip(本 IP + 全局,可切全部),
            上传固定带该 IP;纯浏览形态不出插入按钮。 -->
       <section class="asset-section">
@@ -648,6 +832,93 @@ function back(): void {
         </form>
       </div>
     </div>
+    <!-- 新建角色对话框(51 号票):名称必填 + 别名/简介/详细设定;
+         建角色自动带「默认」变体,成功后直接打开详情抽屉。 -->
+    <div
+      v-if="createCharacterOpen"
+      class="dialog-mask"
+      @click.self="createCharacterOpen = false"
+    >
+      <div class="dialog">
+        <h3>新建角色</h3>
+        <form
+          class="create-form"
+          @submit.prevent="submitCreateCharacter"
+        >
+          <label class="field">
+            名称
+            <input
+              v-model="characterName"
+              type="text"
+              maxlength="255"
+              placeholder="角色名(同 IP 内可重名)"
+              autofocus
+            >
+          </label>
+          <label class="field">
+            别名
+            <input
+              v-model="characterAlias"
+              type="text"
+              maxlength="255"
+              placeholder="可选"
+            >
+          </label>
+          <label class="field">
+            简介(一句话)
+            <input
+              v-model="characterDescription"
+              type="text"
+              maxlength="1024"
+              placeholder="可选"
+            >
+          </label>
+          <label class="field">
+            详细设定(纯文本)
+            <textarea
+              v-model="characterDetail"
+              rows="4"
+              maxlength="20000"
+              placeholder="可选:性格、背景、发型发色…"
+            />
+          </label>
+          <p
+            v-if="actionError"
+            class="feedback error"
+            role="alert"
+          >
+            {{ actionError }}
+          </p>
+          <div class="form-actions">
+            <button
+              type="submit"
+              class="primary"
+              :disabled="creatingCharacter || !characterName.trim()"
+            >
+              {{ creatingCharacter ? '创建中…' : '创建' }}
+            </button>
+            <button
+              type="button"
+              class="ghost"
+              @click="createCharacterOpen = false"
+            >
+              取消
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 角色详情抽屉(51 号票):字段编辑 + 变体条 + 设定图画廊;按角色
+         id 换 key 重挂,组件自管数据,changed 事件同步卡墙。 -->
+    <CharacterDrawer
+      v-if="drawerCharacterId !== null"
+      :key="drawerCharacterId"
+      :character-id="drawerCharacterId"
+      :ip-id="ipId"
+      @changed="onDrawerChanged"
+      @close="drawerCharacterId = null"
+    />
   </main>
 </template>
 
@@ -928,6 +1199,120 @@ function back(): void {
 /* 素材区:面板原是编辑器右缘浮层,这里改为文档流内的固定高度区。 */
 .asset-section {
   margin-top: 26px;
+}
+
+/* 角色区(51 号票):卡墙插在画布区与素材区之间。 */
+.character-section {
+  margin-top: 26px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.section-count {
+  color: #6f7690;
+  font-size: 13px;
+}
+
+.section-head button {
+  margin-left: auto;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.character-wall {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.character-card {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.character-card:hover {
+  border-color: rgba(122, 162, 247, 0.5);
+}
+
+.character-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.character-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cover-fallback.small {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 32px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+}
+
+.character-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-alias {
+  font-style: normal;
+  font-weight: 400;
+  color: #8b91a7;
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.character-meta {
+  color: #6f7690;
+  font-size: 12px;
+}
+
+/* 新建角色对话框的文本域与详情抽屉共用 pre-wrap 纯文本口径。 */
+.create-form textarea {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: inherit;
+  font-size: 14px;
+  resize: vertical;
+  white-space: pre-wrap;
 }
 
 .asset-section h2 {

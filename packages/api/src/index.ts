@@ -238,6 +238,95 @@ export interface PatchIPInput {
   cover_asset_id?: number
 }
 
+// ---- 角色库(canvas/server,51 号票,需 JWT 会话)----
+
+/** 一条设定图:纯素材引用(asset_id 指向素材行)。label 是展示标签
+ * (前端白名单六类:三视图/多视图/表情集/色板/姿态/其他,后端存字符串
+ * 不校验枚举);视图类(三视图/多视图)是主资产,展示面排序置前。
+ * 素材行被删后本行保留,展示面落「素材不可用」占位可手动移除。 */
+export interface CharacterImageRecord {
+  id: number
+  character_id: number
+  variant_id: number
+  asset_id: number
+  label: string
+  sort: number
+}
+
+/** 一个造型变体:换装 = 新建变体后成套上传新视图(资产的一级组织维度)。
+ * 建角色自动带「默认」变体,最后一个不可删(409 variant_last_one)。 */
+export interface CharacterVariantRecord {
+  id: number
+  character_id: number
+  name: string
+  /** 服装描述,自由文本。 */
+  note: string
+  sort: number
+  images: CharacterImageRecord[]
+  created_at: string
+  updated_at: string
+}
+
+/** 一个 IP 级角色:角色圣经的载体与设定图锚的一致性源(ADR 0004 定案 3)。
+ * variants 是完整树(角色 → 变体 → 图,目录一次取全);cover_asset_id 是
+ * 卡片首图投影(首个变体排序最前的视图类图,无则任意第一张,0 = 渐变+
+ * 首字占位)。detail 是纯文本详细设定,展示 pre-wrap 不解析 markdown。 */
+export interface CharacterRecord {
+  id: number
+  ip_id: number
+  name: string
+  alias: string
+  description: string
+  detail: string
+  cover_asset_id: number
+  variants: CharacterVariantRecord[]
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateCharacterInput {
+  name: string
+  alias?: string
+  description?: string
+  detail?: string
+}
+
+/** 角色部分更新:字段任选;空串 = 清空可选字段。 */
+export interface PatchCharacterInput {
+  name?: string
+  alias?: string
+  description?: string
+  detail?: string
+}
+
+export interface CreateCharacterVariantInput {
+  name: string
+  note?: string
+}
+
+/** 变体部分更新:改名字/服装描述/展示排序。 */
+export interface PatchCharacterVariantInput {
+  name?: string
+  note?: string
+  sort?: number
+}
+
+/** 锚一张设定图:双入口 —— 本机先经 /api/assets/upload?ip_id= 入素材库
+ * 再引用,或素材库/角色挑选器选已有图。 */
+export interface CreateCharacterImageInput {
+  variant_id: number
+  asset_id: number
+  label?: string
+  sort?: number
+}
+
+/** 设定图部分更新:label/sort/换变体(变体必须同角色,400)。 */
+export interface PatchCharacterImageInput {
+  label?: string
+  sort?: number
+  variant_id?: number
+}
+
 /** 自动保存成功后的版本指针,下一次保存必须带上它。 */
 export interface SaveGraphResult {
   version: number
@@ -862,6 +951,76 @@ export class ApiClient {
   /** 删除 IP:名下有画布或有直接素材时后端 409 ip_not_empty(不级联)。 */
   async deleteIP(id: number): Promise<void> {
     await this.request<void>(`/ips/${id}`, { method: 'DELETE' })
+  }
+
+  // ---- 角色库(51 号票,需 JWT 会话;目录挂 /ips/:id/characters,
+  //      CRUD 挂 /characters 系)----
+
+  /** IP 的角色目录:完整树一次取全(角色 → 变体 → 图),角色按最近更新
+   * 新到旧;cover_asset_id 随行(卡片首图投影)。 */
+  async listIPCharacters(ipId: number): Promise<CharacterRecord[]> {
+    const body = await this.request<{ characters: CharacterRecord[] }>(`/ips/${ipId}/characters`)
+    return body.characters
+  }
+
+  /** 建角色(自动带「默认」变体);不存在的 IP 回 404。 */
+  createCharacter(ipId: number, input: CreateCharacterInput): Promise<CharacterRecord> {
+    return this.request<CharacterRecord>(`/ips/${ipId}/characters`, { method: 'POST', body: input })
+  }
+
+  getCharacter(characterId: number): Promise<CharacterRecord> {
+    return this.request<CharacterRecord>(`/characters/${characterId}`)
+  }
+
+  /** 角色部分更新:字段任选,空串 = 清空可选字段。 */
+  patchCharacter(characterId: number, input: PatchCharacterInput): Promise<CharacterRecord> {
+    return this.request<CharacterRecord>(`/characters/${characterId}`, { method: 'PATCH', body: input })
+  }
+
+  /** 删角色:级联删变体与图行,素材行不动(素材库里仍可见)。 */
+  async deleteCharacter(characterId: number): Promise<void> {
+    await this.request<void>(`/characters/${characterId}`, { method: 'DELETE' })
+  }
+
+  /** 新建造型变体(换装入口)。 */
+  createCharacterVariant(characterId: number, input: CreateCharacterVariantInput): Promise<CharacterVariantRecord> {
+    return this.request<CharacterVariantRecord>(`/characters/${characterId}/variants`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  patchCharacterVariant(variantId: number, input: PatchCharacterVariantInput): Promise<CharacterVariantRecord> {
+    return this.request<CharacterVariantRecord>(`/character-variants/${variantId}`, {
+      method: 'PATCH',
+      body: input,
+    })
+  }
+
+  /** 删变体(其设定图行随级联消失);最后一个变体回 409 variant_last_one。 */
+  async deleteCharacterVariant(variantId: number): Promise<void> {
+    await this.request<void>(`/character-variants/${variantId}`, { method: 'DELETE' })
+  }
+
+  /** 锚一张设定图到变体(asset_id 引用素材行)。 */
+  createCharacterImage(characterId: number, input: CreateCharacterImageInput): Promise<CharacterImageRecord> {
+    return this.request<CharacterImageRecord>(`/characters/${characterId}/images`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 设定图部分更新:label/sort/换变体(变体必须同角色)。 */
+  patchCharacterImage(imageId: number, input: PatchCharacterImageInput): Promise<CharacterImageRecord> {
+    return this.request<CharacterImageRecord>(`/character-images/${imageId}`, {
+      method: 'PATCH',
+      body: input,
+    })
+  }
+
+  /** 删设定图(只删图行,素材行不动)。 */
+  async deleteCharacterImage(imageId: number): Promise<void> {
+    await this.request<void>(`/character-images/${imageId}`, { method: 'DELETE' })
   }
 
   // ---- 画布生成任务(挂 /canvases/:id/tasks,需 JWT 会话)----
