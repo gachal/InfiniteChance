@@ -17,6 +17,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -55,9 +56,24 @@ type fakeCanvases struct{}
 
 func (fakeCanvases) Get(_ context.Context, id int64) (canvas.Canvas, error) {
 	if id == 7 {
-		return canvas.Canvas{ID: 7, Name: "测试画布", Version: 1}, nil
+		return canvas.Canvas{ID: 7, Name: "测试画布", Version: 1, IPID: 3}, nil
 	}
 	return canvas.Canvas{}, canvas.ErrNotFound
+}
+
+// fakeCharacters 是角色库 store 的桩(52 号票):只暴露消费面用到的 Get,
+// byID 缺行 = 角色已删(ErrCharacterNotFound)。11 号角色属画布所在 IP(3),
+// 12 号属其他 IP(9),构成跨 IP 校验的两极。
+type fakeCharacters struct {
+	byID map[int64]character.Character
+}
+
+func (f fakeCharacters) GetCharacter(_ context.Context, id int64) (character.Character, error) {
+	c, ok := f.byID[id]
+	if !ok {
+		return character.Character{}, character.ErrCharacterNotFound
+	}
+	return c, nil
 }
 
 type fakePrices struct {
@@ -137,6 +153,7 @@ func (f fakeAssets) CountOthersOnObjectKey(context.Context, string, int64) (int,
 type envParams struct {
 	templates     fakeTemplates
 	assets        *fakeAssets
+	characters    fakeCharacters
 	gateway       promptgen.Gateway
 	publicBaseURL func(ctx context.Context) string
 }
@@ -161,6 +178,11 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			7: {ID: 7, Kind: asset.KindVideo, CanvasID: 7, URL: "data:video/mp4;base64,AAAA"},
 		}},
 		gateway: &stubGateway{content: "a neon cyberpunk city at dusk", deltas: []string{"a neon ", "cyberpunk city"}},
+		characters: fakeCharacters{byID: map[int64]character.Character{
+			11: {ID: 11, IPID: 3, Name: "林小满", Alias: "小满", Description: "16 岁的机械师学徒", Detail: "银色短发,工装裤,左手是机械义肢。"},
+			12: {ID: 12, IPID: 3, Name: "陈远", Alias: "", Description: "", Detail: "黑色长发的领航员。"},
+			13: {ID: 13, IPID: 9, Name: "别家角色", Alias: "跨 IP", Description: "属于其他 IP", Detail: "不应可注入。"},
+		}},
 	}
 	if mutate != nil {
 		mutate(params)
@@ -168,9 +190,10 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 
 	engine := gin.New()
 	promptgen.RegisterRoutes(engine.Group("/canvases"), &promptgen.Handlers{
-		Templates: params.templates,
-		Canvases:  fakeCanvases{},
-		Assets:    params.assets,
+		Templates:  params.templates,
+		Canvases:   fakeCanvases{},
+		Assets:     params.assets,
+		Characters: params.characters,
 		Models: fakePrices{byModel: map[string]pricing.Price{
 			"chat-m": {PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
 			"img-m":  {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
@@ -334,6 +357,150 @@ func TestGenerateMultiRoundConversationShape(t *testing.T) {
 	}
 	if !reflect.DeepEqual(req.Conversation, want) {
 		t.Errorf("conversation = %+v, want instruction + history + current input", req.Conversation)
+	}
+}
+
+// ---- generate-prompt · 角色设定注入(52 号票)----
+
+// TestGenerateInjectsCharacterSectionAfterSkillText 验证注入形状与位置:
+// 角色渲染为「【角色设定】\n名字:…\n别名:…\n简介:…\n设定:\n<detail>」段,
+// 拼在技能渲染文本之后(同属 messages 首条),用户输入(历史/本轮)之前。
+func TestGenerateInjectsCharacterSectionAfterSkillText(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id":   1,
+		"topic":         "赛博朋克城市",
+		"model":         "chat-m",
+		"character_ids": []int64{11},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	want := []promptgen.ChatMessage{
+		{Role: "user", Content: "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。\n\n" +
+			"【角色设定】\n名字:林小满\n别名:小满\n简介:16 岁的机械师学徒\n设定:\n银色短发,工装裤,左手是机械义肢。"},
+	}
+	if !reflect.DeepEqual(req.Conversation, want) {
+		t.Errorf("conversation = %+v, want skill text followed by the character section", req.Conversation)
+	}
+}
+
+// TestGenerateMultiCharacterSectionsFollowSelectionOrder 验证多角色按选择序
+// 各自成段拼接,历史与本轮输入仍跟在首条之后 —— 每轮请求取角色最新数据,
+// 已发生轮次不受影响。
+func TestGenerateMultiCharacterSectionsFollowSelectionOrder(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+		"template_id":   1,
+		"topic":         "把色调改暖",
+		"model":         "chat-m",
+		"character_ids": []int64{12, 11},
+		"history": []map[string]string{
+			{"role": "user", "content": "赛博朋克城市"},
+			{"role": "assistant", "content": "a neon cyberpunk city"},
+		},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if len(req.Conversation) != 4 {
+		t.Fatalf("conversation = %+v, want instruction + history + current input", req.Conversation)
+	}
+	// 请求体里的选择序是 [12, 11],段落同序;每段各自以【角色设定】开头。
+	want := "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。\n\n" +
+		"【角色设定】\n名字:陈远\n别名:\n简介:\n设定:\n黑色长发的领航员。\n\n" +
+		"【角色设定】\n名字:林小满\n别名:小满\n简介:16 岁的机械师学徒\n设定:\n银色短发,工装裤,左手是机械义肢。"
+	if req.Conversation[0].Content != want {
+		t.Errorf("instruction = %q, want both sections in selection order", req.Conversation[0].Content)
+	}
+	if req.Conversation[1].Content != "赛博朋克城市" || req.Conversation[3].Content != "把色调改暖" {
+		t.Errorf("conversation = %+v, want history and current input after the instruction", req.Conversation)
+	}
+}
+
+// TestGenerateCharacterValidation 验证双校验与形状护栏:角色已删 404
+// character_not_found、跨 IP 400 character_ip_mismatch、id 形状不对 400。
+func TestGenerateCharacterValidation(t *testing.T) {
+	cases := []struct {
+		name       string
+		ids        []int64
+		wantStatus int
+		wantCode   string
+	}{
+		{"deleted character", []int64{99}, http.StatusNotFound, "character_not_found"},
+		{"character from another ip", []int64{13}, http.StatusBadRequest, "character_ip_mismatch"},
+		{"non-positive id", []int64{0}, http.StatusBadRequest, "invalid_request"},
+		{"negative id", []int64{-1}, http.StatusBadRequest, "invalid_request"},
+		{"first valid then missing", []int64{11, 99}, http.StatusNotFound, "character_not_found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt", map[string]any{
+				"topic":         "任意",
+				"model":         "chat-m",
+				"character_ids": tc.ids,
+			})
+			if res.StatusCode != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", res.StatusCode, tc.wantStatus, raw)
+			}
+			code, _ := errorBody(t, raw)
+			if code != tc.wantCode {
+				t.Errorf("code = %q, want %q", code, tc.wantCode)
+			}
+		})
+	}
+}
+
+// TestGenerateStreamCharacterValidationAnswersJSONBeforeStream 验证流式变体
+// 同套校验且前置:校验失败回答 JSON 错误、流不开始(31 号票纪律)。
+func TestGenerateStreamCharacterValidationAnswersJSONBeforeStream(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"topic":         "任意",
+		"model":         "chat-m",
+		"character_ids": []int64{13},
+	})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", res.StatusCode, raw)
+	}
+	if ct := res.Header.Get("Content-Type"); ct == "text/event-stream" {
+		t.Errorf("content-type = %q, want JSON before the stream opens", ct)
+	}
+	code, _ := errorBody(t, raw)
+	if code != "character_ip_mismatch" {
+		t.Errorf("code = %q, want character_ip_mismatch", code)
+	}
+}
+
+// TestGenerateStreamInjectsSameCharacterSection 验证流式端点与同步同源:
+// 注入后的首条指令形状一致。
+func TestGenerateStreamInjectsSameCharacterSection(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/generate-prompt/stream", map[string]any{
+		"template_id":   1,
+		"topic":         "赛博朋克城市",
+		"model":         "chat-m",
+		"character_ids": []int64{11},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	if !strings.HasSuffix(raw, "data: [DONE]\n\n") {
+		t.Errorf("body = %q, want the stream to complete", raw)
+	}
+	req := env.params.gateway.(*stubGateway).requests[0]
+	if len(req.Conversation) != 1 {
+		t.Fatalf("conversation = %+v, want a single instruction message", req.Conversation)
+	}
+	want := "请为主题「赛博朋克城市」写一段英文文生图提示词,只输出提示词本身。\n\n" +
+		"【角色设定】\n名字:林小满\n别名:小满\n简介:16 岁的机械师学徒\n设定:\n银色短发,工装裤,左手是机械义肢。"
+	if req.Conversation[0].Content != want {
+		t.Errorf("instruction = %q, want the same injected shape as the sync endpoint", req.Conversation[0].Content)
 	}
 }
 

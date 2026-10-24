@@ -439,21 +439,26 @@ curl -X POST $CANVAS/canvases/1/tasks/ct_1a2b3c/cancel -H "Authorization: Bearer
 # (混合允许);assistant 轮带 media = 400;有媒体的轮 content 拼多模态
 # 分节(媒体在前文本在后),历史媒体全量重发;内容寻址引用由服务端解出
 # 真实地址并校验 kind,素材已删 404 asset_not_found(文案指路开新会话);
-# 结果写回 Agent 节点文本区并沿连线投递下游媒体节点)
+# 52 号票起可选 character_ids[](按选择序,≤20 个):服务端校验角色存在
+# (404 character_not_found)与 IP 归属(character.ip_id == canvas.ip_id,
+# 400 character_ip_mismatch)后,把「【角色设定】」段拼在技能文本之后、
+# 仍属首条指令,只带角色级字段;结果写回 Agent 节点文本区并沿连线投递
+# 下游媒体节点)
 curl -X POST $CANVAS/canvases/1/generate-prompt -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"node_id":"n_agent_1","template_id":1,"topic":"参考这个角色再改一版","model":"gpt-4o",
        "media":[{"ref":"/api/assets/6/content","kind":"image"}],
+       "character_ids":[11,12],
        "history":[{"role":"user","content":"智能家居",
                    "media":[{"ref":"/api/assets/5/content","kind":"video"}]},
                   {"role":"assistant","content":"...上一轮提示词..."}]}'
 # → {"text":"..."}
 
 # 生成提示词 · 流式(31 号票,请求体与同步端点完全同形(含 32 号票
-# media/history[].media),响应为 SSE):
+# media/history[].media 与 52 号票 character_ids),响应为 SSE):
 # data: {"delta":"…"} 增量 → data: [DONE] 收尾;流中途失败发
-# data: {"error":{code,message}}。校验前置:没过完校验(含媒体校验)
-# 不给流,失败仍是普通 JSON 错误形状。响应带 X-Accel-Buffering: no,
+# data: {"error":{code,message}}。校验前置:没过完校验(含媒体与角色
+# 校验)不给流,失败仍是普通 JSON 错误形状。响应带 X-Accel-Buffering: no,
 # 反代无需另配。
 curl -N -X POST $CANVAS/canvases/1/generate-prompt/stream -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \

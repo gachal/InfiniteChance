@@ -167,6 +167,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Templates:     s.Templates,
 		Canvases:      s.Canvases,
 		Assets:        s.Assets,
+		Characters:    s.Characters,
 		Models:        s.Prices,
 		Gateway:       chatGateway,
 		PublicBaseURL: publicBase,

@@ -17,6 +17,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 )
@@ -58,6 +59,13 @@ type CanvasGetter interface {
 	Get(ctx context.Context, id int64) (canvas.Canvas, error)
 }
 
+// CharacterSource is the slice of the character store the handlers need
+// (52 号票设定文本注入):Agent 会话按 character_ids 逐个取角色最新数据,
+// 校验存在性与 IP 归属后渲染设定段。只取角色级字段,不碰变体/设定图。
+type CharacterSource interface {
+	GetCharacter(ctx context.Context, id int64) (character.Character, error)
+}
+
 // AssetGetter is the slice of the asset store the handlers need: a video
 // reference in the content-addressed form resolves through it to the
 // address the asset row holds.
@@ -89,8 +97,11 @@ type Handlers struct {
 	Templates TemplateSource
 	Canvases  CanvasGetter
 	Assets    AssetGetter
-	Models    ModelPricer
-	Gateway   Gateway
+	// Characters 承载角色设定注入(52 号票):nil 时带 character_ids 的
+	// 请求按装配缺口回答 500,不带则不受影响(反推/分析不注入)。
+	Characters CharacterSource
+	Models     ModelPricer
+	Gateway    Gateway
 	// PublicBaseURL answers the configured public base address of the
 	// object storage for LLM-reachable media resolution (18 号票解析顺序:
 	// 自有公网地址优先、厂商原址回落)。19 号票落地 settings 前没有配置
@@ -123,6 +134,9 @@ type generateInput struct {
 	// Media 是本轮输入携带的媒体附件(32 号票):素材内容寻址路径或厂商
 	// http(s) 地址,服务端解出 LLM 可达地址;历史轮的媒体随各轮自带。
 	Media []chatMediaIn `json:"media"`
+	// CharacterIDs 是本轮注入的角色(52 号票,可选):按选择序逐个取最新
+	// 角色数据渲染「【角色设定】」段拼进首条指令;空/缺省 = 不注入。
+	CharacterIDs []int64 `json:"character_ids"`
 }
 
 // chatMediaIn is one media attachment on a conversation turn (32 号票):
@@ -147,6 +161,11 @@ type chatTurnIn struct {
 // 上限、超出截断最旧」的纪律同宽(一轮 = 一条 user + 一条 assistant),
 // 超限整单拒绝 —— 历史裁剪是编辑器的职责,服务端只挡明显失控的请求。
 const agentHistoryMaxMessages = 40
+
+// maxCharacterIDsPerRequest 是单次注入的角色数上限(52 号票):设定注入
+// 直接放大首条指令的 token 开销,20 个角色对单管理员形态已是失控量级,
+// 超限整单拒绝 —— 与历史条数上限同一护栏哲学。
+const maxCharacterIDsPerRequest = 20
 
 // builtinPromptInstruction 是未选技能时的通用「提示词书写」首条指令(29
 // 号票,反推/分析固定指令先例):与技能同形带 {topic} 占位,渲染后作会话
@@ -234,7 +253,9 @@ func normalizeTurnMedia(raw []chatMediaIn) ([]chatMediaIn, error) {
 // content 走分节数组(媒体在前、该轮文本在后,17 号票形状),无媒体轮
 // 恒纯文本,指令首条恒纯文本 —— 首轮(无历史)带媒体时媒体随指令分节,
 // 否则媒体无处可挂。历史媒体全量重发:每轮请求解出会话出现过的全部媒体。
-func conversationMessages(instructionText string, history []chatTurnIn, topic string, currentMedia []MediaPart) []ChatMessage {
+// characterSection 非空时(52 号票)拼在渲染后的技能文本之后、仍属首条
+// 指令 —— 角色设定段对模型是背景资料,永远先于任何一轮用户输入。
+func conversationMessages(instructionText string, characterSection string, history []chatTurnIn, topic string, currentMedia []MediaPart) []ChatMessage {
 	firstTopic := topic
 	for _, t := range history {
 		if t.Role == "user" {
@@ -243,6 +264,9 @@ func conversationMessages(instructionText string, history []chatTurnIn, topic st
 		}
 	}
 	instruction := strings.ReplaceAll(instructionText, prompttemplate.TopicPlaceholder, firstTopic)
+	if characterSection != "" {
+		instruction += "\n\n" + characterSection
+	}
 	msgs := make([]ChatMessage, 0, len(history)+2)
 	if len(history) == 0 {
 		if len(currentMedia) > 0 {
@@ -272,7 +296,10 @@ type generatePrep struct {
 	canvasID        int64
 	nodeID          string
 	instructionText string
-	history         []chatTurnIn
+	// characterSection 是本轮注入的「【角色设定】」段(52 号票):已过
+	// 存在性与 IP 归属校验,空 = 未注入。
+	characterSection string
+	history          []chatTurnIn
 	// currentMedia 是本轮输入的媒体(32 号票):已解出 LLM 可达地址。
 	currentMedia []MediaPart
 	topic        string
@@ -289,7 +316,8 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 	if !ok {
 		return generatePrep{}, false
 	}
-	if _, err := h.Canvases.Get(c.Request.Context(), canvasID); err != nil {
+	cv, err := h.Canvases.Get(c.Request.Context(), canvasID)
+	if err != nil {
 		h.failCanvas(c, err)
 		return generatePrep{}, false
 	}
@@ -342,6 +370,14 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 		return generatePrep{}, false
 	}
 
+	// 角色设定注入(52 号票):流前校验 —— 存在性(404)与 IP 归属
+	// (400)逐个过,全部通过才渲染设定段;历史与本轮输入取的是同一份
+	// 最新角色数据(历史固化只靠 messages 里的已发文本)。
+	characterSection, ok := h.resolveCharacterSection(c, cv.IPID, in.CharacterIDs)
+	if !ok {
+		return generatePrep{}, false
+	}
+
 	// 32 号票:history 与本轮的媒体逐条解引用(http(s) 直传 / 内容寻址
 	// 解出素材真实地址并校验 kind / data: URI 拒绝,17 号票同套)。历史
 	// 媒体全量重发,任何一条解不出 LLM 可达地址都整单拒绝 —— 流前校验,
@@ -384,14 +420,74 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 		return generatePrep{}, false
 	}
 	return generatePrep{
-		canvasID:        canvasID,
-		nodeID:          nodeID,
-		instructionText: instructionText,
-		history:         history,
-		currentMedia:    currentMedia,
-		topic:           topic,
-		model:           model,
+		canvasID:         canvasID,
+		nodeID:           nodeID,
+		instructionText:  instructionText,
+		characterSection: characterSection,
+		history:          history,
+		currentMedia:     currentMedia,
+		topic:            topic,
+		model:            model,
 	}, true
+}
+
+// characterSectionHeader 是每个角色的设定段首行标记(52 号票票面形状)。
+const characterSectionHeader = "【角色设定】"
+
+// characterSection renders one character's 设定段(52 号票票面固定形状):
+// 只带角色级字段(name/alias/description/detail),变体名与服装描述不注入
+// —— 视觉一致性走 51 号票的图像锚,不靠文本描述钉住。空可选字段照常出
+// 行(名字恒有值,字段缺失如实留白,不替用户编内容)。
+func characterSection(ch character.Character) string {
+	var b strings.Builder
+	b.WriteString(characterSectionHeader + "\n")
+	b.WriteString("名字:" + ch.Name + "\n")
+	b.WriteString("别名:" + ch.Alias + "\n")
+	b.WriteString("简介:" + ch.Description + "\n")
+	b.WriteString("设定:\n")
+	b.WriteString(ch.Detail)
+	return b.String()
+}
+
+// resolveCharacterSection validates the request's character_ids and renders
+// them into the injected section (52 号票):逐个校验存在(404
+// character_not_found)与 IP 归属(character.ip_id == canvas.ip_id,400
+// character_ip_mismatch),按请求序各渲染一段、段间空行分隔 —— 选择序即
+// 注入序。任何一条不过都整单拒绝(流前校验,31 号票纪律)。
+func (h *Handlers) resolveCharacterSection(c *gin.Context, canvasIPID int64, ids []int64) (string, bool) {
+	if len(ids) == 0 {
+		return "", true
+	}
+	if len(ids) > maxCharacterIDsPerRequest {
+		apierr.InvalidRequest(c, fmt.Sprintf("character_ids 最多 %d 个角色", maxCharacterIDsPerRequest))
+		return "", false
+	}
+	if h.Characters == nil {
+		h.failStore(c, errors.New("promptgen: character store not wired"))
+		return "", false
+	}
+	sections := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id < 1 {
+			apierr.InvalidRequest(c, "character_ids 里的角色 id 必须是正整数")
+			return "", false
+		}
+		ch, err := h.Characters.GetCharacter(c.Request.Context(), id)
+		if errors.Is(err, character.ErrCharacterNotFound) {
+			apierr.Write(c, http.StatusNotFound, "character_not_found", "角色不存在或已被删除")
+			return "", false
+		}
+		if err != nil {
+			h.failStore(c, err)
+			return "", false
+		}
+		if ch.IPID != canvasIPID {
+			apierr.Write(c, http.StatusBadRequest, "character_ip_mismatch", "角色不属于该画布所在的 IP 企划")
+			return "", false
+		}
+		sections = append(sections, characterSection(ch))
+	}
+	return strings.Join(sections, "\n\n"), true
 }
 
 // Generate renders the chosen template with the topic and relays it through
@@ -406,7 +502,7 @@ func (h *Handlers) Generate(c *gin.Context) {
 
 	result, err := h.Gateway.GenerateChat(c.Request.Context(), ChatRequest{
 		Model:        prep.model,
-		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic, prep.currentMedia),
+		Conversation: conversationMessages(prep.instructionText, prep.characterSection, prep.history, prep.topic, prep.currentMedia),
 		Source:       canvasSource(prep.canvasID, prep.nodeID, "prompt"),
 	})
 	if err != nil {
@@ -453,7 +549,7 @@ func (h *Handlers) GenerateStream(c *gin.Context) {
 
 	err := h.Gateway.StreamChat(c.Request.Context(), ChatRequest{
 		Model:        prep.model,
-		Conversation: conversationMessages(prep.instructionText, prep.history, prep.topic, prep.currentMedia),
+		Conversation: conversationMessages(prep.instructionText, prep.characterSection, prep.history, prep.topic, prep.currentMedia),
 		Source:       canvasSource(prep.canvasID, prep.nodeID, "prompt"),
 	}, func(delta string) {
 		body, mErr := json.Marshal(gin.H{"delta": delta})
