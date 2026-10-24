@@ -1,7 +1,7 @@
 # 50 IP 企划分组层:第一层 IP,画布类型化
 
 Type: feat
-Status: drafted(2026-10-24 grilling 定案;方法论依据见 [研究纪要](../research/ip-methodology.md) 与 [ADR 0004](../../../docs/adr/0004-ip-container-and-canvas-typing.md))
+Status: implemented(2026-10-24;feat/ip-platform,见记忆)。**注记(2026-10-24)**:本票「画布类型 + 特色节点」结构与对 53-55 的预切口径,已被 53 号票 grilling 推翻——画布回归通用、节点全画布可用、组织下沉到节点分组,见 [ADR 0005](../../../docs/adr/0005-universal-canvas-and-node-grouping.md);ip_id/素材 IP 维度/默认 IP 收编等其余定案不受影响。票面正文保留历史原貌,不随推翻改写。
 
 ## Question
 
