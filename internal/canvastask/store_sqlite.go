@@ -243,10 +243,10 @@ func (s *SQLiteStore) finalizeSuccess(ctx context.Context, id string, a asset.As
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.Kind, a.CanvasID, a.TaskID, a.Model, a.Prompt, a.URL,
-		a.ObjectKey, a.ContentType, a.SizeBytes, sqlitedb.FormatTime(time.Now()))
+		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID, sqlitedb.FormatTime(time.Now()))
 	if err != nil {
 		return Task{}, false, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 )
 
 // MySQLStore backs Store with the canvases table.
@@ -19,22 +20,74 @@ CREATE TABLE IF NOT EXISTS canvases (
 	name       VARCHAR(128) NOT NULL,
 	graph      JSON         NOT NULL,
 	version    BIGINT UNSIGNED NOT NULL DEFAULT 1,
+	ip_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,
+	type       VARCHAR(32) NOT NULL DEFAULT 'animation',
 	created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
-// EnsureSchema creates the canvases table when missing. It runs at
-// canvas-server startup and is idempotent.
-func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, schema)
-	return err
+// ipsSchema 与 canvases 同包领域,canvas store 建表时一并建出:List/Get
+// join ips 取展示名,表必须在 canvas schema 就绪时即存在。IP 行的收编
+// (默认 IP 自愈迁移)在 IPStore 的 EnsureSchema,装配顺序在其后。
+const ipsSchema = `
+CREATE TABLE IF NOT EXISTS ips (
+	id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+	name            VARCHAR(255) NOT NULL,
+	description     VARCHAR(1024) NOT NULL DEFAULT '',
+	cover_asset_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,
+	created_at      TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+	updated_at      TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
+
+// migrations widens canvases tables created by earlier tickets in place
+// (50 号票的 ip_id/type):CREATE TABLE IF NOT EXISTS never widens an
+// existing table, an already-deployed canvas DB must upgrade without a
+// rebuild. Idempotent. 存量行由列默认值收编(ip_id=0 等自愈迁移归入默认
+// IP;type='animation' 即「当前的画布就是动画画布」口径)。
+var migrations = []struct{ column, ddl string }{
+	{"ip_id", "ALTER TABLE canvases ADD COLUMN ip_id BIGINT UNSIGNED NOT NULL DEFAULT 0"},
+	{"type", "ALTER TABLE canvases ADD COLUMN type VARCHAR(32) NOT NULL DEFAULT 'animation'"},
 }
 
-func (s *MySQLStore) List(ctx context.Context) ([]Canvas, error) {
+// EnsureSchema creates the canvases + ips tables when missing and widens an
+// existing canvases table in place. It runs at canvas-server startup and is
+// idempotent.
+func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
+	if _, err := s.DB.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	for _, m := range migrations {
+		var count int
+		if err := s.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM information_schema.COLUMNS
+			 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'canvases' AND COLUMN_NAME = ?`,
+			m.column).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := s.DB.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
+	if _, err := s.DB.ExecContext(ctx, ipsSchema); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *MySQLStore) List(ctx context.Context, ipID int64) ([]Canvas, error) {
+	where := ""
+	args := []any{}
+	if ipID > 0 {
+		where = " WHERE c.ip_id = ?"
+		args = append(args, ipID)
+	}
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT id, name, version, created_at, updated_at
-		FROM canvases
-		ORDER BY updated_at DESC, id DESC`)
+		SELECT c.id, c.name, c.version, c.ip_id, i.name, c.type, c.created_at, c.updated_at
+		FROM canvases c`+canvasJoinIP+where+`
+		ORDER BY c.updated_at DESC, c.id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -43,9 +96,11 @@ func (s *MySQLStore) List(ctx context.Context) ([]Canvas, error) {
 	var out []Canvas
 	for rows.Next() {
 		var c Canvas
-		if err := rows.Scan(&c.ID, &c.Name, &c.Version, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var ipName sql.NullString
+		if err := rows.Scan(&c.ID, &c.Name, &c.Version, &c.IPID, &ipName, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
+		c.IPName = ipName.String
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -53,22 +108,24 @@ func (s *MySQLStore) List(ctx context.Context) ([]Canvas, error) {
 
 func (s *MySQLStore) Get(ctx context.Context, id int64) (Canvas, error) {
 	var c Canvas
+	var ipName sql.NullString
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT id, name, graph, version, created_at, updated_at
-		FROM canvases WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Name, &c.Graph, &c.Version, &c.CreatedAt, &c.UpdatedAt)
+		SELECT c.id, c.name, c.graph, c.version, c.ip_id, i.name, c.type, c.created_at, c.updated_at
+		FROM canvases c`+canvasJoinIP+` WHERE c.id = ?`, id,
+	).Scan(&c.ID, &c.Name, &c.Graph, &c.Version, &c.IPID, &ipName, &c.Type, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Canvas{}, ErrNotFound
 	}
 	if err != nil {
 		return Canvas{}, err
 	}
+	c.IPName = ipName.String
 	return c, nil
 }
 
-func (s *MySQLStore) Create(ctx context.Context, name string, graph []byte) (Canvas, error) {
+func (s *MySQLStore) Create(ctx context.Context, ipID int64, name string, graph []byte, canvasType string) (Canvas, error) {
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvases (name, graph) VALUES (?, ?)`, name, graph)
+		`INSERT INTO canvases (name, graph, ip_id, type) VALUES (?, ?, ?, ?)`, name, graph, ipID, canvasType)
 	if err != nil {
 		return Canvas{}, err
 	}
@@ -79,20 +136,38 @@ func (s *MySQLStore) Create(ctx context.Context, name string, graph []byte) (Can
 	return s.Get(ctx, id)
 }
 
-// Rename changes the display name only. The version stays put on purpose:
-// versions guard the graph document, so an unrelated rename must never
-// invalidate another tab's pending auto-save.
-func (s *MySQLStore) Rename(ctx context.Context, id int64, name string) (Canvas, error) {
-	// 先探存在性再更新:MySQL 默认把「值未变的行」算 0 affected,
-	// 同名改名若按 affected==0 判缺失会误报不存在。
+// updateColumn 是 Rename/SetType/Move 共用的「探存在 → 单列更新 → 回读」
+// 路径:MySQL 默认把「值未变的行」算 0 affected,同名改名/同值更新若按
+// affected==0 判缺失会误报不存在,故先探活。版本号不推进:版本只守护图文
+// 档,无关的元数据更新不能打断其他标签页的在途自动保存。
+func (s *MySQLStore) updateColumn(ctx context.Context, id int64, column, value string) (Canvas, error) {
 	if _, err := s.Get(ctx, id); err != nil {
 		return Canvas{}, err
 	}
 	if _, err := s.DB.ExecContext(ctx,
-		`UPDATE canvases SET name = ? WHERE id = ?`, name, id); err != nil {
+		`UPDATE canvases SET `+column+` = ? WHERE id = ?`, value, id); err != nil {
 		return Canvas{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// Rename changes the display name only. The version stays put on purpose:
+// versions guard the graph document, so an unrelated rename must never
+// invalidate another tab's pending auto-save.
+func (s *MySQLStore) Rename(ctx context.Context, id int64, name string) (Canvas, error) {
+	return s.updateColumn(ctx, id, "name", name)
+}
+
+// SetType retypes one canvas(50 号票 PATCH type);type 串原样落库。
+func (s *MySQLStore) SetType(ctx context.Context, id int64, canvasType string) (Canvas, error) {
+	return s.updateColumn(ctx, id, "type", canvasType)
+}
+
+// Move re-homes one canvas under another IP. 只改画布归属,不回填该画布
+// 名下历史素材行的 ip_id —— 旧产物留在原 IP 名下、过滤仍可见,此后新产物
+// 由 worker 传导新 IP(历史行不清洗原则)。
+func (s *MySQLStore) Move(ctx context.Context, id, ipID int64) (Canvas, error) {
+	return s.updateColumn(ctx, id, "ip_id", strconv.FormatInt(ipID, 10))
 }
 
 func (s *MySQLStore) Delete(ctx context.Context, id int64) error {

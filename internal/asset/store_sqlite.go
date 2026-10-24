@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS assets (
 	content_type TEXT    NOT NULL DEFAULT '',
 	size_bytes   INTEGER NOT NULL DEFAULT 0,
 	content_hash TEXT    NOT NULL DEFAULT '',
+	ip_id        INTEGER NOT NULL DEFAULT 0,
 	created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
 	last_used_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
@@ -53,6 +54,7 @@ var sqliteIndexes = []string{
 	`CREATE INDEX IF NOT EXISTS idx_assets_last_used ON assets (last_used_at, id)`,
 	`CREATE INDEX IF NOT EXISTS idx_assets_object_key ON assets (object_key)`,
 	`CREATE INDEX IF NOT EXISTS idx_assets_hash ON assets (content_hash)`,
+	`CREATE INDEX IF NOT EXISTS idx_assets_ip ON assets (ip_id, id)`,
 }
 
 // sqliteMigrations widens tables created by earlier desktop builds in place
@@ -60,6 +62,7 @@ var sqliteIndexes = []string{
 // 存量 app.db 靠 PRAGMA table_info 检查后 ALTER)。Idempotent.
 var sqliteMigrations = []struct{ column, ddl string }{
 	{"content_hash", "ALTER TABLE assets ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"},
+	{"ip_id", "ALTER TABLE assets ADD COLUMN ip_id INTEGER NOT NULL DEFAULT 0"},
 }
 
 // EnsureSchema creates the assets table and its indexes when missing, then
@@ -117,9 +120,9 @@ func (s *SQLiteStore) Create(ctx context.Context, a Asset) (Asset, error) {
 	// (47 号票),同一条 NOW 免依赖 SQLite 默认表达式的语句内恒等。
 	now := sqlitedb.FormatTime(time.Now())
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, content_hash, created_at, last_used_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes, a.ContentHash,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, content_hash, ip_id, created_at, last_used_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes, a.ContentHash, a.IPID,
 		now, now)
 	if err != nil {
 		return Asset{}, err
@@ -165,8 +168,10 @@ func (s *SQLiteStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	where, args := listWhere(f)
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT a.id, a.kind, a.canvas_id, a.task_id, a.model, a.prompt, a.url,
-			a.object_key, a.content_type, a.size_bytes, a.content_hash, a.created_at, a.last_used_at, c.name
-		 FROM assets a LEFT JOIN canvases c ON c.id = a.canvas_id`+
+			a.object_key, a.content_type, a.size_bytes, a.content_hash, a.ip_id, a.created_at, a.last_used_at, c.name, i.name
+		 FROM assets a
+		 LEFT JOIN canvases c ON c.id = a.canvas_id
+		 LEFT JOIN ips i ON i.id = a.ip_id`+
 			where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
@@ -177,9 +182,9 @@ func (s *SQLiteStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	var out []Listed
 	for rows.Next() {
 		var l Listed
-		var prompt, contentHash, createdAt, lastUsedAt, canvasName sql.NullString
+		var prompt, contentHash, createdAt, lastUsedAt, canvasName, ipName sql.NullString
 		if err := rows.Scan(&l.ID, &l.Kind, &l.CanvasID, &l.TaskID, &l.Model, &prompt,
-			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &contentHash, &createdAt, &lastUsedAt, &canvasName); err != nil {
+			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &contentHash, &l.IPID, &createdAt, &lastUsedAt, &canvasName, &ipName); err != nil {
 			return nil, err
 		}
 		if l.CreatedAt, err = sqlitedb.ParseTime(createdAt.String); err != nil {
@@ -191,6 +196,7 @@ func (s *SQLiteStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 		l.Prompt = prompt.String
 		l.ContentHash = contentHash.String
 		l.CanvasName = canvasName.String
+		l.IPName = ipName.String
 		out = append(out, l)
 	}
 	return out, rows.Err()
@@ -235,7 +241,7 @@ func scanSQLiteAsset(row rowScanner) (Asset, error) {
 	var a Asset
 	var prompt, contentHash, createdAt, lastUsedAt sql.NullString
 	if err := row.Scan(&a.ID, &a.Kind, &a.CanvasID, &a.TaskID, &a.Model, &prompt,
-		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &contentHash, &createdAt, &lastUsedAt); err != nil {
+		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &contentHash, &a.IPID, &createdAt, &lastUsedAt); err != nil {
 		return Asset{}, err
 	}
 	a.Prompt = prompt.String

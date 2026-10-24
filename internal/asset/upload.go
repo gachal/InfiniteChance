@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +73,34 @@ func (h *Handlers) Upload(c *gin.Context) {
 	if kind != KindImage && kind != KindVideo && kind != KindAudio {
 		apierr.InvalidRequest(c, "kind 必须是 image、video 或 audio")
 		return
+	}
+
+	// 可选 ip_id(50 号票):只校验存在性,归属语义由调用方声明 —— 画布内
+	// 上传固定传画布的 IP,IP 详情页上传传该 IP;不提供主动上传为全局的
+	// 入口,ip_id 缺省/0 = 全局(直连产物与历史行的自然形态)。
+	var ipID int64
+	if v := strings.TrimSpace(c.PostForm("ip_id")); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			apierr.InvalidRequest(c, "ip_id 必须是正整数")
+			return
+		}
+		if h.IPs == nil {
+			log.Printf("asset: upload with ip_id but no IP checker wired")
+			apierr.Internal(c, "服务内部错误,请稍后再试")
+			return
+		}
+		ok, err := h.IPs.IPExists(c.Request.Context(), id)
+		if err != nil {
+			log.Printf("asset: ip exists %d: %v", id, err)
+			apierr.Internal(c, "服务内部错误,请稍后再试")
+			return
+		}
+		if !ok {
+			apierr.Write(c, http.StatusBadRequest, "ip_not_found", "IP 企划不存在")
+			return
+		}
+		ipID = id
 	}
 
 	fh, err := c.FormFile("file")
@@ -142,6 +171,7 @@ func (h *Handlers) Upload(c *gin.Context) {
 		ContentType: contentType,
 		SizeBytes:   fh.Size,
 		ContentHash: contentHash,
+		IPID:        ipID,
 	})
 	if err != nil {
 		// 行没落成就把已写字节回收:不留孤儿对象(Delete 幂等,no-op 安全)。
@@ -155,7 +185,7 @@ func (h *Handlers) Upload(c *gin.Context) {
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"asset": assetListJSON(created, "")})
+	c.JSON(http.StatusCreated, gin.H{"asset": assetListJSON(created, "", "")})
 }
 
 // isOversizeParseError recognizes the failure MaxBytesReader injects when the

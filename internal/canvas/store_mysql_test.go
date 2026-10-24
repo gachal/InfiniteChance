@@ -72,7 +72,7 @@ func openTestStore(t *testing.T) (*canvas.MySQLStore, *sql.DB) {
 
 func mustCreate(t *testing.T, store *canvas.MySQLStore, name string) canvas.Canvas {
 	t.Helper()
-	c, err := store.Create(context.Background(), name, []byte(`{"nodes":[],"edges":[]}`))
+	c, err := store.Create(context.Background(), 0, name, []byte(`{"nodes":[],"edges":[]}`), "animation")
 	if err != nil {
 		t.Fatalf("create %q: %v", name, err)
 	}
@@ -123,7 +123,7 @@ func TestListOrdersRecentFirst(t *testing.T) {
 	time.Sleep(10 * time.Millisecond) // TIMESTAMP(6) 粒度足够,仍留出可见间隔
 	second := mustCreate(t, store, "晚")
 
-	list, err := store.List(context.Background())
+	list, err := store.List(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

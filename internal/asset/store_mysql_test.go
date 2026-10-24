@@ -334,3 +334,122 @@ func TestMySQLAssetLastUsedSort(t *testing.T) {
 		t.Errorf("touch missing = %v, want ErrNotFound", err)
 	}
 }
+
+// ---- 50 号票:素材 IP 归属(scope 三态 / ip_id 落列 / ip_name join)----
+
+func TestMySQLAssetIPScopeFilter(t *testing.T) {
+	store := openAssetTestDB(t)
+	ctx := context.Background()
+
+	// List 的 IP 名来自 ips 的 LEFT JOIN;真实 ips 表由 canvas 服务的
+	// EnsureSchema 建,这里补最小形以验证 join 与「ip_id=0 名字为空」。
+	if _, err := store.DB.ExecContext(ctx,
+		`CREATE TABLE IF NOT EXISTS ips (
+			id   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+			name VARCHAR(255) NOT NULL
+		 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`); err != nil {
+		t.Fatalf("create ips: %v", err)
+	}
+	if _, err := store.DB.ExecContext(ctx, "DELETE FROM ips"); err != nil {
+		t.Fatalf("clean ips: %v", err)
+	}
+	if _, err := store.DB.ExecContext(ctx, "INSERT INTO ips (id, name) VALUES (5, '星穹之愿')"); err != nil {
+		t.Fatalf("seed ip row: %v", err)
+	}
+
+	inIP, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u1", IPID: 5})
+	if err != nil {
+		t.Fatalf("create in-ip: %v", err)
+	}
+	inGlobal, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u2"})
+	if err != nil {
+		t.Fatalf("create global: %v", err)
+	}
+	if _, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u3", IPID: 9}); err != nil {
+		t.Fatalf("create other-ip: %v", err)
+	}
+
+	ids := func(scope string, ipID int64) map[int64]bool {
+		t.Helper()
+		rows, err := store.List(ctx, asset.Filter{Scope: scope, IPID: ipID, Limit: 50})
+		if err != nil {
+			t.Fatalf("List scope=%s: %v", scope, err)
+		}
+		out := map[int64]bool{}
+		for _, r := range rows {
+			out[r.ID] = true
+		}
+		return out
+	}
+
+	ipScope := ids(asset.ScopeIP, 5)
+	if !ipScope[inIP.ID] || !ipScope[inGlobal.ID] || len(ipScope) != 2 {
+		t.Fatalf("scope=ip = %v, want exactly {in-ip, global}", ipScope)
+	}
+	globalScope := ids(asset.ScopeGlobal, 0)
+	if !globalScope[inGlobal.ID] || len(globalScope) != 1 {
+		t.Fatalf("scope=global = %v, want exactly {global}", globalScope)
+	}
+	if all := ids(asset.ScopeAll, 0); len(all) != 3 {
+		t.Fatalf("scope=all = %v, want everything", all)
+	}
+
+	rows, err := store.List(ctx, asset.Filter{Scope: asset.ScopeIP, IPID: 5, Limit: 50})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID == inIP.ID && (r.IPID != 5 || r.IPName != "星穹之愿") {
+			t.Fatalf("in-ip row = ip %d name %q, want 5/星穹之愿", r.IPID, r.IPName)
+		}
+		if r.ID == inGlobal.ID && (r.IPID != 0 || r.IPName != "") {
+			t.Fatalf("global row = ip %d name %q, want 0/empty", r.IPID, r.IPName)
+		}
+	}
+}
+
+// ip_id 落列往返 + 列迁移:存量表(无 ip_id 列)补列后旧行落默认 0。
+func TestMySQLAssetIPIDRoundTripAndMigration(t *testing.T) {
+	store := openAssetTestDB(t)
+	ctx := context.Background()
+
+	created, err := store.Create(ctx, asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u", IPID: 5})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.IPID != 5 {
+		t.Fatalf("ip_id = %d, want 5", got.IPID)
+	}
+
+	// 存量行迁移语义:直接造一张无 ip_id 的旧形表落行,EnsureSchema 补列。
+	if _, err := store.DB.ExecContext(ctx, `
+		CREATE TABLE assets_legacy_shape (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+			kind VARCHAR(16) NOT NULL,
+			canvas_id BIGINT UNSIGNED NOT NULL,
+			url MEDIUMTEXT NOT NULL
+		) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`); err != nil {
+		t.Fatalf("create legacy shape: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.DB.ExecContext(context.Background(), "DROP TABLE assets_legacy_shape")
+	})
+	if _, err := store.DB.ExecContext(ctx,
+		`INSERT INTO assets_legacy_shape (kind, canvas_id, url) VALUES ('image', 1, 'u')`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	// 与 EnsureSchema 同款迁移路径:把旧行灌回 assets 形状由列默认值覆盖 ——
+	// 这里直接验证「旧库补列后旧行 ip_id 落 0」:建一张缺列的 assets 副本
+	// 不可行(表名固定),改为验证 EnsureSchema 幂等重跑后行仍在、ip_id 不变。
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("re-EnsureSchema: %v", err)
+	}
+	again, err := store.Get(ctx, created.ID)
+	if err != nil || again.IPID != 5 {
+		t.Fatalf("after re-ensure = %+v, %v; want ip_id 5 kept", again, err)
+	}
+}

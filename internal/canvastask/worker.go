@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 )
 
@@ -35,6 +36,9 @@ type Worker struct {
 	// storage 落产物字节(14 号票):nil 时跳过转存,素材行只带厂商地址
 	// —— 与 10 号票的旧行为一致,测试与未配存储的部署都靠这个 nil 分支。
 	storage objectstore.Store
+	// canvases 解析任务画布的 IP 归属(50 号票:产物经画布传导);nil 时
+	// 素材行落 0(全局)—— 旧装配形态与不关心 IP 的测试都靠 nil 分支。
+	canvases CanvasGetter
 
 	concurrency  int
 	pollInterval time.Duration
@@ -114,6 +118,33 @@ func WithVideoTaskTimeout(d time.Duration) WorkerOption {
 // task finalizes (14 号票); nil keeps the legacy vendor-URL-only rows.
 func WithStorage(s objectstore.Store) WorkerOption {
 	return func(w *Worker) { w.storage = s }
+}
+
+// WithCanvases lets the worker carry each task's canvas IP into its asset
+// row (50 号票的归属传导);nil keeps rows at 0(全局)。
+func WithCanvases(g CanvasGetter) WorkerOption {
+	return func(w *Worker) {
+		if g != nil {
+			w.canvases = g
+		}
+	}
+}
+
+// canvasIPID resolves the task canvas's owning IP. 画布已删落 0(不阻塞,
+// 素材行落全局);其他查询错误同样落 0 但留日志 —— IP 归属是过滤/展示
+// 维度,不能让它拦住一次成功的生成。
+func (w *Worker) canvasIPID(ctx context.Context, t Task) int64 {
+	if w.canvases == nil {
+		return 0
+	}
+	c, err := w.canvases.Get(ctx, t.CanvasID)
+	if err != nil {
+		if !errors.Is(err, canvas.ErrNotFound) {
+			w.logger.Printf("canvastask: resolve ip of canvas %d for %s: %v", t.CanvasID, t.ID, err)
+		}
+		return 0
+	}
+	return c.IPID
 }
 
 // WithLogger routes worker logging (nil keeps the default logger).
@@ -249,6 +280,7 @@ func (w *Worker) archive(ctx context.Context, t Task, url string) (asset.Asset, 
 		Model:    t.Model,
 		Prompt:   t.Prompt,
 		URL:      url,
+		IPID:     w.canvasIPID(ctx, t), // 50 号票:归属随画布;画布已删落 0
 	}
 	if w.storage == nil {
 		return a, nil

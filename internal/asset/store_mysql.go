@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS assets (
 	content_type VARCHAR(100) NOT NULL DEFAULT '',
 	size_bytes  BIGINT       NOT NULL DEFAULT 0,
 	content_hash VARCHAR(64) NOT NULL DEFAULT '',
+	ip_id       BIGINT UNSIGNED NOT NULL DEFAULT 0,
 	created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	last_used_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	KEY idx_assets_canvas (canvas_id, id),
@@ -39,7 +40,8 @@ CREATE TABLE IF NOT EXISTS assets (
 	KEY idx_assets_kind (kind, id),
 	KEY idx_assets_last_used (last_used_at, id),
 	KEY idx_assets_object_key (object_key),
-	KEY idx_assets_hash (content_hash)
+	KEY idx_assets_hash (content_hash),
+	KEY idx_assets_ip (ip_id, id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
 // migrations widens tables created by earlier tickets in place (14 号票的
@@ -54,6 +56,7 @@ var migrations = []struct{ column, ddl string }{
 	{"size_bytes", "ALTER TABLE assets ADD COLUMN size_bytes BIGINT NOT NULL DEFAULT 0"},
 	{"last_used_at", "ALTER TABLE assets ADD COLUMN last_used_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)"},
 	{"content_hash", "ALTER TABLE assets ADD COLUMN content_hash VARCHAR(64) NOT NULL DEFAULT ''"},
+	{"ip_id", "ALTER TABLE assets ADD COLUMN ip_id BIGINT UNSIGNED NOT NULL DEFAULT 0"},
 }
 
 // indexMigrations adds the secondary indexes the fresh schema carries; the
@@ -64,6 +67,7 @@ var indexMigrations = []struct{ index, ddl string }{
 	{"idx_assets_last_used", "ALTER TABLE assets ADD INDEX idx_assets_last_used (last_used_at, id)"},
 	{"idx_assets_object_key", "ALTER TABLE assets ADD INDEX idx_assets_object_key (object_key)"},
 	{"idx_assets_hash", "ALTER TABLE assets ADD INDEX idx_assets_hash (content_hash)"},
+	{"idx_assets_ip", "ALTER TABLE assets ADD INDEX idx_assets_ip (ip_id, id)"},
 }
 
 // EnsureSchema creates the assets table when missing and widens an existing
@@ -108,7 +112,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 }
 
 const assetColumns = `id, kind, canvas_id, task_id, model, prompt, url,
-	object_key, content_type, size_bytes, content_hash, created_at, last_used_at`
+	object_key, content_type, size_bytes, content_hash, ip_id, created_at, last_used_at`
 
 func (s *MySQLStore) Create(ctx context.Context, a Asset) (Asset, error) {
 	var prompt any
@@ -116,9 +120,9 @@ func (s *MySQLStore) Create(ctx context.Context, a Asset) (Asset, error) {
 		prompt = a.Prompt
 	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, content_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes, a.ContentHash)
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, content_hash, ip_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Kind, a.CanvasID, a.TaskID, a.Model, prompt, a.URL, a.ObjectKey, a.ContentType, a.SizeBytes, a.ContentHash, a.IPID)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -167,8 +171,10 @@ func (s *MySQLStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	where, args := listWhere(f)
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT a.id, a.kind, a.canvas_id, a.task_id, a.model, a.prompt, a.url,
-		a.object_key, a.content_type, a.size_bytes, a.content_hash, a.created_at, a.last_used_at, c.name
-		FROM assets a LEFT JOIN canvases c ON c.id = a.canvas_id`+
+		a.object_key, a.content_type, a.size_bytes, a.content_hash, a.ip_id, a.created_at, a.last_used_at, c.name, i.name
+		FROM assets a
+		LEFT JOIN canvases c ON c.id = a.canvas_id
+		LEFT JOIN ips i ON i.id = a.ip_id`+
 			where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
@@ -179,18 +185,21 @@ func (s *MySQLStore) List(ctx context.Context, f Filter) ([]Listed, error) {
 	var out []Listed
 	for rows.Next() {
 		var l Listed
-		var prompt, canvasName sql.NullString
+		var prompt, canvasName, ipName sql.NullString
 		if err := rows.Scan(&l.ID, &l.Kind, &l.CanvasID, &l.TaskID, &l.Model, &prompt,
-			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &l.ContentHash, &l.CreatedAt, &l.LastUsedAt, &canvasName); err != nil {
+			&l.URL, &l.ObjectKey, &l.ContentType, &l.SizeBytes, &l.ContentHash, &l.IPID, &l.CreatedAt, &l.LastUsedAt, &canvasName, &ipName); err != nil {
 			return nil, err
 		}
 		l.Prompt = prompt.String
 		l.CanvasName = canvasName.String
+		l.IPName = ipName.String
 		out = append(out, l)
 	}
 	return out, rows.Err()
 }
 
+// listWhere 拼过滤:scope 三态(50 号票)——ip = 本 IP + 全局两段
+// (ip_id IN (X, 0)),global = 仅 0,其余(含空串)= 不过滤。
 func listWhere(f Filter) (string, []any) {
 	where := " WHERE 1=1"
 	var args []any
@@ -201,6 +210,13 @@ func listWhere(f Filter) (string, []any) {
 	if f.CanvasID > 0 {
 		where += " AND a.canvas_id = ?"
 		args = append(args, f.CanvasID)
+	}
+	switch f.Scope {
+	case ScopeIP:
+		where += " AND a.ip_id IN (?, 0)"
+		args = append(args, f.IPID)
+	case ScopeGlobal:
+		where += " AND a.ip_id = 0"
 	}
 	return where, args
 }
@@ -246,7 +262,7 @@ func scanAsset(row rowScanner) (Asset, error) {
 	var a Asset
 	var prompt sql.NullString
 	if err := row.Scan(&a.ID, &a.Kind, &a.CanvasID, &a.TaskID, &a.Model, &prompt,
-		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &a.ContentHash, &a.CreatedAt, &a.LastUsedAt); err != nil {
+		&a.URL, &a.ObjectKey, &a.ContentType, &a.SizeBytes, &a.ContentHash, &a.IPID, &a.CreatedAt, &a.LastUsedAt); err != nil {
 		return Asset{}, err
 	}
 	a.Prompt = prompt.String

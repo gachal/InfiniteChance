@@ -37,6 +37,13 @@ func main() {
 		if err := assets.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure asset schema: %v", err)
 		}
+		// IP 企划(50 号票):建 ips 表 + 启动自愈迁移(存量 ip_id=0 画布
+		// 收编进「默认 IP」,新库不预建,幂等)。依赖前两步的加列先就位
+		// —— 装配顺序 canvases → assets → ips。
+		ips := canvas.NewMySQLIPStore(d.DB)
+		if err := ips.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure ip schema: %v", err)
+		}
 		prices := pricing.NewMySQLStore(d.DB)
 		if err := prices.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure model price schema: %v", err)
@@ -72,6 +79,7 @@ func main() {
 		wiring.CanvasRoutes(r, d.Config, wiring.CanvasStores{
 			Auth:      store,
 			Canvases:  canvases,
+			IPs:       ips,
 			Assets:    assets,
 			Prices:    prices,
 			Tasks:     tasks,
@@ -83,7 +91,7 @@ func main() {
 		if lifetime == nil {
 			lifetime = context.Background()
 		}
-		startWorker(tasks, gateway, d.Config, storage, lifetime)
+		startWorker(tasks, gateway, d.Config, storage, lifetime, canvases)
 	})
 }
 
@@ -101,8 +109,8 @@ func serviceGateway(cfg config.Config) canvastask.Gateway {
 // startWorker recovers orphaned generations (running rows from a previous
 // process go back to the queue) and drives the queue until lifetime is
 // canceled (SIGINT/SIGTERM, see app.Run). storage 非 nil 时产物在终态前转存
-// 对象存储.
-func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store, lifetime context.Context) {
+// 对象存储;canvases 非 nil 时产物行随画布传导 IP 归属(50 号票)。
+func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store, lifetime context.Context, canvases *canvas.MySQLStore) {
 	if gateway == nil {
 		return
 	}
@@ -115,6 +123,9 @@ func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg c
 	opts := []canvastask.WorkerOption{canvastask.WithConcurrency(cfg.CanvasTaskConcurrency)}
 	if storage != nil {
 		opts = append(opts, canvastask.WithStorage(storage))
+	}
+	if canvases != nil {
+		opts = append(opts, canvastask.WithCanvases(canvases))
 	}
 	worker := canvastask.NewWorker(tasks, gateway, opts...)
 	go worker.Run(ctx)

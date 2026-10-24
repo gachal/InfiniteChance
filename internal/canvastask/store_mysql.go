@@ -213,10 +213,10 @@ func (s *MySQLStore) finalizeSuccess(ctx context.Context, id string, a asset.Ass
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.Kind, a.CanvasID, a.TaskID, a.Model, a.Prompt, a.URL,
-		a.ObjectKey, a.ContentType, a.SizeBytes)
+		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID)
 	if err != nil {
 		return Task{}, false, err
 	}

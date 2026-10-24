@@ -167,3 +167,92 @@ func TestSQLiteAssetSchemaMigratesContentHash(t *testing.T) {
 		t.Errorf("content_hash = %q, want hash-m", got.ContentHash)
 	}
 }
+
+// ---- 50 号票:素材 IP 归属(scope 三态 / ip_id 落列 / ip_name join)----
+
+// scope=ip 恰好 = 本 IP + 全局两段;global 仅全局;all/缺省不过滤;
+// ip_name 来自 ips join,ip_id=0 时为空(前端显示「全局」)。
+func TestSQLiteAssetIPScopeFilter(t *testing.T) {
+	s := newSQLiteAssetStore(t)
+	ctx := context.Background()
+
+	// 最小 ips 行(join 事实源;真实 CRUD 由 canvas 包测试负责)。
+	if _, err := s.DB.ExecContext(ctx,
+		`INSERT INTO ips (id, name) VALUES (5, '星穹之愿')`); err != nil {
+		t.Fatalf("seed ip row: %v", err)
+	}
+
+	inIP, err := s.Create(ctx, Asset{Kind: KindImage, CanvasID: 1, URL: "u1", IPID: 5})
+	if err != nil {
+		t.Fatalf("create in-ip: %v", err)
+	}
+	inGlobal, err := s.Create(ctx, Asset{Kind: KindImage, CanvasID: 1, URL: "u2"})
+	if err != nil {
+		t.Fatalf("create global: %v", err)
+	}
+	if _, err := s.Create(ctx, Asset{Kind: KindImage, CanvasID: 1, URL: "u3", IPID: 9}); err != nil {
+		t.Fatalf("create other-ip: %v", err)
+	}
+
+	ids := func(scope string, ipID int64) map[int64]bool {
+		t.Helper()
+		rows, err := s.List(ctx, Filter{Scope: scope, IPID: ipID, Limit: 50})
+		if err != nil {
+			t.Fatalf("List scope=%s: %v", scope, err)
+		}
+		out := map[int64]bool{}
+		for _, r := range rows {
+			out[r.ID] = true
+		}
+		return out
+	}
+
+	ipScope := ids(ScopeIP, 5)
+	if !ipScope[inIP.ID] || !ipScope[inGlobal.ID] || len(ipScope) != 2 {
+		t.Fatalf("scope=ip = %v, want exactly {in-ip, global}", ipScope)
+	}
+	globalScope := ids(ScopeGlobal, 0)
+	if !globalScope[inGlobal.ID] || len(globalScope) != 1 {
+		t.Fatalf("scope=global = %v, want exactly {global}", globalScope)
+	}
+	allScope := ids(ScopeAll, 0)
+	if len(allScope) != 3 {
+		t.Fatalf("scope=all = %v, want everything", allScope)
+	}
+	emptyScope := ids("", 0)
+	if len(emptyScope) != 3 {
+		t.Fatalf("empty scope = %v, want everything (现状缺省)", emptyScope)
+	}
+
+	// ip_name 随行;全局行 ip_id=0、ip_name 空。
+	rows, err := s.List(ctx, Filter{Scope: ScopeIP, IPID: 5, Limit: 50})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID == inIP.ID && (r.IPID != 5 || r.IPName != "星穹之愿") {
+			t.Fatalf("in-ip row = ip %d name %q, want 5/星穹之愿", r.IPID, r.IPName)
+		}
+		if r.ID == inGlobal.ID && (r.IPID != 0 || r.IPName != "") {
+			t.Fatalf("global row = ip %d name %q, want 0/empty", r.IPID, r.IPName)
+		}
+	}
+}
+
+// ip_id 落列往返:Create 带 IPID,Get 读回一致。
+func TestSQLiteAssetIPIDRoundTrip(t *testing.T) {
+	s := newSQLiteAssetStore(t)
+	ctx := context.Background()
+
+	created, err := s.Create(ctx, Asset{Kind: KindImage, CanvasID: 1, URL: "u", IPID: 5})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.IPID != 5 {
+		t.Fatalf("ip_id = %d, want 5", got.IPID)
+	}
+}

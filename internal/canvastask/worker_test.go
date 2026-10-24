@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 )
 
@@ -780,5 +781,93 @@ func TestWorkerCarriesBackgroundToGateway(t *testing.T) {
 	edits := gateway.seenEdits()
 	if len(edits) != 1 || edits[0].Background != "transparent" {
 		t.Errorf("edit requests = %+v, want one carrying background transparent", edits)
+	}
+}
+
+// ---- 50 号票:产物 IP 归属传导 ----
+
+// fakeIPCanvases answers the worker's canvas lookups: 画布 7 归 IP 5;
+// deleted = true 时按 ErrNotFound 应答(画布已删的传导口径)。
+type fakeIPCanvases struct {
+	deleted bool
+	broken  error
+}
+
+func (f *fakeIPCanvases) Get(_ context.Context, id int64) (canvas.Canvas, error) {
+	if f.broken != nil {
+		return canvas.Canvas{}, f.broken
+	}
+	if f.deleted {
+		return canvas.Canvas{}, canvas.ErrNotFound
+	}
+	return canvas.Canvas{ID: id, IPID: 5, Name: "IP 画布", Version: 1}, nil
+}
+
+// 任务成功后素材行 ip_id 随画布(归属传导);画布已删落 0(不阻塞)。
+func TestWorkerCarriesCanvasIPToAsset(t *testing.T) {
+	store, db := openTaskTestDB(t)
+	gateway := &stubGateway{fn: func(_ context.Context, _ canvastask.ImageRequest) (canvastask.ImageResult, error) {
+		return canvastask.ImageResult{URL: "https://img.example/ip.png"}, nil
+	}}
+	getter := &fakeIPCanvases{}
+	worker := canvastask.NewWorker(store, gateway,
+		canvastask.WithPollInterval(20*time.Millisecond),
+		canvastask.WithTaskTimeout(2*time.Second),
+		canvastask.WithConcurrency(2),
+		canvastask.WithLogger(log.New(&strings.Builder{}, "", 0)),
+		canvastask.WithCanvases(getter),
+	)
+	runWorker(t, worker)
+
+	task := seedTask(t, store, 7, "image-1-1", canvastask.StatusQueued)
+	final := awaitTask(t, store, task.ID)
+	if final.Status != canvastask.StatusSucceeded || final.AssetID == 0 {
+		t.Fatalf("task = %+v, want succeeded with asset", final)
+	}
+	assets := asset.NewMySQLStore(db)
+	a, err := assets.Get(context.Background(), final.AssetID)
+	if err != nil {
+		t.Fatalf("asset Get: %v", err)
+	}
+	if a.IPID != 5 {
+		t.Fatalf("asset ip_id = %d, want 5 (画布 IP 传导)", a.IPID)
+	}
+
+	// 画布已删:新任务照跑,产物落 0(全局)。
+	getter.deleted = true
+	task2 := seedTask(t, store, 7, "image-1-2", canvastask.StatusQueued)
+	final2 := awaitTask(t, store, task2.ID)
+	if final2.Status != canvastask.StatusSucceeded || final2.AssetID == 0 {
+		t.Fatalf("task2 = %+v, want succeeded with asset", final2)
+	}
+	a2, err := assets.Get(context.Background(), final2.AssetID)
+	if err != nil {
+		t.Fatalf("asset2 Get: %v", err)
+	}
+	if a2.IPID != 0 {
+		t.Fatalf("asset2 ip_id = %d, want 0 (画布已删不阻塞)", a2.IPID)
+	}
+}
+
+// 未接 canvas getter(旧装配形态):素材行落 0,行为与升级前一致。
+func TestWorkerWithoutCanvasesKeepsGlobalAssets(t *testing.T) {
+	store, db := openTaskTestDB(t)
+	gateway := &stubGateway{fn: func(_ context.Context, _ canvastask.ImageRequest) (canvastask.ImageResult, error) {
+		return canvastask.ImageResult{URL: "https://img.example/global.png"}, nil
+	}}
+	runWorker(t, newTestWorker(store, gateway))
+
+	task := seedTask(t, store, 7, "image-1-1", canvastask.StatusQueued)
+	final := awaitTask(t, store, task.ID)
+	if final.Status != canvastask.StatusSucceeded || final.AssetID == 0 {
+		t.Fatalf("task = %+v, want succeeded with asset", final)
+	}
+	assets := asset.NewMySQLStore(db)
+	a, err := assets.Get(context.Background(), final.AssetID)
+	if err != nil {
+		t.Fatalf("asset Get: %v", err)
+	}
+	if a.IPID != 0 {
+		t.Fatalf("asset ip_id = %d, want 0 (未接传导)", a.IPID)
 	}
 }

@@ -22,9 +22,18 @@ import (
 // use the same ceiling (transfer.go).
 var transferClient = &http.Client{Timeout: transferTimeout}
 
+// IPExistenceChecker is the slice of the canvas IP store the upload seam
+// needs(50 号票):可选 ip_id 只校验存在性,归属语义由调用方声明。生产装配
+// 传 canvas.IPStore(结构化满足),测试传替身。
+type IPExistenceChecker interface {
+	IPExists(ctx context.Context, id int64) (bool, error)
+}
+
 // Handlers serves the creator asset endpoints. 10 号票落了内容寻址;14 号票
 // 的素材库管理(列表/过滤/删除/下载)在同一组 Handlers 上继续长;49 号票
-// 的缩略端点用 PublicBaseURL 解析活跃驱动的公网基座。
+// 的缩略端点用 PublicBaseURL 解析活跃驱动的公网基座。IPs 支撑上传的可选
+// ip_id 存在性校验(50 号票);nil 时带 ip_id 的上传以 500 拒(装配缺口,
+// 生产恒非 nil)。
 type Handlers struct {
 	Store Store
 	// Storage backs preview/download for transferred artifacts; nil keeps
@@ -33,6 +42,8 @@ type Handlers struct {
 	// PublicBaseURL answers the active driver's public base (settings 注入,
 	// 19 号票接缝);nil = 未接线,缩略端点恒回落 content。
 	PublicBaseURL func(ctx context.Context) string
+	// IPs backs the optional upload ip_id existence check (50 号票)。
+	IPs IPExistenceChecker
 }
 
 // thumbnailEdge is the one-tier thumbnail semantic (49 号票):等比缩小到
@@ -95,8 +106,12 @@ type listJSON struct {
 	SizeBytes    int64  `json:"size_bytes"`
 	ContentURL   string `json:"content_url"`
 	ThumbnailURL string `json:"thumbnail_url"`
-	CreatedAt    string `json:"created_at"`
-	LastUsedAt   string `json:"last_used_at"`
+	// IP 归属(50 号票):ip_id=0 = 全局(直连产物与历史行),ip_name 是
+	// 展示事实(join ips),前端按 ip_id==0 显示「全局」。
+	IPID       int64  `json:"ip_id"`
+	IPName     string `json:"ip_name"`
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at"`
 }
 
 // Content serves the artifact for <img>/<video> previews and downloads.
@@ -327,6 +342,33 @@ func (h *Handlers) List(c *gin.Context) {
 		}
 		f.Sort = v
 	}
+	// IP 归属过滤(50 号票):scope=ip 须带 ip_id(语义 = 本 IP + 全局);
+	// global 仅全局;all/缺省不过滤;未知值显式 400,不静默当缺省 —— 与
+	// sort 同款纪律,静默会让「想按 IP 看却拿到全库」无从排查。
+	if v := strings.TrimSpace(c.Query("scope")); v != "" {
+		switch v {
+		case ScopeIP, ScopeGlobal, ScopeAll:
+			f.Scope = v
+		default:
+			apierr.InvalidRequest(c, "scope 仅支持 ip、global 或 all")
+			return
+		}
+	}
+	if v := c.Query("ip_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			apierr.InvalidRequest(c, "ip_id 必须是正整数")
+			return
+		}
+		f.IPID = id
+		if f.Scope == "" {
+			f.Scope = ScopeIP
+		}
+	}
+	if f.Scope == ScopeIP && f.IPID == 0 {
+		apierr.InvalidRequest(c, "scope=ip 必须带 ip_id")
+		return
+	}
 	if v := c.Query("canvas_id"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id < 1 {
@@ -360,7 +402,7 @@ func (h *Handlers) List(c *gin.Context) {
 	}
 	out := make([]listJSON, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, assetListJSON(row.Asset, row.CanvasName))
+		out = append(out, assetListJSON(row.Asset, row.CanvasName, row.IPName))
 	}
 	c.JSON(http.StatusOK, gin.H{"assets": out})
 }
@@ -368,7 +410,7 @@ func (h *Handlers) List(c *gin.Context) {
 // assetListJSON renders one asset row in the library's wire shape; the list
 // page and the upload response share it, so a freshly uploaded asset lands
 // in the editor exactly like a listed one.
-func assetListJSON(a Asset, canvasName string) listJSON {
+func assetListJSON(a Asset, canvasName, ipName string) listJSON {
 	return listJSON{
 		ID: a.ID, Kind: a.Kind, CanvasID: a.CanvasID,
 		CanvasName: canvasName, TaskID: a.TaskID, Model: a.Model,
@@ -378,6 +420,8 @@ func assetListJSON(a Asset, canvasName string) listJSON {
 		SizeBytes:    a.SizeBytes,
 		ContentURL:   contentPath(a.ID),
 		ThumbnailURL: thumbPath(a.ID),
+		IPID:         a.IPID,
+		IPName:       ipName,
 		CreatedAt:    a.CreatedAt.Format(timeFormat),
 		LastUsedAt:   a.LastUsedAt.Format(timeFormat),
 	}

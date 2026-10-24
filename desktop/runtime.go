@@ -45,6 +45,8 @@ type Desktop struct {
 	auths   *auth.SQLiteStore
 	tasks   *canvastask.SQLiteStore
 	storage objectstore.Store
+	// canvases 留给画布 worker 的 IP 传导(50 号票,Start 时挂 option)。
+	canvases *canvas.SQLiteStore
 
 	gateway   *app.App
 	canvas    *app.App
@@ -86,11 +88,14 @@ func NewDesktop() (*Desktop, error) {
 	settingsStore := settings.NewSQLiteStore(db)
 	canvases := canvas.NewSQLiteStore(db)
 	assets := asset.NewSQLiteStore(db)
+	// IP 企划(50 号票):建 ips 表 + 启动自愈迁移(存量收编,幂等);
+	// 依赖 canvases/assets 的加列先就位 —— 列表顺序即装配顺序。
+	ipStore := canvas.NewSQLiteIPStore(db)
 	tasks := canvastask.NewSQLiteStore(db, assets)
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, ipStore, tasks,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -179,6 +184,7 @@ func NewDesktop() (*Desktop, error) {
 		wiring.CanvasRoutes(r, d.Config, wiring.CanvasStores{
 			Auth:      auths,
 			Canvases:  canvases,
+			IPs:       ipStore,
 			Assets:    assets,
 			Prices:    prices,
 			Tasks:     tasks,
@@ -196,14 +202,15 @@ func NewDesktop() (*Desktop, error) {
 	}
 
 	return &Desktop{
-		dataDir: dataDir,
-		cfg:     cfg,
-		db:      db,
-		auths:   auths,
-		tasks:   tasks,
-		storage: storage,
-		gateway: gatewayApp,
-		canvas:  canvasApp,
+		dataDir:  dataDir,
+		cfg:      cfg,
+		db:       db,
+		auths:    auths,
+		tasks:    tasks,
+		storage:  storage,
+		canvases: canvases,
+		gateway:  gatewayApp,
+		canvas:   canvasApp,
 	}, nil
 }
 
@@ -233,6 +240,11 @@ func (dt *Desktop) Start() error {
 	opts := []canvastask.WorkerOption{canvastask.WithConcurrency(dt.cfg.CanvasTaskConcurrency)}
 	if dt.storage != nil {
 		opts = append(opts, canvastask.WithStorage(dt.storage))
+	}
+	// 产物行随画布传导 IP 归属(50 号票);canvases 恒非 nil(nil 分支只
+	// 是 worker 自身的宽容路径)。
+	if dt.canvases != nil {
+		opts = append(opts, canvastask.WithCanvases(dt.canvases))
 	}
 	worker := canvastask.NewWorker(dt.tasks, canvastask.NewClient(
 		fmt.Sprintf("http://127.0.0.1:%d", dt.cfg.GatewayPort), dt.cfg.CanvasServiceKey,

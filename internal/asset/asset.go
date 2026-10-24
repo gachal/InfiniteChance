@@ -47,7 +47,10 @@ func PublicAddress(a Asset, publicBase string) (string, bool) {
 // 是「最近一次被服务端解引用」的时点(47 号票):初始 = 创建,任务参考与
 // Agent 媒体解析成功时刷新,驱动挑选场景的最近使用排序。ContentHash 是字
 // 节的 SHA-256 十六进制指纹(48 号票):判同去重用,不是下载完整性校验;
-// 空 = 未算(历史行态),纯内部指纹,不进任何对外响应。
+// 空 = 未算(历史行态),纯内部指纹,不进任何对外响应。IPID 是归属的
+// IP 企划(50 号票):产物经画布传导(worker 落行按任务行 canvas_id 查画布
+// 取 ip_id,画布已删落 0)、上传挂 IP;0 = 全局/未归属,只由直连产物
+// (relay persist 恒 0)与历史行自然形成,不提供主动上传为全局的入口。
 type Asset struct {
 	ID          int64
 	Kind        string
@@ -60,9 +63,19 @@ type Asset struct {
 	ContentType string
 	SizeBytes   int64
 	ContentHash string
+	IPID        int64
 	CreatedAt   time.Time
 	LastUsedAt  time.Time
 }
+
+// 素材列表的 IP 归属过滤(50 号票):ScopeIP = 本 IP + 全局两段
+// (ip_id IN (X, 0),须带 Filter.IPID —— 素材面板/挑选器的缺省视图);
+// ScopeGlobal = 仅 ip_id=0;ScopeAll = 不过滤(现状缺省,管理端审计视角)。
+const (
+	ScopeIP     = "ip"
+	ScopeGlobal = "global"
+	ScopeAll    = "all"
+)
 
 // SortLastUsed asks List to order by last_used_at DESC (recently used
 // first), id DESC breaking ties. The zero value keeps the historical
@@ -70,21 +83,26 @@ type Asset struct {
 const SortLastUsed = "last_used"
 
 // Filter narrows List. Zero fields mean "no constraint"; Limit <= 0 means
-// the handler default.
+// the handler default. Scope 为空串按 ScopeAll 处理(不过滤)。
 type Filter struct {
 	Kind     string
 	CanvasID int64
 	Sort     string
-	Limit    int
-	Offset   int
+	// IP 归属过滤(50 号票):Scope + IPID(仅 ScopeIP 消费)。
+	Scope string
+	IPID  int64
+	Limit int
+	Offset int
 }
 
 // Listed is one List row: the asset plus the originating canvas's name.
 // CanvasName is a display fact, not asset identity — the canvas row may be
-// gone (素材比画布活得久), in which case it is empty.
+// gone (素材比画布活得久), in which case it is empty. IPName 同理(join
+// ips;ip_id=0 或 IP 行已删时为空,前端按 ip_id==0 显示「全局」)。
 type Listed struct {
 	Asset
 	CanvasName string
+	IPName     string
 }
 
 // Store persists assets. 14 号票在 10 号票的写入/取回上扩过滤列表与删除;

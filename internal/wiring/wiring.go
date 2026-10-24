@@ -101,9 +101,12 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 // the canvas side — the table is administered through the gateway. Settings
 // is read-only the same way (19 号票): the storage row drives the object
 // store's dynamic routing and the assets' public-address resolution.
+// IPs 支撑画布创建/移动的 IP 校验、/ips CRUD 与素材上传的存在性检查
+// (50 号票);nil 时校验缺口以运行时 500 暴露,生产装配恒非 nil。
 type CanvasStores struct {
 	Auth      auth.Store
 	Canvases  canvas.Store
+	IPs       canvas.IPStore
 	Assets    asset.Store
 	Prices    pricing.Store
 	Tasks     canvastask.Store
@@ -128,7 +131,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 
 	// 画布面:一律先过 JWT 会话,与管理面同一套令牌体系。
 	group := r.Group("/canvases", auth.RequireAuth(issuer))
-	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases})
+	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases, IPs: s.IPs})
 	canvastask.RegisterRoutes(group, &canvastask.Handlers{
 		Tasks:         s.Tasks,
 		Canvases:      s.Canvases,
@@ -137,6 +140,10 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Gateway:       gateway,
 		PublicBaseURL: publicBase,
 	})
+	// IP 企划面(50 号票):CRUD 挂 JWT 会话,与画布同一令牌体系;
+	// admin-web 不设 IP 管理页,增删改全在创作侧。
+	ipsGroup := r.Group("/ips", auth.RequireAuth(issuer))
+	canvas.RegisterIPRoutes(ipsGroup, &canvas.IPHandlers{Store: s.IPs})
 	// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
 	// 直接以 gateway_unconfigured 拒绝。
 	var chatGateway promptgen.Gateway
@@ -166,7 +173,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	// Authorization 头(见 asset 包);素材库的列表/删除挂 JWT 会话,
 	// 画布素材面板与管理端素材页共用。thumb 端点(49 号票)同组同理由,
 	// PublicBaseURL 与画布任务/提示词生成共用同一 settings 提供者。
-	assetHandlers := &asset.Handlers{Store: s.Assets, Storage: storage, PublicBaseURL: publicBase}
+	assetHandlers := &asset.Handlers{Store: s.Assets, Storage: storage, PublicBaseURL: publicBase, IPs: s.IPs}
 	asset.RegisterContentRoutes(r.Group("/assets"), assetHandlers)
 	asset.RegisterLibraryRoutes(r.Group("/assets", auth.RequireAuth(issuer)), assetHandlers)
 }

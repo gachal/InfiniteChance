@@ -78,7 +78,17 @@ func (f *fakeStore) List(_ context.Context, fl asset.Filter) ([]asset.Listed, er
 		if fl.CanvasID > 0 && a.CanvasID != fl.CanvasID {
 			continue
 		}
-		out = append(out, asset.Listed{Asset: a, CanvasName: canvasNameOf(a.CanvasID)})
+		switch fl.Scope {
+		case asset.ScopeIP:
+			if a.IPID != fl.IPID && a.IPID != 0 {
+				continue
+			}
+		case asset.ScopeGlobal:
+			if a.IPID != 0 {
+				continue
+			}
+		}
+		out = append(out, asset.Listed{Asset: a, CanvasName: canvasNameOf(a.CanvasID), IPName: ipNameOf(a.IPID)})
 	}
 	if fl.Sort == asset.SortLastUsed {
 		sort.SliceStable(out, func(i, j int) bool {
@@ -154,6 +164,20 @@ func canvasNameOf(id int64) string {
 	return ""
 }
 
+func ipNameOf(id int64) string {
+	if id == 5 {
+		return "星穹之愿"
+	}
+	return ""
+}
+
+// fakeIPs answers asset.IPExistenceChecker:只有 5 号 IP 存在。
+type fakeIPs struct{}
+
+func (fakeIPs) IPExists(_ context.Context, id int64) (bool, error) {
+	return id == 5, nil
+}
+
 // handlerEnv wires the asset routes the way the binary does (minus JWT on
 // the library group) with a real FileSystem storage over a temp dir.
 type assetEnv struct {
@@ -170,7 +194,7 @@ func newAssetEnv(t *testing.T) *assetEnv {
 	if err != nil {
 		t.Fatalf("objectstore: %v", err)
 	}
-	h := &asset.Handlers{Store: store, Storage: storage}
+	h := &asset.Handlers{Store: store, Storage: storage, IPs: fakeIPs{}}
 	r := gin.New()
 	asset.RegisterContentRoutes(r.Group("/assets"), h)
 	asset.RegisterLibraryRoutes(r.Group("/assets"), h)
@@ -673,5 +697,110 @@ func TestListAndUploadCarryThumbnailURL(t *testing.T) {
 	}
 	if up.Asset.ThumbnailURL == "" {
 		t.Errorf("upload response missing thumbnail_url")
+	}
+}
+
+// ---- 50 号票:上传 ip_id 校验与列表 IP 归属过滤的 HTTP 面 ----
+
+// 上传可选 ip_id:存在即落行、不存在 400 ip_not_found、非法值 400;
+// 不带 ip_id 落 0(全局)。响应行携带 ip_id/ip_name。
+func TestUploadIPOptionalAndValidated(t *testing.T) {
+	env := newAssetEnv(t)
+
+	upload := func(ipID string) *httptest.ResponseRecorder {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		_ = writer.WriteField("kind", "image")
+		if ipID != "" {
+			_ = writer.WriteField("ip_id", ipID)
+		}
+		part, _ := writer.CreateFormFile("file", "pic.png")
+		_, _ = part.Write([]byte("\x89PNG\r\n\x1a\ntestbytes"))
+		writer.Close()
+		req := httptest.NewRequest(http.MethodPost, "/assets/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+		env.engine.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := upload("5")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload to ip 5 status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var up struct {
+		Asset struct {
+			IPID int64 `json:"ip_id"`
+		} `json:"asset"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	// ip_name 是列表 join 的展示事实,上传响应只带 ip_id;面板刷新后由
+	// 列表行补名字。
+	if up.Asset.IPID != 5 {
+		t.Fatalf("uploaded asset = ip %d, want 5", up.Asset.IPID)
+	}
+
+	rec = upload("99")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ip_not_found") {
+		t.Fatalf("upload to unknown ip = %d %s", rec.Code, rec.Body)
+	}
+	rec = upload("oops")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("upload with bad ip_id = %d", rec.Code)
+	}
+	rec = upload("")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload without ip_id status = %d", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	if up.Asset.IPID != 0 {
+		t.Fatalf("upload without ip_id = ip %d, want 0 (全局)", up.Asset.IPID)
+	}
+}
+
+// scope 过滤的参数面:ip 必带 ip_id;未知 scope 400;合法 scope 原样穿透
+// 到 store(fake 与真实语义同形,响应行带 ip_id)。
+func TestListScopeValidation(t *testing.T) {
+	env := newAssetEnv(t)
+	_, _ = env.store.Create(context.Background(), asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "u", IPID: 5})
+	_, _ = env.store.Create(context.Background(), asset.Asset{Kind: asset.KindImage, CanvasID: 1, URL: "v"})
+
+	w := env.do(t, http.MethodGet, "/assets?scope=ip&ip_id=5")
+	if w.Code != http.StatusOK {
+		t.Fatalf("scope=ip status = %d, body = %s", w.Code, w.Body)
+	}
+	var body struct {
+		Assets []struct {
+			ID   int64 `json:"id"`
+			IPID int64 `json:"ip_id"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Assets) != 2 {
+		t.Fatalf("scope=ip rows = %d, want 本 IP + 全局两行", len(body.Assets))
+	}
+
+	w = env.do(t, http.MethodGet, "/assets?scope=ip")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("scope=ip without ip_id status = %d, want 400", w.Code)
+	}
+	w = env.do(t, http.MethodGet, "/assets?scope=nonsense")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown scope status = %d, want 400", w.Code)
+	}
+	w = env.do(t, http.MethodGet, "/assets?ip_id=oops")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad ip_id status = %d, want 400", w.Code)
+	}
+	// 带了 ip_id 未带 scope:按 scope=ip 处理(前端画布侧固定传参的便捷形)。
+	w = env.do(t, http.MethodGet, "/assets?ip_id=5")
+	if w.Code != http.StatusOK {
+		t.Fatalf("ip_id alone status = %d, body = %s", w.Code, w.Body)
 	}
 }
