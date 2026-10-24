@@ -21,6 +21,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/health"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
@@ -91,11 +92,13 @@ func NewDesktop() (*Desktop, error) {
 	// IP 企划(50 号票):建 ips 表 + 启动自愈迁移(存量收编,幂等);
 	// 依赖 canvases/assets 的加列先就位 —— 列表顺序即装配顺序。
 	ipStore := canvas.NewSQLiteIPStore(db)
+	// 角色库(51 号票):三表空起步无迁移,表自含无同序依赖。
+	characters := character.NewSQLiteStore(db)
 	tasks := canvastask.NewSQLiteStore(db, assets)
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, ipStore, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, ipStore, characters, tasks,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -182,14 +185,15 @@ func NewDesktop() (*Desktop, error) {
 
 	canvasApp, err := app.Assemble("canvas", "8081", func(r *gin.Engine, d app.Deps) {
 		wiring.CanvasRoutes(r, d.Config, wiring.CanvasStores{
-			Auth:      auths,
-			Canvases:  canvases,
-			IPs:       ipStore,
-			Assets:    assets,
-			Prices:    prices,
-			Tasks:     tasks,
-			Templates: templates,
-			Settings:  settingsStore,
+			Auth:       auths,
+			Canvases:   canvases,
+			IPs:        ipStore,
+			Characters: characters,
+			Assets:     assets,
+			Prices:     prices,
+			Tasks:      tasks,
+			Templates:  templates,
+			Settings:   settingsStore,
 		}, canvastask.NewClient(gatewayURL, cfg.CanvasServiceKey), storage)
 	}, app.WithConfig(ccfg), app.WithDB(db), app.WithPingers(pingers),
 		app.WithHTTPHandler(func(h http.Handler) http.Handler {

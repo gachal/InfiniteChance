@@ -12,6 +12,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
+	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
@@ -43,6 +44,12 @@ func main() {
 		ips := canvas.NewMySQLIPStore(d.DB)
 		if err := ips.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure ip schema: %v", err)
+		}
+		// 角色库(51 号票):三表空起步无迁移,表自含无同序依赖,装配位置
+		// 随意,随 ips 之后。
+		characters := character.NewMySQLStore(d.DB)
+		if err := characters.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure character schema: %v", err)
 		}
 		prices := pricing.NewMySQLStore(d.DB)
 		if err := prices.EnsureSchema(context.Background()); err != nil {
@@ -77,14 +84,15 @@ func main() {
 
 		gateway := serviceGateway(d.Config)
 		wiring.CanvasRoutes(r, d.Config, wiring.CanvasStores{
-			Auth:      store,
-			Canvases:  canvases,
-			IPs:       ips,
-			Assets:    assets,
-			Prices:    prices,
-			Tasks:     tasks,
-			Templates: templates,
-			Settings:  settingsStore,
+			Auth:       store,
+			Canvases:   canvases,
+			IPs:        ips,
+			Characters: characters,
+			Assets:     assets,
+			Prices:     prices,
+			Tasks:      tasks,
+			Templates:  templates,
+			Settings:   settingsStore,
 		}, gateway, storage)
 
 		lifetime := d.Lifetime

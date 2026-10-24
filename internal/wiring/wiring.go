@@ -16,6 +16,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
+	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
@@ -103,15 +104,18 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 // store's dynamic routing and the assets' public-address resolution.
 // IPs 支撑画布创建/移动的 IP 校验、/ips CRUD 与素材上传的存在性检查
 // (50 号票);nil 时校验缺口以运行时 500 暴露,生产装配恒非 nil。
+// Characters 承载 IP 级角色库(51 号票):/api/ips/:id/characters 目录与
+// /api/characters 系 CRUD,与 IPs 同用 IP 存在性裁决。
 type CanvasStores struct {
-	Auth      auth.Store
-	Canvases  canvas.Store
-	IPs       canvas.IPStore
-	Assets    asset.Store
-	Prices    pricing.Store
-	Tasks     canvastask.Store
-	Templates prompttemplate.Store
-	Settings  settings.Store
+	Auth       auth.Store
+	Canvases   canvas.Store
+	IPs        canvas.IPStore
+	Characters character.Store
+	Assets     asset.Store
+	Prices     pricing.Store
+	Tasks      canvastask.Store
+	Templates  prompttemplate.Store
+	Settings   settings.Store
 }
 
 // CanvasRoutes mounts the canvas surface: /auth (same account table),
@@ -144,6 +148,15 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	// admin-web 不设 IP 管理页,增删改全在创作侧。
 	ipsGroup := r.Group("/ips", auth.RequireAuth(issuer))
 	canvas.RegisterIPRoutes(ipsGroup, &canvas.IPHandlers{Store: s.IPs})
+	// 角色库(51 号票):IP 级角色、造型变体与设定图锚,同一 JWT 会话面。
+	// 目录挂 /ips/:id/characters(IP 存在性由 handler 经 IPs 裁决),
+	// 角色系 CRUD 与变体/图面挂 /characters 系;网关零改动(设定图引用
+	// 走既有素材契约)。
+	characterHandlers := &character.Handlers{Store: s.Characters, IPs: s.IPs}
+	character.RegisterIPRoutes(r.Group("/ips/:id/characters", auth.RequireAuth(issuer)), characterHandlers)
+	character.RegisterRoutes(r.Group("/characters", auth.RequireAuth(issuer)), characterHandlers)
+	character.RegisterVariantRoutes(r.Group("/character-variants", auth.RequireAuth(issuer)), characterHandlers)
+	character.RegisterImageRoutes(r.Group("/character-images", auth.RequireAuth(issuer)), characterHandlers)
 	// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
 	// 直接以 gateway_unconfigured 拒绝。
 	var chatGateway promptgen.Gateway
