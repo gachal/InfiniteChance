@@ -41,8 +41,8 @@ var (
 
 // Character is one IP 级角色实体:角色圣经的载体与设定图锚的一致性源。
 // Variants 随 Get/List 一次取全(单管理员量级小,画布侧目录一次拿整棵
-// 树);CoverAssetID 是列表投影 —— 首个变体(按 sort+id)排序最前的视图
-// 类图,无则首变体第一张,再无则后续变体兜底;0 = 全空(卡片走占位)。
+// 树);CoverAssetID 是列表投影(规则见 CoverAssetID);0 = 全空(卡片走
+// 占位)。
 type Character struct {
 	ID           int64
 	IPID         int64
@@ -166,10 +166,11 @@ type Store interface {
 }
 
 // CoverAssetID computes the card-wall cover projection for one assembled
-// character: 首个变体(按 sort+id)排序最前的视图类图,无则首变体第一张,
-// 再无则按序扫后续变体兜底;0 = 全空。视图类集合 = ViewLabels。
+// character(51 号票 API 节规则):逐变体(按 sort+id)扫描,首个有图的
+// 变体内取排序最前的视图类图,无视图类图则取该变体第一张 —— 视图类优先
+// 是变体内的事,变体序先于视图类;首个变体为空时向后续变体兜底,全部
+// 变体皆空 = 0(卡片走占位)。视图类集合 = ViewLabels。
 func CoverAssetID(c Character) int64 {
-	// 第一遍:首变体内 视图类优先 → 首变体任意第一张。
 	for _, v := range c.Variants {
 		var first int64
 		for _, img := range v.Images {
@@ -182,14 +183,6 @@ func CoverAssetID(c Character) int64 {
 		}
 		if first != 0 {
 			return first
-		}
-	}
-	// 第二遍:后续变体兜底(同样视图类优先)。
-	for _, v := range c.Variants[1:] {
-		for _, img := range v.Images {
-			if ViewLabels[img.Label] {
-				return img.AssetID
-			}
 		}
 	}
 	return 0
