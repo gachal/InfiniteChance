@@ -34,6 +34,7 @@ import {
   normalizeNodeType,
   type CanvasNodeData,
   type CanvasNodeType,
+  type LevelNodeData,
   type MediaNodeData,
   type NameNodeData,
   type NamePage,
@@ -47,6 +48,7 @@ import {
   hasAgentMediaSlot,
   nextAgentMediaId,
 } from '../agentMedia'
+import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import {
   appendComposerRef,
   appendVideoRef,
@@ -91,6 +93,7 @@ import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import CharacterNode from '../components/nodes/CharacterNode.vue'
 import ImageNode from '../components/nodes/ImageNode.vue'
+import LevelCard from '../components/nodes/LevelCard.vue'
 import NameNode from '../components/nodes/NameNode.vue'
 import PrevizNode from '../components/nodes/PrevizNode.vue'
 import StoryboardNode from '../components/nodes/StoryboardNode.vue'
@@ -780,6 +783,7 @@ function toggleComposerPicker(): void {
     recordsPanelOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
+    levelPickerNodeId.value = ''
   }
 }
 
@@ -1358,6 +1362,7 @@ function openAgentHistory(nodeId: string): void {
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
+  levelPickerNodeId.value = ''
 }
 
 function openAgentPicker(nodeId: string): void {
@@ -1370,6 +1375,7 @@ function openAgentPicker(nodeId: string): void {
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
+  levelPickerNodeId.value = ''
 }
 
 /** 清空会话(历史面板顶部按钮):与新会话同一语义,清后节点可重新开始。 */
@@ -1804,6 +1810,96 @@ function onNameLayerDrop(pageIndex: number, panelIndex: number): void {
   }
 }
 
+// ---- 关卡卡(55 号票)----
+
+// 55 号票:关卡卡**卡内直接编辑不开编辑层**(53 号票定案),字段补丁由
+// 卡面逐键/逐动作上抛,这里走同一条 updateNodeData + markChanged 落盘链
+// (整图 JSON 随节点 data,自动保存免费获得)。
+function onLevelChange(nodeId: string, patch: Partial<LevelNodeData>): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
+// 画面槽本机上传在途(编辑器级全局,任一在途即禁用各卡上传入口)。
+const levelUploading = ref(false)
+
+// 画面槽素材挑选面板绑定的节点 id('' = 关闭):与素材库、生成记录、
+// 对话框挑选、Agent 选择等右缘面板互斥(32 号票纪律)。
+const levelPickerNodeId = ref('')
+const levelPickerNode = computed(() =>
+  levelPickerNodeId.value ? findNode(levelPickerNodeId.value) ?? null : null,
+)
+
+const levelPickerSelectedIds = computed<number[]>(
+  () => (levelPickerNode.value?.data as LevelNodeData | undefined)?.asset_ids ?? [],
+)
+
+function openLevelPicker(nodeId: string): void {
+  if (levelPickerNodeId.value === nodeId) {
+    levelPickerNodeId.value = ''
+    return
+  }
+  levelPickerNodeId.value = nodeId
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+  composerPickerOpen.value = false
+  historyNodeId.value = ''
+  pickerNodeId.value = ''
+}
+
+/** 画面槽挑选点选:已在槽中 = 摘下;不在 = 追加,满员整条拒收并提示
+ * (9 上限守卫,与参考图口径一致)。 */
+function onLevelPickToggle(nodeId: string, a: AssetRecord): void {
+  if (a.kind !== 'image') {
+    return
+  }
+  const data = findNode(nodeId)?.data as LevelNodeData | undefined
+  if (!data) {
+    return
+  }
+  const next = toggleLevelAsset(data.asset_ids, a.id)
+  if (next === data.asset_ids && !data.asset_ids.includes(a.id)) {
+    generateError.value = '画面槽已满(最多 9 张),请先移除一张'
+    return
+  }
+  updateNodeData(nodeId, { asset_ids: next })
+  markChanged()
+}
+
+/** 画面槽本机上传:上传前按当前槽位预检(满员直接报错不传字节,免得
+ * 上传成素材却在槽上拒收 —— 42 号票前置纪律);入库挂画布 IP(键落
+ * uploads/ 档),成功后按素材 id 回填画面槽,回填以节点 data 现值为准
+ * (上传在途的卡内改动不丢),素材行删除后槽落「素材不可用」占位。 */
+async function onLevelUpload(nodeId: string, file: File): Promise<void> {
+  if (levelUploading.value) {
+    return
+  }
+  const data = findNode(nodeId)?.data as LevelNodeData | undefined
+  if (!data || !canAddLevelAsset(data.asset_ids)) {
+    generateError.value = '画面槽已满(最多 9 张),请先移除一张'
+    return
+  }
+  levelUploading.value = true
+  generateError.value = ''
+  try {
+    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
+    const fresh = findNode(nodeId)?.data as LevelNodeData | undefined
+    if (fresh) {
+      const next = toggleLevelAsset(fresh.asset_ids, a.id)
+      if (next !== fresh.asset_ids) {
+        updateNodeData(nodeId, { asset_ids: next })
+        markChanged()
+      } else {
+        generateError.value = '画面槽已满(最多 9 张),请先移除一张'
+      }
+    }
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
+  } finally {
+    levelUploading.value = false
+  }
+}
+
 // ---- 两击连线(30 号票)----
 
 // 连线唯一入口 = 节点旁常驻 + 按钮:点击进入连接态,预连线跟随鼠标,点
@@ -1907,6 +2003,10 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     }
     if (pickerNodeId.value) {
       pickerNodeId.value = ''
+      return
+    }
+    if (levelPickerNodeId.value) {
+      levelPickerNodeId.value = ''
       return
     }
     if (historyNodeId.value) {
@@ -2040,8 +2140,8 @@ function addNode(type: CanvasNodeType): void {
 }
 
 /** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫/
- * 预演台粉/角色青/絵コンテ橙/ネーム天蓝),38 号票评审补的导航面沿用
- * 同一语义色系。 */
+ * 预演台粉/角色青/絵コンテ橙/ネーム天蓝/关卡红),38 号票评审补的导航
+ * 面沿用同一语义色系。 */
 function miniMapNodeColor(node: { type?: string | null }): string {
   switch (normalizeNodeType(node.type ?? undefined)) {
     case 'agent':
@@ -2058,6 +2158,8 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#fb923c'
     case 'name':
       return '#38bdf8'
+    case 'level':
+      return '#f87171'
     default:
       return '#a78bfa'
   }
@@ -2138,6 +2240,7 @@ function toggleAssetPanel(): void {
     composerPickerOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
+    levelPickerNodeId.value = ''
   }
 }
 
@@ -2148,6 +2251,7 @@ function toggleRecordsPanel(): void {
     composerPickerOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
+    levelPickerNodeId.value = ''
   }
 }
 
@@ -2397,10 +2501,10 @@ onBeforeUnmount(() => {
 
 /** 工具栏添加按钮的两组(53 号票,ADR 0005 组织下沉):「创作」= 媒介
  * 生产节点(analysis 仍仅由动作创建,不经面板);「规划」= 规划工件
- * 节点(絵コンテ + ネーム,54 号票;55 关卡另票)。纯展示分组,无语义
+ * 节点(絵コンテ + ネーム + 关卡,54/55 号票)。纯展示分组,无语义
  * 过滤 —— 全节点全画布可用(53 号票 A 段)。 */
 const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character']
-const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name']
+const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level']
 
 function backToList(): void {
   // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
@@ -2712,6 +2816,20 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
+        <!-- 55 号票:关卡卡,卡内直接编辑不开编辑层(53 号票定案);
+             字段补丁/上传/素材挑选面板经事件回编辑器;不渲染把手,
+             不参与连线。 -->
+        <template #node-level="nodeProps">
+          <LevelCard
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :uploading="levelUploading"
+            @change="onLevelChange(nodeProps.id, $event)"
+            @upload="onLevelUpload(nodeProps.id, $event)"
+            @open-picker="openLevelPicker(nodeProps.id)"
+          />
+        </template>
       </VueFlow>
       <!-- 30 号票:连接态预连线(画布区屏幕坐标;pointer-events none,
            不挡任何底层交互)。 -->
@@ -2810,6 +2928,19 @@ function backToList(): void {
         :ip-id="canvasIPID || undefined"
         @toggle="onAgentPickToggle(pickerNode.id, $event)"
         @close="pickerNodeId = ''"
+      />
+      <!-- 55 号票:关卡卡画面槽的素材挑选面板(scope=ip 默认),节点被删
+           时随 computed 自动消失。 -->
+      <AssetPicker
+        v-else-if="levelPickerNode"
+        :key="`level-picker-${levelPickerNode.id}`"
+        title="挑选画面参考"
+        :kind-whitelist="['image']"
+        hint="点选挂为关卡画面参考,再点取消;画面槽最多 9 张。"
+        :selected-asset-ids="levelPickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
+        @toggle="onLevelPickToggle(levelPickerNode.id, $event)"
+        @close="levelPickerNodeId = ''"
       />
       <!-- 40 号票:预演台全屏编辑层(Teleport 到 body),场景改动走同一条
            scene-change 落盘链;渲染帧大图经编辑器级灯箱打开(灯箱入口收进
@@ -3269,6 +3400,12 @@ function backToList(): void {
 .add-name {
   background: rgba(56, 189, 248, 0.16);
   color: #38bdf8;
+}
+
+/* 55 号票:关卡入「规划」组,红色与节点描边/小地图同源。 */
+.add-level {
+  background: rgba(248, 113, 113, 0.16);
+  color: #f87171;
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是

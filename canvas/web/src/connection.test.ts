@@ -95,3 +95,17 @@ describe('canConnect', () => {
     }
   })
 })
+
+  it('keeps the level node out of the edge matrix entirely (55 号票)', () => {
+    // 关卡卡 = 文档型工件(55 号票):卡内直接编辑,无来源/投递语义,
+    // 与角色引用节点的「不连线」同族 —— 不作任何连线的源与目标,组件
+    // 也不渲染把手;画面参考走素材引用不走边。
+    expect(EDGE_MATRIX.level).toEqual([])
+    expect(canConnect('level', 'image')).toBe(false)
+    expect(canConnect('level', 'agent')).toBe(false)
+    expect(canConnect('level', 'level')).toBe(false)
+    expect(canConnect('agent', 'level')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('level')
+    }
+  })

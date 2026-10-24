@@ -14,6 +14,7 @@ import type {
 import { defaultPrevizScene } from './previz'
 import { defaultName } from './name'
 import { defaultStoryboard } from './storyboard'
+import { defaultLevel } from './level'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
@@ -148,6 +149,23 @@ export interface NameNodeData {
   pages: NamePage[]
 }
 
+/** 关卡卡节点数据(55 号票,第九种节点类型「规划」组):文档型工件 ——
+ * 结构化字段(名称/目标/节拍)+ 画面参考,随节点 data 存整图 JSON(53 号
+ * 票「数据随身」先例)。name 缺省「新关卡」(添加即命名);goal 一句话
+ * 目标、detail 详细描述都是可空字段,空时不落键;beats 是流程节拍列表
+ * (有序,每拍一行文本,增删移走 level.ts 纯函数,序号显示时生成 1..N
+ * 不持久);asset_ids 是画面槽的素材引用列表(概念图/地图草图,上限
+ * MAX_LEVEL_ASSETS = 9,与参考图口径一致),素材行被删时槽落「素材不可
+ * 用」占位。卡内直接编辑不开编辑层(53 号票定案),不参与连线(文档卡,
+ * 无来源/投递语义,与角色引用节点的「不连线」同族)。 */
+export interface LevelNodeData {
+  name: string
+  goal?: string
+  detail?: string
+  beats: string[]
+  asset_ids: number[]
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
@@ -156,8 +174,9 @@ export type CanvasNodeData =
   | CharacterNodeData
   | StoryboardNodeData
   | NameNodeData
+  | LevelNodeData
 
-export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character' | 'storyboard' | 'name'
+export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character' | 'storyboard' | 'name' | 'level'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -168,7 +187,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'previz' ||
     value === 'character' ||
     value === 'storyboard' ||
-    value === 'name'
+    value === 'name' ||
+    value === 'level'
   )
 }
 
@@ -186,7 +206,8 @@ export function normalizeNodeType(value: unknown): CanvasNodeType {
  * (文本后填),不从工具栏直接添加;预演台自带默认场景(一个人形 +
  * 一个机位),添加即可见可渲染;角色节点 character_id = 0(未绑定),
  * 绑定走节点卡上的选择器(52 号票);絵コンテ自带 1 个空 cut(53 号
- * 票,添加即可编辑);ネーム自带 1 页 1 格(54 号票,添加即可编辑)。 */
+ * 票,添加即可编辑);ネーム自带 1 页 1 格(54 号票,添加即可编辑);
+ * 关卡卡自带「新关卡」+ 空节拍(55 号票,添加即可编辑)。 */
 export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'agent' || type === 'analysis') {
     return { text: '' }
@@ -204,6 +225,9 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'name') {
     return defaultName()
   }
+  if (type === 'level') {
+    return defaultLevel()
+  }
   return { url: '', note: '' }
 }
 
@@ -216,6 +240,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   character: '角色',
   storyboard: '絵コンテ',
   name: 'ネーム',
+  level: '关卡',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出

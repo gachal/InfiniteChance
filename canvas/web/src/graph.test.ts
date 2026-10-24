@@ -31,6 +31,8 @@ describe('normalizeNodeType', () => {
     expect(normalizeNodeType('storyboard')).toBe('storyboard')
     // 54 号票:ネーム是第八种类型(规划组),原样通过。
     expect(normalizeNodeType('name')).toBe('name')
+    // 55 号票:关卡是第九种类型(规划组),原样通过。
+    expect(normalizeNodeType('level')).toBe('level')
   })
 
   it('falls back to agent for unknown types', () => {
@@ -88,6 +90,25 @@ describe('isCanvasNodeType / initialData', () => {
     expect(data.pages[0].panels).toHaveLength(1)
     expect(data.pages[0].panels[0]).toEqual({ asset_id: 0, lines: '', size: 'large' })
     expect(NODE_TYPE_LABEL.name).toBe('ネーム')
+  })
+
+  it('seeds level nodes as 新关卡 with empty beats and asset slots (55 号票)', () => {
+    // 添加即「新关卡」+ 空节拍;goal/detail 可空不落键;画面槽上限 9
+    // 与参考图口径一致;卡内直接编辑不开编辑层。
+    expect(isCanvasNodeType('level')).toBe(true)
+    const data = initialData('level') as {
+      name: string
+      goal?: string
+      detail?: string
+      beats: string[]
+      asset_ids: number[]
+    }
+    expect(data.name).toBe('新关卡')
+    expect(data.beats).toEqual([])
+    expect(data.asset_ids).toEqual([])
+    expect('goal' in data).toBe(false)
+    expect('detail' in data).toBe(false)
+    expect(NODE_TYPE_LABEL.level).toBe('关卡')
   })
 })
 

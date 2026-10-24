@@ -18,7 +18,9 @@ import type { CanvasNodeType } from './graph'
  * analysis 不作为任何连线的源;previz/storyboard/name 不作为任何连线的目标
  * (输入是用户摆的场景/cut/格的画面,回填走素材引用不走边);character 不作
  * 任何连线的源与目标(52 号票:它是钉在画布上的设定参照卡,组件不渲染
- * 把手 —— 设定图进生成链走「落图节点」的素材插入语义,不走连线);其余
+ * 把手 —— 设定图进生成链走「落图节点」的素材插入语义,不走连线);level
+ * 也不作任何连线的源与目标(55 号票:关卡卡是文档卡,卡内直接编辑,无
+ * 来源/投递语义,与 character 的「不连线」同族,组件不渲染把手);其余
  * 组合(agent→agent、previz→video 等)拒连。
  */
 export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
@@ -30,6 +32,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   character: [],
   storyboard: ['image'],
   name: ['image'],
+  level: [],
 }
 
 /** source 类型到 target 类型能否建立新连线;未知/缺失类型一律拒绝。 */
