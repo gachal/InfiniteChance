@@ -6,6 +6,7 @@
  */
 import type { StoryboardCut, StoryboardNodeData } from './graph'
 import { moveItem, removeAt } from './list'
+import { assetContentURL } from './thumbnail'
 
 /** 运镜白名单(53 号票):前端持有,后端存串不校验(51 号 label 同哲学);
  * 将来管理端可配显式另票。初始集:推/拉/摇/移/跟/固定/手持/变焦。 */
@@ -85,7 +86,8 @@ export function formatDuration(seconds: number): string {
 }
 
 /** cut 画面的内容寻址地址(展示层按素材 id 拼装,服务端解出真实地址;
- * 素材行被删时 404,展示面落「素材不可用」占位)。 */
+ * 素材行被删时 404,展示面落「素材不可用」占位);构造统一走
+ * thumbnail.ts assetContentURL(与角色设定图同一体,评审合并)。 */
 export function frameContentURL(assetId: number): string {
-  return `/api/assets/${assetId}/content`
+  return assetContentURL(assetId)
 }

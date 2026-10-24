@@ -7,6 +7,8 @@
 
 import type { CharacterImageRecord } from '@infinitechance/api'
 
+import { assetContentURL } from './thumbnail'
+
 /** 设定图标签的六类白名单(新建/改标签时的唯一入口)。 */
 export const CHARACTER_IMAGE_LABELS = ['三视图', '多视图', '表情集', '色板', '姿态', '其他'] as const
 
@@ -17,9 +19,11 @@ export function isViewLabel(label: string): boolean {
 }
 
 /** 设定图 → 内容寻址路径(服务端 302 thumb 端点的显示面派生,49 号票
- * 同款规则;素材行被删时两地址都会 404,展示面落「素材不可用」占位)。 */
+ * 同款规则;素材行被删时两地址都会 404,展示面落「素材不可用」占位);
+ * 构造统一走 thumbnail.ts assetContentURL(与絵コンテ cut 画面同一体,
+ * 评审合并)。 */
 export function characterImageContentURL(assetId: number): string {
-  return `/api/assets/${assetId}/content`
+  return assetContentURL(assetId)
 }
 
 export function characterImageThumbURL(assetId: number): string {

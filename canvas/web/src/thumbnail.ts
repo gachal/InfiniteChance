@@ -15,6 +15,14 @@
  */
 import { ref } from 'vue'
 
+/** 素材内容寻址地址(按素材 id 拼装,服务端解出真实地址;素材行被删时
+ * 404,展示面落「素材不可用」占位)。路径形态与下方 thumbnailURLOf 的
+ * 正则同源 —— 组件侧载荷派生点(画面槽/设定图)经各自域模块的命名封装
+ * 引到这里,不再各持一份字面量(评审合并)。 */
+export function assetContentURL(assetId: number): string {
+  return `/api/assets/${assetId}/content`
+}
+
 /** 内容寻址路径 → 缩略地址;非内容寻址(厂商 http(s) 地址、data: URI)
  * 返回 null,调用方保持原图。路径形态与服务端 contentPath/thumbPath 同源。 */
 export function thumbnailURLOf(url: string): string | null {
