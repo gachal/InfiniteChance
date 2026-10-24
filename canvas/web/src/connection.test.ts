@@ -79,4 +79,19 @@ describe('canConnect', () => {
       expect(EDGE_MATRIX[source]).not.toContain('storyboard')
     }
   })
+
+  it('lets name feed image nodes only, and never receive an edge (54 号票)', () => {
+    // ネーム落图与絵コンテ同族(来源语义):格画面落成图片节点并连线;
+    // 回填走素材引用不走边,作任何连线的目标都非法。
+    expect(EDGE_MATRIX.name).toEqual(['image'])
+    expect(canConnect('name', 'image')).toBe(true)
+    expect(canConnect('name', 'video')).toBe(false)
+    expect(canConnect('name', 'analysis')).toBe(false)
+    expect(canConnect('name', 'agent')).toBe(false)
+    expect(canConnect('name', 'name')).toBe(false)
+    expect(canConnect('name', 'storyboard')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('name')
+    }
+  })
 })

@@ -14,8 +14,9 @@ import type { CanvasNodeType } from './graph'
  * - image/video → image/video  迭代来源(21 号票)
  * - previz → image             渲染帧落点(39 号票,落画布成图片节点)
  * - storyboard → image         分镜画面落点(53 号票,落图节点成图片节点)
- * analysis 不作为任何连线的源;previz/storyboard 不作为任何连线的目标
- * (输入是用户摆的场景/cut 的画面,回填走素材引用不走边);character 不作
+ * - name → image               格画面落点(54 号票,storyboard 同族来源语义)
+ * analysis 不作为任何连线的源;previz/storyboard/name 不作为任何连线的目标
+ * (输入是用户摆的场景/cut/格的画面,回填走素材引用不走边);character 不作
  * 任何连线的源与目标(52 号票:它是钉在画布上的设定参照卡,组件不渲染
  * 把手 —— 设定图进生成链走「落图节点」的素材插入语义,不走连线);其余
  * 组合(agent→agent、previz→video 等)拒连。
@@ -28,6 +29,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   previz: ['image'],
   character: [],
   storyboard: ['image'],
+  name: ['image'],
 }
 
 /** source 类型到 target 类型能否建立新连线;未知/缺失类型一律拒绝。 */

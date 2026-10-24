@@ -29,6 +29,8 @@ describe('normalizeNodeType', () => {
     expect(normalizeNodeType('character')).toBe('character')
     // 53 号票:絵コンテ是第七种类型(规划组),原样通过。
     expect(normalizeNodeType('storyboard')).toBe('storyboard')
+    // 54 号票:ネーム是第八种类型(规划组),原样通过。
+    expect(normalizeNodeType('name')).toBe('name')
   })
 
   it('falls back to agent for unknown types', () => {
@@ -72,6 +74,20 @@ describe('isCanvasNodeType / initialData', () => {
     expect(data.title).toBe('')
     expect(data.cuts).toHaveLength(1)
     expect(NODE_TYPE_LABEL.storyboard).toBe('絵コンテ')
+  })
+
+  it('seeds name nodes with one page holding one empty panel (54 号票)', () => {
+    // 添加即带 1 页 1 格;页标题可空、格大格起步,序号显示时生成不持久。
+    expect(isCanvasNodeType('name')).toBe(true)
+    const data = initialData('name') as {
+      title?: string
+      pages: { title?: string; panels: { asset_id: number; lines: string; size: string }[] }[]
+    }
+    expect(data.title).toBe('')
+    expect(data.pages).toHaveLength(1)
+    expect(data.pages[0].panels).toHaveLength(1)
+    expect(data.pages[0].panels[0]).toEqual({ asset_id: 0, lines: '', size: 'large' })
+    expect(NODE_TYPE_LABEL.name).toBe('ネーム')
   })
 })
 

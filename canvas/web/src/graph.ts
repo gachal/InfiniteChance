@@ -12,6 +12,7 @@ import type {
 } from '@infinitechance/api'
 
 import { defaultPrevizScene } from './previz'
+import { defaultName } from './name'
 import { defaultStoryboard } from './storyboard'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
@@ -119,6 +120,34 @@ export interface StoryboardNodeData {
   cuts: StoryboardCut[]
 }
 
+/** ネーム单个格(54 号票,第八种节点类型「规划」组):画面持素材引用
+ * (0 = 空格,「素材不可用」占位契约同絵コンテ);lines 是台词/旁白/
+ * 拟音多行文本;size 是大小格两档(コマ割り节奏的轻量表达,不做真二维
+ * 排版 —— 拖拽定格子框另票)。与絵コンテ的 Cut 字段集不同(无时长/
+ * 运镜/备注),数据结构各自定义、不强行归一。序号不持久 —— 显示时生成
+ * 页内 1..N。 */
+export interface NamePanel {
+  asset_id: number
+  lines: string
+  size: 'large' | 'small'
+}
+
+/** ネーム的页(54 号票,一级单位:「每页 ネーム」):页标题可空(不落键,
+ * 展示层回落「第 N 页」);panels 是页内格子垂直流(增删移走 name.ts
+ * 纯函数,格可删到空)。 */
+export interface NamePage {
+  title?: string
+  panels: NamePanel[]
+}
+
+/** ネーム节点数据(54 号票):板名 + 页列表随节点 data 存整图 JSON。
+ * title 空 = 展示层回落「ネーム」;页可删到空(板可空页)、格可删到空
+ * (空页保留),删节点只删图 JSON 里的节点,素材行不动。 */
+export interface NameNodeData {
+  title?: string
+  pages: NamePage[]
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
@@ -126,8 +155,9 @@ export type CanvasNodeData =
   | PrevizNodeData
   | CharacterNodeData
   | StoryboardNodeData
+  | NameNodeData
 
-export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character' | 'storyboard'
+export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character' | 'storyboard' | 'name'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -137,7 +167,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'analysis' ||
     value === 'previz' ||
     value === 'character' ||
-    value === 'storyboard'
+    value === 'storyboard' ||
+    value === 'name'
   )
 }
 
@@ -155,7 +186,7 @@ export function normalizeNodeType(value: unknown): CanvasNodeType {
  * (文本后填),不从工具栏直接添加;预演台自带默认场景(一个人形 +
  * 一个机位),添加即可见可渲染;角色节点 character_id = 0(未绑定),
  * 绑定走节点卡上的选择器(52 号票);絵コンテ自带 1 个空 cut(53 号
- * 票,添加即可编辑)。 */
+ * 票,添加即可编辑);ネーム自带 1 页 1 格(54 号票,添加即可编辑)。 */
 export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'agent' || type === 'analysis') {
     return { text: '' }
@@ -170,6 +201,9 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'storyboard') {
     return defaultStoryboard()
   }
+  if (type === 'name') {
+    return defaultName()
+  }
   return { url: '', note: '' }
 }
 
@@ -181,6 +215,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   previz: '预演台',
   character: '角色',
   storyboard: '絵コンテ',
+  name: 'ネーム',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出
