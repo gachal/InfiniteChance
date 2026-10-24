@@ -67,9 +67,7 @@ import {
   type VideoRefKind,
   type VideoRefRole,
 } from '../composer'
-import { canvasTypeLabel } from '../canvasTypes'
 import { characterImageContentURL } from '../characters'
-import { nodeTypesForCanvasType } from '../graph'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
@@ -122,14 +120,13 @@ const {
 } = useVueFlow()
 
 const canvasName = ref('')
-// IP 归属与画布类型(50 号票):面包屑「IP 名 / 画布名」+ 类型徽章的
-// 数据源;ipId 同时是编辑器内全部上传的固定归属(画布内上传传画布 IP,
-// 不可改)。uploadIPId 是全部 uploadAsset 调用的归属参数单一来源
-// (0 = 无 IP 维度,按全局上传)。
+// IP 归属(50 号票):面包屑「IP 名 / 画布名」的数据源;ipId 同时是编辑器
+// 内全部上传的固定归属(画布内上传传画布 IP,不可改)。uploadIPId 是全部
+// uploadAsset 调用的归属参数单一来源(0 = 无 IP 维度,按全局上传)。
+// 53 号票 A 段:画布回归通用,类型值不再读写展示(canvases.type 列冻结保留)。
 const canvasIPID = ref(0)
 const uploadIPId = computed(() => canvasIPID.value || undefined)
 const canvasIPName = ref('')
-const canvasType = ref('general')
 const loadError = ref('')
 const loading = ref(true)
 const missing = ref(false)
@@ -2045,7 +2042,6 @@ async function applyServerGraph(detail: CanvasDetail): Promise<void> {
   canvasName.value = detail.name
   canvasIPID.value = detail.ip_id
   canvasIPName.value = detail.ip_name
-  canvasType.value = detail.type
   setNodes(normalizeNodes(detail))
   setEdges(detail.graph.edges as unknown as Edge[])
   await nextTick()
@@ -2175,11 +2171,9 @@ onBeforeUnmount(() => {
   taskSync.stop()
 })
 
-/** 添加面板的节点清单:按画布类型过滤(50 号票机制;52 号票起角色引用
- * 节点也是通用节点)—— 分析节点不经面板添加,照旧排除。 */
-const addableNodeTypes = computed(() =>
-  nodeTypesForCanvasType(canvasType.value).filter((t) => t !== 'analysis'),
-)
+/** 添加面板的节点清单(53 号票 A 段:画布回归通用,全节点全画布可见,
+ * 50 号票的按类型过滤机制退役)—— 分析节点不经面板添加,照旧排除。 */
+const addableNodeTypes: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character']
 
 function backToList(): void {
   // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
@@ -2194,8 +2188,8 @@ function backToList(): void {
 <template>
   <div class="editor">
     <header class="topbar">
-      <!-- 50 号票面包屑:「IP 名 / 画布名」,IP 段点击回详情页;类型徽章
-           随行(数据来自 GET /canvases/:id 的新增字段)。 -->
+      <!-- 50 号票面包屑:「IP 名 / 画布名」,IP 段点击回详情页;53 号票 A 段
+           撤类型徽章 —— 画布回归通用,类型不再展示。 -->
       <button
         class="ghost breadcrumb-ip"
         type="button"
@@ -2245,12 +2239,6 @@ function backToList(): void {
           {{ canvasName || '未命名画布' }}
         </button>
       </template>
-      <span
-        class="type-badge"
-        :title="`画布类型:${canvasTypeLabel(canvasType)}`"
-      >
-        {{ canvasTypeLabel(canvasType) }}
-      </span>
 
       <span
         class="save-state"
@@ -2667,17 +2655,6 @@ function backToList(): void {
   color: #4c5468;
   font-size: 14px;
   margin: 0 -4px;
-}
-
-.type-badge {
-  flex-shrink: 0;
-  border: 1px solid rgba(122, 162, 247, 0.4);
-  background: rgba(76, 110, 245, 0.18);
-  color: #a5b4fc;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
-  white-space: nowrap;
 }
 
 .topbar {

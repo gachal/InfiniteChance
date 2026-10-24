@@ -12,7 +12,6 @@ import type {
 } from '@infinitechance/api'
 
 import { defaultPrevizScene } from './previz'
-import type { CanvasTypeId } from './canvasTypes'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
@@ -115,29 +114,6 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'previz' ||
     value === 'character'
   )
-}
-
-/** 节点类型的「适用画布类型」声明(50 号票机制落位):'all' = 通用节点,
- * 全部画布类型可见;数组 = 特色节点,仅列出的类型在添加面板出现。落地时
- * 现有五类全部通用 —— 行为暂无差异,是有意的中间态而非遗漏;特色节点
- * (53-55 号票)挂靠时在此收窄。 */
-export const NODE_TYPE_APPLICABILITY: Record<CanvasNodeType, 'all' | CanvasTypeId[]> = {
-  agent: 'all',
-  image: 'all',
-  video: 'all',
-  analysis: 'all',
-  previz: 'all',
-  // 角色跨媒介是本质属性(52 号票 grilling 定案):引用节点全画布类型可用。
-  character: 'all',
-}
-
-/** 某画布类型可用的节点类型清单:通用节点恒在,特色节点按声明过滤。 */
-export function nodeTypesForCanvasType(canvasType: string): CanvasNodeType[] {
-  const all: CanvasNodeType[] = ['agent', 'image', 'video', 'analysis', 'previz', 'character']
-  return all.filter((t) => {
-    const a = NODE_TYPE_APPLICABILITY[t]
-    return a === 'all' || a.includes(canvasType as CanvasTypeId)
-  })
 }
 
 /** 读旧图的就地迁移(29 号票):类型值 prompt 映射为 agent —— 历史

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// IP 详情页(50 号票):第二层 —— 头部信息(封面/名称/简介/画布数/最近
-// 更新)+ 编辑/删除;「新建画布」对话框 = 四张类型卡单选 + 名称输入,提交
-// POST 带 ip_id + type 直进编辑器;画布区按类型分组展示(空类型不显示),
+// IP 详情页(50 号票;53 号票 A 段画布回归通用):第二层 —— 头部信息
+// (封面/名称/简介/画布数/最近更新)+ 编辑/删除;「新建画布」对话框 =
+// 仅名称输入(画布不再带媒介类型,POST 只带 ip_id,后端恒落 general),
+// 提交后直进编辑器;画布区平铺展示(接口本就按 updated_at 新到旧),
 // 行内操作:打开/重命名/移动到其他 IP/删除(移动只改归属,历史素材不回填
 // —— 票面口径,这里只发起请求);素材区复用素材面板(scope=ip,上传带
 // 该 IP)。角色区(51 号票)插在画布区与素材区之间:角色卡墙(首图投影
@@ -20,7 +21,6 @@ import {
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
 import { characterImageContentURL, characterImageThumbURL } from '../characters'
-import { CANVAS_TYPES, canvasTypeLabel } from '../canvasTypes'
 import AssetPanel from '../components/AssetPanel.vue'
 import CharacterDrawer from '../components/CharacterDrawer.vue'
 
@@ -46,9 +46,8 @@ const renameDraft = ref('')
 const moveTargetId = ref<number | null>(null)
 const movingId = ref<number | null>(null)
 
-// 新建画布对话框:类型卡单选 + 名称。
+// 新建画布对话框:仅名称(53 号票 A 段,画布回归通用)。
 const createOpen = ref(false)
-const createType = ref('general')
 const createName = ref('')
 const creating = ref(false)
 
@@ -58,24 +57,8 @@ const editName = ref('')
 const editDescription = ref('')
 const savingIP = ref(false)
 
-// 图片缩略走 thumbnail_url(49 号票)。
+/** 图片缩略走 thumbnail_url(49 号票)。 */
 const thumbs = useThumbFallback()
-
-/** 类型注册表序 × 该类型的画布;空类型不显示。 */
-const grouped = computed(() =>
-  CANVAS_TYPES.map((t) => ({
-    meta: t,
-    items: canvases.value.filter((c) => c.type === t.id),
-  })).filter((g) => g.items.length > 0),
-)
-
-/** 注册表之外的未知类型画布(type 不在四类先行里,后端不校验枚举):
- * 兜底一组照常展示,展示面永远可用。 */
-const extraGroup = computed(() => {
-  const known = new Set<string>(CANVAS_TYPES.map((t) => t.id as string))
-  const items = canvases.value.filter((c) => !known.has(c.type))
-  return items.length > 0 ? items : []
-})
 
 async function refresh(): Promise<void> {
   loading.value = true
@@ -107,8 +90,7 @@ onMounted(() => {
   void loadCharacters()
 })
 
-function openCreate(type: string): void {
-  createType.value = type
+function openCreate(): void {
   createName.value = ''
   actionError.value = ''
   createOpen.value = true
@@ -122,7 +104,9 @@ async function submitCreate(): Promise<void> {
   creating.value = true
   actionError.value = ''
   try {
-    const created = await client.createCanvas({ name, ip_id: ipId.value, type: createType.value })
+    // 53 号票 A 段:POST 不带 type,后端恒落缺省 general;存量画布的
+    // 旧类型值成为不可见的库内历史事实。
+    const created = await client.createCanvas({ name, ip_id: ipId.value })
     createOpen.value = false
     await router.push({ name: 'canvas-editor', params: { id: created.id } })
   } catch (e) {
@@ -375,7 +359,7 @@ function back(): void {
       <button
         class="ghost"
         type="button"
-        @click="openCreate('general')"
+        @click="openCreate()"
       >
         + 新建画布
       </button>
@@ -470,34 +454,25 @@ function back(): void {
         {{ loadError }}
       </p>
 
-      <!-- 新建画布:类型卡单选 + 名称(四类先行,注册表驱动)。 -->
-      <section class="create-row">
-        <button
-          v-for="t in CANVAS_TYPES"
-          :key="t.id"
-          type="button"
-          class="type-card"
-          @click="openCreate(t.id)"
-        >
-          <span class="type-icon">{{ t.icon }}</span>
-          <span class="type-label">新建{{ t.label }}画布</span>
-          <span class="type-desc">{{ t.description }}</span>
-        </button>
-      </section>
-
-      <section
-        v-for="g in grouped"
-        :key="g.meta.id"
-        class="type-group"
-      >
+      <!-- 画布区(53 号票 A 段平铺):接口本就按 updated_at 新到旧,直接
+           单列表展示,不再按类型分组。 -->
+      <section class="canvas-section">
         <h2>
-          <span class="type-icon">{{ g.meta.icon }}</span>
-          {{ g.meta.label }}画布
-          <span class="count">{{ g.items.length }}</span>
+          画布
+          <span class="count">{{ canvases.length }}</span>
         </h2>
-        <ul class="list">
+        <p
+          v-if="canvases.length === 0"
+          class="feedback"
+        >
+          还没有画布 —— 新建一张,从第一格分镜开始。
+        </p>
+        <ul
+          v-else
+          class="list"
+        >
           <li
-            v-for="c in g.items"
+            v-for="c in canvases"
             :key="c.id"
           >
             <template v-if="renamingId === c.id">
@@ -533,7 +508,7 @@ function back(): void {
                 @click="openIPDetail(c)"
               >
                 <span class="name">{{ c.name }}</span>
-                <span class="meta">{{ canvasTypeLabel(c.type) }} · 更新于 {{ formatTime(c.updated_at) }}</span>
+                <span class="meta">更新于 {{ formatTime(c.updated_at) }}</span>
               </button>
               <span class="row-actions">
                 <button
@@ -591,29 +566,6 @@ function back(): void {
                 </button>
               </span>
             </template>
-          </li>
-        </ul>
-      </section>
-
-      <!-- 注册表之外的类型(历史数据/手写串):兜底照常展示。 -->
-      <section
-        v-if="extraGroup.length > 0"
-        class="type-group"
-      >
-        <h2>其他类型</h2>
-        <ul class="list">
-          <li
-            v-for="c in extraGroup"
-            :key="c.id"
-          >
-            <button
-              class="open"
-              type="button"
-              @click="openIPDetail(c)"
-            >
-              <span class="name">{{ c.name }}</span>
-              <span class="meta">{{ c.type }} · 更新于 {{ formatTime(c.updated_at) }}</span>
-            </button>
           </li>
         </ul>
       </section>
@@ -717,7 +669,7 @@ function back(): void {
       加载中…
     </p>
 
-    <!-- 新建画布对话框:类型卡单选 + 名称。 -->
+    <!-- 新建画布对话框(53 号票 A 段):仅名称。 -->
     <div
       v-if="createOpen"
       class="dialog-mask"
@@ -725,20 +677,6 @@ function back(): void {
     >
       <div class="dialog">
         <h3>新建画布</h3>
-        <div class="type-pick">
-          <button
-            v-for="t in CANVAS_TYPES"
-            :key="t.id"
-            type="button"
-            class="type-card"
-            :class="{ active: createType === t.id }"
-            @click="createType = t.id"
-          >
-            <span class="type-icon">{{ t.icon }}</span>
-            <span class="type-label">{{ t.label }}</span>
-            <span class="type-desc">{{ t.description }}</span>
-          </button>
-        </div>
         <form
           class="create-form"
           @submit.prevent="submitCreate"
@@ -1040,53 +978,11 @@ function back(): void {
   flex-shrink: 0;
 }
 
-.create-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px;
-  margin: 20px 0 8px;
-}
-
-.type-card {
-  display: grid;
-  gap: 4px;
-  text-align: left;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 12px;
-  color: inherit;
-  cursor: pointer;
-}
-
-.type-card:hover {
-  border-color: rgba(122, 162, 247, 0.5);
-}
-
-.type-card.active {
-  border-color: rgba(122, 162, 247, 0.9);
-  background: rgba(76, 110, 245, 0.18);
-}
-
-.type-icon {
-  font-size: 20px;
-}
-
-.type-label {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.type-desc {
-  color: #8b91a7;
-  font-size: 12px;
-}
-
-.type-group {
+.canvas-section {
   margin-top: 22px;
 }
 
-.type-group h2 {
+.canvas-section h2 {
   margin: 0 0 10px;
   font-size: 16px;
   display: flex;
@@ -1094,7 +990,7 @@ function back(): void {
   gap: 8px;
 }
 
-.type-group .count {
+.canvas-section .count {
   color: #6f7690;
   font-size: 13px;
   font-weight: 400;
@@ -1354,13 +1250,6 @@ function back(): void {
 .dialog h3 {
   margin: 0 0 14px;
   font-size: 18px;
-}
-
-.type-pick {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-bottom: 14px;
 }
 
 .create-form {
