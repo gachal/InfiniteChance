@@ -24,18 +24,20 @@ import (
 // SDK clients branch on code the same way they do for vendor errors; the
 // relay face speaks English like the vendor APIs.
 const (
-	CodeInvalidRequest      = "invalid_request"
-	CodeMissingModel        = "missing_model"
-	CodeMissingMessages     = "missing_messages"
-	CodeModelNotFound       = "model_not_found"
-	CodeModelNotPriced      = "model_not_priced"
-	CodeModelUnavailable    = "model_unavailable"
-	CodeInsufficientQuota   = "insufficient_quota"
-	CodeUpstreamError       = "upstream_error"
-	CodeTaskNotFound        = "task_not_found" // 08 号票:未知或他人的任务 id
-	TypeInvalidRequestError = "invalid_request_error"
-	TypeInsufficientQuota   = "insufficient_quota"
-	TypeServerError         = "server_error"
+	CodeInvalidRequest         = "invalid_request"
+	CodeMissingModel           = "missing_model"
+	CodeMissingMessages        = "missing_messages"
+	CodeModelNotFound          = "model_not_found"
+	CodeModelNotPriced         = "model_not_priced"
+	CodeModelUnavailable       = "model_unavailable"
+	CodeInsufficientQuota      = "insufficient_quota"
+	CodeUpstreamError          = "upstream_error"
+	CodeTaskNotFound           = "task_not_found"           // 08 号票:未知或他人的任务 id
+	CodeChannelNotFound        = "channel_not_found"        // 56 号票:钉渠道的 channel_id 无此行
+	CodeAudioInlineUnsupported = "audio_inline_unsupported" // 56 号票:克隆声音样本拒绝 data: 内联(12 号票契约家族)
+	TypeInvalidRequestError    = "invalid_request_error"
+	TypeInsufficientQuota      = "insufficient_quota"
+	TypeServerError            = "server_error"
 )
 
 // chatRequest is the slice of the OpenAI chat-completions body the gateway

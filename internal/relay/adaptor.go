@@ -85,6 +85,26 @@ type Adaptor interface {
 	// answer is not fatal by itself — the caller decides whether the task
 	// still cancels locally (取消对外不扣费的语义由网关兑付).
 	VideosCancel(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error)
+	// VoicesCreate forwards one voice-enrollment request (56 号票 音色定制:
+	// design / clone). payload is the gateway body with channel_id stripped
+	// and the model already the upstream enrollment name; a 2xx answer is
+	// the normalized voice object (voice_id / target_model / status /
+	// preview_audio…), synthesized 502 when the vendor answers 2xx without
+	// a voice_id.
+	VoicesCreate(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
+	// VoicesQuery polls one custom voice's lifecycle (DEPLOYING/OK/
+	// UNDEPLOYED). The vendor body is normalized to the voice object like
+	// VoicesCreate.
+	VoicesQuery(ctx context.Context, ch channel.Channel, upstreamModel, voiceID string) (*UpstreamResponse, error)
+	// VoicesDelete removes one custom voice upstream. A 2xx answer is the
+	// normalized (possibly empty) output object.
+	VoicesDelete(ctx context.Context, ch channel.Channel, upstreamModel, voiceID string) (*UpstreamResponse, error)
+	// SpeechSynthesis forwards one synchronous line-synthesis request
+	// (56 号票 台词合成). payload is the gateway body with channel_id
+	// stripped and the model already the upstream name; a 2xx answer is
+	// normalized to {"audio":{…}} with the vendor's temporary URL —
+	// synthesized 502 when it carries none.
+	SpeechSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
 	// Normalize converts a 2xx upstream chat-completion body into the
 	// client-facing body (model rewritten to the public name) and extracts
 	// the usage.
@@ -402,6 +422,25 @@ func (a *openAIAdaptor) VideosQuery(ctx context.Context, ch channel.Channel, ups
 // VideosCancel relays one POST {base_url}/videos/tasks/{id}/cancel.
 func (a *openAIAdaptor) VideosCancel(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
 	return a.postUpstream(ctx, ch, "/videos/tasks/"+url.PathEscape(upstreamTaskID)+"/cancel", "application/json", nil)
+}
+
+// 音频四方法(56 号票)只归 dashscope adaptor:vod/ark/minimax 嵌入本类型
+// 同款继承这些桩;OpenAI 兼容上游暂无同面端点,显式不支持 —— 调度已按
+// audio 能力过滤,桩只作兜底(与 dashscope 的聊天桩互为镜像)。
+func (a *openAIAdaptor) VoicesCreate(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay audio voices")
+}
+
+func (a *openAIAdaptor) VoicesQuery(ctx context.Context, ch channel.Channel, upstreamModel, voiceID string) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay audio voices")
+}
+
+func (a *openAIAdaptor) VoicesDelete(ctx context.Context, ch channel.Channel, upstreamModel, voiceID string) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay audio voices")
+}
+
+func (a *openAIAdaptor) SpeechSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay speech synthesis")
 }
 
 // ChatCompletionsStream opens the streaming variant of the same upstream

@@ -735,6 +735,19 @@ func TestRelayAdaptorNormalization(t *testing.T) {
 	if s := a.ErrorSummary([]byte(`raw text`)); !strings.Contains(s, "raw text") {
 		t.Errorf("ErrorSummary fallback = %q, want raw text", s)
 	}
+	// 音频四方法(56 号票)在 openai 兼容 adaptor 上是显式不支持桩:
+	// 调度按 audio 能力过滤,桩只作兜底。
+	audioStubs := []func() error{
+		func() error { _, err := a.VoicesCreate(context.Background(), channel.Channel{}, nil); return err },
+		func() error { _, err := a.VoicesQuery(context.Background(), channel.Channel{}, "m", "v"); return err },
+		func() error { _, err := a.VoicesDelete(context.Background(), channel.Channel{}, "m", "v"); return err },
+		func() error { _, err := a.SpeechSynthesis(context.Background(), channel.Channel{}, nil); return err },
+	}
+	for i, stub := range audioStubs {
+		if err := stub(); err == nil {
+			t.Errorf("openAI audio stub %d = nil error, want the unsupported stub", i)
+		}
+	}
 }
 
 func TestRelayClientDisconnectMidFlightStillRefundsAndLogs(t *testing.T) {

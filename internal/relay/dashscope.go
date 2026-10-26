@@ -46,9 +46,13 @@ func newDashScopeAdaptor() *dashscopeAdaptor {
 
 // dashscopeSubmitPath / dashscopeQueryPrefix are the versioned task-face
 // paths appended to the channel's BaseURL (工作空间域名根,不含路径).
+// ttsCustomizationPath / speechSynthesizerPath are the audio face's two
+// endpoints (56 号票 音色定制与台词合成,同步调用不带 X-DashScope-Async).
 const (
-	dashscopeSubmitPath  = "/api/v1/services/aigc/video-generation/video-synthesis"
-	dashscopeQueryPrefix = "/api/v1/tasks/"
+	dashscopeSubmitPath   = "/api/v1/services/aigc/video-generation/video-synthesis"
+	dashscopeQueryPrefix  = "/api/v1/tasks/"
+	ttsCustomizationPath  = "/api/v1/services/audio/tts/customization"
+	speechSynthesizerPath = "/api/v1/services/audio/tts/SpeechSynthesizer"
 )
 
 // dashscopeReferenceType maps one gateway reference kind onto its DashScope
@@ -297,4 +301,210 @@ func (a *dashscopeAdaptor) ImagesGenerations(ctx context.Context, ch channel.Cha
 
 func (a *dashscopeAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, contentType string, payload []byte) (*UpstreamResponse, error) {
 	return nil, errors.New("relay: dashscope adaptor does not relay images")
+}
+
+// 音频面(56 号票):音色定制三个 action(create/query/delete_voice)走同
+// 一端点,台词合成走 SpeechSynthesizer;全部同步调用(dashscopeCall 的
+// async=false,不带 X-DashScope-Async)。请求体翻译、output 信封剥离都关在
+// adaptor 内,relay 的 handler 只见归一后的形状。
+
+// dashscopeVoicePayload is the gateway voice body's upstream-bound slice:
+// channel_id 已在 handler 剥离,model 已是上游 enrollment 名。
+type dashscopeVoicePayload struct {
+	Model       string `json:"model"`
+	Mode        string `json:"mode"`
+	TargetModel string `json:"target_model"`
+	VoicePrompt string `json:"voice_prompt"`
+	Audio       string `json:"audio"`
+	PreviewText string `json:"preview_text"`
+	Prefix      string `json:"prefix"`
+}
+
+// dashscopeSpeechPayload is the gateway speech body's upstream-bound slice.
+type dashscopeSpeechPayload struct {
+	Model       string `json:"model"`
+	Voice       string `json:"voice"`
+	Text        string `json:"text"`
+	Instruction string `json:"instruction"`
+}
+
+// dashscopeTranslateVoiceCreate rebuilds one create_voice body:action 恒
+// create_voice,mode/voice_prompt(clone 时为声音样本 http(s) 地址)/audio/
+// preview_text/prefix 原样透传(target_model 是音色绑定的合成模型)。
+// 上游对 design/clone 两态的字段裁决交厂商,4xx 透回。
+func dashscopeTranslateVoiceCreate(payload []byte) ([]byte, error) {
+	var vp dashscopeVoicePayload
+	if err := json.Unmarshal(payload, &vp); err != nil {
+		return nil, fmt.Errorf("request body is not a valid JSON object: %w", err)
+	}
+	body := map[string]any{
+		"model":        vp.Model,
+		"action":       "create_voice",
+		"mode":         vp.Mode,
+		"target_model": vp.TargetModel,
+	}
+	if p := strings.TrimSpace(vp.VoicePrompt); p != "" {
+		body["voice_prompt"] = p
+	}
+	if u := strings.TrimSpace(vp.Audio); u != "" {
+		body["audio"] = u
+	}
+	if p := strings.TrimSpace(vp.PreviewText); p != "" {
+		body["preview_text"] = p
+	}
+	if p := strings.TrimSpace(vp.Prefix); p != "" {
+		body["prefix"] = p
+	}
+	return json.Marshal(body)
+}
+
+// dashscopeUnwrapOutput peels the DashScope response envelope: 2xx 体恒
+// {"request_id":…,"output":{…}},网关面只见 output 对象。无 output(或不
+// 是对象)是上游坏形状,报错由调用方合成 502。
+func dashscopeUnwrapOutput(body []byte) ([]byte, error) {
+	var r struct {
+		Output *json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("upstream body is not a JSON object: %w", err)
+	}
+	if r.Output == nil {
+		return nil, errors.New("upstream body carries no output object")
+	}
+	out := []byte(*r.Output)
+	if !json.Valid(out) {
+		return nil, errors.New("upstream output is not a JSON value")
+	}
+	return out, nil
+}
+
+// dashscopeVoiceActionBody builds one query_voice / delete_voice body.
+func dashscopeVoiceActionBody(action, upstreamModel, voiceID string) []byte {
+	body, _ := json.Marshal(map[string]string{
+		"model":    upstreamModel,
+		"action":   action,
+		"voice_id": voiceID,
+	})
+	return body
+}
+
+// dashscopeTranslateSpeech rebuilds the gateway speech body as the
+// SpeechSynthesizer 三段体:input{text, voice, instruction?} +
+// parameters{language_hints, format, sample_rate}。输出固定 WAV 24kHz、
+// language_hints 恒 ["zh"](56 号票定案:不暴露格式/采样率/多语言参数)。
+func dashscopeTranslateSpeech(payload []byte) ([]byte, error) {
+	var sp dashscopeSpeechPayload
+	if err := json.Unmarshal(payload, &sp); err != nil {
+		return nil, fmt.Errorf("request body is not a valid JSON object: %w", err)
+	}
+	input := map[string]any{"text": sp.Text, "voice": sp.Voice}
+	if i := strings.TrimSpace(sp.Instruction); i != "" {
+		input["instruction"] = i
+	}
+	body := map[string]any{
+		"model": sp.Model,
+		"input": input,
+		"parameters": map[string]any{
+			"language_hints": []string{"zh"},
+			"format":         "wav",
+			"sample_rate":    24000,
+		},
+	}
+	return json.Marshal(body)
+}
+
+// dashscopeTranslateSpeechResponse normalizes one SpeechSynthesizer 2xx
+// body into {"audio":{…}}(上游临时 OSS 地址与到期时间原样透传;usage 由
+// 网关侧字符口径自算,不随行)。无 output.audio 是坏形状,报错合成 502。
+func dashscopeTranslateSpeechResponse(body []byte) ([]byte, error) {
+	var r struct {
+		Output *struct {
+			Audio *json.RawMessage `json:"audio"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("upstream body is not a JSON object: %w", err)
+	}
+	if r.Output == nil || r.Output.Audio == nil {
+		return nil, errors.New("upstream speech body carries no output.audio")
+	}
+	return json.Marshal(map[string]json.RawMessage{"audio": *r.Output.Audio})
+}
+
+// VoicesCreate forwards one create_voice call and unwraps the output
+// envelope; 2xx without a voice_id synthesizes 502(与视频提交同款防御).
+func (a *dashscopeAdaptor) VoicesCreate(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	translated, err := dashscopeTranslateVoiceCreate(payload)
+	if err != nil {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("dashscope: " + err.Error())}, nil
+	}
+	upstream, err := a.dashscopeCall(ctx, ch, http.MethodPost, ttsCustomizationPath, translated, false)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	output, err := dashscopeUnwrapOutput(upstream.Body)
+	if err == nil {
+		var v struct {
+			VoiceID string `json:"voice_id"`
+		}
+		if json.Unmarshal(output, &v) != nil || strings.TrimSpace(v.VoiceID) == "" {
+			err = errors.New("2xx create_voice carries no voice_id")
+		}
+	}
+	if err != nil {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("dashscope: " + err.Error())}, nil
+	}
+	return &UpstreamResponse{Status: upstream.Status, Body: output, OK: true}, nil
+}
+
+// VoicesQuery polls one voice's lifecycle (query_voice).
+func (a *dashscopeAdaptor) VoicesQuery(ctx context.Context, ch channel.Channel, upstreamModel, voiceID string) (*UpstreamResponse, error) {
+	upstream, err := a.dashscopeCall(ctx, ch, http.MethodPost, ttsCustomizationPath,
+		dashscopeVoiceActionBody("query_voice", upstreamModel, voiceID), false)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	output, err := dashscopeUnwrapOutput(upstream.Body)
+	if err != nil {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("dashscope: " + err.Error())}, nil
+	}
+	return &UpstreamResponse{Status: upstream.Status, Body: output, OK: true}, nil
+}
+
+// VoicesDelete removes one voice upstream (delete_voice).
+func (a *dashscopeAdaptor) VoicesDelete(ctx context.Context, ch channel.Channel, upstreamModel, voiceID string) (*UpstreamResponse, error) {
+	upstream, err := a.dashscopeCall(ctx, ch, http.MethodPost, ttsCustomizationPath,
+		dashscopeVoiceActionBody("delete_voice", upstreamModel, voiceID), false)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	output, err := dashscopeUnwrapOutput(upstream.Body)
+	if err != nil {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("dashscope: " + err.Error())}, nil
+	}
+	return &UpstreamResponse{Status: upstream.Status, Body: output, OK: true}, nil
+}
+
+// SpeechSynthesis translates and forwards one synchronous synthesis call;
+// the 2xx body is normalized to {"audio":{…}}, missing audio synthesizes 502.
+func (a *dashscopeAdaptor) SpeechSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	translated, err := dashscopeTranslateSpeech(payload)
+	if err != nil {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("dashscope: " + err.Error())}, nil
+	}
+	upstream, err := a.dashscopeCall(ctx, ch, http.MethodPost, speechSynthesizerPath, translated, false)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	normalized, err := dashscopeTranslateSpeechResponse(upstream.Body)
+	if err != nil {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("dashscope: " + err.Error())}, nil
+	}
+	return &UpstreamResponse{Status: upstream.Status, Body: normalized, OK: true}, nil
 }

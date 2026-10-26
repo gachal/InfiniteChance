@@ -175,8 +175,8 @@ func TestDashScopeAdaptorTranslatesContract(t *testing.T) {
 		t.Errorf("auth = %q, want the channel's Bearer key", auth)
 	}
 	var sent struct {
-		Model      string `json:"model"`
-		Input      struct {
+		Model string `json:"model"`
+		Input struct {
 			Prompt string           `json:"prompt"`
 			Media  []map[string]any `json:"media"`
 		} `json:"input"`
