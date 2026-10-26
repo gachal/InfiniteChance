@@ -1,7 +1,7 @@
 # 57 画布音色闭环(音色节点/音频节点/角色绑定)
 
 Type: feat
-Status: decided(2026-10-26 grilling 定案;依赖 56 号票网关面)
+Status: implemented(2026-10-26;feat/voice-tts)。定案背景:2026-10-26 grilling 定案,依赖 56 号票网关面(同分支实现)
 
 ## Question
 

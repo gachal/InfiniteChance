@@ -1,7 +1,7 @@
 # 56 网关 TTS 与音色定制面
 
 Type: feat
-Status: decided(2026-10-26 grilling 定案;上游为阿里云百炼 Qwen-Audio-TTS 系列,目标模型 `qwen-audio-3.1-tts-plus`)
+Status: implemented(2026-10-26;feat/voice-tts)。定案背景:2026-10-26 grilling 定案,上游为阿里云百炼 Qwen-Audio-TTS 系列,目标模型 `qwen-audio-3.1-tts-plus`
 
 ## Question
 
