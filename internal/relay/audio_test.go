@@ -750,3 +750,52 @@ func TestRelayVoiceQueryAndDeleteNoBilling(t *testing.T) {
 		t.Errorf("ledger = %d entries, want initial only", len(entries))
 	}
 }
+
+// TestRelayAudioModelsCatalog pins GET /v1/audio/models (57 号票):启用 +
+// audio 能力渠道的映射并集 ∩ 字符轨配价 —— enrollment(次轨)与图片模型
+// 不进目录,停用渠道的映射不进目录,价格随行带 PriceSummary。
+func TestRelayAudioModelsCatalog(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	audio := env.seedAudioChannel(t, "bailian-audio", "https://audio.example")
+	env.seedSpeechPrice(t)   // testTTSModel 字符轨
+	env.seedEnrollmentPrice(t) // voice-enrollment 次轨 → 不进合成目录
+	// 图片模型:在 audio 渠道映射之外,不进目录。
+	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
+		PublicModel: "img-m", Unit: pricing.UnitCall,
+		Call: &pricing.CallPrice{CNYPerCallMicros: 10_000},
+	}); err != nil {
+		t.Fatalf("seed image price: %v", err)
+	}
+	// 停用的 audio 渠道:映射不进目录。
+	if _, err := env.stores.channels.Create(context.Background(), channel.Channel{
+		Name: "disabled-audio", Type: channel.TypeDashScope,
+		ModelMap:      map[string]string{"off-model": "off-model"},
+		Capabilities:  []channel.Capability{channel.CapAudio}, Enabled: false,
+	}); err != nil {
+		t.Fatalf("seed disabled channel: %v", err)
+	}
+
+	_, fullKey := env.seedKey(t, 1_000_000)
+	req := httptest.NewRequest(http.MethodGet, "/v1/audio/models", nil)
+	req.Header.Set("Authorization", "Bearer "+fullKey)
+	w := httptest.NewRecorder()
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Models []string                       `json:"models"`
+		Prices map[string]pricing.PriceSummary `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0] != testTTSModel {
+		t.Fatalf("models = %v, want only %s", resp.Models, testTTSModel)
+	}
+	summary, ok := resp.Prices[testTTSModel]
+	if !ok || summary.Unit != string(pricing.UnitCharacter) || summary.CNYPer10KChars == 0 {
+		t.Fatalf("price summary = %+v, want character-track with cny_per_10k_chars", summary)
+	}
+	_ = audio
+}

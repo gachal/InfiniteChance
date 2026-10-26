@@ -68,6 +68,7 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/audio/voices/:id/query", h.QueryVoice)
 	group.DELETE("/audio/voices/:id", h.DeleteVoice)
 	group.POST("/audio/speech", h.CreateSpeech)
+	group.GET("/audio/models", h.AudioModels)
 }
 
 // maxRequestBody caps how much of a client request body the /v1 surface

@@ -236,6 +236,13 @@ curl -X POST $GATEWAY/v1/audio/voices/$VOICE_ID/query \
   -d '{"channel_id": 3}'
 # → {"voice_id":"...","status":"OK"}
 
+# 音频模型目录(57 号票):启用 + audio 能力渠道的映射并集 ∩ 字符轨配价,
+# 价格随行走 PriceSummary(38 号票);voice-enrollment(次轨定制键)不进目录。
+# 画布服务的 /audio-models(JWT)以服务级 key 代理本端点。
+curl $GATEWAY/v1/audio/models -H "Authorization: Bearer $GWKEY"
+# → {"models":["qwen-audio-3.1-tts-plus"],"prices":{"qwen-audio-3.1-tts-plus":
+#    {"unit":"character","cny_per_10k_chars":1.4}}}
+
 # 删除音色(管理动作,204;删除前先停用引用是调用方职责)
 curl -X DELETE $GATEWAY/v1/audio/voices/$VOICE_ID \
   -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
