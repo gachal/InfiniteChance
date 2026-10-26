@@ -21,7 +21,7 @@ Status: decided(2026-10-26 grilling 定案;依赖 56 号票网关面)
 
 **音色节点(第 10 种节点类型 `voice`,创作组,`NODE_TYPE_LABEL` =「音色」)**:
 
-- data 随身(整图 JSON):`{ voice_id?, name, mode: "design"|"clone", status, preview_asset_id?, target_model?, voice_prompt?, sample_asset_id? }`。
+- data 随身(整图 JSON):`{ voice_id?, name, mode: "design"|"clone", status, preview_asset_id?, target_model?, voice_prompt?, sample_asset_id? }`。**实现结论(评审回写)**:节点实存 `{ mode, name, target_model?, voice_prompt?, preview_text?, sample_asset_id?, status?, ledger_id? }` —— 音色的上游句柄与试听不进节点快照,`ledger_id` 指台账行、卡面按 voices 目录实时投影(台账是唯一事实源,快照会漂移);票面原形的 `voice_id`/`preview_asset_id` 由台账行承载。
 - 创建表单**内联卡上**(不进生成对话框、不进编辑层):模式二选一——**设计** = 名称 + 音色描述(≤500 字,仅中英)+ 试听文本(15–200 字)+ 模型下拉;**克隆** = 名称 + 声音样本 chip(本机上传经 `/api/assets/upload` kind=audio、或素材库挑选,≤10MB 前端守卫)+ 试听文本 + 模型下拉;表单带价格预估(56 号票 PriceSummary)。样本 UI 提示「10–20 秒清晰人声,WAV/MP3/M4A」;时长质量交上游裁决。
 - 提交 = canvas_task `kind=voice` 绑本节点;卡面状态徽章(部署中/可用/审核未通过/失败)+ 试听 `<audio>`(preview 素材);失败原地重试。
 - 删除节点仅摘图不动台账;卡上「删除音色」动作 = 二次确认 + `DELETE /voices/:id`(voice_in_use 防护)。
@@ -43,11 +43,12 @@ Status: decided(2026-10-26 grilling 定案;依赖 56 号票网关面)
 
 **目录端点**:`GET /audio-models`(canvas JWT,服务级 key 经网关,过滤 audio 能力渠道 + 字符轨配价模型,带 38 号票 PriceSummary 带价)——音色节点创建表单的模型下拉与价格预估共用。
 
-**面板收尾**:素材面板与 AssetPicker 音频行加「插入画布」(落音频节点,asset 引用 + 内容寻址;推翻 24 号票注记);生成记录面板音频行(图标 + 内联试听 + 插入画布);`recordKindLabel` 三元。
+**面板收尾**:素材面板与 AssetPicker 音频行加「插入画布」(落音频节点,asset 引用 + 内容寻址;推翻 24 号票注记);生成记录面板音频行(图标 + 内联试听 + 插入画布);`recordKindLabel` 三元。**实现结论(评审回写)**:「插入画布」落在素材面板与生成记录面板;AssetPicker 音频行保持选择语义(toggle,图片/视频行同款 —— 它的职责是挑参考/样本,插入由调用方接线),不设插入按钮。
 
 ## 产出面
 
 - 后端:`internal/canvas`(voices store + handler + characters 加列)、`internal/canvastask`(kind 常量与白名单、`voice_spec` 列、worker 分派两 run、Finalize)。
+- 网关侧注记:「服务级 key 经网关」定案的支撑端点 `GET /v1/audio/models`(字符轨合成模型目录)由 57 号票实现在 `internal/relay`(56 号票端点组之外)。
 - `canvas/web`:`graph.ts`(voice/audio 类型)、`voice.ts` 纯函数(表单校验/状态映射,vitest)、`VoiceNode.vue`/`AudioNode.vue`、connection 矩阵、小地图配色、工具栏创作组「音色」、CharacterDrawer、素材面板/AssetPicker/生成记录面板。
 - `packages/api`:voices/characters/audio-models 请求层。
 - CONTEXT.md:「画布任务」「连线」「节点」「素材」词条增补 + 新增「音色节点」「音频节点」词条(已随定案落笔)。

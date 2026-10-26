@@ -56,7 +56,7 @@ Status: decided(2026-10-26 grilling 定案;上游为阿里云百炼 Qwen-Audio-T
 
 - 单测:字符计数(汉字/全角/混合/emoji/空 instruction)、四端点请求校验(data: 拒绝、长度上限、mode 互斥必填)、adaptor 提交/归一形状、计费算术(微整数向上取整)。
 - `make test` + `make lint`;MySQL 集成 skip 语义不变。
-- 真 key 全链:design 创建 → DEPLOYING → OK 实际时长;clone(真实 10–20s 样本)创建与生效;UNDEPLOYED(违规描述,如模仿名人)真实报错文案;合成产物采样率/格式实测;**instruction 是否计费**(对账上游账单,决定口径是否放宽);日语等多语言在 `language_hints=["zh"]` 下的表现(决定是否开放)。
+- 真 key 全链:design 创建 → DEPLOYING → OK 实际时长;clone(真实 10–20s 样本)创建与生效;UNDEPLOYED(违规描述,如模仿名人)真实报错文案;合成产物采样率/格式实测;**instruction 是否计费**(对账上游账单,决定口径是否放宽);日语等多语言在 `language_hints=["zh"]` 下的表现(决定是否开放);create 响应字段完备性(target_model/status/preview_audio 缺失时的行为 —— 现 adaptor 只校验 voice_id,status 缺失 canvas 侧 QueryVoice 会报错,留待真 key 实证)。
 
 ## Out of Scope(另票)
 
