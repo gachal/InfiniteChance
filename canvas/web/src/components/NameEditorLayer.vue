@@ -406,11 +406,11 @@ onBeforeUnmount(() => {
 .layer {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--z-editor-layer);
   display: flex;
   flex-direction: column;
   background: #10162a;
-  color: #cdd7ee;
+  color: var(--text-bright);
   font-size: 13px;
 }
 
@@ -425,37 +425,37 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(20, 26, 43, 0.95);
+  border-bottom: 1px solid var(--line-08);
+  background: rgba(var(--surface-card-rgb), 0.95);
 }
 
 .bar .title {
   font-weight: 600;
-  color: #38bdf8;
+  color: var(--sky);
 }
 
 .bar .meta {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .bar button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.05);
-  color: #cdd7ee;
+  background: var(--wash-05);
+  color: var(--text-bright);
   white-space: nowrap;
 }
 
 .bar button:hover {
-  border-color: rgba(56, 189, 248, 0.6);
+  border-color: rgba(var(--sky-rgb), 0.6);
 }
 
 .bar .back:hover {
-  border-color: rgba(122, 162, 247, 0.7);
+  border-color: rgba(var(--accent-rgb), 0.7);
 }
 
 /* ---- 主体:页列表(每页内格子垂直流)---- */
@@ -483,16 +483,16 @@ onBeforeUnmount(() => {
 
 .empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .page {
   display: grid;
   gap: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-xl);
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .page-head {
@@ -505,14 +505,14 @@ onBeforeUnmount(() => {
 .page-no {
   font-size: 13px;
   font-weight: 700;
-  color: #38bdf8;
+  color: var(--sky);
   white-space: nowrap;
 }
 
 .page-title {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 5px 10px;
   color: inherit;
   font-size: 13px;
@@ -522,7 +522,7 @@ onBeforeUnmount(() => {
 
 .page-title:focus {
   outline: none;
-  border-color: rgba(56, 189, 248, 0.6);
+  border-color: rgba(var(--sky-rgb), 0.6);
 }
 
 .page-actions,
@@ -534,19 +534,19 @@ onBeforeUnmount(() => {
 
 .page-actions button,
 .panel-actions button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .page-actions button:hover:not(:disabled),
 .panel-actions button:hover:not(:disabled) {
-  border-color: rgba(56, 189, 248, 0.6);
+  border-color: rgba(var(--sky-rgb), 0.6);
   color: inherit;
 }
 
@@ -558,13 +558,13 @@ onBeforeUnmount(() => {
 
 .page-actions .danger,
 .panel-actions .danger {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .page-empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -572,10 +572,10 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 26px 1fr;
   gap: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 10px;
+  border: 1px solid var(--line-07);
+  border-radius: var(--r-lg);
   padding: 10px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 
 .panel-no {
@@ -584,7 +584,7 @@ onBeforeUnmount(() => {
   padding-top: 4px;
   font-size: 14px;
   font-weight: 700;
-  color: #38bdf8;
+  color: var(--sky);
 }
 
 .panel-main {
@@ -605,13 +605,13 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 4px;
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .field textarea {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px 10px;
   color: inherit;
   font-size: 13px;
@@ -623,7 +623,7 @@ onBeforeUnmount(() => {
 
 .field textarea:focus {
   outline: none;
-  border-color: rgba(56, 189, 248, 0.6);
+  border-color: rgba(var(--sky-rgb), 0.6);
 }
 
 .chips {
@@ -632,23 +632,23 @@ onBeforeUnmount(() => {
 }
 
 .chip {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-pill);
   padding: 3px 12px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .chip:hover {
-  border-color: rgba(56, 189, 248, 0.6);
+  border-color: rgba(var(--sky-rgb), 0.6);
 }
 
 .chip.on {
-  background: rgba(56, 189, 248, 0.18);
-  border-color: rgba(56, 189, 248, 0.65);
-  color: #38bdf8;
+  background: rgba(var(--sky-rgb), 0.18);
+  border-color: rgba(var(--sky-rgb), 0.65);
+  color: var(--sky);
   font-weight: 600;
 }
 
@@ -658,34 +658,34 @@ onBeforeUnmount(() => {
 
 .add-panel {
   justify-self: start;
-  border: 1px dashed rgba(56, 189, 248, 0.4);
-  border-radius: 8px;
+  border: 1px dashed rgba(var(--sky-rgb), 0.4);
+  border-radius: var(--r-md);
   padding: 5px 14px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   background: transparent;
-  color: #38bdf8;
+  color: var(--sky);
 }
 
 .add-panel:hover {
-  background: rgba(56, 189, 248, 0.12);
+  background: rgba(var(--sky-rgb), 0.12);
 }
 
 .add-page {
   align-self: flex-start;
-  border: 1px dashed rgba(56, 189, 248, 0.5);
-  border-radius: 10px;
+  border: 1px dashed rgba(var(--sky-rgb), 0.5);
+  border-radius: var(--r-lg);
   padding: 8px 18px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   background: transparent;
-  color: #38bdf8;
+  color: var(--sky);
 }
 
 .add-page:hover {
-  background: rgba(56, 189, 248, 0.12);
+  background: rgba(var(--sky-rgb), 0.12);
 }
 
 /* 素材挑选面板:AssetPicker 原为编辑器右缘浮层,这里锚在层右缘。 */

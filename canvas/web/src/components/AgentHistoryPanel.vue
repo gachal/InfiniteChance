@@ -134,9 +134,9 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  background: rgba(13, 21, 36, 0.96);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  z-index: 6;
+  background: rgba(var(--surface-panel-rgb), 0.96);
+  border-left: 1px solid var(--line-10);
+  z-index: var(--z-side-panel);
   overflow-y: auto;
 }
 
@@ -158,10 +158,10 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
 }
 
 .head-actions button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
@@ -169,17 +169,17 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
 
 .head-actions .clear {
   color: #fdba74;
-  border-color: rgba(251, 146, 60, 0.4);
+  border-color: rgba(var(--orange-rgb), 0.4);
 }
 
 .head-actions button:hover {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
 .panel-empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -207,17 +207,17 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
   max-width: 100%;
   white-space: pre-wrap;
   word-break: break-word;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-lg);
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.6;
 }
 
 .turn[data-role='user'] .bubble {
-  background: rgba(122, 162, 247, 0.14);
-  border-color: rgba(122, 162, 247, 0.35);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-color: rgba(var(--accent-rgb), 0.35);
 }
 
 .media-row {
@@ -230,9 +230,9 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
   width: 84px;
   height: 84px;
   object-fit: cover;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
+  border: 1px solid var(--line-10);
   display: block;
 }
 
@@ -242,9 +242,9 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
   justify-content: center;
   width: 84px;
   height: 84px;
-  border-radius: 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  color: #8b91a7;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--line-20);
+  color: var(--text-muted);
   font-size: 12px;
   text-align: center;
 }

@@ -613,10 +613,10 @@ onBeforeUnmount(() => {
   /* 尺寸交给宿主(编辑层的视口窗格),组件随容器自适应。 */
   width: 100%;
   height: 100%;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   background: #1d2434;
-  border: 1px solid rgba(244, 114, 182, 0.25);
+  border: 1px solid rgba(var(--pink-rgb), 0.25);
   touch-action: none;
   cursor: grab;
 }
@@ -635,13 +635,13 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 6px;
   right: 6px;
-  z-index: 2;
+  z-index: var(--z-previz-inner);
   width: 26px;
   height: 26px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
+  border: 1px solid var(--line-18);
+  border-radius: var(--r-md);
   background: rgba(13, 18, 32, 0.85);
   color: #dfe3ee;
   font-size: 14px;
@@ -649,7 +649,7 @@ onBeforeUnmount(() => {
 }
 
 .reset-view:hover {
-  border-color: rgba(122, 162, 247, 0.85);
+  border-color: rgba(var(--accent-rgb), 0.85);
   color: #fff;
 }
 </style>

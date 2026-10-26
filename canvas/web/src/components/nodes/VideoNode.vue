@@ -243,16 +243,16 @@ function submitAnalyze(): void {
 <style scoped>
 .node {
   width: 220px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(250, 204, 21, 0.4);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--amber-rgb), 0.4);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
 }
 
 .node header {
   font-weight: 600;
-  color: #facc15;
+  color: var(--amber);
   margin-bottom: 8px;
 }
 
@@ -261,17 +261,17 @@ function submitAnalyze(): void {
 }
 
 .node[data-task='running'] {
-  border-color: rgba(250, 204, 21, 0.85);
+  border-color: rgba(var(--amber-rgb), 0.85);
 }
 
 .node[data-task='failed'] {
-  border-color: rgba(255, 143, 143, 0.6);
+  border-color: rgba(var(--danger-rgb), 0.6);
 }
 
 video {
   display: block;
   width: 100%;
-  border-radius: 8px;
+  border-radius: var(--r-md);
 }
 
 /* 33 号票:缩略媒体区(点击开灯箱),徽标居中盖在首帧上。 */
@@ -302,9 +302,9 @@ video {
   gap: 4px;
   justify-items: center;
   padding: 26px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {
@@ -316,12 +316,12 @@ video {
 }
 
 .placeholder.missing {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .working .pill {
-  color: #facc15;
+  color: var(--amber);
 }
 
 .node[data-task='running'] .pill {
@@ -340,13 +340,13 @@ video {
 
 .cancel {
   margin-top: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-md);
   padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .cancel:disabled {
@@ -359,25 +359,25 @@ video {
   gap: 8px;
   justify-items: start;
   padding: 10px;
-  border: 1px solid rgba(255, 143, 143, 0.35);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--danger-rgb), 0.35);
+  border-radius: var(--r-md);
 }
 
 .failed .error {
   margin: 0;
   font-size: 12px;
-  color: #ff8f8f;
+  color: var(--danger);
   word-break: break-all;
 }
 
 .retry {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 6px 14px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--wash-10);
   color: inherit;
 }
 
@@ -392,8 +392,8 @@ video {
   justify-items: center;
   padding: 18px 8px;
   border: 1px dashed rgba(139, 145, 167, 0.45);
-  border-radius: 8px;
-  color: #8b91a7;
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .canceled span {
@@ -418,9 +418,9 @@ video {
 .reverse-row select {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
   font-size: 12px;
@@ -429,13 +429,13 @@ video {
 .reverse-btn {
   flex-shrink: 0;
   background: transparent;
-  border: 1px solid rgba(122, 162, 247, 0.55);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.55);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  color: #7aa2f7;
+  color: var(--accent);
 }
 
 .reverse-btn:disabled {
@@ -448,13 +448,13 @@ video {
 .analyze-btn {
   width: 100%;
   background: transparent;
-  border: 1px solid rgba(165, 180, 252, 0.55);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  color: #a5b4fc;
+  color: var(--indigo-soft);
 }
 
 .analyze-btn:disabled {

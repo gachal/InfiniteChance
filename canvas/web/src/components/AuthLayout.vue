@@ -26,8 +26,8 @@
 .auth-card {
   width: 100%;
   max-width: 380px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
   border-radius: 16px;
   padding: 36px 32px;
 }
@@ -41,7 +41,7 @@
 
 .tagline {
   margin: 6px 0 24px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
   text-align: center;
 }

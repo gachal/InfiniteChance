@@ -161,9 +161,9 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
 <style scoped>
 .node {
   width: 340px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--sky-rgb), 0.4);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
   cursor: pointer;
@@ -175,32 +175,32 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   background: transparent;
   border: none;
   border-bottom: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   padding: 2px 4px;
-  color: #38bdf8;
+  color: var(--sky);
   font-size: 14px;
   font-weight: 600;
 }
 
 .board-title::placeholder {
-  color: #38bdf8;
+  color: var(--sky);
   opacity: 0.9;
 }
 
 .board-title:hover {
-  border-bottom-color: rgba(56, 189, 248, 0.35);
+  border-bottom-color: rgba(var(--sky-rgb), 0.35);
 }
 
 .board-title:focus {
   outline: none;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom-color: rgba(56, 189, 248, 0.6);
+  background: var(--wash-05);
+  border-bottom-color: rgba(var(--sky-rgb), 0.6);
   color: inherit;
 }
 
 .summary {
   margin: 6px 0 8px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -217,19 +217,19 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   place-items: center;
   width: 56px;
   height: 40px;
-  border-radius: 6px;
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--line-20);
+  background: var(--wash-04);
   overflow: hidden;
 }
 
 .thumb.filled {
   border-style: solid;
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--line-08);
 }
 
 .thumb.missing {
-  border-color: rgba(255, 143, 143, 0.4);
+  border-color: rgba(var(--danger-rgb), 0.4);
 }
 
 .thumb img {
@@ -241,16 +241,16 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
 
 .thumb-text {
   font-size: 11px;
-  color: #6f7690;
+  color: var(--text-faint);
 }
 
 .thumb-text.bad {
   font-size: 10px;
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 :global(.vue-flow__node.selected) .thumb.filled {
-  outline: 2px solid rgba(122, 162, 247, 0.8);
+  outline: 2px solid rgba(var(--accent-rgb), 0.8);
   outline-offset: 1px;
 }
 
@@ -259,9 +259,9 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   gap: 4px;
   justify-items: center;
   padding: 26px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {

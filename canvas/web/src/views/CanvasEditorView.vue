@@ -3404,13 +3404,13 @@ function backToList(): void {
   align-items: center;
   gap: 14px;
   padding: 10px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(13, 21, 36, 0.9);
+  border-bottom: 1px solid var(--line-08);
+  background: rgba(var(--surface-panel-rgb), 0.9);
 }
 
 .topbar button {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 8px 12px;
   font-size: 14px;
   cursor: pointer;
@@ -3424,7 +3424,7 @@ function backToList(): void {
 }
 
 .title:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .rename-form {
@@ -3436,9 +3436,9 @@ function backToList(): void {
 .rename-form input {
   flex: 1;
   max-width: 320px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 8px 10px;
   color: inherit;
   font-size: 14px;
@@ -3446,7 +3446,7 @@ function backToList(): void {
 
 .save-state {
   margin-left: auto;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -3458,12 +3458,12 @@ function backToList(): void {
 
 .save-state[data-state='error'],
 .save-state[data-state='conflict'] {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 /* 在途任务 = 活动态,用交互蓝,不再与图片节点的绿色共用。 */
 .task-state {
-  color: #7aa2f7;
+  color: var(--accent);
   font-size: 13px;
   white-space: nowrap;
 }
@@ -3490,13 +3490,13 @@ function backToList(): void {
 }
 
 .generate-error button {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-md);
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -3524,7 +3524,7 @@ function backToList(): void {
 .conflict-actions button,
 .load-error button {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
@@ -3555,8 +3555,8 @@ function backToList(): void {
   inset: 0;
   display: grid;
   place-items: center;
-  color: #8b91a7;
-  z-index: 5;
+  color: var(--text-muted);
+  z-index: var(--z-canvas-loading);
 }
 
 .flow {
@@ -3571,17 +3571,17 @@ function backToList(): void {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  z-index: 4;
+  z-index: var(--z-connect-preview);
 }
 
 .connect-preview line {
-  stroke: #7aa2f7;
+  stroke: var(--accent);
   stroke-width: 2;
   stroke-dasharray: 6 4;
 }
 
 .connect-preview circle {
-  fill: rgba(122, 162, 247, 0.9);
+  fill: rgba(var(--accent-rgb), 0.9);
 }
 
 /* 轻提示(38 号票评审):画布底部居中,自动消退,不抢焦点。z 取 120 高于
@@ -3592,16 +3592,16 @@ function backToList(): void {
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  z-index: 120;
+  z-index: var(--z-toast);
   max-width: min(560px, calc(100% - 32px));
   padding: 8px 14px;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: rgba(20, 28, 48, 0.95);
-  border: 1px solid rgba(122, 162, 247, 0.4);
-  color: #cdd7ee;
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  color: var(--text-bright);
   font-size: 13px;
   line-height: 1.5;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-dialog);
   pointer-events: none;
 }
 
@@ -3619,12 +3619,12 @@ function backToList(): void {
 
 .ghost {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #aab1c5;
+  border: 1px solid var(--line-16);
+  color: var(--text-secondary);
 }
 
 .ghost:hover {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
@@ -3634,12 +3634,12 @@ function backToList(): void {
   justify-content: space-between;
   gap: 16px;
   padding: 10px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(13, 21, 36, 0.9);
+  border-top: 1px solid var(--line-08);
+  background: rgba(var(--surface-panel-rgb), 0.9);
 }
 
 .hint {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -3650,7 +3650,7 @@ function backToList(): void {
 
 .add-group button {
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   padding: 9px 16px;
   font-size: 14px;
   font-weight: 600;
@@ -3660,7 +3660,7 @@ function backToList(): void {
 /* 53 号票:创作/规划两组的组名与组间分隔线(纯展示分组)。 */
 .group-label {
   align-self: center;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -3670,58 +3670,58 @@ function backToList(): void {
   align-self: stretch;
   margin: 4px 2px;
   width: 1px;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--wash-14);
 }
 
 .add-agent {
-  background: rgba(122, 162, 247, 0.2);
-  color: #7aa2f7;
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent);
 }
 
 .add-image {
-  background: rgba(74, 222, 128, 0.16);
-  color: #4ade80;
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
 }
 
 .add-video {
-  background: rgba(250, 204, 21, 0.14);
-  color: #facc15;
+  background: rgba(var(--amber-rgb), 0.14);
+  color: var(--amber);
 }
 
 .add-previz {
-  background: rgba(244, 114, 182, 0.16);
-  color: #f472b6;
+  background: rgba(var(--pink-rgb), 0.16);
+  color: var(--pink);
 }
 
 /* 52 号票:角色引用节点入添加组,青色与节点描边/小地图同源。 */
 .add-character {
-  background: rgba(45, 212, 191, 0.16);
-  color: #2dd4bf;
+  background: rgba(var(--teal-rgb), 0.16);
+  color: var(--teal);
 }
 
 /* 57 号票:音色入「创作」组,水绿与节点描边/小地图同源(audio 不进组,
    只作台词合成产物与面板插入出现)。 */
 .add-voice {
-  background: rgba(94, 234, 212, 0.14);
-  color: #5eead4;
+  background: rgba(var(--teal-light-rgb), 0.14);
+  color: var(--teal-light);
 }
 
 /* 53 号票:絵コンテ入「规划」组,橙色与节点描边/小地图同源。 */
 .add-storyboard {
-  background: rgba(251, 146, 60, 0.16);
-  color: #fb923c;
+  background: rgba(var(--orange-rgb), 0.16);
+  color: var(--orange);
 }
 
 /* 54 号票:ネーム入「规划」组,天蓝与节点描边/小地图同源。 */
 .add-name {
-  background: rgba(56, 189, 248, 0.16);
-  color: #38bdf8;
+  background: rgba(var(--sky-rgb), 0.16);
+  color: var(--sky);
 }
 
 /* 55 号票:关卡入「规划」组,红色与节点描边/小地图同源。 */
 .add-level {
-  background: rgba(248, 113, 113, 0.16);
-  color: #f87171;
+  background: rgba(var(--red-signal-rgb), 0.16);
+  color: var(--red-signal);
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是
@@ -3732,13 +3732,13 @@ function backToList(): void {
 }
 
 .add-records {
-  background: rgba(251, 146, 60, 0.14);
+  background: rgba(var(--orange-rgb), 0.14);
   color: #fdba74;
 }
 
 .add-upload {
-  background: rgba(94, 234, 212, 0.14);
-  color: #5eead4;
+  background: rgba(var(--teal-light-rgb), 0.14);
+  color: var(--teal-light);
 }
 
 .add-upload:disabled {

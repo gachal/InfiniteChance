@@ -11,20 +11,20 @@ label {
 
 label span {
   font-size: 13px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-lg);
   padding: 10px 12px;
   color: inherit;
   font-size: 15px;
 }
 
 input:focus {
-  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
   border-color: transparent;
 }
@@ -33,7 +33,7 @@ button {
   margin-top: 4px;
   background: #3b5bdb;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   padding: 11px 0;
   color: #fff;
   font-size: 15px;
@@ -52,6 +52,6 @@ button:disabled {
 
 .error {
   margin: 0;
-  color: #ff8f8f;
+  color: var(--danger);
   font-size: 13px;
 }

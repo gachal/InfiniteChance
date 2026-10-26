@@ -320,11 +320,11 @@ onBeforeUnmount(() => {
 .layer {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--z-editor-layer);
   display: flex;
   flex-direction: column;
   background: #10162a;
-  color: #cdd7ee;
+  color: var(--text-bright);
   font-size: 13px;
 }
 
@@ -339,37 +339,37 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(20, 26, 43, 0.95);
+  border-bottom: 1px solid var(--line-08);
+  background: rgba(var(--surface-card-rgb), 0.95);
 }
 
 .bar .title {
   font-weight: 600;
-  color: #fb923c;
+  color: var(--orange);
 }
 
 .bar .meta {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .bar button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.05);
-  color: #cdd7ee;
+  background: var(--wash-05);
+  color: var(--text-bright);
   white-space: nowrap;
 }
 
 .bar button:hover {
-  border-color: rgba(251, 146, 60, 0.6);
+  border-color: rgba(var(--orange-rgb), 0.6);
 }
 
 .bar .back:hover {
-  border-color: rgba(122, 162, 247, 0.7);
+  border-color: rgba(var(--accent-rgb), 0.7);
 }
 
 /* ---- 主体:垂直 cut 列表 ---- */
@@ -397,17 +397,17 @@ onBeforeUnmount(() => {
 
 .empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .cut {
   display: grid;
   grid-template-columns: 36px 1fr;
   gap: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-xl);
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .cut-no {
@@ -416,7 +416,7 @@ onBeforeUnmount(() => {
   padding-top: 4px;
   font-size: 16px;
   font-weight: 700;
-  color: #fb923c;
+  color: var(--orange);
 }
 
 .cut-main {
@@ -437,14 +437,14 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 4px;
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .field input,
 .field textarea {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px 10px;
   color: inherit;
   font-size: 13px;
@@ -460,7 +460,7 @@ onBeforeUnmount(() => {
 .field input:focus,
 .field textarea:focus {
   outline: none;
-  border-color: rgba(251, 146, 60, 0.6);
+  border-color: rgba(var(--orange-rgb), 0.6);
 }
 
 .field-row {
@@ -476,23 +476,23 @@ onBeforeUnmount(() => {
 }
 
 .chip {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-pill);
   padding: 3px 12px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .chip:hover {
-  border-color: rgba(251, 146, 60, 0.6);
+  border-color: rgba(var(--orange-rgb), 0.6);
 }
 
 .chip.on {
-  background: rgba(251, 146, 60, 0.18);
-  border-color: rgba(251, 146, 60, 0.65);
-  color: #fb923c;
+  background: rgba(var(--orange-rgb), 0.18);
+  border-color: rgba(var(--orange-rgb), 0.65);
+  color: var(--orange);
   font-weight: 600;
 }
 
@@ -504,18 +504,18 @@ onBeforeUnmount(() => {
 }
 
 .cut-actions button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .cut-actions button:hover:not(:disabled) {
-  border-color: rgba(251, 146, 60, 0.6);
+  border-color: rgba(var(--orange-rgb), 0.6);
   color: inherit;
 }
 
@@ -525,24 +525,24 @@ onBeforeUnmount(() => {
 }
 
 .cut-actions .danger {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .add-cut {
   align-self: flex-start;
-  border: 1px dashed rgba(251, 146, 60, 0.5);
-  border-radius: 10px;
+  border: 1px dashed rgba(var(--orange-rgb), 0.5);
+  border-radius: var(--r-lg);
   padding: 8px 18px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   background: transparent;
-  color: #fb923c;
+  color: var(--orange);
 }
 
 .add-cut:hover {
-  background: rgba(251, 146, 60, 0.12);
+  background: rgba(var(--orange-rgb), 0.12);
 }
 
 /* 素材挑选面板:AssetPicker 原为编辑器右缘浮层,这里锚在层右缘。 */

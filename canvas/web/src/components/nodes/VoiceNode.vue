@@ -514,9 +514,9 @@ const previewBroken = ref(false)
 <style scoped>
 .node {
   width: 340px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(94, 234, 212, 0.4);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--teal-light-rgb), 0.4);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
   display: grid;
@@ -526,32 +526,32 @@ const previewBroken = ref(false)
 header {
   font-size: 12px;
   font-weight: 600;
-  color: #5eead4;
+  color: var(--teal-light);
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .badge {
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 500;
 }
 
 .badge.deploying {
-  background: rgba(250, 204, 21, 0.16);
-  color: #facc15;
+  background: rgba(var(--amber-rgb), 0.16);
+  color: var(--amber);
 }
 
 .badge.ok {
-  background: rgba(74, 222, 128, 0.16);
-  color: #4ade80;
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
 }
 
 .badge.rejected {
-  background: rgba(248, 113, 113, 0.16);
-  color: #f87171;
+  background: rgba(var(--red-signal-rgb), 0.16);
+  color: var(--red-signal);
 }
 
 .ledger-name {
@@ -561,7 +561,7 @@ header {
 }
 
 .meta {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -572,7 +572,7 @@ audio {
 }
 
 .preview-fallback {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -583,27 +583,27 @@ audio {
 
 .mode-row button {
   flex: 1;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #8b91a7;
-  border-radius: 8px;
+  color: var(--text-muted);
+  border-radius: var(--r-md);
   padding: 5px 0;
   cursor: pointer;
   font-size: 12px;
 }
 
 .mode-row button.on {
-  border-color: rgba(94, 234, 212, 0.6);
-  background: rgba(94, 234, 212, 0.12);
-  color: #5eead4;
+  border-color: rgba(var(--teal-light-rgb), 0.6);
+  background: rgba(var(--teal-light-rgb), 0.12);
+  color: var(--teal-light);
 }
 
 .field {
   width: 100%;
   box-sizing: border-box;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
   font-size: 13px;
@@ -613,11 +613,11 @@ audio {
 
 .field:focus {
   outline: none;
-  border-color: rgba(94, 234, 212, 0.6);
+  border-color: rgba(var(--teal-light-rgb), 0.6);
 }
 
 .field::placeholder {
-  color: #6f7690;
+  color: var(--text-faint);
 }
 
 select.field option {
@@ -627,7 +627,7 @@ select.field option {
 .rune-count {
   margin-top: -4px;
   text-align: right;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 11px;
 }
 
@@ -646,9 +646,9 @@ select.field option {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 999px;
-  background: rgba(94, 234, 212, 0.12);
-  color: #5eead4;
+  border-radius: var(--r-pill);
+  background: rgba(var(--teal-light-rgb), 0.12);
+  color: var(--teal-light);
   padding: 3px 10px;
   font-size: 12px;
   max-width: 100%;
@@ -668,14 +668,14 @@ select.field option {
 
 .hint {
   margin: -2px 0 0;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 11px;
 }
 
 .action {
   border: none;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--r-md);
+  background: var(--wash-08);
   color: #b6c2d8;
   padding: 6px 12px;
   cursor: pointer;
@@ -688,13 +688,13 @@ select.field option {
 }
 
 .action.primary {
-  background: rgba(94, 234, 212, 0.18);
-  color: #5eead4;
+  background: rgba(var(--teal-light-rgb), 0.18);
+  color: var(--teal-light);
 }
 
 .action.danger {
-  background: rgba(248, 113, 113, 0.12);
-  color: #f87171;
+  background: rgba(var(--red-signal-rgb), 0.12);
+  color: var(--red-signal);
 }
 
 .form-foot {
@@ -705,13 +705,13 @@ select.field option {
 }
 
 .estimate {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .form-error {
   margin: 0;
-  color: #ff8f8f;
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -724,9 +724,9 @@ select.field option {
 .speech-form input {
   width: 100%;
   box-sizing: border-box;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
   font-size: 12px;
@@ -737,7 +737,7 @@ select.field option {
 .speech-form textarea:focus,
 .speech-form input:focus {
   outline: none;
-  border-color: rgba(94, 234, 212, 0.6);
+  border-color: rgba(var(--teal-light-rgb), 0.6);
 }
 
 .card-foot {
@@ -750,9 +750,9 @@ select.field option {
   gap: 4px;
   justify-items: center;
   padding: 20px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder small {
@@ -760,9 +760,9 @@ select.field option {
 }
 
 .pill {
-  border-radius: 999px;
-  background: rgba(250, 204, 21, 0.14);
-  color: #facc15;
+  border-radius: var(--r-pill);
+  background: rgba(var(--amber-rgb), 0.14);
+  color: var(--amber);
   padding: 3px 10px;
   font-size: 12px;
 }
@@ -774,7 +774,7 @@ select.field option {
 
 .error {
   margin: 0;
-  color: #ff8f8f;
+  color: var(--danger);
   font-size: 12px;
   word-break: break-word;
   display: -webkit-box;

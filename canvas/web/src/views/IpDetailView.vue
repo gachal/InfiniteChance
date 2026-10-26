@@ -1000,7 +1000,7 @@ function back(): void {
 .danger,
 .primary {
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
@@ -1008,12 +1008,12 @@ function back(): void {
 
 .ghost {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #aab1c5;
+  border: 1px solid var(--line-16);
+  color: var(--text-secondary);
 }
 
 .ghost:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
@@ -1038,8 +1038,8 @@ function back(): void {
   display: flex;
   gap: 18px;
   align-items: flex-start;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
   border-radius: 14px;
   padding: 16px;
 }
@@ -1048,10 +1048,10 @@ function back(): void {
   display: block;
   width: 168px;
   aspect-ratio: 16 / 9;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .cover-img {
@@ -1068,7 +1068,7 @@ function back(): void {
   font-size: 40px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.82);
-  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+  background: linear-gradient(135deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
 }
 
 .head-info {
@@ -1083,13 +1083,13 @@ function back(): void {
 
 .description {
   margin: 6px 0 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
 .meta {
   margin: 8px 0 0;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -1112,7 +1112,7 @@ function back(): void {
 }
 
 .canvas-section .count {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 13px;
   font-weight: 400;
 }
@@ -1130,9 +1130,9 @@ function back(): void {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-xl);
   padding: 8px 12px;
 }
 
@@ -1145,12 +1145,12 @@ function back(): void {
   border: none;
   color: inherit;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   cursor: pointer;
 }
 
 .open:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .open .name {
@@ -1159,7 +1159,7 @@ function back(): void {
 }
 
 .open .meta {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -1175,16 +1175,16 @@ function back(): void {
 }
 
 .move-select {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  color: #aab1c5;
+  background: var(--wash-05);
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
+  color: var(--text-secondary);
   padding: 5px 8px;
   font-size: 12px;
 }
 
 .move-select.placeholder {
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .rename-form {
@@ -1195,9 +1195,9 @@ function back(): void {
 
 .rename-form input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-lg);
   padding: 8px 12px;
   color: inherit;
   font-size: 15px;
@@ -1205,12 +1205,12 @@ function back(): void {
 
 .feedback {
   margin: 14px 0 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
 .error {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 /* 素材区:面板原是编辑器右缘浮层,这里改为文档流内的固定高度区。 */
@@ -1236,7 +1236,7 @@ function back(): void {
 }
 
 .section-count {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 13px;
 }
 
@@ -1260,25 +1260,25 @@ function back(): void {
   gap: 6px;
   text-align: left;
   width: 100%;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-xl);
   padding: 10px;
   color: inherit;
   cursor: pointer;
 }
 
 .character-card:hover {
-  border-color: rgba(122, 162, 247, 0.5);
+  border-color: rgba(var(--accent-rgb), 0.5);
 }
 
 .character-cover {
   display: block;
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .character-cover img {
@@ -1296,7 +1296,7 @@ function back(): void {
   font-size: 32px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.82);
-  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+  background: linear-gradient(135deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
 }
 
 .character-name {
@@ -1310,21 +1310,21 @@ function back(): void {
 .character-alias {
   font-style: normal;
   font-weight: 400;
-  color: #8b91a7;
+  color: var(--text-muted);
   margin-left: 6px;
   font-size: 12px;
 }
 
 .character-meta {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
 /* 新建角色对话框的文本域与详情抽屉共用 pre-wrap 纯文本口径。 */
 .create-form textarea {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-lg);
   padding: 10px 12px;
   color: inherit;
   font-size: 14px;
@@ -1339,7 +1339,7 @@ function back(): void {
 
 .asset-holder {
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line-10);
   border-radius: 14px;
   overflow: hidden;
   height: 420px;
@@ -1348,7 +1348,7 @@ function back(): void {
 .asset-holder :deep(.asset-panel) {
   position: absolute;
   border-left: none;
-  background: rgba(13, 21, 36, 0.6);
+  background: rgba(var(--surface-panel-rgb), 0.6);
 }
 
 .dialog-mask {
@@ -1357,7 +1357,7 @@ function back(): void {
   background: rgba(4, 8, 18, 0.7);
   display: grid;
   place-items: center;
-  z-index: 20;
+  z-index: var(--z-dialog-mask);
 }
 
 .dialog {
@@ -1365,7 +1365,7 @@ function back(): void {
   overflow: hidden;
   width: min(520px, calc(100vw - 48px));
   background: #101a2e;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-12);
   border-radius: 14px;
   padding: 20px;
 }
@@ -1381,9 +1381,9 @@ function back(): void {
 }
 
 .create-form input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-lg);
   padding: 10px 12px;
   color: inherit;
   font-size: 15px;
@@ -1393,7 +1393,7 @@ function back(): void {
   display: grid;
   gap: 6px;
   font-size: 13px;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 /* 封面字段(IP 列表页编辑对话框同款):预览 + 三入口 + 隐藏 file input。 */
@@ -1406,7 +1406,7 @@ function back(): void {
 
 .cover-label {
   font-size: 13px;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .cover-preview {
@@ -1414,9 +1414,9 @@ function back(): void {
   place-items: center;
   width: 88px;
   height: 50px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   font-size: 18px;
   font-weight: 700;
 }
@@ -1428,7 +1428,7 @@ function back(): void {
 }
 
 .cover-preview .placeholder {
-  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+  background: linear-gradient(135deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
   width: 100%;
   height: 100%;
   display: grid;

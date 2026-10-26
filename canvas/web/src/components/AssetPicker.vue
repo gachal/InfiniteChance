@@ -480,9 +480,9 @@ onMounted(refresh)
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  background: rgba(13, 21, 36, 0.96);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  z-index: 6;
+  background: rgba(var(--surface-panel-rgb), 0.96);
+  border-left: 1px solid var(--line-10);
+  z-index: var(--z-side-panel);
   overflow-y: auto;
 }
 
@@ -499,23 +499,23 @@ onMounted(refresh)
 }
 
 .head-actions button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .head-actions button:hover {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
 .panel-hint {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -528,10 +528,10 @@ onMounted(refresh)
 .scope-filter button,
 .kind-filter button,
 .view-switch button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
@@ -550,7 +550,7 @@ onMounted(refresh)
   display: grid;
   gap: 8px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--line-08);
 }
 
 .character-name {
@@ -559,7 +559,7 @@ onMounted(refresh)
 }
 
 .character-alias {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 400;
   margin-left: 6px;
@@ -567,18 +567,18 @@ onMounted(refresh)
 
 .variant-group .variant-name {
   margin: 0 0 6px;
-  color: #aab1c5;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .variant-group .variant-note {
-  color: #6f7690;
+  color: var(--text-faint);
   margin-left: 6px;
 }
 
 .variant-empty {
   margin: 0;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -586,10 +586,10 @@ onMounted(refresh)
   display: grid;
   place-items: center;
   height: 84px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border: 1px dashed var(--line-16);
+  border-radius: var(--r-md);
 }
 
 .kind-tag.view-label {
@@ -599,12 +599,12 @@ onMounted(refresh)
 .panel-error,
 .panel-empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .panel-error {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .asset-list {
@@ -621,27 +621,27 @@ onMounted(refresh)
   display: grid;
   gap: 4px;
   padding: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-lg);
   cursor: pointer;
 }
 
 .asset-card:hover {
-  border-color: rgba(122, 162, 247, 0.5);
+  border-color: rgba(var(--accent-rgb), 0.5);
 }
 
 .asset-card.selected {
-  border-color: rgba(122, 162, 247, 0.8);
-  background: rgba(122, 162, 247, 0.12);
+  border-color: rgba(var(--accent-rgb), 0.8);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .thumb {
   width: 100%;
   height: 84px;
   object-fit: cover;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
   display: block;
 }
 
@@ -660,12 +660,12 @@ onMounted(refresh)
 
 .kind-tag {
   font-size: 10px;
-  color: #9fb4f9;
+  color: var(--accent-soft);
 }
 
 .meta .prompt {
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -680,18 +680,18 @@ onMounted(refresh)
   height: 22px;
   display: grid;
   place-items: center;
-  border-radius: 999px;
-  background: #7aa2f7;
-  color: #10152a;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 700;
 }
 
 .more {
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--line-16);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 7px;
   font-size: 12px;
   cursor: pointer;

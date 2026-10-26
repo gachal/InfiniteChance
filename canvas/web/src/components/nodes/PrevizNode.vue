@@ -129,9 +129,9 @@ watch(
 <style scoped>
 .node {
   width: 340px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(244, 114, 182, 0.4);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--pink-rgb), 0.4);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
   cursor: pointer;
@@ -139,12 +139,12 @@ watch(
 
 .node header {
   font-weight: 600;
-  color: #f472b6;
+  color: var(--pink);
   margin-bottom: 8px;
 }
 
 :global(.vue-flow__node.selected) .media-frame {
-  outline: 2px solid rgba(122, 162, 247, 0.8);
+  outline: 2px solid rgba(var(--accent-rgb), 0.8);
   outline-offset: 2px;
 }
 
@@ -156,7 +156,7 @@ watch(
 .media-frame img {
   display: block;
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
 
 .media-frame .download {
@@ -168,7 +168,7 @@ watch(
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: rgba(13, 18, 32, 0.85);
   color: #dfe3ee;
   font-size: 14px;
@@ -193,9 +193,9 @@ watch(
   gap: 4px;
   justify-items: center;
   padding: 34px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {
@@ -207,21 +207,21 @@ watch(
 }
 
 .placeholder.missing {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .drop {
   width: 100%;
   margin-top: 8px;
-  border: 1px solid rgba(122, 162, 247, 0.55);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.55);
+  border-radius: var(--r-md);
   padding: 7px 0;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  background: rgba(122, 162, 247, 0.12);
-  color: #7aa2f7;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
 }
 
 .drop:disabled {

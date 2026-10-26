@@ -162,22 +162,22 @@ async function copyText(): Promise<void> {
 <style scoped>
 .node {
   width: 260px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(165, 180, 252, 0.45);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--indigo-soft-rgb), 0.45);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
 }
 
 .node header {
   font-weight: 600;
-  color: #a5b4fc;
+  color: var(--indigo-soft);
   margin-bottom: 8px;
 }
 
 .node[data-state='working'] {
   border-style: dashed;
-  border-color: rgba(165, 180, 252, 0.85);
+  border-color: rgba(var(--indigo-soft-rgb), 0.85);
 }
 
 /* 报告只读展示:pre-wrap 保留模型输出的 markdown 换行与缩进。 */
@@ -187,9 +187,9 @@ async function copyText(): Promise<void> {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.55;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-md);
   padding: 8px;
 }
 
@@ -202,7 +202,7 @@ async function copyText(): Promise<void> {
 }
 
 .report-meta small {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -211,17 +211,17 @@ async function copyText(): Promise<void> {
 
 .copy {
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .copy:hover {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
@@ -230,9 +230,9 @@ async function copyText(): Promise<void> {
   gap: 4px;
   justify-items: center;
   padding: 18px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {
@@ -244,7 +244,7 @@ async function copyText(): Promise<void> {
 }
 
 .placeholder .pill {
-  color: #a5b4fc;
+  color: var(--indigo-soft);
   animation: pulse 1.4s ease-in-out infinite;
 }
 
@@ -268,9 +268,9 @@ async function copyText(): Promise<void> {
 .redo-row select {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
   font-size: 12px;
@@ -279,13 +279,13 @@ async function copyText(): Promise<void> {
 .redo {
   flex-shrink: 0;
   background: transparent;
-  border: 1px solid rgba(165, 180, 252, 0.55);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  color: #a5b4fc;
+  color: var(--indigo-soft);
 }
 
 .redo:disabled {
@@ -294,6 +294,6 @@ async function copyText(): Promise<void> {
 }
 
 .no-models {
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 </style>

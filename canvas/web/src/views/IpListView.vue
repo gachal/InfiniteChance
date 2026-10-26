@@ -478,7 +478,7 @@ async function logout(): Promise<void> {
 
 .subtitle {
   margin: 6px 0 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
@@ -492,7 +492,7 @@ async function logout(): Promise<void> {
 .ghost,
 .danger {
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   padding: 10px 16px;
   font-size: 14px;
   cursor: pointer;
@@ -515,12 +515,12 @@ async function logout(): Promise<void> {
 
 .ghost {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #aab1c5;
+  border: 1px solid var(--line-16);
+  color: var(--text-secondary);
 }
 
 .ghost:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
@@ -532,12 +532,12 @@ async function logout(): Promise<void> {
 
 .feedback {
   margin: 16px 0 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
 .error {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .ip-grid {
@@ -552,9 +552,9 @@ async function logout(): Promise<void> {
 .ip-card {
   display: grid;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-xl);
   padding: 12px;
 }
 
@@ -566,20 +566,20 @@ async function logout(): Promise<void> {
   border: none;
   color: inherit;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   cursor: pointer;
 }
 
 .card-body:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .cover {
   display: block;
   aspect-ratio: 16 / 9;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .cover-img {
@@ -596,7 +596,7 @@ async function logout(): Promise<void> {
   font-size: 42px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.82);
-  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+  background: linear-gradient(135deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
 }
 
 .name {
@@ -605,7 +605,7 @@ async function logout(): Promise<void> {
 }
 
 .description {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
   overflow: hidden;
   display: -webkit-box;
@@ -614,7 +614,7 @@ async function logout(): Promise<void> {
 }
 
 .meta {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -635,14 +635,14 @@ async function logout(): Promise<void> {
   background: rgba(4, 8, 18, 0.7);
   display: grid;
   place-items: center;
-  z-index: 20;
+  z-index: var(--z-dialog-mask);
 }
 
 .dialog {
   position: relative;
   width: min(440px, calc(100vw - 48px));
   background: #101a2e;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-12);
   border-radius: 14px;
   overflow: hidden;
 }
@@ -665,20 +665,20 @@ async function logout(): Promise<void> {
   display: grid;
   gap: 6px;
   font-size: 13px;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .ip-form input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-lg);
   padding: 9px 12px;
   color: inherit;
   font-size: 15px;
 }
 
 .ip-form input:focus {
-  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
   border-color: transparent;
 }
@@ -692,7 +692,7 @@ async function logout(): Promise<void> {
 
 .cover-label {
   font-size: 13px;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .cover-preview {
@@ -700,9 +700,9 @@ async function logout(): Promise<void> {
   place-items: center;
   width: 88px;
   height: 50px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   font-size: 18px;
   font-weight: 700;
 }
@@ -714,7 +714,7 @@ async function logout(): Promise<void> {
 }
 
 .cover-preview .placeholder {
-  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+  background: linear-gradient(135deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
   width: 100%;
   height: 100%;
   display: grid;
@@ -723,7 +723,7 @@ async function logout(): Promise<void> {
 
 .cover-preview .pending {
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--text-muted);
   padding: 4px;
   text-align: center;
   overflow: hidden;

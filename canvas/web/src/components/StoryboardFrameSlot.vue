@@ -134,8 +134,8 @@ function onFileChange(e: Event): void {
   width: 100%;
   max-height: 150px;
   object-fit: contain;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
 }
 
 .frame-box {
@@ -144,9 +144,9 @@ function onFileChange(e: Event): void {
   place-items: center;
   min-height: 84px;
   padding: 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
   text-align: center;
 }
 
@@ -160,8 +160,8 @@ function onFileChange(e: Event): void {
 }
 
 .frame-box.missing {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .frame-actions {
@@ -172,18 +172,18 @@ function onFileChange(e: Event): void {
 .frame-actions button {
   flex: 1;
   min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 4px 0;
   font-size: 11px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.05);
-  color: #cdd7ee;
+  background: var(--wash-05);
+  color: var(--text-bright);
   white-space: nowrap;
 }
 
 .frame-actions button:hover:not(:disabled) {
-  border-color: rgba(251, 146, 60, 0.6);
+  border-color: rgba(var(--orange-rgb), 0.6);
 }
 
 .frame-actions button:disabled {

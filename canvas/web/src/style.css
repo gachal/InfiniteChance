@@ -10,6 +10,131 @@
     system-ui,
     -apple-system,
     sans-serif;
+
+  /* ==== 设计 Token(58 号票阶段一地基)====
+     值为基线忠实提取:同名 token 是对应色值/档位的唯一事实源;
+     档位收敛(17 档白系 alpha → 三档描边)与间距 token 留待阶段二改版。
+     rgb 三元组 token 供 rgba(var(--x-rgb), α) 派生透明度用。 */
+
+  /* 深夜三层底(只作页面底,不作面板) */
+  --bg-deep: #090c14;
+  --bg-deep-rgb: 9, 12, 20;
+  --bg-navy: #0d1524;
+  --bg-navy-rgb: 13, 21, 36;
+  --bg-glow: #14284b;
+  --bg-glow-rgb: 20, 40, 75;
+
+  /* 玻璃面板 */
+  --surface-card-rgb: 20, 26, 43;
+  --surface-panel-rgb: 13, 21, 36;
+
+  /* 文字字阶 */
+  --text-primary: #e8eaf2;
+  --text-bright: #cdd7ee;
+  --text-secondary: #aab1c5;
+  --text-muted: #8b91a7;
+  --text-faint: #6f7690;
+
+  /* 工作灯蓝:唯一的全局交互色 */
+  --accent: #7aa2f7;
+  --accent-rgb: 122, 162, 247;
+  --accent-ink: #10152a;
+  --accent-soft: #9fb4f9;
+  --estimate-ink: #9fb3d9;
+
+  /* 信号色与节点类型色板(描边身份 0.4–0.45 透明度) */
+  --success: #4ade80;
+  --success-rgb: 74, 222, 128;
+  --danger: #ff8f8f;
+  --danger-rgb: 255, 143, 143;
+  --amber: #facc15;
+  --amber-rgb: 250, 204, 21;
+  --sky: #38bdf8;
+  --sky-rgb: 56, 189, 248;
+  --indigo-soft: #a5b4fc;
+  --indigo-soft-rgb: 165, 180, 252;
+  --violet: #a78bfa;
+  --violet-rgb: 167, 139, 250;
+  --pink: #f472b6;
+  --pink-rgb: 244, 114, 182;
+  --teal: #2dd4bf;
+  --teal-rgb: 45, 212, 191;
+  --teal-light: #5eead4;
+  --teal-light-rgb: 94, 234, 212;
+  --orange: #fb923c;
+  --orange-rgb: 251, 146, 60;
+  --red-signal: #f87171;
+  --red-signal-rgb: 248, 113, 113;
+
+  /* 企划渐变三色(只许 IP 身份时刻) */
+  --ip-indigo: #243b8f;
+  --ip-violet: #57348a;
+  --ip-wine: #8a2f5c;
+
+  /* 白系描边档(border 族,基线逐档忠实提取;阶段二收敛为三档) */
+  --line-02: rgba(255, 255, 255, 0.02);
+  --line-03: rgba(255, 255, 255, 0.03);
+  --line-04: rgba(255, 255, 255, 0.04);
+  --line-05: rgba(255, 255, 255, 0.05);
+  --line-06: rgba(255, 255, 255, 0.06);
+  --line-07: rgba(255, 255, 255, 0.07);
+  --line-08: rgba(255, 255, 255, 0.08);
+  --line-10: rgba(255, 255, 255, 0.1);
+  --line-12: rgba(255, 255, 255, 0.12);
+  --line-14: rgba(255, 255, 255, 0.14);
+  --line-16: rgba(255, 255, 255, 0.16);
+  --line-18: rgba(255, 255, 255, 0.18);
+  --line-20: rgba(255, 255, 255, 0.2);
+  --line-22: rgba(255, 255, 255, 0.22);
+  --line-28: rgba(255, 255, 255, 0.28);
+  --line-30: rgba(255, 255, 255, 0.3);
+  --line-32: rgba(255, 255, 255, 0.32);
+
+  /* 白系底纹档(background 族,同值不同语义:面不是线) */
+  --wash-02: rgba(255, 255, 255, 0.02);
+  --wash-03: rgba(255, 255, 255, 0.03);
+  --wash-04: rgba(255, 255, 255, 0.04);
+  --wash-05: rgba(255, 255, 255, 0.05);
+  --wash-06: rgba(255, 255, 255, 0.06);
+  --wash-07: rgba(255, 255, 255, 0.07);
+  --wash-08: rgba(255, 255, 255, 0.08);
+  --wash-10: rgba(255, 255, 255, 0.1);
+  --wash-12: rgba(255, 255, 255, 0.12);
+  --wash-14: rgba(255, 255, 255, 0.14);
+  --wash-16: rgba(255, 255, 255, 0.16);
+  --wash-18: rgba(255, 255, 255, 0.18);
+  --wash-20: rgba(255, 255, 255, 0.2);
+  --wash-22: rgba(255, 255, 255, 0.22);
+  --wash-28: rgba(255, 255, 255, 0.28);
+  --wash-30: rgba(255, 255, 255, 0.3);
+  --wash-32: rgba(255, 255, 255, 0.32);
+
+  /* 圆角档(8px 为骨、999 胶囊为饰) */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
+  --r-pill: 999px;
+
+  /* 阴影词汇:阴影 = 模态信号,静止内容永不带影 */
+  --shadow-control: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-slide: -12px 0 32px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-dialog-strong: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-overlay: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-overlay-strong: 0 12px 48px rgba(0, 0, 0, 0.55);
+
+  /* z-index 档位表(十档,语义唯一;新浮层先来这里领档,不许自造数值) */
+  --z-previz-inner: 2;
+  --z-connect-preview: 4;
+  --z-canvas-loading: 5;
+  --z-side-panel: 6;
+  --z-canvas-float: 10;
+  --z-dialog-mask: 20;
+  --z-drawer: 30;
+  --z-editor-layer: 90;
+  --z-lightbox: 100;
+  --z-toast: 120;
 }
 
 * {
@@ -19,8 +144,8 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(1200px 800px at 80% -10%, #14284b 0%, #0d1524 55%, #090c14 100%);
-  color: #e8eaf2;
+  background: radial-gradient(1200px 800px at 80% -10%, var(--bg-glow) 0%, var(--bg-navy) 55%, var(--bg-deep) 100%);
+  color: var(--text-primary);
 }
 
 /* ---- 两击连线(30 号票)----
@@ -50,18 +175,18 @@ body {
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  background: rgba(13, 21, 36, 0.92);
-  color: #aab1c5;
+  border: 1px solid var(--line-28);
+  border-radius: var(--r-pill);
+  background: rgba(var(--surface-panel-rgb), 0.92);
+  color: var(--text-secondary);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  z-index: 10;
+  z-index: var(--z-canvas-float);
 }
 
 .port:hover {
-  border-color: rgba(122, 162, 247, 0.85);
+  border-color: rgba(var(--accent-rgb), 0.85);
   color: #fff;
 }
 
@@ -75,13 +200,13 @@ body {
 
 /* 连接态:原点与合法目标描边高亮,非法目标置灰(不可作为连线终点)。 */
 .vue-flow__node .node.connect-origin {
-  border-color: rgba(122, 162, 247, 0.9);
-  box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.45);
+  border-color: rgba(var(--accent-rgb), 0.9);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.45);
 }
 
 .vue-flow__node .node.connect-valid {
-  border-color: rgba(74, 222, 128, 0.9);
-  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.4);
+  border-color: rgba(var(--success-rgb), 0.9);
+  box-shadow: 0 0 0 2px rgba(var(--success-rgb), 0.4);
 }
 
 .vue-flow__node .node.connect-dimmed {
@@ -93,7 +218,7 @@ body {
    全局 focus-visible:焦点指示只在键盘导航时出现,统一用交互蓝,
    不依赖各组件自带的 focus 样式。 */
 :focus-visible {
-  outline: 2px solid #7aa2f7;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -109,16 +234,16 @@ body {
 /* ---- vue-flow 控件与小地图(38 号票评审):深色主题化 ---- */
 
 .vue-flow__controls {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-lg);
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-control);
 }
 
 .vue-flow__controls-button {
-  background: rgba(13, 21, 36, 0.92);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  fill: #aab1c5;
+  background: rgba(var(--surface-panel-rgb), 0.92);
+  border-bottom: 1px solid var(--line-08);
+  fill: var(--text-secondary);
 }
 
 .vue-flow__controls-button:hover {
@@ -130,12 +255,12 @@ body {
 }
 
 .vue-flow__minimap {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  background: rgba(13, 21, 36, 0.92);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-lg);
+  background: rgba(var(--surface-panel-rgb), 0.92);
+  box-shadow: var(--shadow-control);
 }
 
 .vue-flow__minimap-mask {
-  fill: rgba(9, 12, 20, 0.65);
+  fill: rgba(var(--bg-deep-rgb), 0.65);
 }

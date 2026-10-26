@@ -161,7 +161,7 @@ onBeforeUnmount(() => {
 .lightbox {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-lightbox);
   display: grid;
   place-items: center;
   padding: 32px;
@@ -180,9 +180,9 @@ onBeforeUnmount(() => {
   height: auto;
   max-width: calc(100vw - 64px);
   max-height: calc(100vh - 64px);
-  border-radius: 12px;
+  border-radius: var(--r-xl);
   background: #0d1220;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-overlay-strong);
   cursor: default;
 }
 
@@ -200,8 +200,8 @@ onBeforeUnmount(() => {
   height: 36px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-lg);
   background: rgba(13, 18, 32, 0.85);
   color: #dfe3ee;
   font-size: 15px;

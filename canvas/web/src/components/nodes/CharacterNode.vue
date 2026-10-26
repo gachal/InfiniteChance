@@ -312,9 +312,9 @@ function onBindChange(e: Event): void {
 <style scoped>
 .node {
   width: 280px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(45, 212, 191, 0.45);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--teal-rgb), 0.45);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
   display: grid;
@@ -323,14 +323,14 @@ function onBindChange(e: Event): void {
 
 .node header {
   font-weight: 600;
-  color: #2dd4bf;
+  color: var(--teal);
   margin-bottom: 0;
 }
 
 .placeholder {
   display: grid;
   gap: 8px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -339,16 +339,16 @@ function onBindChange(e: Event): void {
 }
 
 .placeholder.unavailable {
-  border: 1px dashed rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
+  border: 1px dashed var(--line-18);
+  border-radius: var(--r-md);
   padding: 10px;
 }
 
 .bind-select {
   width: 100%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
   font-size: 12px;
@@ -357,15 +357,15 @@ function onBindChange(e: Event): void {
 .hint {
   margin: 0;
   font-size: 11px;
-  color: #6f7690;
+  color: var(--text-faint);
 }
 
 .cover {
   position: relative;
   height: 140px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .cover img {
@@ -382,8 +382,8 @@ function onBindChange(e: Event): void {
   place-items: center;
   font-size: 40px;
   font-weight: 700;
-  color: rgba(45, 212, 191, 0.55);
-  background: linear-gradient(135deg, rgba(45, 212, 191, 0.12), rgba(122, 162, 247, 0.1));
+  color: rgba(var(--teal-rgb), 0.55);
+  background: linear-gradient(135deg, rgba(var(--teal-rgb), 0.12), rgba(var(--accent-rgb), 0.1));
 }
 
 .name {
@@ -403,37 +403,37 @@ function onBindChange(e: Event): void {
   align-items: center;
   margin: 6px 0 0;
   padding: 6px 8px;
-  border: 1px dashed rgba(94, 234, 212, 0.35);
-  border-radius: 8px;
+  border: 1px dashed rgba(var(--teal-light-rgb), 0.35);
+  border-radius: var(--r-md);
 }
 
 .voice-badge {
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 8px;
   font-size: 11px;
-  background: rgba(94, 234, 212, 0.12);
-  color: #5eead4;
+  background: rgba(var(--teal-light-rgb), 0.12);
+  color: var(--teal-light);
   justify-self: start;
 }
 
 .voice-badge.ok {
-  background: rgba(74, 222, 128, 0.16);
-  color: #4ade80;
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
 }
 
 .voice-badge.deploying {
-  background: rgba(250, 204, 21, 0.16);
-  color: #facc15;
+  background: rgba(var(--amber-rgb), 0.16);
+  color: var(--amber);
 }
 
 .voice-badge.rejected {
-  background: rgba(248, 113, 113, 0.16);
-  color: #f87171;
+  background: rgba(var(--red-signal-rgb), 0.16);
+  color: var(--red-signal);
 }
 
 .voice-name {
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -448,7 +448,7 @@ function onBindChange(e: Event): void {
 .alias {
   font-size: 12px;
   font-weight: 400;
-  color: #8b91a7;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -461,10 +461,10 @@ function onBindChange(e: Event): void {
 }
 
 .variant-tabs button {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-12);
   background: transparent;
-  color: #8b91a7;
-  border-radius: 999px;
+  color: var(--text-muted);
+  border-radius: var(--r-pill);
   padding: 2px 10px;
   font-size: 11px;
   cursor: pointer;
@@ -475,9 +475,9 @@ function onBindChange(e: Event): void {
 }
 
 .variant-tabs button.on {
-  border-color: rgba(45, 212, 191, 0.7);
-  color: #2dd4bf;
-  background: rgba(45, 212, 191, 0.1);
+  border-color: rgba(var(--teal-rgb), 0.7);
+  color: var(--teal);
+  background: rgba(var(--teal-rgb), 0.1);
 }
 
 .gallery {
@@ -498,8 +498,8 @@ function onBindChange(e: Event): void {
   width: 64px;
   height: 64px;
   object-fit: cover;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
   display: block;
 }
 
@@ -509,9 +509,9 @@ function onBindChange(e: Event): void {
   display: grid;
   place-items: center;
   font-size: 10px;
-  color: #8b91a7;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  color: var(--text-muted);
+  border: 1px dashed var(--line-16);
+  border-radius: var(--r-md);
   text-align: center;
 }
 
@@ -524,10 +524,10 @@ function onBindChange(e: Event): void {
 }
 
 .label-badge {
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--line-20);
   color: #cbd3ea;
   font-size: 10px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 7px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -535,15 +535,15 @@ function onBindChange(e: Event): void {
 }
 
 .label-badge.view {
-  border-color: rgba(45, 212, 191, 0.8);
-  color: #5eead4;
+  border-color: rgba(var(--teal-rgb), 0.8);
+  color: var(--teal-light);
 }
 
 .land {
   flex-shrink: 0;
-  border: 1px solid rgba(45, 212, 191, 0.55);
+  border: 1px solid rgba(var(--teal-rgb), 0.55);
   background: transparent;
-  color: #2dd4bf;
+  color: var(--teal);
   border-radius: 7px;
   padding: 3px 8px;
   font-size: 11px;
@@ -552,11 +552,11 @@ function onBindChange(e: Event): void {
 }
 
 .land:hover {
-  background: rgba(45, 212, 191, 0.12);
+  background: rgba(var(--teal-rgb), 0.12);
 }
 
 .rebind {
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 </style>

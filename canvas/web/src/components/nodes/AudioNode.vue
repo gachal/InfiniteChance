@@ -138,9 +138,9 @@ function onAudioError(): void {
 <style scoped>
 .node {
   width: 300px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(167, 139, 250, 0.45);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--violet-rgb), 0.45);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
 }
@@ -148,7 +148,7 @@ function onAudioError(): void {
 header {
   font-size: 12px;
   font-weight: 600;
-  color: #a78bfa;
+  color: var(--violet);
   margin-bottom: 8px;
 }
 
@@ -160,7 +160,7 @@ audio {
 
 .excerpt {
   margin: 8px 0 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -172,9 +172,9 @@ audio {
   gap: 4px;
   justify-items: center;
   padding: 22px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {
@@ -186,14 +186,14 @@ audio {
 }
 
 .placeholder.missing {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .pill {
-  border-radius: 999px;
-  background: rgba(122, 162, 247, 0.18);
-  color: #7aa2f7;
+  border-radius: var(--r-pill);
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent);
   padding: 3px 10px;
   font-size: 12px;
 }
@@ -205,7 +205,7 @@ audio {
 
 .error {
   margin: 0;
-  color: #ff8f8f;
+  color: var(--danger);
   font-size: 12px;
   word-break: break-word;
   display: -webkit-box;
@@ -217,9 +217,9 @@ audio {
 .retry {
   justify-self: start;
   border: none;
-  border-radius: 8px;
-  background: rgba(122, 162, 247, 0.2);
-  color: #7aa2f7;
+  border-radius: var(--r-md);
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent);
   padding: 6px 12px;
   cursor: pointer;
   font-size: 12px;

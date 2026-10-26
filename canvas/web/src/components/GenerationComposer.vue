@@ -588,15 +588,15 @@ function onFileChange(e: Event): void {
 /* 即梦式深色面板:参考条 + 输入区 + 参数栏,悬浮在画布上。 */
 .composer {
   position: absolute;
-  z-index: 10;
+  z-index: var(--z-canvas-float);
   width: min(560px, calc(100% - 32px));
   display: grid;
   gap: 8px;
   padding: 12px;
   background: rgba(13, 18, 32, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-overlay);
   box-sizing: border-box;
 }
 
@@ -619,8 +619,8 @@ function onFileChange(e: Event): void {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line-18);
   display: block;
   cursor: zoom-in;
 }
@@ -639,8 +639,8 @@ function onFileChange(e: Event): void {
   width: 64px;
   height: 48px;
   object-fit: cover;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line-18);
   display: block;
   cursor: zoom-in;
 }
@@ -650,10 +650,10 @@ function onFileChange(e: Event): void {
   height: 48px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.05);
-  color: #aab1c5;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line-18);
+  background: var(--wash-05);
+  color: var(--text-secondary);
   font-size: 18px;
 }
 
@@ -666,14 +666,14 @@ button.vref-icon {
 }
 
 button.vref-icon:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--wash-12);
 }
 
 .vref-role {
   width: 100%;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 6px;
+  background: var(--wash-07);
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-sm);
   color: inherit;
   font-size: 10px;
   padding: 1px 2px;
@@ -681,7 +681,7 @@ button.vref-icon:hover {
 
 .vref-role.fixed {
   text-align: center;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 10px;
   white-space: nowrap;
   overflow: hidden;
@@ -710,10 +710,10 @@ button.vref-icon:hover {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  border: 1px dashed rgba(255, 255, 255, 0.3);
-  border-radius: 10px;
+  border: 1px dashed var(--line-30);
+  border-radius: var(--r-lg);
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
   font-size: 20px;
   cursor: pointer;
 }
@@ -728,10 +728,10 @@ button.vref-icon:hover {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 10px;
+  border: 1px solid var(--line-30);
+  border-radius: var(--r-lg);
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
   font-size: 14px;
   cursor: pointer;
 }
@@ -756,16 +756,16 @@ button.vref-icon:hover {
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid rgba(250, 204, 21, 0.4);
-  border-radius: 10px;
-  background: rgba(250, 204, 21, 0.08);
+  border: 1px solid rgba(var(--amber-rgb), 0.4);
+  border-radius: var(--r-lg);
+  background: rgba(var(--amber-rgb), 0.08);
   font-size: 12px;
   color: #fde68a;
 }
 
 .catalog-error button {
   border: 1px solid rgba(253, 230, 138, 0.5);
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: transparent;
   color: #fde68a;
   padding: 4px 10px;
@@ -790,7 +790,7 @@ button.vref-icon:hover {
 .estimate {
   margin: 0;
   font-size: 12px;
-  color: #9fb3d9;
+  color: var(--estimate-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -800,9 +800,9 @@ textarea {
   width: 100%;
   resize: vertical;
   min-height: 64px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-lg);
   padding: 8px 10px;
   color: inherit;
   font: inherit;
@@ -811,7 +811,7 @@ textarea {
 }
 
 textarea:focus {
-  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
   border-color: transparent;
 }
@@ -824,9 +824,9 @@ textarea:focus {
 }
 
 .controls select {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
   font-size: 12px;
@@ -844,9 +844,9 @@ textarea:focus {
 /* 时长数字输入比下拉窄,单位(秒)缀在 placeholder 语义里。 */
 .controls input.duration {
   width: 64px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
   font-size: 12px;
@@ -860,14 +860,14 @@ textarea:focus {
   gap: 4px;
   flex-shrink: 0;
   font-size: 12px;
-  color: #aab1c5;
+  color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
 }
 
 .controls label.transparent input {
-  accent-color: #7aa2f7;
+  accent-color: var(--accent);
   margin: 0;
 }
 
@@ -882,8 +882,8 @@ textarea:focus {
   height: 36px;
   border: none;
   border-radius: 50%;
-  background: #7aa2f7;
-  color: #10152a;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;

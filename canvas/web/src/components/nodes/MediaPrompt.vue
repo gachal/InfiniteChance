@@ -80,14 +80,14 @@ async function copyText(): Promise<void> {
   flex-shrink: 0;
   font-weight: 600;
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 /* 模型名小字随行:超长模型名省略,完整名悬浮可见。 */
 .prompt-head small {
   flex: 1;
   min-width: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -96,17 +96,17 @@ async function copyText(): Promise<void> {
 
 .copy {
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border: 1px solid var(--line-16);
+  border-radius: var(--r-md);
   padding: 3px 10px;
   font-size: 12px;
   cursor: pointer;
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .copy:hover {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
@@ -117,9 +117,9 @@ async function copyText(): Promise<void> {
   word-break: break-word;
   line-height: 1.5;
   font-size: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-md);
   padding: 6px 8px;
   cursor: pointer;
   display: -webkit-box;

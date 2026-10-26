@@ -299,9 +299,9 @@ onMounted(refresh)
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  background: rgba(13, 21, 36, 0.96);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  z-index: 6;
+  background: rgba(var(--surface-panel-rgb), 0.96);
+  border-left: 1px solid var(--line-10);
+  z-index: var(--z-side-panel);
   overflow-y: auto;
 }
 
@@ -332,10 +332,10 @@ onMounted(refresh)
 .scope-filter button,
 .kind-filter button,
 .upload {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
@@ -373,13 +373,13 @@ onMounted(refresh)
 
 .panel-error {
   margin: 0;
-  color: #ff8f8f;
+  color: var(--danger);
   font-size: 13px;
 }
 
 .panel-empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -396,9 +396,9 @@ onMounted(refresh)
   grid-template-columns: 72px 1fr;
   gap: 8px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-lg);
 }
 
 .thumb {
@@ -406,8 +406,8 @@ onMounted(refresh)
   width: 72px;
   height: 72px;
   object-fit: cover;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
 }
 
 /* 音频卡片:试听条占缩略位,下方照常给元信息。 */
@@ -431,7 +431,7 @@ onMounted(refresh)
 
 .meta .prompt {
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -452,7 +452,7 @@ onMounted(refresh)
 .actions button,
 .actions a {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
@@ -462,21 +462,21 @@ onMounted(refresh)
 
 .insert {
   background: rgba(76, 110, 245, 0.25);
-  color: #a5b4fc;
+  color: var(--indigo-soft);
   font-weight: 600;
 }
 
 .download {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #aab1c5;
+  border: 1px solid var(--line-16);
+  color: var(--text-secondary);
 }
 
 .more {
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--line-16);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 7px;
   font-size: 12px;
   cursor: pointer;

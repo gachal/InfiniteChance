@@ -342,9 +342,9 @@ function onUploadChange(event: Event): void {
 <style scoped>
 .node {
   width: 340px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(248, 113, 113, 0.4);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--red-signal-rgb), 0.4);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
 }
@@ -355,38 +355,38 @@ function onUploadChange(event: Event): void {
   background: transparent;
   border: none;
   border-bottom: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   padding: 2px 4px;
-  color: #f87171;
+  color: var(--red-signal);
   font-size: 14px;
   font-weight: 600;
 }
 
 .level-name::placeholder {
-  color: #f87171;
+  color: var(--red-signal);
   opacity: 0.9;
 }
 
 .level-name:hover {
-  border-bottom-color: rgba(248, 113, 113, 0.35);
+  border-bottom-color: rgba(var(--red-signal-rgb), 0.35);
 }
 
 .level-name:focus {
   outline: none;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom-color: rgba(248, 113, 113, 0.6);
+  background: var(--wash-05);
+  border-bottom-color: rgba(var(--red-signal-rgb), 0.6);
   color: inherit;
 }
 
 .summary {
   margin: 6px 0 8px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .goal {
   margin: 0 0 8px;
-  color: #cdd7ee;
+  color: var(--text-bright);
   font-size: 12px;
   overflow: hidden;
   display: -webkit-box;
@@ -407,19 +407,19 @@ function onUploadChange(event: Event): void {
   place-items: center;
   width: 56px;
   height: 40px;
-  border-radius: 6px;
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--line-20);
+  background: var(--wash-04);
   overflow: hidden;
 }
 
 .thumb.filled {
   border-style: solid;
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--line-08);
 }
 
 .thumb.missing {
-  border-color: rgba(255, 143, 143, 0.4);
+  border-color: rgba(var(--danger-rgb), 0.4);
 }
 
 .thumb img {
@@ -431,17 +431,17 @@ function onUploadChange(event: Event): void {
 
 .thumb-text {
   font-size: 11px;
-  color: #6f7690;
+  color: var(--text-faint);
 }
 
 .thumb-text.bad {
   font-size: 10px;
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 :global(.vue-flow__node.selected) .thumb.filled,
 :global(.vue-flow__node.selected) .slot {
-  outline: 2px solid rgba(122, 162, 247, 0.8);
+  outline: 2px solid rgba(var(--accent-rgb), 0.8);
   outline-offset: 1px;
 }
 
@@ -450,9 +450,9 @@ function onUploadChange(event: Event): void {
   gap: 4px;
   justify-items: center;
   padding: 18px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {
@@ -465,17 +465,17 @@ function onUploadChange(event: Event): void {
 
 .toggle {
   margin-top: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 3px 12px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .toggle:hover {
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: rgba(var(--red-signal-rgb), 0.5);
   color: inherit;
 }
 
@@ -485,11 +485,11 @@ function onUploadChange(event: Event): void {
   gap: 4px;
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--line-08);
 }
 
 .field-label {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 11px;
   font-weight: 600;
 }
@@ -497,9 +497,9 @@ function onUploadChange(event: Event): void {
 .field-input {
   width: 100%;
   box-sizing: border-box;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-sm);
   padding: 5px 8px;
   color: inherit;
   font-size: 12px;
@@ -507,7 +507,7 @@ function onUploadChange(event: Event): void {
 
 .field-input:focus {
   outline: none;
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: rgba(var(--red-signal-rgb), 0.5);
 }
 
 .field-input.detail {
@@ -534,16 +534,16 @@ function onUploadChange(event: Event): void {
 .beat-no {
   flex: 0 0 18px;
   text-align: center;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 11px;
 }
 
 .beat-text {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-sm);
   padding: 4px 6px;
   color: inherit;
   font-size: 12px;
@@ -551,7 +551,7 @@ function onUploadChange(event: Event): void {
 
 .beat-text:focus {
   outline: none;
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: rgba(var(--red-signal-rgb), 0.5);
 }
 
 .beat-actions {
@@ -560,9 +560,9 @@ function onUploadChange(event: Event): void {
 }
 
 .beat-actions button {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
+  color: var(--text-secondary);
   border-radius: 5px;
   width: 20px;
   height: 20px;
@@ -573,7 +573,7 @@ function onUploadChange(event: Event): void {
 }
 
 .beat-actions button:hover:not(:disabled) {
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: rgba(var(--red-signal-rgb), 0.5);
   color: inherit;
 }
 
@@ -584,17 +584,17 @@ function onUploadChange(event: Event): void {
 
 .add-beat {
   justify-self: start;
-  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border: 1px dashed var(--line-20);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 6px;
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
   padding: 3px 10px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .add-beat:hover {
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: rgba(var(--red-signal-rgb), 0.5);
   color: inherit;
 }
 
@@ -610,14 +610,14 @@ function onUploadChange(event: Event): void {
   place-items: center;
   width: 64px;
   height: 46px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-12);
+  background: var(--wash-04);
   overflow: hidden;
 }
 
 .slot.missing {
-  border-color: rgba(255, 143, 143, 0.4);
+  border-color: rgba(var(--danger-rgb), 0.4);
 }
 
 .slot img {
@@ -635,8 +635,8 @@ function onUploadChange(event: Event): void {
   height: 16px;
   border: none;
   border-radius: 4px;
-  background: rgba(13, 21, 36, 0.85);
-  color: #ff8f8f;
+  background: rgba(var(--surface-panel-rgb), 0.85);
+  color: var(--danger);
   font-size: 11px;
   line-height: 1;
   padding: 0;
@@ -650,7 +650,7 @@ function onUploadChange(event: Event): void {
 
 .slots-empty {
   margin: 0;
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -660,17 +660,17 @@ function onUploadChange(event: Event): void {
 }
 
 .slot-entries .entry {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 6px;
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
   padding: 3px 10px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .slot-entries .entry:hover:not(:disabled) {
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: rgba(var(--red-signal-rgb), 0.5);
   color: inherit;
 }
 

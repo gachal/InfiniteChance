@@ -92,7 +92,7 @@ async function submit(): Promise<void> {
 <style scoped>
 .hint {
   margin: 0 0 16px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 1.6;
 }

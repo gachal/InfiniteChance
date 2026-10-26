@@ -697,25 +697,25 @@ function onDeliver(): void {
 <style scoped>
 .node {
   width: 260px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(122, 162, 247, 0.45);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
 }
 
 .node header {
   font-weight: 600;
-  color: #7aa2f7;
+  color: var(--accent);
   margin-bottom: 8px;
 }
 
 textarea {
   width: 100%;
   resize: vertical;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 8px;
   color: inherit;
   font: inherit;
@@ -723,7 +723,7 @@ textarea {
 }
 
 textarea:focus {
-  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
   border-color: transparent;
 }
@@ -744,9 +744,9 @@ textarea:focus {
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  background: rgba(122, 162, 247, 0.14);
-  border: 1px solid rgba(122, 162, 247, 0.4);
-  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.14);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: var(--r-pill);
   padding: 2px 4px 2px 8px;
   font-size: 11px;
   color: #c4cdf3;
@@ -754,21 +754,21 @@ textarea:focus {
 
 .chip-target {
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 0 6px;
   font-size: 10px;
-  background: rgba(122, 162, 247, 0.2);
-  color: #9fb4f9;
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent-soft);
 }
 
 .chip-target[data-target='image'] {
-  background: rgba(74, 222, 128, 0.16);
-  color: #4ade80;
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
 }
 
 .chip-target[data-target='video'] {
-  background: rgba(250, 204, 21, 0.16);
-  color: #facc15;
+  background: rgba(var(--amber-rgb), 0.16);
+  color: var(--amber);
 }
 
 .chip-name {
@@ -781,7 +781,7 @@ textarea:focus {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
@@ -789,7 +789,7 @@ textarea:focus {
 }
 
 .chip-x:hover {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 /* 52 号票:角色 chip 与技能 chip 同排,徽章换青色系与角色节点同源。 */
@@ -798,8 +798,8 @@ textarea:focus {
 }
 
 .chip-target.char {
-  background: rgba(45, 212, 191, 0.16);
-  color: #5eead4;
+  background: rgba(var(--teal-rgb), 0.16);
+  color: var(--teal-light);
 }
 
 /* 52 号票:角色浮层比技能浮层略高,容纳角色简介。 */
@@ -817,9 +817,9 @@ textarea:focus {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  background: rgba(122, 162, 247, 0.12);
-  border: 1px solid rgba(122, 162, 247, 0.35);
-  border-radius: 8px;
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  border-radius: var(--r-md);
   padding: 2px;
   font-size: 11px;
   color: #c4cdf3;
@@ -827,19 +827,19 @@ textarea:focus {
 
 .media-chip[data-state='uploading'] {
   border-style: dashed;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .media-chip[data-state='failed'] {
   border-color: rgba(224, 49, 49, 0.5);
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .media-chip img {
   width: 30px;
   height: 30px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   display: block;
 }
 
@@ -856,9 +856,9 @@ textarea:focus {
 }
 
 .tool {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-12);
   background: transparent;
-  color: #8b91a7;
+  color: var(--text-muted);
   border-radius: 7px;
   padding: 3px 7px;
   font-size: 11px;
@@ -867,14 +867,14 @@ textarea:focus {
 }
 
 .tool:hover {
-  border-color: rgba(122, 162, 247, 0.5);
+  border-color: rgba(var(--accent-rgb), 0.5);
   color: #c4cdf3;
 }
 
 .tool.on {
-  border-color: rgba(122, 162, 247, 0.7);
-  color: #7aa2f7;
-  background: rgba(122, 162, 247, 0.12);
+  border-color: rgba(var(--accent-rgb), 0.7);
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .tool:disabled {
@@ -898,9 +898,9 @@ textarea:focus {
   min-height: 32px;
   resize: vertical;
   overflow-y: auto;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
   font-size: 12px;
@@ -908,7 +908,7 @@ textarea:focus {
 }
 
 .input-row textarea:focus {
-  outline: 2px solid rgba(122, 162, 247, 0.6);
+  outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
   border-color: transparent;
 }
@@ -921,9 +921,9 @@ textarea:focus {
 .action-row select {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
   font-size: 12px;
@@ -932,7 +932,7 @@ textarea:focus {
 .action-row button {
   flex-shrink: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 600;
@@ -945,22 +945,22 @@ textarea:focus {
 }
 
 .generate {
-  background: #7aa2f7;
-  color: #10152a;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* 投递是次级动作:描边样式区分,主蓝留给生成。 */
 .deliver {
   background: transparent;
-  border: 1px solid rgba(122, 162, 247, 0.55) !important;
-  color: #7aa2f7;
+  border: 1px solid rgba(var(--accent-rgb), 0.55) !important;
+  color: var(--accent);
 }
 
 .rounds,
 .no-models {
   margin: 0;
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 /* 技能浮层:盖在输入行上方,即梦式斜杠命令。 */
@@ -969,12 +969,12 @@ textarea:focus {
   left: 0;
   right: 0;
   bottom: calc(100% + 6px);
-  background: rgba(13, 21, 36, 0.98);
-  border: 1px solid rgba(122, 162, 247, 0.45);
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  background: rgba(var(--surface-panel-rgb), 0.98);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-dialog-strong);
   padding: 6px;
-  z-index: 30;
+  z-index: var(--z-drawer);
 }
 
 .overlay-filter {
@@ -984,18 +984,18 @@ textarea:focus {
 }
 
 .overlay-filter button {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-12);
   background: transparent;
-  color: #8b91a7;
-  border-radius: 999px;
+  color: var(--text-muted);
+  border-radius: var(--r-pill);
   padding: 1px 8px;
   font-size: 11px;
   cursor: pointer;
 }
 
 .overlay-filter button.on {
-  border-color: rgba(122, 162, 247, 0.6);
-  color: #7aa2f7;
+  border-color: rgba(var(--accent-rgb), 0.6);
+  color: var(--accent);
 }
 
 .skill-list {
@@ -1011,18 +1011,18 @@ textarea:focus {
 .skill-list li {
   display: grid;
   gap: 2px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 6px 8px;
   cursor: pointer;
 }
 
 .skill-list li.on {
-  background: rgba(122, 162, 247, 0.16);
+  background: rgba(var(--accent-rgb), 0.16);
 }
 
 .skill-list li.empty {
   cursor: default;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -1044,21 +1044,21 @@ textarea:focus {
 
 .skill-list .badge {
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 0 6px;
   font-size: 10px;
-  background: rgba(122, 162, 247, 0.2);
-  color: #9fb4f9;
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent-soft);
 }
 
 .skill-list .badge[data-target='image'] {
-  background: rgba(74, 222, 128, 0.16);
-  color: #4ade80;
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
 }
 
 .skill-list .badge[data-target='video'] {
-  background: rgba(250, 204, 21, 0.16);
-  color: #facc15;
+  background: rgba(var(--amber-rgb), 0.16);
+  color: var(--amber);
 }
 
 .skill-desc {
@@ -1066,6 +1066,6 @@ textarea:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 </style>

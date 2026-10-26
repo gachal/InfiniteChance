@@ -202,9 +202,9 @@ function statusClass(task: CanvasTask): string {
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  background: rgba(13, 21, 36, 0.96);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  z-index: 6;
+  background: rgba(var(--surface-panel-rgb), 0.96);
+  border-left: 1px solid var(--line-10);
+  z-index: var(--z-side-panel);
   overflow-y: auto;
 }
 
@@ -227,7 +227,7 @@ function statusClass(task: CanvasTask): string {
 
 .panel-empty {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -244,14 +244,14 @@ function statusClass(task: CanvasTask): string {
   grid-template-columns: 72px 1fr;
   gap: 8px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-lg);
   cursor: pointer;
 }
 
 .record-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--line-20);
 }
 
 .thumb {
@@ -259,8 +259,8 @@ function statusClass(task: CanvasTask): string {
   width: 72px;
   height: 72px;
   object-fit: cover;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
 }
 
 /* 失败/取消/排队/生成中的行没有产物可看:kind 徽章占位。 */
@@ -273,8 +273,8 @@ function statusClass(task: CanvasTask): string {
   place-items: center;
   font-size: 14px;
   font-weight: 600;
-  color: #8b91a7;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  background: var(--wash-05);
 }
 
 /* 成功但素材已删/地址过期的行:失联占位,不再尝试加载。 */
@@ -283,7 +283,7 @@ function statusClass(task: CanvasTask): string {
   place-items: center;
   font-size: 12px;
   color: #8f97ad;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .meta {
@@ -301,17 +301,17 @@ function statusClass(task: CanvasTask): string {
 
 .kind {
   padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #aab1c5;
+  border-radius: var(--r-sm);
+  background: var(--wash-08);
+  color: var(--text-secondary);
 }
 
 /* 透明背景徽章(37 号票):与 kind 徽章同族的浅色小标。 */
 .bg-flag {
   padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(122, 162, 247, 0.18);
-  color: #a5b4fc;
+  border-radius: var(--r-sm);
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--indigo-soft);
 }
 
 .status {
@@ -319,20 +319,20 @@ function statusClass(task: CanvasTask): string {
 }
 
 .status.st-succeeded {
-  color: #4ade80;
+  color: var(--success);
 }
 
 .status.st-failed {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .status.st-canceled {
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .status.st-queued,
 .status.st-running {
-  color: #7aa2f7;
+  color: var(--accent);
 }
 
 .time {
@@ -358,7 +358,7 @@ function statusClass(task: CanvasTask): string {
 
 .model {
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -366,7 +366,7 @@ function statusClass(task: CanvasTask): string {
 
 .error {
   font-size: 12px;
-  color: #ff8f8f;
+  color: var(--danger);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -382,12 +382,12 @@ function statusClass(task: CanvasTask): string {
 
 .insert {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
   background: rgba(76, 110, 245, 0.25);
-  color: #a5b4fc;
+  color: var(--indigo-soft);
   font-weight: 600;
 }
 </style>

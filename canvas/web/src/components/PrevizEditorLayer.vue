@@ -440,11 +440,11 @@ onBeforeUnmount(() => {
 .layer {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--z-editor-layer);
   display: flex;
   flex-direction: column;
   background: #10162a;
-  color: #cdd7ee;
+  color: var(--text-bright);
   font-size: 13px;
 }
 
@@ -459,13 +459,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(20, 26, 43, 0.95);
+  border-bottom: 1px solid var(--line-08);
+  background: rgba(var(--surface-card-rgb), 0.95);
 }
 
 .bar .title {
   font-weight: 600;
-  color: #f472b6;
+  color: var(--pink);
 }
 
 .bar .spacer {
@@ -474,22 +474,22 @@ onBeforeUnmount(() => {
 
 .bar button,
 .camera-pick select {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.05);
-  color: #cdd7ee;
+  background: var(--wash-05);
+  color: var(--text-bright);
   white-space: nowrap;
 }
 
 .bar button:hover {
-  border-color: rgba(244, 114, 182, 0.6);
+  border-color: rgba(var(--pink-rgb), 0.6);
 }
 
 .bar .back:hover {
-  border-color: rgba(122, 162, 247, 0.7);
+  border-color: rgba(var(--accent-rgb), 0.7);
 }
 
 .bar .ghost:disabled {
@@ -498,9 +498,9 @@ onBeforeUnmount(() => {
 }
 
 .bar .primary {
-  background: rgba(244, 114, 182, 0.16);
-  border-color: rgba(244, 114, 182, 0.55);
-  color: #f472b6;
+  background: rgba(var(--pink-rgb), 0.16);
+  border-color: rgba(var(--pink-rgb), 0.55);
+  color: var(--pink);
   font-weight: 600;
 }
 
@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .camera-pick select {
@@ -537,15 +537,15 @@ onBeforeUnmount(() => {
   gap: 14px;
   padding: 12px;
   overflow-y: auto;
-  background: rgba(20, 26, 43, 0.75);
+  background: rgba(var(--surface-card-rgb), 0.75);
 }
 
 .panel:first-child {
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid var(--line-08);
 }
 
 .panel:last-child {
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid var(--line-08);
 }
 
 .group {
@@ -556,7 +556,7 @@ onBeforeUnmount(() => {
 .group-title {
   font-size: 12px;
   font-weight: 600;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .add-row {
@@ -567,18 +567,18 @@ onBeforeUnmount(() => {
 .add-row button {
   flex: 1;
   min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--line-14);
+  border-radius: var(--r-md);
   padding: 5px 0;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.05);
-  color: #cdd7ee;
+  background: var(--wash-05);
+  color: var(--text-bright);
   white-space: nowrap;
 }
 
 .add-row button:hover {
-  border-color: rgba(244, 114, 182, 0.6);
+  border-color: rgba(var(--pink-rgb), 0.6);
 }
 
 .entities {
@@ -594,7 +594,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -602,11 +602,11 @@ onBeforeUnmount(() => {
 }
 
 .entities li:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .entities li.active {
-  background: rgba(122, 162, 247, 0.16);
+  background: rgba(var(--accent-rgb), 0.16);
   color: #fff;
 }
 
@@ -632,7 +632,7 @@ onBeforeUnmount(() => {
 
 .entities .dot.camera {
   border-radius: 50%;
-  background: #f472b6;
+  background: var(--pink);
 }
 
 .entities .badge {
@@ -640,9 +640,9 @@ onBeforeUnmount(() => {
   font-style: normal;
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(244, 114, 182, 0.2);
-  color: #f472b6;
+  border-radius: var(--r-sm);
+  background: rgba(var(--pink-rgb), 0.2);
+  color: var(--pink);
 }
 
 /* ---- 视口 ---- */
@@ -657,8 +657,8 @@ onBeforeUnmount(() => {
 /* ---- 检查器 ---- */
 
 .inspector {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  border: 1px solid var(--line-10);
+  border-radius: var(--r-md);
   padding: 8px;
   display: grid;
   gap: 6px;
@@ -678,7 +678,7 @@ onBeforeUnmount(() => {
 .inspector-head .name {
   font-weight: 600;
   font-size: 12px;
-  color: #cdd7ee;
+  color: var(--text-bright);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -686,13 +686,13 @@ onBeforeUnmount(() => {
 
 .inspector-head .remove {
   flex-shrink: 0;
-  border: 1px solid rgba(255, 143, 143, 0.4);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--danger-rgb), 0.4);
+  border-radius: var(--r-md);
   padding: 2px 10px;
   font-size: 11px;
   cursor: pointer;
   background: transparent;
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .inspector-head .remove:disabled {
@@ -705,7 +705,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #8b91a7;
+  color: var(--text-muted);
 }
 
 .slider span {
@@ -716,7 +716,7 @@ onBeforeUnmount(() => {
 .slider input[type='range'] {
   flex: 1;
   min-width: 0;
-  accent-color: #f472b6;
+  accent-color: var(--pink);
 }
 
 .slider em {
@@ -724,12 +724,12 @@ onBeforeUnmount(() => {
   width: 38px;
   text-align: right;
   font-style: normal;
-  color: #cdd7ee;
+  color: var(--text-bright);
 }
 
 .hint {
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--text-muted);
   line-height: 1.6;
 }
 </style>

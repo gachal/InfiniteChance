@@ -800,10 +800,10 @@ function variantLabel(v: CharacterVariantRecord): string {
   flex-direction: column;
   gap: 12px;
   padding: 16px;
-  background: rgba(13, 21, 36, 0.98);
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
-  z-index: 30;
+  background: rgba(var(--surface-panel-rgb), 0.98);
+  border-left: 1px solid var(--line-12);
+  box-shadow: var(--shadow-slide);
+  z-index: var(--z-drawer);
   overflow-y: auto;
 }
 
@@ -820,17 +820,17 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .close {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-14);
   background: transparent;
-  color: #aab1c5;
-  border-radius: 8px;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .close:hover {
-  border-color: rgba(255, 255, 255, 0.32);
+  border-color: var(--line-32);
   color: inherit;
 }
 
@@ -840,9 +840,9 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .voices select {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 8px 10px;
   color: inherit;
   font-size: 13px;
@@ -856,8 +856,8 @@ function variantLabel(v: CharacterVariantRecord): string {
   display: grid;
   gap: 6px;
   padding: 8px 10px;
-  border: 1px dashed rgba(94, 234, 212, 0.35);
-  border-radius: 8px;
+  border: 1px dashed rgba(var(--teal-light-rgb), 0.35);
+  border-radius: var(--r-md);
 }
 
 .voice-line audio {
@@ -867,30 +867,30 @@ function variantLabel(v: CharacterVariantRecord): string {
 
 .voice-badge {
   justify-self: start;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 8px;
   font-size: 11px;
-  background: rgba(94, 234, 212, 0.12);
-  color: #5eead4;
+  background: rgba(var(--teal-light-rgb), 0.12);
+  color: var(--teal-light);
 }
 
 .voice-badge.ok {
-  background: rgba(74, 222, 128, 0.16);
-  color: #4ade80;
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
 }
 
 .voice-badge.deploying {
-  background: rgba(250, 204, 21, 0.16);
-  color: #facc15;
+  background: rgba(var(--amber-rgb), 0.16);
+  color: var(--amber);
 }
 
 .voice-badge.rejected {
-  background: rgba(248, 113, 113, 0.16);
-  color: #f87171;
+  background: rgba(var(--red-signal-rgb), 0.16);
+  color: var(--red-signal);
 }
 
 .voice-name {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -903,16 +903,16 @@ function variantLabel(v: CharacterVariantRecord): string {
   display: grid;
   gap: 4px;
   font-size: 12px;
-  color: #aab1c5;
+  color: var(--text-secondary);
 }
 
 .field input,
 .field textarea,
 .variant-new input,
 .variant-edit input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 8px 10px;
   color: inherit;
   font-size: 13px;
@@ -933,7 +933,7 @@ function variantLabel(v: CharacterVariantRecord): string {
   color: #fff;
   font-weight: 600;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 7px 14px;
   font-size: 13px;
   cursor: pointer;
@@ -946,8 +946,8 @@ function variantLabel(v: CharacterVariantRecord): string {
 
 .mini {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: #aab1c5;
+  border: 1px solid var(--line-14);
+  color: var(--text-secondary);
   border-radius: 7px;
   padding: 3px 8px;
   font-size: 12px;
@@ -966,7 +966,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .danger-text {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .variants h4,
@@ -979,7 +979,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .gallery .count {
-  color: #6f7690;
+  color: var(--text-faint);
   font-size: 12px;
   font-weight: 400;
 }
@@ -997,13 +997,13 @@ function variantLabel(v: CharacterVariantRecord): string {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-lg);
   padding: 6px 8px;
 }
 
 .variant-list li.active {
-  border-color: rgba(122, 162, 247, 0.6);
+  border-color: rgba(var(--accent-rgb), 0.6);
   background: rgba(76, 110, 245, 0.12);
 }
 
@@ -1026,7 +1026,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .variant-note {
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1075,9 +1075,9 @@ function variantLabel(v: CharacterVariantRecord): string {
   position: relative;
   display: grid;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: var(--wash-04);
+  border: 1px solid var(--line-08);
+  border-radius: var(--r-lg);
   padding: 6px;
 }
 
@@ -1085,8 +1085,8 @@ function variantLabel(v: CharacterVariantRecord): string {
   width: 100%;
   height: 110px;
   object-fit: cover;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md);
+  background: var(--wash-05);
   display: block;
 }
 
@@ -1094,17 +1094,17 @@ function variantLabel(v: CharacterVariantRecord): string {
   position: absolute;
   top: 10px;
   left: 10px;
-  background: rgba(13, 21, 36, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(var(--surface-panel-rgb), 0.85);
+  border: 1px solid var(--line-20);
   color: #cbd3ea;
   font-size: 11px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 8px;
 }
 
 .label-badge.view {
-  border-color: rgba(122, 162, 247, 0.8);
-  color: #9fb4f9;
+  border-color: rgba(var(--accent-rgb), 0.8);
+  color: var(--accent-soft);
 }
 
 .unavailable {
@@ -1112,10 +1112,10 @@ function variantLabel(v: CharacterVariantRecord): string {
   place-items: center;
   gap: 6px;
   height: 110px;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border: 1px dashed var(--line-16);
+  border-radius: var(--r-md);
 }
 
 .gallery-meta {
@@ -1126,10 +1126,10 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .label-select {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
   border-radius: 7px;
-  color: #aab1c5;
+  color: var(--text-secondary);
   padding: 2px 4px;
   font-size: 11px;
   max-width: 96px;
@@ -1142,12 +1142,12 @@ function variantLabel(v: CharacterVariantRecord): string {
 
 .feedback {
   margin: 0;
-  color: #8b91a7;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .feedback.error {
-  color: #ff8f8f;
+  color: var(--danger);
 }
 
 .feedback.hint {

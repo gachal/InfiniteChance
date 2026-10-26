@@ -217,16 +217,16 @@ function submitAnalyze(): void {
  * 视频模式(24 号票),分析入口留在卡片底部。 */
 .node {
   width: 280px;
-  background: rgba(20, 26, 43, 0.92);
-  border: 1px solid rgba(74, 222, 128, 0.4);
-  border-radius: 12px;
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid rgba(var(--success-rgb), 0.4);
+  border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: 13px;
 }
 
 .node header {
   font-weight: 600;
-  color: #4ade80;
+  color: var(--success);
   margin-bottom: 8px;
 }
 
@@ -235,17 +235,17 @@ function submitAnalyze(): void {
 }
 
 .node[data-task='running'] {
-  border-color: rgba(74, 222, 128, 0.85);
+  border-color: rgba(var(--success-rgb), 0.85);
 }
 
 .node[data-task='failed'] {
-  border-color: rgba(255, 143, 143, 0.6);
+  border-color: rgba(var(--danger-rgb), 0.6);
 }
 
 /* vue-flow 把选中态标在节点包装层(本组件根的祖先),作用域样式以
    前置 :global 够到它 —— 编译为 .vue-flow__node.selected .media-frame[data-v]。 */
 :global(.vue-flow__node.selected) .media-frame {
-  outline: 2px solid rgba(122, 162, 247, 0.8);
+  outline: 2px solid rgba(var(--accent-rgb), 0.8);
   outline-offset: 2px;
 }
 
@@ -257,7 +257,7 @@ function submitAnalyze(): void {
 .media-frame img {
   display: block;
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
 }
 
 /* 悬浮下载:媒体卡片右上角,hover 才出现(触屏常显)。 */
@@ -270,7 +270,7 @@ function submitAnalyze(): void {
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: rgba(13, 18, 32, 0.85);
   color: #dfe3ee;
   font-size: 14px;
@@ -295,9 +295,9 @@ function submitAnalyze(): void {
   gap: 4px;
   justify-items: center;
   padding: 26px 8px;
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  color: #8b91a7;
+  border: 1px dashed var(--line-22);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
 }
 
 .placeholder span {
@@ -309,12 +309,12 @@ function submitAnalyze(): void {
 }
 
 .placeholder.missing {
-  border-color: rgba(255, 143, 143, 0.4);
-  color: #ff8f8f;
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
 }
 
 .working .pill {
-  color: #4ade80;
+  color: var(--success);
 }
 
 .node[data-task='running'] .pill {
@@ -336,25 +336,25 @@ function submitAnalyze(): void {
   gap: 8px;
   justify-items: start;
   padding: 10px;
-  border: 1px solid rgba(255, 143, 143, 0.35);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--danger-rgb), 0.35);
+  border-radius: var(--r-md);
 }
 
 .failed .error {
   margin: 0;
   font-size: 12px;
-  color: #ff8f8f;
+  color: var(--danger);
   word-break: break-all;
 }
 
 .retry {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   padding: 6px 14px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--wash-10);
   color: inherit;
 }
 
@@ -376,9 +376,9 @@ function submitAnalyze(): void {
 .analyze-row select {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: var(--wash-05);
+  border: 1px solid var(--line-12);
+  border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
   font-size: 12px;
@@ -387,13 +387,13 @@ function submitAnalyze(): void {
 .analyze-btn {
   flex-shrink: 0;
   background: transparent;
-  border: 1px solid rgba(165, 180, 252, 0.55);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
+  border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  color: #a5b4fc;
+  color: var(--indigo-soft);
 }
 
 .analyze-btn:disabled {
