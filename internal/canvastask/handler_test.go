@@ -17,6 +17,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // fakeTasks is the in-memory Store double; handler tests run at the HTTP
@@ -136,6 +137,22 @@ func (f *fakeTasks) Cancel(_ context.Context, id string, canvasID int64) (canvas
 	t.Status = canvastask.StatusCanceled
 	f.tasks[t.ID] = t
 	return t, nil
+}
+
+func (f *fakeTasks) AttachVoiceChannel(_ context.Context, _ string, _ int64) (canvastask.Task, bool, error) {
+	return canvastask.Task{}, false, nil
+}
+
+func (f *fakeTasks) AttachRemoteVoice(_ context.Context, _ string, _ string) (canvastask.Task, bool, error) {
+	return canvastask.Task{}, false, nil
+}
+
+func (f *fakeTasks) FinalizeVoiceSuccess(_ context.Context, _ string, _ voice.CreateInput, _ *asset.Asset) (canvastask.Task, bool, error) {
+	return canvastask.Task{}, false, nil
+}
+
+func (f *fakeTasks) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (canvastask.Task, bool, error) {
+	return f.FinalizeSuccess(ctx, id, a)
 }
 
 func (f *fakeTasks) AttachRemote(_ context.Context, id, remoteTaskID string) (canvastask.Task, bool, error) {
@@ -318,6 +335,24 @@ func (g *okGateway) PollVideo(context.Context, string) (canvastask.VideoPoll, er
 func (g *okGateway) CancelVideo(_ context.Context, taskID string) error {
 	g.cancels = append(g.cancels, taskID)
 	return nil
+}
+
+func (g *okGateway) CreateVoice(context.Context, canvastask.VoiceCreateRequest) (canvastask.VoiceCreateResult, error) {
+	return canvastask.VoiceCreateResult{VoiceID: "vd_handler_ok", Status: "DEPLOYING"}, nil
+}
+
+func (g *okGateway) QueryVoice(context.Context, int64, string, string) (string, error) {
+	return "DEPLOYING", nil
+}
+
+func (g *okGateway) DeleteVoice(context.Context, int64, string, string) error { return nil }
+
+func (g *okGateway) SynthesizeSpeech(context.Context, canvastask.SpeechRequest) (canvastask.SpeechResult, error) {
+	return canvastask.SpeechResult{AudioURL: g.url, Chars: 6}, nil
+}
+
+func (g *okGateway) ListAudioModels(context.Context) (canvastask.AudioModelCatalog, error) {
+	return canvastask.AudioModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
 }
 
 func TestHandlerCreateTaskQueuesWork(t *testing.T) {

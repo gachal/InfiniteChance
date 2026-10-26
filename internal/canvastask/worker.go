@@ -10,12 +10,15 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // Gateway is the worker's view of the relay surface: the synchronous image
-// calls — text-to-image (10 号票) and image-to-image (21 号票) — and the
-// async video contract's three faces — submit, poll, cancel (12 号票).
+// calls — text-to-image (10 号票) and image-to-image (21 号票) — the async
+// video contract's three faces — submit, poll, cancel (12 号票) — and the
+// 音色闭环的四端点加合成模型目录 (57 号票,钉渠道不换道).
 // *Client satisfies it; tests substitute fakes.
 type Gateway interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error)
@@ -23,6 +26,26 @@ type Gateway interface {
 	SubmitVideo(ctx context.Context, req VideoRequest) (VideoSubmitResult, error)
 	PollVideo(ctx context.Context, taskID string) (VideoPoll, error)
 	CancelVideo(ctx context.Context, taskID string) error
+	CreateVoice(ctx context.Context, req VoiceCreateRequest) (VoiceCreateResult, error)
+	QueryVoice(ctx context.Context, channelID int64, voiceID, source string) (string, error)
+	DeleteVoice(ctx context.Context, channelID int64, voiceID, source string) error
+	SynthesizeSpeech(ctx context.Context, req SpeechRequest) (SpeechResult, error)
+	ListAudioModels(ctx context.Context) (AudioModelCatalog, error)
+}
+
+// ChannelLister is the slice of the channel store the worker needs to
+// auto-pin a channel for voice-creation tasks (57 号票):canvas 服务与网关
+// 共享同一数据库,这里只读 —— 选渠道的过滤维度归渠道表管,与网关调度
+// 同一事实源。nil 时 kind=voice 任务缺 channel_id 即失败(可读原因)。
+type ChannelLister interface {
+	List(ctx context.Context) ([]channel.Channel, error)
+}
+
+// VoiceLedger is the slice of the voices store the worker needs: 台词合成
+// (kind=tts)运行时读台账行取渠道与上游句柄。nil 时 kind=tts 任务失败
+// (可读原因)。
+type VoiceLedger interface {
+	Get(ctx context.Context, id int64) (voice.Voice, error)
 }
 
 // Worker runs the canvas generation queue server-side (10 号票): claim one
@@ -39,6 +62,11 @@ type Worker struct {
 	// canvases 解析任务画布的 IP 归属(50 号票:产物经画布传导);nil 时
 	// 素材行落 0(全局)—— 旧装配形态与不关心 IP 的测试都靠 nil 分支。
 	canvases CanvasGetter
+	// channels / voices 是音色闭环的只读伴 store(57 号票):渠道目录
+	// 供 kind=voice 自动钉渠道,音色台账供 kind=tts 取句柄。nil 的语义见
+	// 各自接口注释(生产装配恒非 nil)。
+	channels ChannelLister
+	voices   VoiceLedger
 
 	concurrency  int
 	pollInterval time.Duration
@@ -47,6 +75,11 @@ type Worker struct {
 	// 视频生成普遍在分钟级,时限远宽于同步生图。
 	videoPollInterval time.Duration
 	videoTaskTimeout  time.Duration
+	// 音色任务的旋钮(57 号票):上游音色部署普遍秒级到一两分钟,轮询
+	// 2s、总时限 2min —— 超时句柄保留(上游继续部署,预扣不退),重试
+	// 续查不重复创建。
+	voicePollInterval time.Duration
+	voiceTaskTimeout  time.Duration
 	logger            *log.Logger
 }
 
@@ -61,6 +94,8 @@ const (
 	defaultTaskTimeout      = 3 * time.Minute
 	defaultVideoPoll        = 3 * time.Second
 	defaultVideoTaskTimeout = 15 * time.Minute
+	defaultVoicePoll        = 2 * time.Second
+	defaultVoiceTaskTimeout = 2 * time.Minute
 )
 
 // NewWorker wires a worker with production defaults; the With… options
@@ -74,6 +109,8 @@ func NewWorker(store Store, gateway Gateway, opts ...WorkerOption) *Worker {
 		taskTimeout:       defaultTaskTimeout,
 		videoPollInterval: defaultVideoPoll,
 		videoTaskTimeout:  defaultVideoTaskTimeout,
+		voicePollInterval: defaultVoicePoll,
+		voiceTaskTimeout:  defaultVoiceTaskTimeout,
 		logger:            log.Default(),
 	}
 	for _, opt := range opts {
@@ -112,6 +149,38 @@ func WithVideoPollInterval(d time.Duration) WorkerOption {
 // WithVideoTaskTimeout bounds one video task from submit to terminal state.
 func WithVideoTaskTimeout(d time.Duration) WorkerOption {
 	return func(w *Worker) { w.videoTaskTimeout = d }
+}
+
+// WithVoicePollInterval sets the cadence of the voice task's gateway polls
+// (57 号票:2s —— 部署普遍秒级,节奏要跟得上)。
+func WithVoicePollInterval(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.voicePollInterval = d }
+}
+
+// WithVoiceTaskTimeout bounds one voice task from submit (or handle resume)
+// to terminal state (57 号票:2min 上限,超时句柄保留)。
+func WithVoiceTaskTimeout(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.voiceTaskTimeout = d }
+}
+
+// WithChannels lets the worker auto-pin a channel for voice-creation tasks
+// (57 号票,同库只读);nil 时 kind=voice 任务缺 channel_id 即失败。
+func WithChannels(g ChannelLister) WorkerOption {
+	return func(w *Worker) {
+		if g != nil {
+			w.channels = g
+		}
+	}
+}
+
+// WithVoiceLedger lets the worker read the voices rows for speech tasks
+// (57 号票,同库只读);nil 时 kind=tts 任务失败。
+func WithVoiceLedger(g VoiceLedger) WorkerOption {
+	return func(w *Worker) {
+		if g != nil {
+			w.voices = g
+		}
+	}
 }
 
 // WithStorage routes generated artifacts into object storage before the
@@ -207,11 +276,19 @@ func (w *Worker) sleep(ctx context.Context) bool {
 }
 
 // runOne carries one claimed task through the gateway and closes it out,
-// dispatching on the task kind: the synchronous image call, or the async
-// video contract's submit-and-poll loop.
+// dispatching on the task kind: the synchronous image call, the async
+// video contract's submit-and-poll loop, or the 音色闭环的两支 (57 号票
+// —— voice 的部署轮询与 tts 的同步合成).
 func (w *Worker) runOne(parent context.Context, t Task) {
-	if t.Kind == KindVideo {
+	switch t.Kind {
+	case KindVideo:
 		w.runVideo(parent, t)
+		return
+	case KindVoice:
+		w.runVoice(parent, t)
+		return
+	case KindTts:
+		w.runTts(parent, t)
 		return
 	}
 
@@ -445,4 +522,335 @@ func (w *Worker) runVideo(parent context.Context, t Task) {
 			return
 		}
 	}
+}
+
+// voiceTaskSource 是音色闭环两支的 X-InfiniteChance-Source 值(图片/视频
+// 的 canvas=%d task=%s node=%s 同族,kind 进来源串供审计分辨)。
+func voiceTaskSource(t Task) string {
+	return fmt.Sprintf("canvas=%d task=%s node=%s kind=%s", t.CanvasID, t.ID, t.NodeID, t.Kind)
+}
+
+// pickVoiceChannel auto-pins the channel for a voice-creation task whose
+// spec carries no channel (57 号票):启用 + audio 能力 + 同时映射
+// voice-enrollment 与目标合成模型 的渠道里取优先级最高者(平局按 id 升序
+// —— 与网关调度「优先级分层」同一语义,确定性排序让重试与观察可复现)。
+// 渠道表只读:过滤维度归渠道表管,选出来的 channel_id 落 voice_spec,
+// 重试/query/后续合成复用同一渠道。
+func (w *Worker) pickVoiceChannel(ctx context.Context, targetModel string) (int64, error) {
+	if w.channels == nil {
+		return 0, errors.New("画布服务未装配渠道目录,无法为音色创建选择渠道")
+	}
+	channels, err := w.channels.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("读取渠道目录失败: %w", err)
+	}
+	var best *channel.Channel
+	for i := range channels {
+		ch := &channels[i]
+		if !ch.Enabled || !ch.HasCapability(channel.CapAudio) {
+			continue
+		}
+		if ch.ModelMap[enrollmentModel] == "" || ch.ModelMap[targetModel] == "" {
+			continue
+		}
+		if best == nil || ch.Priority > best.Priority || (ch.Priority == best.Priority && ch.ID < best.ID) {
+			best = ch
+		}
+	}
+	if best == nil {
+		return 0, fmt.Errorf("没有启用且具备 audio 能力、同时映射 voice-enrollment 与 %s 的渠道", targetModel)
+	}
+	return best.ID, nil
+}
+
+// runVoice drives one voice-creation task through the gateway's pinned
+// audio contract (57 号票): 选渠道 → create(收到 voice_id 先落行)→
+// 试听转存 → 轮询 query 至 OK → 台账行 + 试听素材 + 任务终态同事务。
+// remote 句柄纪律同视频:重启恢复/重试带句柄先 query 校验(OK 直接
+// finalize;UNDEPLOYED 丢句柄重建;不存在/被拒重建);轮询超时句柄保留
+// (上游继续部署,预扣不退),重试续查不重复创建;UNDEPLOYED → failed
+// (上游审核未通过,丢弃句柄)。
+func (w *Worker) runVoice(parent context.Context, t Task) {
+	ctx, cancel := context.WithTimeout(parent, w.voiceTaskTimeout)
+	defer cancel()
+	bookkeeping := context.WithoutCancel(parent)
+
+	spec := t.VoiceSpec
+	source := voiceTaskSource(t)
+	if spec.TargetModel == "" || spec.Name == "" || spec.PreviewText == "" {
+		w.fail(bookkeeping, t.ID, "任务行缺少音色创建事实(target_model/name/preview_text)")
+		return
+	}
+
+	// 渠道钉定:spec 没带(首次运行)时自动选,选到先落行再创建 ——
+	// 重启恢复与重试必须回到同一渠道,音色是渠道工作空间的所有物。
+	channelID := spec.ChannelID
+	if channelID <= 0 {
+		picked, err := w.pickVoiceChannel(ctx, spec.TargetModel)
+		if err != nil {
+			w.fail(bookkeeping, t.ID, err.Error())
+			return
+		}
+		if _, ok, aerr := w.store.AttachVoiceChannel(bookkeeping, t.ID, picked); aerr != nil {
+			// 落行失败不拦创建(句柄仍在进程手里);极端情形由恢复路径兜底。
+			w.logger.Printf("canvastask: attach channel %d to %s: %v", picked, t.ID, aerr)
+		} else if !ok {
+			w.fail(bookkeeping, t.ID, "任务行已不在运行态,音色创建中止")
+			return
+		} else {
+			channelID = picked
+		}
+	}
+
+	var preview *asset.Asset // 试听素材(试听转存成功才有;nil = 台账落无预览形态)
+
+	handle := spec.RemoteVoiceID
+	if handle != "" {
+		status, err := w.gateway.QueryVoice(ctx, channelID, handle, source)
+		switch {
+		case err == nil && status == voice.StatusOK:
+			// 上次运行已部署完成:直接收尾(试听素材已随崩溃丢失,台账行
+			// 落无预览形态 —— 素材行是转存产物,不是台账的成立条件)。
+			w.finalizeVoice(bookkeeping, t, spec, channelID, handle, nil)
+			return
+		case err == nil && status == voice.StatusUndeployed:
+			// 上游审核未通过:句柄作废,就地重建新音色(重试口径)。
+			w.logger.Printf("canvastask: voice %s of %s undeployed, rebuilding", handle, t.ID)
+			if _, _, aerr := w.store.AttachRemoteVoice(bookkeeping, t.ID, ""); aerr != nil {
+				w.logger.Printf("canvastask: clear stale voice handle on %s: %v", t.ID, aerr)
+			}
+			handle = ""
+		case err == nil:
+			// 仍在部署或其他态:进轮询循环续查。
+		default:
+			var ue *voice.UpstreamError
+			if errors.As(err, &ue) && ue.Status < 500 {
+				// 网关裁决的永久拒绝(句柄不存在/渠道没了):句柄作废重建。
+				w.logger.Printf("canvastask: voice %s of %s gone upstream (%d), rebuilding: %s", handle, t.ID, ue.Status, ue.Message)
+				if _, _, aerr := w.store.AttachRemoteVoice(bookkeeping, t.ID, ""); aerr != nil {
+					w.logger.Printf("canvastask: clear stale voice handle on %s: %v", t.ID, aerr)
+				}
+				handle = ""
+			} else {
+				// 暂态(传输失败/熔断中):进轮询循环,循环里继续 query。
+				w.logger.Printf("canvastask: query %s (voice %s): %v", t.ID, handle, err)
+			}
+		}
+	}
+
+	if handle == "" {
+		w.logger.Printf("canvastask: running %s (canvas %d, node %s, kind voice, attempt %d)",
+			t.ID, t.CanvasID, t.NodeID, t.Attempts)
+		res, err := w.gateway.CreateVoice(ctx, VoiceCreateRequest{
+			TargetModel: spec.TargetModel,
+			Mode:        spec.Mode,
+			ChannelID:   channelID,
+			VoicePrompt: spec.VoicePrompt,
+			Audio:       spec.AudioURL,
+			PreviewText: spec.PreviewText,
+			Source:      source,
+		})
+		if err != nil {
+			w.fail(bookkeeping, t.ID, err.Error())
+			return
+		}
+		// 句柄先落行(视频 AttachRemote 同款):重启恢复与重试才知道该
+		// query 谁。voice 任务不可取消,行不在 running 的竞态窗口几乎不
+		// 存在,落行失败只留日志。
+		if _, _, aerr := w.store.AttachRemoteVoice(bookkeeping, t.ID, res.VoiceID); aerr != nil {
+			w.logger.Printf("canvastask: attach remote voice %s to %s: %v", res.VoiceID, t.ID, aerr)
+		}
+		handle = res.VoiceID
+		// 试听转存(best-effort):失败不拦部署轮询 —— 台账行是闭环的
+		// 主体,试听素材缺失只是节点上少一个播放器。
+		if p, err := w.archiveAudio(bookkeeping, t, previewDataURI(res), spec.PreviewText); err != nil {
+			w.logger.Printf("canvastask: transfer voice preview of %s: %v", t.ID, err)
+		} else if p != nil {
+			preview = p
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			// 时限到:句柄保留(上游继续部署,预扣不退),失败原因指明可
+			// 重试续查 —— 与视频「超时即取消」不同,音色没有可撤销的上游
+			// 提交,保留句柄是唯一不浪费这次扣费的选择。
+			w.fail(bookkeeping, t.ID, fmt.Sprintf("音色部署轮询超时(上限 %s),上游句柄已保留,重试将继续查询", w.voiceTaskTimeout))
+			return
+		case <-time.After(w.voicePollInterval):
+		}
+
+		status, err := w.gateway.QueryVoice(ctx, channelID, handle, source)
+		if err != nil {
+			// 一次轮询失败不是任务失败:暂态故障稍后再试;总时限兜底。
+			// 网关裁决的 4xx(渠道被删/句柄被旁路删除)才就地收尾。
+			var ue *voice.UpstreamError
+			if errors.As(err, &ue) && ue.Status < 500 {
+				w.fail(bookkeeping, t.ID, err.Error())
+				return
+			}
+			w.logger.Printf("canvastask: poll %s (voice %s): %v", t.ID, handle, err)
+			continue
+		}
+		switch status {
+		case voice.StatusDeploying:
+			continue
+		case voice.StatusOK:
+			w.finalizeVoice(bookkeeping, t, spec, channelID, handle, preview)
+			return
+		case voice.StatusUndeployed:
+			// 上游审核未通过:丢弃句柄再失败,重试走全新创建。
+			if _, _, aerr := w.store.AttachRemoteVoice(bookkeeping, t.ID, ""); aerr != nil {
+				w.logger.Printf("canvastask: drop voice handle on %s: %v", t.ID, aerr)
+			}
+			w.fail(bookkeeping, t.ID, "上游审核未通过,该音色不可用(已丢弃句柄,重试将重新创建)")
+			return
+		default:
+			w.fail(bookkeeping, t.ID, "上游报告未知音色状态 "+status)
+			return
+		}
+	}
+}
+
+// finalizeVoice assembles the ledger row and closes the task through the
+// store's one-transaction finalizer.
+func (w *Worker) finalizeVoice(ctx context.Context, t Task, spec VoiceSpec, channelID int64, remoteVoiceID string, preview *asset.Asset) {
+	in := voice.CreateInput{
+		VoiceID:        remoteVoiceID,
+		ChannelID:      channelID,
+		TargetModel:    spec.TargetModel,
+		Name:           spec.Name,
+		SourceMode:     spec.Mode,
+		SourcePrompt:   spec.VoicePrompt,
+		SampleAssetID:  spec.SampleAssetID,
+		Status:         voice.StatusOK,
+	}
+	if spec.Mode == voice.SourceModeClone {
+		// clone 的出处是样本地址(design 存音色描述,同列两语义)。
+		in.SourcePrompt = spec.AudioURL
+	}
+	finalized, won, err := w.store.FinalizeVoiceSuccess(ctx, t.ID, in, preview)
+	if err != nil {
+		w.logger.Printf("canvastask: finalize voice success %s: %v", t.ID, err)
+		return
+	}
+	if !won {
+		w.logger.Printf("canvastask: finalize voice success %s lost the race (status now %s)", t.ID, finalized.Status)
+		return
+	}
+	w.logger.Printf("canvastask: task %s succeeded, voice %q, preview asset %d", t.ID, remoteVoiceID, finalized.AssetID)
+}
+
+// previewDataURI wraps the create response's Base64 preview as a data: URI
+// — asset.Transfer decodes those in place, so the preview lands in our own
+// storage without ever touching the wire twice. 无试听(上游没给)时零值
+// 交给调用方跳过。
+func previewDataURI(res VoiceCreateResult) string {
+	if res.PreviewBase64 == "" {
+		return ""
+	}
+	format := res.PreviewFormat
+	if format == "" {
+		format = "wav"
+	}
+	return "data:audio/" + format + ";base64," + res.PreviewBase64
+}
+
+// runTts carries one speech task through the gateway's pinned-character
+// contract (57 号票): 运行时读台账行(校验 status=OK,取钉定渠道与上游
+// 句柄 —— 提交到运行之间被删/审核翻转的任务在这里自然失败)→ 同步合成
+// → 产物转存 kind=audio 素材行 → FinalizeTtsSuccess 同事务收尾。
+func (w *Worker) runTts(parent context.Context, t Task) {
+	ctx, cancel := context.WithTimeout(parent, w.taskTimeout)
+	defer cancel()
+	bookkeeping := context.WithoutCancel(parent)
+
+	spec := t.VoiceSpec
+	if spec.LedgerID <= 0 {
+		w.fail(bookkeeping, t.ID, "任务行缺少音色台账引用(ledger_id)")
+		return
+	}
+	if t.Prompt == "" {
+		w.fail(bookkeeping, t.ID, "任务行缺少台词文本")
+		return
+	}
+	if w.voices == nil {
+		w.fail(bookkeeping, t.ID, "画布服务未装配音色台账,无法合成台词")
+		return
+	}
+	v, err := w.voices.Get(ctx, spec.LedgerID)
+	if err != nil {
+		if errors.Is(err, voice.ErrVoiceNotFound) {
+			w.fail(bookkeeping, t.ID, "音色不存在或已删除,无法合成台词")
+			return
+		}
+		w.fail(bookkeeping, t.ID, fmt.Sprintf("读取音色台账失败: %v", err))
+		return
+	}
+	if v.Status != voice.StatusOK {
+		w.fail(bookkeeping, t.ID, "音色「"+v.Name+"」当前状态 "+v.Status+",尚不可合成台词")
+		return
+	}
+
+	w.logger.Printf("canvastask: running %s (canvas %d, node %s, kind tts, attempt %d)",
+		t.ID, t.CanvasID, t.NodeID, t.Attempts)
+	res, err := w.gateway.SynthesizeSpeech(ctx, SpeechRequest{
+		Model:       v.TargetModel,
+		Voice:       v.VoiceID,
+		Text:        t.Prompt,
+		Instruction: spec.Instruction,
+		ChannelID:   v.ChannelID,
+		Source:      voiceTaskSource(t),
+	})
+	if err != nil {
+		w.fail(bookkeeping, t.ID, err.Error())
+		return
+	}
+	a, aerr := w.archiveAudio(bookkeeping, t, res.AudioURL, t.Prompt)
+	if aerr != nil {
+		w.fail(bookkeeping, t.ID, aerr.Error())
+		return
+	}
+	finalized, won, err := w.store.FinalizeTtsSuccess(bookkeeping, t.ID, *a)
+	if err != nil {
+		w.logger.Printf("canvastask: finalize tts success %s: %v", t.ID, err)
+		return
+	}
+	if !won {
+		w.logger.Printf("canvastask: finalize tts success %s lost the race (status now %s)", t.ID, finalized.Status)
+		return
+	}
+	w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)
+}
+
+// archiveAudio is the audio twin of archive (57 号票):产物一律 kind=audio
+// 素材行,对象键按 canvases/ 档的 audio 扩展名归档(Transfer 按响应
+// Content-Type 定扩展,wav/m4a/mp3 各归其位)。storage 未配置时返回只带
+// 厂商临时地址的素材事实(约 24h 过期,旧行为兜底)。
+func (w *Worker) archiveAudio(ctx context.Context, t Task, url, prompt string) (*asset.Asset, error) {
+	if url == "" {
+		return nil, nil
+	}
+	a := &asset.Asset{
+		Kind:     asset.KindAudio,
+		CanvasID: t.CanvasID,
+		TaskID:   t.ID,
+		Model:    t.Model,
+		Prompt:   prompt,
+		URL:      url,
+		IPID:     w.canvasIPID(ctx, t), // 50 号票:归属随画布;画布已删落 0
+	}
+	if w.storage == nil {
+		return a, nil
+	}
+	stored, err := asset.Transfer(ctx, w.storage, nil, t.CanvasID, t.ID, asset.KindAudio, url)
+	if err != nil {
+		return nil, err
+	}
+	a.ObjectKey = stored.Key
+	a.ContentType = stored.ContentType
+	a.SizeBytes = stored.SizeBytes
+	a.ContentHash = stored.ContentHash // 48 号票:转存链只落列不复用
+	return a, nil
 }

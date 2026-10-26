@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // ErrNotFound reports a task id that has no row.
@@ -53,10 +54,14 @@ func Terminal(s Status) bool {
 	return s != StatusQueued && s != StatusRunning
 }
 
-// Task kinds. 10 号票落了文生图;12 号票的图生视频沿用同一张表与状态机。
+// Task kinds. 10 号票落了文生图;12 号票的图生视频沿用同一张表与状态机;
+// 57 号票的音色闭环追加 voice(音色创建)与 tts(台词合成)—— 同步秒级
+// 到分钟级的短任务,无 canceled 态(不可撤销,取消语义只属于视频)。
 const (
 	KindImage = "image"
 	KindVideo = "video"
+	KindVoice = "voice"
+	KindTts   = "tts"
 )
 
 // 视频参考的角色集(24 号票,对齐即梦「全能参考」):首帧/尾帧/参考图是
@@ -81,6 +86,62 @@ type VideoRef struct {
 	URL  string `json:"url"`
 	Kind string `json:"kind"`
 	Role string `json:"role"`
+}
+
+// VoiceSpec carries the 57 号票两 kind 的专属事实,随任务行落 JSON 列
+// (VideoRefs 的 encode/decode 同款纪律)。上半是音色创建(kind=voice)
+// 的表单事实:mode/name/target_model 与 design/clone 的各自入参,提交时
+// 由 handler 校验;AudioURL 是提交时就地解出的克隆样本 http(s) 地址
+// (24 号票「提交时解析、行自足」先例 —— 素材行的厂商地址约 24h 过期,
+// 重试跨窗的语义与视频参考一致)。
+//
+// 下半是 worker 的运行时句柄区:ChannelID 是钉定渠道(worker 自动选渠道
+// 后落行,重试/query 复用同一渠道 —— 音色绑定渠道的工作空间,换渠道=
+// 另一个音色);RemoteVoiceID 是上游 voice_id 句柄,一收到就落行
+// (AttachRemoteVoice,视频 remote 纪律同款);LedgerID/Instruction 是
+// 台词合成(kind=tts)的台账行引用与可选演绎指令 —— 台词本身落在任务行
+// 的 prompt 列,不在这里重复。
+type VoiceSpec struct {
+	Mode          string `json:"mode,omitempty"`
+	Name          string `json:"name,omitempty"`
+	TargetModel   string `json:"target_model,omitempty"`
+	VoicePrompt   string `json:"voice_prompt,omitempty"`
+	PreviewText   string `json:"preview_text,omitempty"`
+	SampleAssetID int64  `json:"sample_asset_id,omitempty"`
+
+	AudioURL      string `json:"audio_url,omitempty"`
+	ChannelID     int64  `json:"channel_id,omitempty"`
+	RemoteVoiceID string `json:"remote_voice_id,omitempty"`
+
+	LedgerID    int64  `json:"ledger_id,omitempty"`
+	Instruction string `json:"instruction,omitempty"`
+}
+
+// encodeVoiceSpec serializes the spec for its column; a zero spec lands as
+// NULL. Marshaling cannot fail, so the error branch exists only to keep the
+// signature honest.
+func encodeVoiceSpec(s VoiceSpec) any {
+	if s == (VoiceSpec{}) {
+		return nil
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// decodeVoiceSpec parses the column back; anything unreadable reads as the
+// zero spec — a corrupt column must not take the worker down.
+func decodeVoiceSpec(s string) VoiceSpec {
+	if s == "" {
+		return VoiceSpec{}
+	}
+	var spec VoiceSpec
+	if err := json.Unmarshal([]byte(s), &spec); err != nil {
+		return VoiceSpec{}
+	}
+	return spec
 }
 
 // idPrefix marks canvas-server-issued task ids; idBytes double to 32 hex
@@ -129,6 +190,7 @@ type Task struct {
 	ImageRef     string     // video: 图生视频的单串参考图(12 号票旧形态)
 	VideoRefs    []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频
 	ImageRefs    []string   // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
+	VoiceSpec    VoiceSpec  // voice/tts:音色闭环事实与运行时句柄(57 号票);零值 = 其他 kind
 	Status       Status
 	Attempts     int64
 	Error        string // failed 的原因摘要;重试入队时清空
@@ -239,6 +301,23 @@ type Store interface {
 	// submit was in flight — and the caller must cancel the just-created
 	// gateway task (releasing the quota hold) and stop.
 	AttachRemote(ctx context.Context, id, remoteTaskID string) (Task, bool, error)
+	// AttachVoiceChannel pins the auto-chosen channel in voice_spec on a
+	// running voice task (57 号票):渠道选择先落行再创建,重启恢复/重试
+	// 复用同一渠道。ok=false 与 AttachRemote 同语义(行已不在 running)。
+	AttachVoiceChannel(ctx context.Context, id string, channelID int64) (Task, bool, error)
+	// AttachRemoteVoice records (or, with an empty id, clears) the upstream
+	// voice handle in voice_spec on a running voice task — 视频远程句柄
+	// 纪律的同款:一收到就落行,重启恢复与重试先 query 校验再续跑。
+	AttachRemoteVoice(ctx context.Context, id, remoteVoiceID string) (Task, bool, error)
+	// FinalizeVoiceSuccess inserts the preview asset (nil = 无试听,崩溃
+	// 恢复路径)、the voices ledger row and the task's terminal state in one
+	// transaction (57 号票)。Guarded on running, same winner semantics as
+	// FinalizeSuccess —— 输家的 voices 行与素材行一并回滚。
+	FinalizeVoiceSuccess(ctx context.Context, id string, in voice.CreateInput, preview *asset.Asset) (Task, bool, error)
+	// FinalizeTtsSuccess inserts the audio asset and closes the task
+	// succeeded in one transaction;产物地址只落素材行(任务行不设音频
+	// URL 列,回填音频节点由前端按 asset_id 拼内容寻址路径)。
+	FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error)
 	// ResetForRetry returns one failed task of the given canvas to the queue,
 	// clearing the failure fields; ErrNotRetryable when the row exists but is
 	// not failed, ErrNotFound when there is no row.
