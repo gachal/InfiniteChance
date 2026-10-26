@@ -155,9 +155,20 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	canvas.RegisterIPRoutes(ipsGroup, &canvas.IPHandlers{Store: s.IPs})
 	// 角色库(51 号票):IP 级角色、造型变体与设定图锚,同一 JWT 会话面。
 	// 目录挂 /ips/:id/characters(IP 存在性由 handler 经 IPs 裁决),
-	// 角色系 CRUD 与变体/图面挂 /characters 系;网关零改动(设定图引用
-	// 走既有素材契约)。
-	characterHandlers := &character.Handlers{Store: s.Characters, IPs: s.IPs, Voices: s.Voices}
+	// 角色系 CRUD 与变体/图面挂 /characters 系;绑定音色的实时校准(57
+	// 号票评审 F1)与音色台账删除面共用同一个网关 client 的切片断言 ——
+	// gateway 为 nil 时绑定以 gateway_unconfigured 拒绝,其余字段不受影响。
+	var voiceGateway voice.UpstreamRemover
+	var voiceQuerier voice.UpstreamQuerier
+	if gateway != nil {
+		if remover, ok := gateway.(voice.UpstreamRemover); ok {
+			voiceGateway = remover
+		}
+		if querier, ok := gateway.(voice.UpstreamQuerier); ok {
+			voiceQuerier = querier
+		}
+	}
+	characterHandlers := &character.Handlers{Store: s.Characters, IPs: s.IPs, Voices: s.Voices, Gateway: voiceQuerier}
 	character.RegisterIPRoutes(r.Group("/ips/:id/characters", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterRoutes(r.Group("/characters", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterVariantRoutes(r.Group("/character-variants", auth.RequireAuth(issuer)), characterHandlers)
@@ -165,12 +176,6 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	// 音色台账(57 号票):/voices 目录面(全量/改名/删除)。删除先经网关
 	// delete_voice —— gateway(client)为 nil 时 handler 以
 	// gateway_unconfigured 拒绝,列表与改名不受影响。
-	var voiceGateway voice.UpstreamRemover
-	if gateway != nil {
-		if remover, ok := gateway.(voice.UpstreamRemover); ok {
-			voiceGateway = remover
-		}
-	}
 	voice.RegisterRoutes(r.Group("/voices", auth.RequireAuth(issuer)),
 		&voice.Handlers{Store: s.Voices, Gateway: voiceGateway})
 	// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作

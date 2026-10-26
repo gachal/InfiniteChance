@@ -320,9 +320,23 @@ func TestSQLiteWorkerTtsHappyPath(t *testing.T) {
 	if final.Status != canvastask.StatusSucceeded || final.AssetID == 0 {
 		t.Fatalf("task = %+v (%q), want succeeded with asset", final.Status, final.Error)
 	}
+	// 评审 F2:网关 usage.chars 随终态并入 voice_spec,任务列表带出供
+	// 编辑器回填音频节点的元数据配对。
+	if final.VoiceSpec.Chars != 6 {
+		t.Fatalf("voice_spec.chars = %d, want 6", final.VoiceSpec.Chars)
+	}
+	// 素材行读回即回归用例(评审 F3 实证):assets 表的时间列默认表达式
+	// strftime('%Y-%m-%dT%H:%M:%f000Z','now') 产出 6 位小数
+	// (如 2026-10-26T03:50:16.142000Z),与 sqlitedb.ParseTime 的定宽
+	// 9 位 layout 不兼容,解析报 cannot parse ".142000Z" as ".000000000"
+	// —— finalizer 不显式写 created_at/last_used_at 时桌面读回必炸。
+	// 这里的 Get 会扫两列,显式落值的修正一旦被"简化"掉,本用例即红。
 	a, err := asset.NewSQLiteStore(db).Get(ctx, final.AssetID)
 	if err != nil {
 		t.Fatalf("asset Get: %v", err)
+	}
+	if a.CreatedAt.IsZero() || a.LastUsedAt.IsZero() {
+		t.Fatalf("asset timestamps zero: created=%v last_used=%v, want explicit values", a.CreatedAt, a.LastUsedAt)
 	}
 	if a.Kind != asset.KindAudio || a.CanvasID != 7 || a.TaskID != task.ID || a.URL != "https://audio.example/out.wav" {
 		t.Fatalf("asset = %+v, want kind=audio with task provenance", a)

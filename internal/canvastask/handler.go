@@ -118,24 +118,27 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 // video tasks; the reference image stays server-side (它可能是超长的 data:
 // URI,不该随每次轮询漂在任务列表里 —— 编辑器自己持有它,在图片节点上).
 type taskJSON struct {
-	ID         string    `json:"id"`
-	CanvasID   int64     `json:"canvas_id"`
-	NodeID     string    `json:"node_id"`
-	Kind       string    `json:"kind"`
-	Prompt     string    `json:"prompt"`
-	Model      string    `json:"model"`
-	Size       string    `json:"size"`
-	Ratio      string    `json:"ratio"`
-	Background string    `json:"background"`
-	Seconds    int64     `json:"seconds"`
-	Status     Status    `json:"status"`
-	Attempts   int64     `json:"attempts"`
-	Error      string    `json:"error"`
-	AssetID    int64     `json:"asset_id"`
-	ImageURL   string    `json:"image_url"`
-	VideoURL   string    `json:"video_url"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         string `json:"id"`
+	CanvasID   int64  `json:"canvas_id"`
+	NodeID     string `json:"node_id"`
+	Kind       string `json:"kind"`
+	Prompt     string `json:"prompt"`
+	Model      string `json:"model"`
+	Size       string `json:"size"`
+	Ratio      string `json:"ratio"`
+	Background string `json:"background"`
+	Seconds    int64  `json:"seconds"`
+	Status     Status `json:"status"`
+	Attempts   int64  `json:"attempts"`
+	Error      string `json:"error"`
+	AssetID    int64  `json:"asset_id"`
+	ImageURL   string `json:"image_url"`
+	VideoURL   string `json:"video_url"`
+	// Chars 是台词合成(kind=tts)的服务端计费字符数,其余 kind 恒 0
+	// (评审 F2:编辑器回填音频节点的元数据配对)。
+	Chars     int64     `json:"chars"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func toTaskJSON(t Task) taskJSON {
@@ -144,7 +147,7 @@ func toTaskJSON(t Task) taskJSON {
 		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio,
 		Background: t.Background, Seconds: t.Seconds,
 		Status: t.Status, Attempts: t.Attempts, Error: t.Error, AssetID: t.AssetID,
-		ImageURL: t.ImageURL, VideoURL: t.VideoURL,
+		ImageURL: t.ImageURL, VideoURL: t.VideoURL, Chars: t.VoiceSpec.Chars,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }

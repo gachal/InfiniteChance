@@ -320,3 +320,11 @@ func (c *Client) ListAudioModels(ctx context.Context) (AudioModelCatalog, error)
 func upstreamRejection(status int, body []byte) error {
 	return &voice.UpstreamError{Status: status, Message: errorSummary(body)}
 }
+
+// Client 满足音色闭环消费方的两个窄切片:台账删除面(voice.UpstreamRemover)
+// 与角色绑定实时校准(character 经 voice.UpstreamQuerier)。wiring 按接口
+// 断言装配,签名漂移在这里编译期暴露,不在运行期静默落 nil。
+var (
+	_ voice.UpstreamRemover = (*Client)(nil)
+	_ voice.UpstreamQuerier = (*Client)(nil)
+)

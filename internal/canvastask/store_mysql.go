@@ -437,8 +437,16 @@ func (s *MySQLStore) FinalizeVoiceSuccess(ctx context.Context, id string, in voi
 
 // FinalizeTtsSuccess inserts the audio asset and closes the task succeeded
 // in one transaction;任务行不设音频 URL 列 —— 产物地址(上游临时地址)
-// 只落素材行作出处,前端按 asset_id 拼内容寻址路径。
-func (s *MySQLStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error) {
+// 只落素材行作出处,前端按 asset_id 拼内容寻址路径。chars 并入 voice_spec
+// 与终态同事务落行(评审 F2):任务行的结果事实一次定格,无中间态。
+func (s *MySQLStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset, chars int64) (Task, bool, error) {
+	// 先读行内当前 voice_spec 作合并底(与 attachVoiceSpec 同法);tts 的
+	// spec 在提交后即静止,chars 是唯一的后提交变更,读改写无竞争。
+	t, err := s.Get(ctx, id)
+	if err != nil {
+		return Task{}, false, err
+	}
+	t.VoiceSpec.Chars = chars
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, false, err
@@ -459,8 +467,8 @@ func (s *MySQLStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.
 	}
 
 	res, err = tx.ExecContext(ctx,
-		`UPDATE canvas_tasks SET status = ?, asset_id = ? WHERE id = ? AND status = ?`,
-		StatusSucceeded, assetID, id, StatusRunning)
+		`UPDATE canvas_tasks SET status = ?, asset_id = ?, voice_spec = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, assetID, encodeVoiceSpec(t.VoiceSpec), id, StatusRunning)
 	if err != nil {
 		return Task{}, false, err
 	}
@@ -469,13 +477,13 @@ func (s *MySQLStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.
 		return Task{}, false, err
 	}
 	if n == 0 {
-		t, err := s.Get(ctx, id)
+		t, err = s.Get(ctx, id)
 		return t, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Task{}, false, err
 	}
-	t, err := s.Get(ctx, id)
+	t, err = s.Get(ctx, id)
 	return t, true, err
 }
 

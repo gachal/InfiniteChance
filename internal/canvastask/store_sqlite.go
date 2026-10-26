@@ -470,8 +470,14 @@ func (s *SQLiteStore) FinalizeVoiceSuccess(ctx context.Context, id string, in vo
 }
 
 // FinalizeTtsSuccess inserts the audio asset and closes the task succeeded
-// in one transaction;任务行不设音频 URL 列(与 MySQL 版同构)。
-func (s *SQLiteStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error) {
+// in one transaction;任务行不设音频 URL 列(与 MySQL 版同构)。chars 并入
+// voice_spec 与终态同事务落行(评审 F2),行内当前 spec 作合并底。
+func (s *SQLiteStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset, chars int64) (Task, bool, error) {
+	t, err := s.Get(ctx, id)
+	if err != nil {
+		return Task{}, false, err
+	}
+	t.VoiceSpec.Chars = chars
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, false, err
@@ -493,8 +499,8 @@ func (s *SQLiteStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset
 	}
 
 	res, err = tx.ExecContext(ctx,
-		`UPDATE canvas_tasks SET status = ?, asset_id = ?, updated_at = ? WHERE id = ? AND status = ?`,
-		StatusSucceeded, assetID, sqlitedb.FormatTime(time.Now()), id, StatusRunning)
+		`UPDATE canvas_tasks SET status = ?, asset_id = ?, voice_spec = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, assetID, encodeVoiceSpec(t.VoiceSpec), sqlitedb.FormatTime(time.Now()), id, StatusRunning)
 	if err != nil {
 		return Task{}, false, err
 	}
@@ -503,13 +509,13 @@ func (s *SQLiteStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset
 		return Task{}, false, err
 	}
 	if n == 0 {
-		t, err := s.Get(ctx, id)
+		t, err = s.Get(ctx, id)
 		return t, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Task{}, false, err
 	}
-	t, err := s.Get(ctx, id)
+	t, err = s.Get(ctx, id)
 	return t, true, err
 }
 

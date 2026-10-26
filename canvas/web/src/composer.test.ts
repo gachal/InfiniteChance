@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   appendComposerRef,
   appendVideoRef,
+  audioSyncPatch,
   composerImageUrls,
   composerRefFromAsset,
   composerVideoRefs,
@@ -389,6 +390,40 @@ describe('mediaSyncPatch', () => {
     const task = makeTask({ asset_id: 9, prompt: '夜色下的港口', model: 'm-a' })
     const data = { url: '/api/assets/9/content', asset_id: 9, note: '', prompt: '夜色下的港口', model: 'm-a' }
     expect(mediaSyncPatch(task, data)).toBeNull()
+  })
+})
+
+describe('audioSyncPatch(57 号票音频节点回填;评审 F2 chars)', () => {
+  it('returns null for non-succeeded tasks or tasks without an asset row', () => {
+    const data = { asset_id: 0, text: '你好' }
+    expect(audioSyncPatch(makeTask({ kind: 'tts', status: 'failed' }), data)).toBeNull()
+    expect(audioSyncPatch(makeTask({ kind: 'tts', status: 'running' }), data)).toBeNull()
+    expect(audioSyncPatch(makeTask({ kind: 'tts', asset_id: 0 }), data)).toBeNull()
+  })
+
+  it('backfills asset_id, text and model onto a fresh audio node', () => {
+    const task = makeTask({ kind: 'tts', asset_id: 9, prompt: '你好,世界。', model: 'qwen-tts-plus', chars: 6 })
+    // 提交时创建的节点只带 text(asset_id 占 0,model 未写)。
+    expect(audioSyncPatch(task, { asset_id: 0, text: '你好,世界。' })).toEqual({
+      asset_id: 9,
+      model: 'qwen-tts-plus',
+      chars: 6,
+    })
+  })
+
+  it('carries chars only when the task row actually landed one', () => {
+    const task = makeTask({ kind: 'tts', asset_id: 9, prompt: '你好', model: 'qwen-tts-plus', chars: 0 })
+    // 旧任务行/未落 chars 的任务:不写 0 进节点,保住「未落值」语义。
+    expect(audioSyncPatch(task, { asset_id: 0, text: '你好' })).toEqual({
+      asset_id: 9,
+      model: 'qwen-tts-plus',
+    })
+  })
+
+  it('never overwrites text/model/chars the node already carries', () => {
+    const task = makeTask({ kind: 'tts', asset_id: 9, prompt: '新词', model: 'm-b', chars: 9 })
+    const data = { asset_id: 9, text: '旧词', model: 'm-a', chars: 3 }
+    expect(audioSyncPatch(task, data)).toBeNull()
   })
 })
 

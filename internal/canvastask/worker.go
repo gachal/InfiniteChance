@@ -812,7 +812,7 @@ func (w *Worker) runTts(parent context.Context, t Task) {
 		w.fail(bookkeeping, t.ID, aerr.Error())
 		return
 	}
-	finalized, won, err := w.store.FinalizeTtsSuccess(bookkeeping, t.ID, *a)
+	finalized, won, err := w.store.FinalizeTtsSuccess(bookkeeping, t.ID, *a, res.Chars)
 	if err != nil {
 		w.logger.Printf("canvastask: finalize tts success %s: %v", t.ID, err)
 		return

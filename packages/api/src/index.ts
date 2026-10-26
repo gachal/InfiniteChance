@@ -392,6 +392,9 @@ export interface CanvasTask {
   asset_id: number
   image_url: string
   video_url: string
+  /** kind=tts 的服务端计费字符数(网关 usage.chars,57 号票评审 F2);
+   * 其余 kind 恒 0。编辑器据此回填音频节点的 chars 元数据。 */
+  chars: number
   created_at: string
   updated_at: string
 }
