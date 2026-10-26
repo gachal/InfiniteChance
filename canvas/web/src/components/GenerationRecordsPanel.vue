@@ -13,6 +13,7 @@ import type { CanvasTask } from '@infinitechance/api'
 import {
   canInsertRecord,
   formatRecordTime,
+  isAudioRecord,
   RECORDS_LIMIT,
   recordKindLabel,
   recordStatusLabel,
@@ -104,10 +105,19 @@ function statusClass(task: CanvasTask): string {
         class="record-card"
         @click="emit('locate', task)"
       >
-        <!-- 缩略位:成功且地址可达走媒体预览;失败/取消/排队/生成中与失联行
-             落 kind 徽章占位。 -->
+        <!-- 缩略位:成功且地址可达走媒体预览;音频行(57 号票 tts)给
+             内联试听条占缩略位,失联/失败/排队态照旧落徽章占位。 -->
+        <audio
+          v-if="isAudioRecord(task) && !unavailable.has(task.id)"
+          :src="thumbURL(task)"
+          class="thumb audio-line"
+          controls
+          preload="none"
+          @error="onThumbError(task)"
+          @click.stop
+        />
         <img
-          v-if="thumbURL(task) !== '' && task.kind !== 'video'"
+          v-else-if="thumbURL(task) !== '' && task.kind !== 'video'"
           :src="thumbURL(task)"
           class="thumb"
           loading="lazy"
@@ -254,6 +264,10 @@ function statusClass(task: CanvasTask): string {
 }
 
 /* 失败/取消/排队/生成中的行没有产物可看:kind 徽章占位。 */
+.audio-line {
+  height: 32px;
+}
+
 .thumb-badge {
   display: grid;
   place-items: center;

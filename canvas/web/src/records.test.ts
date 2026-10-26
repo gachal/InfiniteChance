@@ -66,6 +66,12 @@ describe('canInsertRecord(28 号票)', () => {
   it('成功但无素材引用不可插入(没有可复用的持久地址)', () => {
     expect(canInsertRecord(task({ asset_id: 0 }))).toBe(false)
   })
+
+  it('voice 行不可插入(57 号票:产物在台账,试听素材非画布产物)', () => {
+    expect(canInsertRecord(task({ kind: 'voice' }))).toBe(false)
+    // tts 行可插入(音频节点是产物载体)。
+    expect(canInsertRecord(task({ kind: 'tts' }))).toBe(true)
+  })
 })
 
 describe('recordStatusLabel / recordKindLabel', () => {
@@ -77,6 +83,8 @@ describe('recordStatusLabel / recordKindLabel', () => {
     expect(recordStatusLabel('canceled')).toBe('已取消')
     expect(recordKindLabel('image')).toBe('图片')
     expect(recordKindLabel('video')).toBe('视频')
+    expect(recordKindLabel('voice')).toBe('音色')
+    expect(recordKindLabel('tts')).toBe('台词')
   })
 })
 

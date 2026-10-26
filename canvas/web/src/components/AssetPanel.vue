@@ -108,8 +108,9 @@ async function onUploadChange(e: Event): Promise<void> {
     )
     // 刷新取最新序;上传成功的行在最前(最近使用 = 创建时刻)。
     await refresh()
-    if (a.kind !== 'audio' && props.selectable) {
-      // 图片/视频可直接插入(与列表插入同语义);音频只入库不插。
+    if (props.selectable) {
+      // 上传成功即可插入(与列表插入同语义);音频也落画布 —— 57 号票
+      // 推翻 24 号票「音频只入库不插」(音频节点出现后插入有载体)。
       emit('insert', a)
     }
   } catch (e) {
@@ -232,8 +233,8 @@ onMounted(refresh)
           muted
           preload="metadata"
         />
-        <!-- 音频没有缩略图:面板内直接给 <audio> 试听(24 号票),插入
-             画布的入口不出现(音频没有节点类型,参考音频经对话框上传)。 -->
+        <!-- 音频没有缩略图:面板内直接给 <audio> 试听;插入画布落音频
+             节点(57 号票翻案 —— 音频节点出现后插入有载体)。 -->
         <audio
           v-else
           :src="a.content_url"
@@ -259,10 +260,9 @@ onMounted(refresh)
           class="actions"
         >
           <button
-            v-if="a.kind !== 'audio'"
             type="button"
             class="insert"
-            title="插入当前画布(跨画布复用同一素材)"
+            :title="a.kind === 'audio' ? '插入当前画布(落音频节点,57 号票)' : '插入当前画布(跨画布复用同一素材)'"
             @click="emit('insert', a)"
           >
             插入
