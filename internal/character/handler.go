@@ -29,7 +29,16 @@ type Handlers struct {
 	// status=OK 的行);nil 时绑定请求以 500 暴露装配缺口(生产装配恒非
 	// nil,既有测试装配不受扰)。
 	Voices VoiceChecker
+	// Gateway 是绑定实时校准的网关查询切片(57 号票评审 F1):台账行的
+	// status 只反映最后一次校准,绑定/换绑前经网关 query_voice 复核上游
+	// 生命周期,仅 OK 放行。nil 时绑定(非解除)以 gateway_unconfigured
+	// 拒绝 —— 与 /voices 删除面同一姿势,解除与角色其余字段不受影响。
+	Gateway voice.UpstreamQuerier
 }
+
+// voiceSource 是绑定校准查询的 X-InfiniteChance-Source 审计值:与音色台账
+// 删除面的 canvas=voices 同族,网关侧把这次 query 归因到角色绑定动作。
+const voiceSource = "canvas=characters"
 
 // VoiceChecker is the slice of the voice store the PATCH handler needs:
 // 绑定校验只问「行存在且状态可用」,不引整个台账接口。
@@ -515,7 +524,7 @@ func (h *Handlers) DeleteImage(c *gin.Context) {
 
 // validateVoiceBinding rejects a character binding to a voice that is not
 // usable right now(57 号票:只认台账里 status=OK 的行;0 = 解除,直接
-// 放行)。false = 已应答 4xx/5xx。
+// 放行不校准)。false = 已应答 4xx/5xx。
 func (h *Handlers) validateVoiceBinding(c *gin.Context, voiceID int64) bool {
 	if voiceID == 0 {
 		return true
@@ -543,7 +552,52 @@ func (h *Handlers) validateVoiceBinding(c *gin.Context, voiceID int64) bool {
 		apierr.InvalidRequest(c, "音色「"+v.Name+"」当前不可用(状态 "+v.Status+"),暂不能绑定")
 		return false
 	}
-	return true
+	return h.calibrateVoiceBinding(c, v)
+}
+
+// calibrateVoiceBinding re-checks one locally-OK ledger row against the
+// upstream lifecycle before a character may bind it (57 号票评审 F1):
+// 台账行只反映最后一次校准 —— 上游已删/已翻 UNDEPLOYED 的音色照样可被
+// 绑定是校准缺口,这里的实时 query 才是绑定时刻的事实。仅 OK 放行;
+// 网关应答的拒绝按状态透传(上游 404 = 音色已不存在,404 语义;其余
+// 4xx 原样),传输层失败 502 可重试。
+func (h *Handlers) calibrateVoiceBinding(c *gin.Context, v voice.Voice) bool {
+	if h.Gateway == nil {
+		log.Printf("character: voice binding without a gateway client (装配缺口)")
+		apierr.Write(c, http.StatusServiceUnavailable, "gateway_unconfigured",
+			"画布服务未配置网关服务 key(CANVAS_SERVICE_KEY),暂时不能绑定音色")
+		return false
+	}
+	status, err := h.Gateway.QueryVoice(c.Request.Context(), v.ChannelID, v.VoiceID, voiceSource)
+	if err != nil {
+		var ue *voice.UpstreamError
+		if errors.As(err, &ue) {
+			if ue.Status == http.StatusNotFound {
+				apierr.NotFound(c, "音色「"+v.Name+"」在上游已不存在(可能已被删除),不能绑定")
+				return false
+			}
+			// 网关已应答:状态与摘要原样透传(渠道没了/熔断中各自的语义
+			// 都在),台账行与绑定都不动。
+			apierr.Write(c, ue.Status, "upstream_error", ue.Message)
+			return false
+		}
+		// 传输层失败(网关不可达等):502,可重试。
+		log.Printf("character: calibrate voice %d (upstream %s): %v", v.ID, v.VoiceID, err)
+		apierr.Write(c, http.StatusBadGateway, "upstream_error", err.Error())
+		return false
+	}
+	switch status {
+	case voice.StatusOK:
+		return true
+	case voice.StatusUndeployed:
+		apierr.Conflict(c, "voice_undeployed", "音色「"+v.Name+"」未通过上游审核(UNDEPLOYED),不能绑定")
+	case voice.StatusDeploying:
+		apierr.Conflict(c, "voice_not_ready", "音色「"+v.Name+"」仍在部署中,部署完成后再绑定")
+	default:
+		log.Printf("character: voice %d query answered unknown status %q", v.ID, status)
+		apierr.Write(c, http.StatusBadGateway, "upstream_error", "网关音色状态应答异常: "+status)
+	}
+	return false
 }
 
 // requireIP parses the :id path segment and answers the IP's existence

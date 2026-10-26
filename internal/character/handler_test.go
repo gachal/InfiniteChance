@@ -16,6 +16,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/character"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // fakeStore is the in-memory Store double; handler tests run at the HTTP
@@ -107,6 +108,9 @@ func (f *fakeStore) UpdateCharacter(_ context.Context, id int64, u *character.Ch
 	}
 	if u.Detail != nil {
 		c.Detail = *u.Detail
+	}
+	if u.VoiceID != nil {
+		c.VoiceID = *u.VoiceID
 	}
 	f.character[id] = c
 	return c, nil
@@ -564,4 +568,225 @@ func TestRouteShapesCoexistWithIPRoutes(t *testing.T) {
 	character.RegisterRoutes(r.Group("/characters"), h)
 	character.RegisterVariantRoutes(r.Group("/character-variants"), h)
 	character.RegisterImageRoutes(r.Group("/character-images"), h)
+}
+
+// ---- 绑定实时校准(57 号票评审 F1)----
+
+// fakeVoiceChecker is the VoiceChecker double: 台账行由测试播种。
+type fakeVoiceChecker struct {
+	rows map[int64]voice.Voice
+}
+
+func (f *fakeVoiceChecker) Get(_ context.Context, id int64) (voice.Voice, error) {
+	v, ok := f.rows[id]
+	if !ok {
+		return voice.Voice{}, voice.ErrVoiceNotFound
+	}
+	return v, nil
+}
+
+// fakeVoiceQuerier is the voice.UpstreamQuerier double: 应答由测试给定,
+// 调用参数全量留痕(渠道/句柄/审计标记的断言用)。
+type fakeVoiceQuerier struct {
+	status string
+	err    error
+	calls  []string // "channelID:voiceID:source"
+}
+
+func (f *fakeVoiceQuerier) QueryVoice(_ context.Context, channelID int64, voiceID, source string) (string, error) {
+	f.calls = append(f.calls, itoa(channelID)+":"+voiceID+":"+source)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.status, nil
+}
+
+// newVoiceRouter mounts the character routes with the voices checker and the
+// gateway querier wired (绑定校准的完整装配,与 wiring 的生产姿势同构)。
+// querier 为 nil 时 Gateway 保持 nil 接口(生产「未装配」语义,不是
+// typed-nil 陷阱)。
+func newVoiceRouter(store *fakeStore, checker *fakeVoiceChecker, querier *fakeVoiceQuerier) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	var gateway voice.UpstreamQuerier
+	if querier != nil {
+		gateway = querier
+	}
+	h := &character.Handlers{Store: store, IPs: newFakeIPs(), Voices: checker, Gateway: gateway}
+	character.RegisterIPRoutes(r.Group("/ips/:id/characters"), h)
+	character.RegisterRoutes(r.Group("/characters"), h)
+	return r
+}
+
+// 绑定全绿路径:台账行存在且 status=OK、网关 query 应答 OK → 200 且
+// voice_id 落列;校准确经台账行的钉定渠道与上游句柄,审计标记归因到
+// 角色绑定。
+func TestHandlerVoiceBindingCalibratesOK(t *testing.T) {
+	store := newFakeStore()
+	c := store.seed(1, "小星")
+	checker := &fakeVoiceChecker{rows: map[int64]voice.Voice{
+		3: {ID: 3, VoiceID: "vd-ok", ChannelID: 4, Name: "少年音", Status: voice.StatusOK},
+	}}
+	querier := &fakeVoiceQuerier{status: voice.StatusOK}
+	r := newVoiceRouter(store, checker, querier)
+
+	w := do(r, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":3}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		VoiceID int64 `json:"voice_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.VoiceID != 3 {
+		t.Fatalf("voice_id = %d, want 3", got.VoiceID)
+	}
+	if len(querier.calls) != 1 || querier.calls[0] != "4:vd-ok:canvas=characters" {
+		t.Fatalf("query calls = %v, want one calibrated call on the pinned channel", querier.calls)
+	}
+}
+
+// 上游已翻 UNDEPLOYED(台账还停在 OK 的漂移形态)→ 409 voice_undeployed,
+// 绑定不落列。
+func TestHandlerVoiceBindingRejectsUndeployed(t *testing.T) {
+	store := newFakeStore()
+	c := store.seed(1, "小星")
+	checker := &fakeVoiceChecker{rows: map[int64]voice.Voice{
+		3: {ID: 3, VoiceID: "vd-bad", ChannelID: 4, Name: "少年音", Status: voice.StatusOK},
+	}}
+	querier := &fakeVoiceQuerier{status: voice.StatusUndeployed}
+	r := newVoiceRouter(store, checker, querier)
+
+	w := do(r, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":3}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d body %s", w.Code, w.Body.String())
+	}
+	var errBody struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if errBody.Error.Code != "voice_undeployed" {
+		t.Fatalf("code = %q, want voice_undeployed", errBody.Error.Code)
+	}
+	persisted, err := store.GetCharacter(context.Background(), c.ID)
+	if err != nil || persisted.VoiceID != 0 {
+		t.Fatalf("character voice_id = %d, %v; want 0 (拒绝即不落列)", persisted.VoiceID, err)
+	}
+}
+
+// 网关侧音色已不存在(404)→ 404 语义错误;其余网关 4xx 原样透传状态与
+// 摘要(upstream_error)。
+func TestHandlerVoiceBindingPassesGatewayRejectionsThrough(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		upstream   *voice.UpstreamError
+		wantStatus int
+		wantCode   string
+	}{
+		{"upstream gone", &voice.UpstreamError{Status: http.StatusNotFound, Message: "voice not found"}, http.StatusNotFound, "not_found"},
+		{"circuit open", &voice.UpstreamError{Status: http.StatusTooManyRequests, Message: "渠道熔断中"}, http.StatusTooManyRequests, "upstream_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			c := store.seed(1, "小星")
+			checker := &fakeVoiceChecker{rows: map[int64]voice.Voice{
+				3: {ID: 3, VoiceID: "vd-gone", ChannelID: 4, Name: "少年音", Status: voice.StatusOK},
+			}}
+			querier := &fakeVoiceQuerier{err: tc.upstream}
+			r := newVoiceRouter(store, checker, querier)
+
+			w := do(r, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":3}`)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d body %s, want %d", w.Code, w.Body.String(), tc.wantStatus)
+			}
+			var errBody struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &errBody); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if errBody.Error.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", errBody.Error.Code, tc.wantCode)
+			}
+			if tc.upstream.Status == http.StatusNotFound && errBody.Error.Message != "音色「少年音」在上游已不存在(可能已被删除),不能绑定" {
+				t.Fatalf("404 message = %q", errBody.Error.Message)
+			}
+			if tc.upstream.Status == http.StatusTooManyRequests && errBody.Error.Message != "渠道熔断中" {
+				t.Fatalf("passthrough message = %q, want the gateway summary intact", errBody.Error.Message)
+			}
+		})
+	}
+}
+
+// 解除绑定(voice_id = 0)不校准:网关一次都不打;网关未装配时解除与
+// 角色其余字段照常可改(只有绑定动作依赖网关)。
+func TestHandlerVoiceUnbindSkipsCalibration(t *testing.T) {
+	store := newFakeStore()
+	c := store.seed(1, "小星")
+	checker := &fakeVoiceChecker{rows: map[int64]voice.Voice{
+		3: {ID: 3, VoiceID: "vd-ok", ChannelID: 4, Name: "少年音", Status: voice.StatusOK},
+	}}
+	querier := &fakeVoiceQuerier{status: voice.StatusOK}
+	r := newVoiceRouter(store, checker, querier)
+
+	// 先绑上(fake store 直写,聚焦解除语义)。
+	bound := int64(3)
+	if _, err := store.UpdateCharacter(context.Background(), c.ID, &character.CharacterUpdate{VoiceID: &bound}); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+	w := do(r, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":0}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unbind status = %d body %s", w.Code, w.Body.String())
+	}
+	if len(querier.calls) != 0 {
+		t.Fatalf("query calls = %v, want none on unbind", querier.calls)
+	}
+	persisted, err := store.GetCharacter(context.Background(), c.ID)
+	if err != nil || persisted.VoiceID != 0 {
+		t.Fatalf("voice_id = %d, %v; want 0", persisted.VoiceID, err)
+	}
+
+	// 网关未装配:解除照常 200,绑定以 gateway_unconfigured 拒绝。
+	rNoGateway := newVoiceRouter(store, checker, nil)
+	if w := do(rNoGateway, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":0}`); w.Code != http.StatusOK {
+		t.Fatalf("unbind without gateway status = %d body %s", w.Code, w.Body.String())
+	}
+	if w := do(rNoGateway, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":3}`); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("bind without gateway status = %d body %s", w.Code, w.Body.String())
+	}
+	var errBody struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(do(rNoGateway, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":3}`).Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if errBody.Error.Code != "gateway_unconfigured" {
+		t.Fatalf("code = %q, want gateway_unconfigured", errBody.Error.Code)
+	}
+}
+
+// 台账行缺失仍是 400(校准前先过本地存在性,网关不被无效 id 打扰)。
+func TestHandlerVoiceBindingRejectsUnknownLedgerRow(t *testing.T) {
+	store := newFakeStore()
+	c := store.seed(1, "小星")
+	querier := &fakeVoiceQuerier{status: voice.StatusOK}
+	r := newVoiceRouter(store, &fakeVoiceChecker{rows: map[int64]voice.Voice{}}, querier)
+
+	if w := do(r, "PATCH", "/characters/"+itoa(c.ID), `{"voice_id":99}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body %s", w.Code, w.Body.String())
+	}
+	if len(querier.calls) != 0 {
+		t.Fatalf("query calls = %v, want none for unknown rows", querier.calls)
+	}
 }

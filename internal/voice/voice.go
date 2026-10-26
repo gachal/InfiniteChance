@@ -103,6 +103,16 @@ type UpstreamRemover interface {
 	DeleteVoice(ctx context.Context, channelID int64, voiceID, source string) error
 }
 
+// UpstreamQuerier is the slice of the gateway client the character binding
+// calibration needs (57 号票评审 F1):绑定/换绑前经网关 query_voice 实时
+// 校准,台账行的 status 只反映最后一次校准,不是实时事实。同一接口被
+// worker 轮询与角色绑定共用;*canvastask.Client satisfies it。
+type UpstreamQuerier interface {
+	// QueryVoice asks the upstream lifecycle status of one voice in its
+	// pinned channel. A gateway-answered rejection arrives as *UpstreamError.
+	QueryVoice(ctx context.Context, channelID int64, voiceID, source string) (string, error)
+}
+
 // Store persists 音色台账. 全局作用域(无 ip_id):List 不带过滤,排序
 // updated_at DESC(最近活动在前,与角色卡片墙同一哲学)。Delete 的
 // 被引检查跨读 characters 表(同库,canvastask 读 assets 的同款先例)。
