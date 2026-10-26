@@ -66,10 +66,11 @@ const (
 	CapChat   Capability = "chat"
 	CapImages Capability = "images"
 	CapVideos Capability = "videos" // 异步视频任务(08 号票)
+	CapAudio  Capability = "audio"  // 音色定制与台词合成(56 号票)
 )
 
 // SupportedCapabilities lists what a channel may declare.
-var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos}
+var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio}
 
 // SupportedTypes lists the channel types this build can relay and probe.
 var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope}

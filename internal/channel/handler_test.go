@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -502,5 +503,38 @@ func TestNormalizeCapabilitiesDefaultsAndHasCapability(t *testing.T) {
 	imagesOnly := channel.Channel{Capabilities: []channel.Capability{channel.CapImages}}
 	if imagesOnly.HasCapability(channel.CapChat) {
 		t.Errorf("images-only channel must not claim chat")
+	}
+}
+
+func TestNormalizeCapabilitiesAcceptsAudio(t *testing.T) {
+	// 56 号票:audio 能力显式开启(音色定制与台词合成),同一 07/08 号票
+	// 显式开启原则 —— 录入校验认这个值,HasCapability 按声明生效。
+	in, err := channel.Input{
+		Name: "c", Type: channel.TypeDashScope, BaseURL: "https://ws.cn-beijing.maas.aliyuncs.com",
+		Capabilities: []channel.Capability{channel.CapAudio, channel.CapChat},
+	}.Normalize(false)
+	if err != nil {
+		t.Fatalf("Normalize with audio: %v", err)
+	}
+	if !slices.Contains(in.Capabilities, channel.CapAudio) {
+		t.Errorf("audio capability = %v, want accepted", in.Capabilities)
+	}
+
+	legacy := channel.Channel{Capabilities: nil}
+	if legacy.HasCapability(channel.CapAudio) {
+		t.Errorf("nil capabilities claims audio, want legacy rows chat-only")
+	}
+	audioOnly := channel.Channel{Capabilities: []channel.Capability{channel.CapAudio}}
+	if audioOnly.HasCapability(channel.CapChat) {
+		t.Errorf("audio-only channel must not claim chat")
+	}
+
+	// 管理面回显路径认这个值(创建即回 201)。
+	r := newChannelServer(newFakeStore())
+	body := validChannelBody()
+	body["capabilities"] = []string{"audio"}
+	w := doJSON(r, http.MethodPost, "/admin/channels", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body %s, want 201", w.Code, w.Body.String())
 	}
 }
