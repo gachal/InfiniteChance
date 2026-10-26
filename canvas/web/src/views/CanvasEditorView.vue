@@ -55,6 +55,7 @@ import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import {
   appendComposerRef,
   appendVideoRef,
+  audioSyncPatch,
   composerImageUrls,
   composerRefFromAsset,
   composerVideoRefs,
@@ -339,14 +340,28 @@ function refreshModelCatalogs(): void {
 }
 
 /** 产物落位与提示词回填:成功任务的补丁(对账逻辑在 composer.ts 的
- * mediaSyncPatch)写进绑定节点;节点是否存在以图为准 —— 结果节点在提交
- * 任务前已先落库,这里不负责物化,也不复活被删除的节点;产物本体在素
- * 材库里,重开可查。27 号票:节点缺 prompt/model 而任务行有时一并补写,
- * 旧产物重开画布轮询到任务行后自动长出提示词。 */
+ * mediaSyncPatch / audioSyncPatch)写进绑定节点;节点是否存在以图为准
+ * —— 结果节点在提交任务前已先落库,这里不负责物化,也不复活被删除的
+ * 节点;产物本体在素材库里,重开可查。27 号票:节点缺 prompt/model 而
+ * 任务行有时一并补写,旧产物重开画布轮询到任务行后自动长出提示词。
+ * 音频节点走 audioSyncPatch 专属形状(57 号票评审 F2:chars 回填,
+ * asset_id 是唯一产物引用,不落 url)。 */
 function syncTaskToCanvas(task: CanvasTask): void {
   const node = findNode(task.node_id)
-  const data = node?.data as MediaNodeData | undefined
-  if (!node || !data) {
+  if (!node) {
+    return
+  }
+  if (node.type === 'audio') {
+    const audio = node.data as AudioNodeData
+    const patch = audioSyncPatch(task, audio)
+    if (patch) {
+      updateNodeData(task.node_id, patch)
+      markChanged()
+    }
+    return
+  }
+  const data = node.data as MediaNodeData | undefined
+  if (!data) {
     return
   }
   const patch = mediaSyncPatch(task, data)

@@ -24,6 +24,7 @@ function task(overrides: Partial<CanvasTask>): CanvasTask {
     asset_id: 0,
     image_url: '',
     video_url: '',
+    chars: 0,
     created_at: '2026-09-03T12:00:00Z',
     updated_at: '2026-09-03T12:00:00Z',
     ...overrides,

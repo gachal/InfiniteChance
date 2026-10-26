@@ -4,7 +4,7 @@
  * 可进网关契约的地址形状。27 号票追加提示词落节点的纯逻辑:提交时
  * 结果节点的数据形状、终态任务对节点的对账补丁。
  */
-import type { MediaNodeData } from './graph'
+import type { AudioNodeData, MediaNodeData } from './graph'
 
 /** 对话框参考条上的一条参考图:素材引用或厂商地址。 */
 export interface ComposerRef {
@@ -360,7 +360,7 @@ export function resolutionPresetsFor(model: string): PresetOption[] {
 
 /** taskUrlFor / mediaSyncPatch 收的任务形状:@infinitechance/api 的
  * CanvasTask 结构满足它;收窄到相关子集是为了让这里不依赖 api 包、测试
- * 可自造轻量对象。 */
+ * 可自造轻量对象。chars 只属于 kind=tts(评审 F2 的回填源)。 */
 export interface TaskForNodeSync {
   kind: string
   status: string
@@ -369,6 +369,7 @@ export interface TaskForNodeSync {
   asset_id: number
   image_url: string
   video_url: string
+  chars?: number
 }
 
 /** 任务产物地址:有素材引用一律走内容寻址路径(14 号票纪律,厂商临时
@@ -422,6 +423,46 @@ export function mediaSyncPatch(
     data.asset_id === task.asset_id &&
     patch.prompt === undefined &&
     patch.model === undefined
+  ) {
+    return null
+  }
+  return patch
+}
+
+/** 终态 tts 任务对音频节点数据的对账补丁(57 号票;评审 F2):asset_id
+ * 回填(展示层按 id 拼内容寻址路径,音频节点不落 url)、台词 text 与
+ * model 缺失补写(27 号票产物-元数据配对)、服务端计费字符数 chars
+ * 回填(任务行 voice_spec 带出,只认已落的非零值)。节点已带的字段不
+ * 覆盖;无可写内容返回 null(调用方据此不落盘)。 */
+export interface AudioNodeSyncPatch {
+  asset_id: number
+  text?: string
+  model?: string
+  chars?: number
+}
+
+export function audioSyncPatch(
+  task: TaskForNodeSync,
+  data: AudioNodeData,
+): AudioNodeSyncPatch | null {
+  if (task.status !== 'succeeded' || task.asset_id <= 0) {
+    return null
+  }
+  const patch: AudioNodeSyncPatch = { asset_id: task.asset_id }
+  if ((data.text ?? '') === '' && task.prompt !== '') {
+    patch.text = task.prompt
+  }
+  if ((data.model ?? '') === '' && task.model !== '') {
+    patch.model = task.model
+  }
+  if ((data.chars ?? 0) === 0 && (task.chars ?? 0) > 0) {
+    patch.chars = task.chars
+  }
+  if (
+    data.asset_id === task.asset_id &&
+    patch.text === undefined &&
+    patch.model === undefined &&
+    patch.chars === undefined
   ) {
     return null
   }
