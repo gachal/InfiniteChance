@@ -40,6 +40,10 @@ Status: defined(2026-10-26 grilling 两轮定案,待实现)
 
 (空)
 
+### 阶段进度
+
+- **阶段一完成(2026-10-26,feat/canvas-pc-redesign)**:基线 docs 固化(main e18c140)→ token 地基 + 全量 var() 化 924 处(1bb0b2d,codemod 只动 `.vue` style 段,scoped 原样)→ CanvasEditorView 拆分(ce97e20,3752→3208 行,新增 components/editor/ 四组件 + composables/ 两枚,Escape 取消改名经 defineExpose 保真)。vue-tsc/vitest 224 例/eslint 全绿;1920×1080 与 1440×900 双档浏览器实测(对话框贴节点定位/侧滑面板/改名/Esc 链/IP 墙)零破版;impeccable detect 28 条全部 advisory、零阻断——advisory 清单(散色 #fff/#3b5bdb/#e03131、4px 圆角、字号散档、rgba(28,40,68,0.95) 等)即阶段二档位收敛的工作清单。注:间距 token 化未做,留阶段二随改版落(值要变,先 token 化是白费)。
+
 ## 产出面
 
 - `canvas/web`:`style.css`(token 地基)、`views/` 五视图、`components/`(拆分新增组件)、`components/nodes/`(质感改版)、各 scoped 样式 `var()` 化。
