@@ -24,7 +24,8 @@ var _ Store = (*SQLiteStore)(nil)
 
 // 三表与 MySQL 版同形(SQLite 方言):表内不带索引子句,二级索引用独立的
 // CREATE INDEX IF NOT EXISTS,名字沿用 MySQL 版索引名(48 号票同款纪律,
-// asset 包先例)。空起步无迁移。
+// asset 包先例)。voice_id(57 号票)是可空列,新库随 CREATE 落地、存量
+// 库走 sqliteMigrations 幂等加列。空起步无其他迁移。
 const sqliteCharactersSchema = `
 CREATE TABLE IF NOT EXISTS characters (
 	id          INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS characters (
 	alias       TEXT    NOT NULL DEFAULT '',
 	description TEXT    NOT NULL DEFAULT '',
 	detail      TEXT    NOT NULL DEFAULT '',
+	voice_id    INTEGER NULL,
 	created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
 	updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
@@ -65,8 +67,16 @@ var sqliteIndexes = []string{
 	`CREATE INDEX IF NOT EXISTS idx_character_images_variant ON character_images (variant_id)`,
 }
 
-// EnsureSchema creates the three tables and their indexes when missing.
-// Idempotent; 空起步无迁移、无同序依赖。
+// sqliteMigrations widens tables created by earlier desktop builds in place
+// (57 号票的角色绑定音色列):CREATE TABLE IF NOT EXISTS 不会加宽已存在的
+// 表,存量 app.db 靠 PRAGMA table_info 检查后 ALTER(canvastask 包先例)。
+// Idempotent.
+var sqliteMigrations = []struct{ column, ddl string }{
+	{"voice_id", "ALTER TABLE characters ADD COLUMN voice_id INTEGER NULL"},
+}
+
+// EnsureSchema creates the three tables and their indexes when missing,
+// then widens an existing characters table in place. Idempotent.
 func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 	for _, ddl := range []string{sqliteCharactersSchema, sqliteVariantsSchema, sqliteImagesSchema} {
 		if _, err := s.DB.ExecContext(ctx, ddl); err != nil {
@@ -78,18 +88,51 @@ func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 			return err
 		}
 	}
+	for _, m := range sqliteMigrations {
+		rows, err := s.DB.QueryContext(ctx, `PRAGMA table_info(characters)`)
+		if err != nil {
+			return err
+		}
+		found := false
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notNull, pk int
+			var dfltValue any
+			if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == m.column {
+				found = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if found {
+			continue
+		}
+		if _, err := s.DB.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-const sqliteCharacterColumns = `id, ip_id, name, alias, description, detail, created_at, updated_at`
+const sqliteCharacterColumns = `id, ip_id, name, alias, description, detail, voice_id, created_at, updated_at`
 
 // scanSQLiteCharacterRow 按列序扫描一行,TEXT 时间经 ParseTime 还原。
 func scanSQLiteCharacterRow(row interface{ Scan(...any) error }) (Character, error) {
 	var c Character
+	var voiceID sql.NullInt64
 	var createdAt, updatedAt string
-	if err := row.Scan(&c.ID, &c.IPID, &c.Name, &c.Alias, &c.Description, &c.Detail, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.IPID, &c.Name, &c.Alias, &c.Description, &c.Detail, &voiceID, &createdAt, &updatedAt); err != nil {
 		return Character{}, err
 	}
+	c.VoiceID = voiceID.Int64
 	t, err := sqlitedb.ParseTime(createdAt)
 	if err != nil {
 		return Character{}, err
@@ -323,6 +366,15 @@ func (s *SQLiteStore) UpdateCharacter(ctx context.Context, id int64, u *Characte
 	if u.Detail != nil {
 		sets = append(sets, "detail = ?")
 		args = append(args, *u.Detail)
+	}
+	if u.VoiceID != nil {
+		// 0 = 解除绑定:可空列落 NULL,与「0 = 未绑定」的读回口径一致。
+		if *u.VoiceID == 0 {
+			sets = append(sets, "voice_id = NULL")
+		} else {
+			sets = append(sets, "voice_id = ?")
+			args = append(args, *u.VoiceID)
+		}
 	}
 	args = append(args, id)
 	if _, err := s.DB.ExecContext(ctx,
