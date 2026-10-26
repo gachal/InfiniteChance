@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T17:14:05+08:00",
+  "title": "Design System: 无限画布 (InfiniteChance Canvas)",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "工作灯蓝", "canonical": "#7aa2f7", "tonalRamp": ["oklch(20% 0.05 265)", "oklch(30% 0.08 265)", "oklch(42% 0.11 265)", "oklch(52% 0.13 265)", "oklch(62% 0.12 265)", "oklch(72% 0.10 265)", "oklch(82% 0.07 265)", "oklch(92% 0.04 265)"] },
+      "success": { "role": "tertiary", "displayName": "信号绿", "canonical": "#4ade80", "tonalRamp": ["oklch(20% 0.06 145)", "oklch(30% 0.09 145)", "oklch(42% 0.13 145)", "oklch(52% 0.16 145)", "oklch(62% 0.15 145)", "oklch(72% 0.12 145)", "oklch(82% 0.08 145)", "oklch(92% 0.04 145)"] },
+      "danger": { "role": "tertiary", "displayName": "失败绯", "canonical": "#ff8f8f", "tonalRamp": ["oklch(20% 0.05 20)", "oklch(30% 0.08 20)", "oklch(42% 0.11 20)", "oklch(52% 0.13 20)", "oklch(62% 0.12 20)", "oklch(72% 0.10 20)", "oklch(82% 0.07 20)", "oklch(92% 0.04 20)"] },
+      "amber": { "role": "tertiary", "displayName": "琥珀黄", "canonical": "#facc15", "tonalRamp": ["oklch(20% 0.06 95)", "oklch(30% 0.10 95)", "oklch(42% 0.14 95)", "oklch(52% 0.16 95)", "oklch(62% 0.15 95)", "oklch(72% 0.13 95)", "oklch(82% 0.09 95)", "oklch(92% 0.05 95)"] },
+      "sky": { "role": "tertiary", "displayName": "晴空蓝", "canonical": "#38bdf8", "tonalRamp": ["oklch(20% 0.05 232)", "oklch(30% 0.08 232)", "oklch(42% 0.11 232)", "oklch(52% 0.13 232)", "oklch(62% 0.13 232)", "oklch(72% 0.11 232)", "oklch(82% 0.07 232)", "oklch(92% 0.04 232)"] },
+      "indigo-soft": { "role": "tertiary", "displayName": "雾靛", "canonical": "#a5b4fc", "tonalRamp": ["oklch(20% 0.04 280)", "oklch(30% 0.06 280)", "oklch(42% 0.08 280)", "oklch(52% 0.09 280)", "oklch(62% 0.09 280)", "oklch(72% 0.08 280)", "oklch(82% 0.05 280)", "oklch(92% 0.03 280)"] },
+      "violet": { "role": "tertiary", "displayName": "罗兰紫", "canonical": "#a78bfa", "tonalRamp": ["oklch(20% 0.05 295)", "oklch(30% 0.08 295)", "oklch(42% 0.11 295)", "oklch(52% 0.13 295)", "oklch(62% 0.12 295)", "oklch(72% 0.10 295)", "oklch(82% 0.07 295)", "oklch(92% 0.04 295)"] },
+      "pink": { "role": "tertiary", "displayName": "夜樱粉", "canonical": "#f472b6", "tonalRamp": ["oklch(20% 0.06 350)", "oklch(30% 0.10 350)", "oklch(42% 0.13 350)", "oklch(52% 0.16 350)", "oklch(62% 0.15 350)", "oklch(72% 0.12 350)", "oklch(82% 0.08 350)", "oklch(92% 0.04 350)"] },
+      "teal": { "role": "tertiary", "displayName": "设定青", "canonical": "#2dd4bf", "tonalRamp": ["oklch(20% 0.05 175)", "oklch(30% 0.08 175)", "oklch(42% 0.11 175)", "oklch(52% 0.13 175)", "oklch(62% 0.12 175)", "oklch(72% 0.10 175)", "oklch(82% 0.07 175)", "oklch(92% 0.04 175)"] },
+      "teal-light": { "role": "tertiary", "displayName": "声波青", "canonical": "#5eead4", "tonalRamp": ["oklch(20% 0.05 175)", "oklch(30% 0.07 175)", "oklch(42% 0.10 175)", "oklch(52% 0.12 175)", "oklch(62% 0.11 175)", "oklch(72% 0.09 175)", "oklch(82% 0.06 175)", "oklch(92% 0.03 175)"] },
+      "orange": { "role": "tertiary", "displayName": "暮橙", "canonical": "#fb923c", "tonalRamp": ["oklch(20% 0.05 60)", "oklch(30% 0.09 60)", "oklch(42% 0.12 60)", "oklch(52% 0.15 60)", "oklch(62% 0.14 60)", "oklch(72% 0.11 60)", "oklch(82% 0.08 60)", "oklch(92% 0.04 60)"] },
+      "red-signal": { "role": "tertiary", "displayName": "警报红", "canonical": "#f87171", "tonalRamp": ["oklch(20% 0.06 22)", "oklch(30% 0.10 22)", "oklch(42% 0.13 22)", "oklch(52% 0.16 22)", "oklch(62% 0.15 22)", "oklch(72% 0.12 22)", "oklch(82% 0.08 22)", "oklch(92% 0.04 22)"] },
+      "ip-indigo": { "role": "secondary", "displayName": "企划蓝", "canonical": "#243b8f", "tonalRamp": ["oklch(18% 0.06 272)", "oklch(26% 0.09 272)", "oklch(34% 0.11 272)", "oklch(42% 0.12 272)", "oklch(52% 0.11 272)", "oklch(64% 0.09 272)", "oklch(78% 0.06 272)", "oklch(90% 0.03 272)"] },
+      "ip-violet": { "role": "secondary", "displayName": "暮紫", "canonical": "#57348a", "tonalRamp": ["oklch(18% 0.05 305)", "oklch(26% 0.08 305)", "oklch(34% 0.10 305)", "oklch(42% 0.11 305)", "oklch(52% 0.10 305)", "oklch(64% 0.08 305)", "oklch(78% 0.05 305)", "oklch(90% 0.03 305)"] },
+      "ip-wine": { "role": "secondary", "displayName": "酒红", "canonical": "#8a2f5c", "tonalRamp": ["oklch(18% 0.05 355)", "oklch(26% 0.07 355)", "oklch(34% 0.09 355)", "oklch(42% 0.10 355)", "oklch(52% 0.09 355)", "oklch(64% 0.07 355)", "oklch(78% 0.05 355)", "oklch(90% 0.02 355)"] },
+      "bg-navy": { "role": "neutral", "displayName": "深夜底", "canonical": "#0d1524", "tonalRamp": ["oklch(14% 0.02 265)", "oklch(20% 0.025 265)", "oklch(28% 0.03 265)", "oklch(38% 0.03 265)", "oklch(52% 0.025 265)", "oklch(68% 0.02 265)", "oklch(82% 0.015 265)", "oklch(94% 0.01 265)"] },
+      "text-secondary": { "role": "neutral", "displayName": "蓝灰字阶", "canonical": "#aab1c5", "tonalRamp": ["oklch(16% 0.02 265)", "oklch(24% 0.025 265)", "oklch(34% 0.03 265)", "oklch(46% 0.025 265)", "oklch(58% 0.02 265)", "oklch(72% 0.015 265)", "oklch(85% 0.01 265)", "oklch(95% 0.005 265)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "仅 IP 企划身份时刻:卡片墙标题、空态徽标、详情页头。" },
+      "title": { "displayName": "Title", "purpose": "面板/节点卡/对话框标题,600 字重。" },
+      "body": { "displayName": "Body", "purpose": "正文与表单,节点卡基准 13px。" },
+      "label": { "displayName": "Label", "purpose": "全站用量重心:字段标签、按钮、chip、表头,12px/600。" },
+      "micro": { "displayName": "Micro", "purpose": "占位提示与辅助注脚,11px。" }
+    },
+    "shadows": [
+      { "name": "控件浮影", "value": "0 8px 24px rgba(0, 0, 0, 0.35)", "purpose": "vue-flow 缩放控件与小地图等常驻悬浮件。" },
+      { "name": "侧滑影", "value": "-12px 0 32px rgba(0, 0, 0, 0.45)", "purpose": "右侧滑面板,光源感来自左侧画布。" },
+      { "name": "对话框影", "value": "0 8px 24px rgba(0, 0, 0, 0.4) / 0 8px 28px rgba(0, 0, 0, 0.5)", "purpose": "生成对话框与中浮层。" },
+      { "name": "全屏浮层影", "value": "0 12px 40px rgba(0, 0, 0, 0.45) / 0 12px 48px rgba(0, 0, 0, 0.55)", "purpose": "灯箱与编辑层,最重层级用最重的影。" }
+    ],
+    "motion": [
+      { "name": "transition-fast", "value": "0.15s ease", "purpose": "透明度与描边态过渡的实测基线;不引入弹簧曲线。" }
+    ]
+  },
+  "components": [
+    {
+      "name": "主按钮(发送)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "36px 圆形击发键,工作灯蓝底压深夜墨字,生成对话框的发送按钮。",
+      "html": "<button class=\"ds-btn-primary\">➤</button>",
+      "css": ".ds-btn-primary { width: 36px; height: 36px; border: none; border-radius: 50%; background: #7aa2f7; color: #10152a; font-size: 16px; font-weight: 700; font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif; cursor: pointer; display: grid; place-items: center; padding: 0; transition: opacity 0.15s ease; } .ds-btn-primary:hover { opacity: 0.9; } .ds-btn-primary:focus-visible { outline: 2px solid #7aa2f7; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Ghost 按钮",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "白系透明底次级按钮,工具栏与对话框次要操作的默认形态。",
+      "html": "<button class=\"ds-btn-ghost\">生成视频</button>",
+      "css": ".ds-btn-ghost { border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px; background: rgba(255, 255, 255, 0.08); color: #aab1c5; font-size: 12px; font-weight: 600; font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif; padding: 6px 12px; cursor: pointer; transition: border-color 0.15s ease, color 0.15s ease; } .ds-btn-ghost:hover { border-color: rgba(122, 162, 247, 0.85); color: #fff; } .ds-btn-ghost:focus-visible { outline: 2px solid #7aa2f7; outline-offset: 2px; }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": null,
+      "description": "胶囊标签,参考条与角色 chip 的通用形态,可带类型色。",
+      "html": "<span class=\"ds-chip\"><span class=\"ds-chip-dot\"></span>参考图 3/9</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 999px; background: rgba(255, 255, 255, 0.08); color: #aab1c5; font-size: 12px; font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif; padding: 3px 10px; } .ds-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; }"
+    },
+    {
+      "name": "节点卡(图片)",
+      "kind": "card",
+      "refersTo": "node-card",
+      "description": "画布签名组件:玻璃底 + 类型色描边(示例为图片节点的信号绿),产物与提示词永久配对。",
+      "html": "<div class=\"ds-node-card\"><div class=\"ds-node-head\"><span class=\"ds-node-title\">图片节点</span><span class=\"ds-node-badge\">已完成</span></div><div class=\"ds-node-media\"></div><p class=\"ds-node-meta\">深夜工作室概念图 · seedance-image</p></div>",
+      "css": ".ds-node-card { width: 280px; background: rgba(20, 26, 43, 0.92); border: 1px solid rgba(74, 222, 128, 0.4); border-radius: 12px; padding: 10px 12px; font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif; } .ds-node-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; } .ds-node-title { font-size: 13px; font-weight: 600; color: #e8eaf2; } .ds-node-badge { font-size: 11px; color: #4ade80; } .ds-node-media { width: 100%; height: 120px; border-radius: 8px; background: linear-gradient(135deg, #14284b 0%, #0d1524 100%); } .ds-node-meta { margin: 8px 0 0; font-size: 12px; color: #8b91a7; }"
+    },
+    {
+      "name": "输入框",
+      "kind": "input",
+      "refersTo": null,
+      "description": "深底细描边输入框,焦点转交互蓝,错误文案用失败绯。",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\">提示词</label><input class=\"ds-input\" placeholder=\"描述你想生成的画面…\" /><p class=\"ds-field-error\">提示词不能为空</p></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4px; font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif; } .ds-field-label { font-size: 12px; font-weight: 600; color: #8b91a7; } .ds-input { background: rgba(13, 21, 36, 0.92); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px; color: #e8eaf2; font-size: 13px; font-family: inherit; padding: 8px 10px; transition: border-color 0.15s ease; } .ds-input::placeholder { color: #6f7690; } .ds-input:focus { outline: none; border-color: rgba(122, 162, 247, 0.85); } .ds-field-error { margin: 0; font-size: 12px; color: #ff8f8f; }"
+    },
+    {
+      "name": "连线端口圆点",
+      "kind": "custom",
+      "refersTo": "port-dot",
+      "description": "节点左右边缘外半枚的 24px 胶囊,两击连线的唯一入口,hover 转交互蓝。",
+      "html": "<button class=\"ds-port\">+</button>",
+      "css": ".ds-port { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 999px; background: rgba(13, 21, 36, 0.92); color: #aab1c5; font-size: 16px; line-height: 1; cursor: pointer; transition: border-color 0.15s ease, color 0.15s ease; } .ds-port:hover { border-color: rgba(122, 162, 247, 0.85); color: #fff; } .ds-port:focus-visible { outline: 2px solid #7aa2f7; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "深夜工作室",
+    "overview": "这是一个只在深夜亮灯的单人工作室:整间屋子沉在蓝黑里,光只落在正在工作的东西上——选中的节点、打开的对话框、进行中的任务。界面底色是一整片深夜蓝黑,其上的一切面板都是半透明的深色玻璃,靠 1px 细描边勾出轮廓而不是靠阴影托起。色彩在这里从不装饰:每一种颜色都在值班——11 种节点类型各占一种身份色,绿是成功、红是失败、蓝是可交互;没有语义的颜色不出现。气质是安静克制的:11–13px 的高密度小字、600 字重的标签、紧凑的 8px 圆角,信息密度明显优先于留白——这是工具,不是海报。但克制里有两处刻意的高光:品牌渐变(深蓝→紫→酒红,135°)只出现在 IP 企划的身份时刻,像工作室里唯一一件永久陈列;类型色描边让 11 种节点在画布上一眼可辨,像不同工组的灯牌。",
+    "keyCharacteristics": [
+      "深夜蓝黑径向渐变打底,color-scheme: dark,全程无纯黑纯白",
+      "半透明深色面板 + 白系透明 hairline 描边,平面靠描边不靠阴影",
+      "11 种节点类型色板(描边 0.4–0.45 透明度),色彩即身份",
+      "高密度小字(11–13px)、600 字重层级、系统中文字体栈零加载",
+      "阴影只给真正浮起的层(灯箱/侧滑/编辑层),浮起即模态",
+      "8px 圆角为骨、999px 胶囊为饰,圆而不泡"
+    ],
+    "rules": [
+      { "name": "The 只在值班时亮规则", "body": "颜色只承载语义:类型身份、状态、交互。不允许无语义的装饰色;想加一点颜色时,先回答它替用户省了哪次辨认。", "section": "colors" },
+      { "name": "The 成本不惊扰规则", "body": "价格预估永远用预估灰蓝(#9fb3d9)小字,失败绯(#ff8f8f)只留给失败。钱要可见,但不必看起来像出错。", "section": "colors" },
+      { "name": "The 600 就够规则", "body": "层级靠 600 对 400 的对比建立,700 只留给 Display 与主按钮字符。不引入更多字重档位。", "section": "typography" },
+      { "name": "The 深夜小字规则", "body": "界面文字 11–15px,15px 是上限(Title 档);只有 IP 身份时刻允许更大。这不是缩小的理由,是密度的承诺。", "section": "typography" },
+      { "name": "The 浮起即模态规则", "body": "阴影是模态性的信号:一个元素带阴影,它就在打断用户的工作流(灯箱/编辑层/对话框/侧滑)。静止内容永不带阴影;想给卡片加影时,先问它凭什么打断用户。", "section": "elevation" },
+      { "name": "The 描边即轮廓规则", "body": "平面元素的轮廓一律用白系透明描边勾出,不用灰色实线、不用阴影兜底。描边透明度即层级:0.08 是分区,0.12–0.16 是控件边界,0.28 是可点击件。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 用白系透明描边勾轮廓:分区 rgba(255,255,255,0.08)、控件 0.12–0.16、可点击件 0.28",
+      "Do 为每种新节点类型选一个未占用的信号色作描边身份,透明度落在 0.4–0.45,并同步用于卡内状态色",
+      "Do 把阴影留给灯箱、编辑层、侧滑面板与悬浮控件;普通卡片保持平面",
+      "Do 价格与用量信息用预估灰蓝 #9fb3d9 的 12px 小字,安静可见",
+      "Do 焦点指示统一交给全局 :focus-visible(2px #7aa2f7,offset 2px),组件不再自写 focus 样式",
+      "Do 状态可辨不只靠透明度:非法连线目标 = 降透明 + 灰阶 + 虚线描边三管齐下"
+    ],
+    "donts": [
+      "Don't 使用无语义的装饰色;每种颜色必须能回答「它替用户省了哪次辨认」",
+      "Don't 把企划渐变(#243b8f→#57348a→#8a2f5c)用于按钮、状态或 IP 时刻之外的任何地方",
+      "Don't 在静止卡片上加阴影,或用阴影替代描边做层级",
+      "Don't 混用两支红:失败绯 #ff8f8f 是错误/失败,警报红 #f87171 是关卡卡类型色",
+      "Don't 引入 webfont 或在 15px 以上再加界面字级;字重只用 400/600/700 三档",
+      "Don't 使用纯黑(#000)或纯白(#fff)作大面积底色/文字;深底与浅字都在蓝调色域内"
+    ]
+  }
+}
