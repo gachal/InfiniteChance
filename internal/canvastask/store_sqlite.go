@@ -8,6 +8,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/sqlitedb"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // SQLiteStore backs Store with the canvas_tasks table in the desktop's
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	image_url      TEXT    NULL,
 	video_url      TEXT    NULL,
 	remote_task_id TEXT    NOT NULL DEFAULT '',
+	voice_spec     TEXT    NULL,
 	created_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
 	updated_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
@@ -72,6 +74,7 @@ var sqliteMigrations = []struct{ column, ddl string }{
 	{"video_refs", "ALTER TABLE canvas_tasks ADD COLUMN video_refs TEXT NULL"},
 	{"ratio", "ALTER TABLE canvas_tasks ADD COLUMN ratio TEXT NOT NULL DEFAULT ''"},
 	{"background", "ALTER TABLE canvas_tasks ADD COLUMN background TEXT NOT NULL DEFAULT ''"},
+	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec TEXT NULL"},
 }
 
 // EnsureSchema creates the canvas_tasks table and its indexes when missing,
@@ -125,10 +128,11 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, image_ref, image_refs, video_refs, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs), t.Status, now, now)
+		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		encodeVoiceSpec(t.VoiceSpec), t.Status, now, now)
 	if err != nil {
 		return Task{}, err
 	}
@@ -242,11 +246,12 @@ func (s *SQLiteStore) finalizeSuccess(ctx context.Context, id string, a asset.As
 	}
 	defer tx.Rollback()
 
+	now := sqlitedb.FormatTime(time.Now())
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id, created_at, last_used_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.Kind, a.CanvasID, a.TaskID, a.Model, a.Prompt, a.URL,
-		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID, sqlitedb.FormatTime(time.Now()))
+		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID, now, now)
 	if err != nil {
 		return Task{}, false, err
 	}
@@ -368,6 +373,146 @@ func (s *SQLiteStore) AttachRemote(ctx context.Context, id, remoteTaskID string)
 	return t, true, err
 }
 
+// attachVoiceSpec merges one spec mutation into the voice_spec column of a
+// running task: 读改写以行内当前 JSON 为底,条件 UPDATE 的守卫与
+// AttachRemote 同款(MySQL 版同构,updated_at 显式带上)。
+func (s *SQLiteStore) attachVoiceSpec(ctx context.Context, id string, mutate func(*VoiceSpec)) (Task, bool, error) {
+	t, err := s.Get(ctx, id)
+	if err != nil {
+		return Task{}, false, err
+	}
+	if t.Status != StatusRunning {
+		return t, false, nil
+	}
+	mutate(&t.VoiceSpec)
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE canvas_tasks SET voice_spec = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		encodeVoiceSpec(t.VoiceSpec), sqlitedb.FormatTime(time.Now()), id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	t, err = s.Get(ctx, id)
+	return t, true, err
+}
+
+func (s *SQLiteStore) AttachVoiceChannel(ctx context.Context, id string, channelID int64) (Task, bool, error) {
+	return s.attachVoiceSpec(ctx, id, func(spec *VoiceSpec) { spec.ChannelID = channelID })
+}
+
+func (s *SQLiteStore) AttachRemoteVoice(ctx context.Context, id, remoteVoiceID string) (Task, bool, error) {
+	return s.attachVoiceSpec(ctx, id, func(spec *VoiceSpec) { spec.RemoteVoiceID = remoteVoiceID })
+}
+
+// FinalizeVoiceSuccess lands the preview asset (nil = 无试听,崩溃恢复
+// 路径),the voices ledger row and the terminal state in one transaction;
+// 与 MySQL 版同一事务形状(database/sql 的事务 API 两边一致),素材行的
+// created_at 显式带上(SQLite 无默认值兜底差异)。
+func (s *SQLiteStore) FinalizeVoiceSuccess(ctx context.Context, id string, in voice.CreateInput, preview *asset.Asset) (Task, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer tx.Rollback()
+
+	var previewID int64
+	if preview != nil {
+		now := sqlitedb.FormatTime(time.Now())
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id, created_at, last_used_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			preview.Kind, preview.CanvasID, preview.TaskID, preview.Model, preview.Prompt, preview.URL,
+			preview.ObjectKey, preview.ContentType, preview.SizeBytes, preview.IPID, now, now)
+		if err != nil {
+			return Task{}, false, err
+		}
+		if previewID, err = res.LastInsertId(); err != nil {
+			return Task{}, false, err
+		}
+	}
+	now := sqlitedb.FormatTime(time.Now())
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO voices (voice_id, channel_id, target_model, name, source_mode, source_prompt, sample_asset_id, preview_asset_id, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.VoiceID, in.ChannelID, in.TargetModel, in.Name, in.SourceMode,
+		voiceNullString(in.SourcePrompt), voiceNullInt64(in.SampleAssetID),
+		voiceNullInt64(previewID), in.Status, now, now); err != nil {
+		return Task{}, false, err
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE canvas_tasks SET status = ?, asset_id = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, previewID, sqlitedb.FormatTime(time.Now()), id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		// 终态被别人(重试复活)改走:素材与台账一行不落,原样回滚。
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, false, err
+	}
+	t, err := s.Get(ctx, id)
+	return t, true, err
+}
+
+// FinalizeTtsSuccess inserts the audio asset and closes the task succeeded
+// in one transaction;任务行不设音频 URL 列(与 MySQL 版同构)。
+func (s *SQLiteStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer tx.Rollback()
+
+	now := sqlitedb.FormatTime(time.Now())
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id, created_at, last_used_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Kind, a.CanvasID, a.TaskID, a.Model, a.Prompt, a.URL,
+		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID, now, now)
+	if err != nil {
+		return Task{}, false, err
+	}
+	assetID, err := res.LastInsertId()
+	if err != nil {
+		return Task{}, false, err
+	}
+
+	res, err = tx.ExecContext(ctx,
+		`UPDATE canvas_tasks SET status = ?, asset_id = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, assetID, sqlitedb.FormatTime(time.Now()), id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, false, err
+	}
+	t, err := s.Get(ctx, id)
+	return t, true, err
+}
+
 // ResetForRetry sends one failed task of the canvas back to the queue and
 // clears the failure fields, keeping the row (and its attempt history)
 // intact so the same node keeps the same task id across retries.
@@ -397,12 +542,12 @@ func (s *SQLiteStore) ResetForRetry(ctx context.Context, id string, canvasID int
 // 读出转回 time.Time,保持与 MySQL 版相同的 Go 返回类型。
 func scanSQLiteTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec sql.NullString
 	var createdAt, updatedAt string
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
 		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
-		&imageURL, &videoURL, &t.RemoteTaskID, &createdAt, &updatedAt); err != nil {
+		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &createdAt, &updatedAt); err != nil {
 		return Task{}, err
 	}
 	t.Error = errMsg.String
@@ -412,6 +557,7 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	t.ImageRef = imageRef.String
 	t.ImageRefs = decodeImageRefs(imageRefs.String)
 	t.VideoRefs = decodeVideoRefs(videoRefs.String)
+	t.VoiceSpec = decodeVoiceSpec(voiceSpec.String)
 	var err error
 	if t.CreatedAt, err = sqlitedb.ParseTime(createdAt); err != nil {
 		return Task{}, err

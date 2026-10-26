@@ -42,7 +42,8 @@ var (
 // Character is one IP 级角色实体:角色圣经的载体与设定图锚的一致性源。
 // Variants 随 Get/List 一次取全(单管理员量级小,画布侧目录一次拿整棵
 // 树);CoverAssetID 是列表投影(规则见 CoverAssetID);0 = 全空(卡片走
-// 占位)。
+// 占位)。VoiceID 是绑定音色的台账行引用(57 号票,全局 voices 表;粒度
+// 角色级 —— 声音跟人不跟衣服,变体级显式不做),0 = 未绑定。
 type Character struct {
 	ID           int64
 	IPID         int64
@@ -51,6 +52,7 @@ type Character struct {
 	Description  string
 	Detail       string
 	CoverAssetID int64
+	VoiceID      int64
 	Variants     []Variant
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -90,11 +92,14 @@ type CharacterInput struct {
 }
 
 // CharacterUpdate carries UpdateCharacter's partial fields: nil = 不动。
+// VoiceID 显式给出即「绑定/换绑」,0 = 解除(存在性与可用性由 handler
+// 对 voices 台账校验,store 只管落列)。
 type CharacterUpdate struct {
 	Name        *string
 	Alias       *string
 	Description *string
 	Detail      *string
+	VoiceID     *int64
 }
 
 // VariantUpdate carries UpdateVariant's partial fields: nil = 不动。

@@ -7,7 +7,7 @@
 import type { CanvasNodeType } from './graph'
 
 /**
- * 合法矩阵(源类型 → 可达目标类型),语义收敛为七种(CONTEXT.md「连线」):
+ * 合法矩阵(源类型 → 可达目标类型),语义收敛为九种(CONTEXT.md「连线」):
  * - agent → image/video        提示词投递通道(29 号票推模式)
  * - video → agent              反推来源(13 号票)
  * - image/video → analysis     分析来源(17 号票)
@@ -15,13 +15,15 @@ import type { CanvasNodeType } from './graph'
  * - previz → image             渲染帧落点(39 号票,落画布成图片节点)
  * - storyboard → image         分镜画面落点(53 号票,落图节点成图片节点)
  * - name → image               格画面落点(54 号票,storyboard 同族来源语义)
+ * - voice → audio              合成来源(57 号票:台词合成的产出边,絵コンテ→图片同族)
  * analysis 不作为任何连线的源;previz/storyboard/name 不作为任何连线的目标
  * (输入是用户摆的场景/cut/格的画面,回填走素材引用不走边);character 不作
  * 任何连线的源与目标(52 号票:它是钉在画布上的设定参照卡,组件不渲染
  * 把手 —— 设定图进生成链走「落图节点」的素材插入语义,不走连线);level
  * 也不作任何连线的源与目标(55 号票:关卡卡是文档卡,卡内直接编辑,无
- * 来源/投递语义,与 character 的「不连线」同族,组件不渲染把手);其余
- * 组合(agent→agent、previz→video 等)拒连。
+ * 来源/投递语义,与 character 的「不连线」同族,组件不渲染把手);audio
+ * 不作为任何连线的源(57 号票:音频是合成产物,不派生新链);其余
+ * 组合(agent→agent、voice→image 等)拒连。
  */
 export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   agent: ['image', 'video'],
@@ -33,6 +35,8 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   storyboard: ['image'],
   name: ['image'],
   level: [],
+  voice: ['audio'],
+  audio: [],
 }
 
 /** source 类型到 target 类型能否建立新连线;未知/缺失类型一律拒绝。 */

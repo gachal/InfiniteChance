@@ -19,6 +19,7 @@ import {
   type CharacterRecord,
   type ModelPriceSummary,
   type PromptTemplateOption,
+  type VoiceRecord,
 } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
@@ -32,6 +33,7 @@ import {
   initialData,
   NODE_TYPE_LABEL,
   normalizeNodeType,
+  type AudioNodeData,
   type CanvasNodeData,
   type CanvasNodeType,
   type LevelNodeData,
@@ -41,6 +43,7 @@ import {
   type PrevizNodeData,
   type StoryboardCut,
   type StoryboardNodeData,
+  type VoiceNodeData,
 } from '../graph'
 import {
   type PendingAgentMedia,
@@ -98,6 +101,8 @@ import NameNode from '../components/nodes/NameNode.vue'
 import PrevizNode from '../components/nodes/PrevizNode.vue'
 import StoryboardNode from '../components/nodes/StoryboardNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
+import AudioNode from '../components/nodes/AudioNode.vue'
+import VoiceNode from '../components/nodes/VoiceNode.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -289,6 +294,12 @@ const videoPrices = ref<Record<string, ModelPriceSummary>>({})
 const imageCatalogFailed = ref(false)
 const videoCatalogFailed = ref(false)
 const modelCatalogsLoaded = ref(false)
+// 音频目录(57 号票):字符轨合成模型(/audio-models,网关代理),音色
+// 创建表单的模型下拉与台词预估共用。enrollment(定制按次价)不在字符轨
+// 目录里,从 image-models 的按次轨投影取(voice-enrollment 配了价就在)。
+const audioModels = ref<string[]>([])
+const audioPrices = ref<Record<string, ModelPriceSummary>>({})
+const enrollmentPrice = computed(() => imagePrices.value['voice-enrollment'])
 
 /** 拉取生图/视频模型目录:成功写名单与价格摘要,失败置失败位(对话框
  * 禁态 + 重试入口指向这里)。 */
@@ -316,6 +327,15 @@ function refreshModelCatalogs(): void {
     .catch(() => {
       videoCatalogFailed.value = true
     })
+  void client
+    .listAudioModels()
+    .then((catalog) => {
+      audioModels.value = catalog.models
+      audioPrices.value = catalog.prices
+    })
+    .catch(() => {
+      /* 目录失败静默保持旧值:创建表单下拉可能为空,重试随窗口聚焦 */
+    })
 }
 
 /** 产物落位与提示词回填:成功任务的补丁(对账逻辑在 composer.ts 的
@@ -333,6 +353,10 @@ function syncTaskToCanvas(task: CanvasTask): void {
   if (patch) {
     updateNodeData(task.node_id, patch)
     markChanged()
+  }
+  if (task.kind === 'voice' && task.status === 'succeeded') {
+    // 音色部署完成:台账行已由 worker 落库,目录刷新点亮节点卡面。
+    void refreshVoices()
   }
 }
 
@@ -1061,6 +1085,21 @@ async function refreshIPCharacters(): Promise<void> {
   }
 }
 
+// ---- 音色台账目录(57 号票,全局作用域)----
+
+// 音色节点卡面与角色绑定 picker 共用的目录源:节点只存 ledger_id 不存
+// 快照(角色节点同哲学),状态/试听随目录刷新。kind=voice 任务 succeeded
+// 时由任务同步回调刷新(部署完成 → 台账行落库 → 节点亮起)。
+const voicesCatalog = ref<VoiceRecord[]>([])
+
+async function refreshVoices(): Promise<void> {
+  try {
+    voicesCatalog.value = await client.listVoices()
+  } catch {
+    /* 拉不到就保持现状,下次聚焦再试 */
+  }
+}
+
 /** 角色节点绑定/换绑:data 只写 character_id(52 号票「不存快照」)。 */
 function onCharacterBind(nodeId: string, characterId: number): void {
   updateNodeData(nodeId, { character_id: characterId } satisfies Partial<CharacterNodeData>)
@@ -1073,6 +1112,200 @@ function onCharacterBind(nodeId: string, characterId: number): void {
 function onCharacterLandImage(image: { asset_id: number }): void {
   insertAssetRef('image', image.asset_id, characterImageContentURL(image.asset_id))
   showNotice('已把设定图落为图片节点(视口中心)')
+}
+
+// ---- 音色闭环(57 号票)----
+
+/** 音色表单事实落盘:updateNodeData 浅合并 + markChanged(表单逐键
+ * 上抛,自动保存免费获得 —— 与絵コンテ板名同链)。 */
+function onVoiceFormChange(nodeId: string, patch: Partial<VoiceNodeData>): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
+// 音色节点创建表单的提交路径:create task 绑本节点(表单即在节点上,
+// 无结果节点要先落库的问题 —— 数据已随整图 JSON 持久化);照生图纪律
+// 先 markChanged + flush 再提交,防抖窗口里的表单编辑必须先落图。
+const voiceSubmitting = ref(false)
+
+async function submitVoiceTask(nodeId: string): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as VoiceNodeData | undefined
+  if (!node || !data || voiceSubmitting.value) {
+    return
+  }
+  voiceSubmitting.value = true
+  try {
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'voice',
+      prompt: data.preview_text ?? '',
+      model: data.target_model ?? '',
+      voice: {
+        mode: data.mode,
+        name: data.name,
+        target_model: data.target_model ?? '',
+        preview_text: data.preview_text ?? '',
+        ...(data.mode === 'design' && data.voice_prompt ? { voice_prompt: data.voice_prompt } : {}),
+        ...(data.mode === 'clone' && data.sample_asset_id ? { sample_asset_id: data.sample_asset_id } : {}),
+      },
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '音色创建任务提交失败,请稍后再试')
+  } finally {
+    voiceSubmitting.value = false
+  }
+}
+
+// 克隆样本:本机上传 kind=audio 入素材库(服务端魔数裁决),成功回写
+// sample_asset_id;失败轻提示,节点侧表单保持可再选。
+const voiceUploading = ref(false)
+
+async function onVoiceSampleFile(nodeId: string, file: File): Promise<void> {
+  if (voiceUploading.value) {
+    return
+  }
+  voiceUploading.value = true
+  try {
+    const a = await client.uploadAsset(file, 'audio', uploadIPId.value)
+    updateNodeData(nodeId, { sample_asset_id: a.id } satisfies Partial<VoiceNodeData>)
+    markChanged()
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '样本上传失败,请稍后再试')
+  } finally {
+    voiceUploading.value = false
+  }
+}
+
+// 克隆样本的素材库挑选面板(与右缘面板互斥纪律一致,开时关其他面板)。
+const voicePickerNodeId = ref('')
+const voicePickerNode = computed(() =>
+  voicePickerNodeId.value ? findNode(voicePickerNodeId.value) ?? null : null,
+)
+const voicePickerSelectedIds = computed<number[]>(() => {
+  const data = voicePickerNode.value?.data as VoiceNodeData | undefined
+  const id = data?.sample_asset_id ?? 0
+  return id > 0 ? [id] : []
+})
+
+function openVoicePicker(nodeId: string): void {
+  voicePickerNodeId.value = nodeId
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+  composerPickerOpen.value = false
+  historyNodeId.value = ''
+  pickerNodeId.value = ''
+  levelPickerNodeId.value = ''
+}
+
+function closeVoicePicker(): void {
+  voicePickerNodeId.value = ''
+}
+
+function onVoicePickToggle(nodeId: string, a: AssetRecord): void {
+  if (a.kind !== 'audio') {
+    return
+  }
+  const data = findNode(nodeId)?.data as VoiceNodeData | undefined
+  if (!data) {
+    return
+  }
+  const next = data.sample_asset_id === a.id ? 0 : a.id
+  updateNodeData(nodeId, { sample_asset_id: next } satisfies Partial<VoiceNodeData>)
+  markChanged()
+}
+
+// 台词合成(消费闭环):先落右侧音频节点 + voice→audio 边并入图(生图
+// 纪律),flush 后提交 kind=tts 任务绑音频节点 —— 浏览器随后关闭,节点、
+// 连线与任务都在。
+const speechSubmitting = ref(false)
+
+async function onVoiceSpeech(nodeId: string, payload: { text: string; instruction: string }): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as VoiceNodeData | undefined
+  if (!node || !data || !data.ledger_id || speechSubmitting.value) {
+    return
+  }
+  speechSubmitting.value = true
+  try {
+    nodeSeq += 1
+    const audioId = `audio-${Date.now()}-${nodeSeq}`
+    removeSelectedNodes(getSelectedNodes.value)
+    addNodes([
+      {
+        id: audioId,
+        type: 'audio',
+        position: { x: node.position.x + 380, y: node.position.y },
+        data: { asset_id: 0, text: payload.text } satisfies AudioNodeData,
+      },
+    ])
+    const added = findNode(audioId)
+    if (added) {
+      addSelectedNodes([added])
+    }
+    connectNodes(nodeId, audioId)
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: audioId,
+      kind: 'tts',
+      prompt: payload.text,
+      model: data.target_model ?? '',
+      tts: {
+        voice_ledger_id: data.ledger_id,
+        text: payload.text,
+        ...(payload.instruction ? { instruction: payload.instruction } : {}),
+      },
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '台词合成任务提交失败,请稍后再试')
+  } finally {
+    speechSubmitting.value = false
+  }
+}
+
+// 删除音色:二次确认后先经网关 delete_voice 成功再删台账行(服务端序);
+// 成功后节点回表单态(台账引用清空,可再建),目录刷新。节点本身仅
+// 表单事实,不动整图其他部分。
+const deletingVoice = ref(false)
+
+async function onDeleteVoice(nodeId: string): Promise<void> {
+  const data = findNode(nodeId)?.data as VoiceNodeData | undefined
+  const ledgerId = data?.ledger_id ?? 0
+  if (!ledgerId || deletingVoice.value) {
+    return
+  }
+  if (!window.confirm(`删除音色「${data?.name || ledgerId}」?上游与台账将一并删除,不可恢复。`)) {
+    return
+  }
+  deletingVoice.value = true
+  try {
+    await client.deleteVoice(ledgerId)
+    updateNodeData(nodeId, { ledger_id: undefined, status: undefined } satisfies Partial<VoiceNodeData>)
+    markChanged()
+    void refreshVoices()
+    showNotice('音色已删除')
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'voice_in_use') {
+      showNotice('音色仍被角色绑定,请先在角色详情中解除绑定')
+    } else {
+      showNotice(e instanceof ApiError ? e.message : '删除音色失败,请稍后再试')
+    }
+  } finally {
+    deletingVoice.value = false
+  }
 }
 
 /** Agent 会话的一轮(29 号票;31 号票起走流式;32 号票带媒体):输入作
@@ -2143,6 +2376,10 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#38bdf8'
     case 'level':
       return '#f87171'
+    case 'voice':
+      return '#5eead4'
+    case 'audio':
+      return '#a78bfa'
     default:
       return '#a78bfa'
   }
@@ -2254,10 +2491,25 @@ function insertAssetRef(kind: 'image' | 'video', assetId: number, contentUrl: st
   ])
 }
 
-/** 素材插入:从素材库把历史产物放进当前画布。音频素材没有对应节点类型,
- * 不落画布(参考音频经对话框上传入口进条)。 */
+/** 音频素材的插入落点(57 号票):音频节点持 asset_id,内容寻址路径由
+ * 展示层按 id 拼装;24 号票「音频不落画布」随音频节点翻案。 */
+function insertAudioAsset(assetId: number): void {
+  nodeSeq += 1
+  addNodes([
+    {
+      id: `audio-${Date.now()}-${nodeSeq}`,
+      type: 'audio',
+      position: viewportCenterPosition(),
+      data: { asset_id: assetId } satisfies AudioNodeData,
+    },
+  ])
+}
+
+/** 素材插入:从素材库把历史产物放进当前画布。音频落音频节点(57 号票
+ * 翻案),图片/视频落媒体节点。 */
 function insertAsset(a: AssetRecord): void {
   if (a.kind === 'audio') {
+    insertAudioAsset(a.id)
     return
   }
   insertAssetRef(a.kind === 'video' ? 'video' : 'image', a.id, a.content_url)
@@ -2282,6 +2534,11 @@ function locateRecordTask(task: CanvasTask): void {
  * taskUrlFor 在 asset_id > 0 时恒为内容寻址路径)。 */
 function insertRecordTask(task: CanvasTask): void {
   if (!canInsertRecord(task)) {
+    return
+  }
+  if (task.kind === 'tts') {
+    // 台词合成产物落音频节点(57 号票;素材行是产物本体,asset_id 引用)。
+    insertAudioAsset(task.asset_id)
     return
   }
   insertAssetRef(task.kind === 'video' ? 'video' : 'image', task.asset_id, taskUrlFor(task))
@@ -2460,11 +2717,13 @@ onMounted(() => {
   void loadCanvas().finally(() => {
     void taskSync.start()
     void refreshIPCharacters()
+    void refreshVoices()
   })
   refreshModelCatalogs()
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('focus', refreshIPCharacters)
+  window.addEventListener('focus', refreshVoices)
   window.addEventListener('beforeunload', beforeUnload)
   window.addEventListener('keydown', onGlobalKeydown)
 })
@@ -2472,6 +2731,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
   window.removeEventListener('focus', refreshIPCharacters)
+  window.removeEventListener('focus', refreshVoices)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (historyTimer !== undefined) {
     clearTimeout(historyTimer)
@@ -2486,7 +2746,7 @@ onBeforeUnmount(() => {
  * 生产节点(analysis 仍仅由动作创建,不经面板);「规划」= 规划工件
  * 节点(絵コンテ + ネーム + 关卡,54/55 号票)。纯展示分组,无语义
  * 过滤 —— 全节点全画布可用(53 号票 A 段)。 */
-const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character']
+const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character', 'voice']
 const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level']
 
 function backToList(): void {
@@ -2769,6 +3029,7 @@ function backToList(): void {
             :type="nodeProps.type"
             :data="nodeProps.data"
             :characters="ipCharacters"
+            :voices="voicesCatalog"
             @bind="onCharacterBind(nodeProps.id, $event)"
             @land-image="onCharacterLandImage($event)"
           />
@@ -2811,6 +3072,43 @@ function backToList(): void {
             @change="onLevelChange(nodeProps.id, $event)"
             @upload="onLevelUpload(nodeProps.id, $event)"
             @open-picker="openLevelPicker(nodeProps.id)"
+          />
+        </template>
+        <!-- 57 号票:音色节点(创建表单内联卡上,只渲染右把手连音频)与
+             音频节点(台词合成产物/面板插入的载体,只渲染左把手)。 -->
+        <template #node-voice="nodeProps">
+          <VoiceNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :voices="voicesCatalog"
+            :audio-models="audioModels"
+            :audio-prices="audioPrices"
+            :enrollment-price="enrollmentPrice"
+            :task="taskSync.byNode.get(nodeProps.id) ?? null"
+            :retrying="retryingNode === nodeProps.id"
+            :deleting="deletingVoice"
+            :connect-state="connection.stateOf(nodeProps.id)"
+            @form-change="onVoiceFormChange(nodeProps.id, $event)"
+            @submit="submitVoiceTask(nodeProps.id)"
+            @retry="onRetry(nodeProps.id)"
+            @connect-start="connection.start(nodeProps.id, $event)"
+            @sample-file="onVoiceSampleFile(nodeProps.id, $event)"
+            @pick-sample="openVoicePicker(nodeProps.id)"
+            @speech="onVoiceSpeech(nodeProps.id, $event)"
+            @delete-voice="onDeleteVoice(nodeProps.id)"
+          />
+        </template>
+        <template #node-audio="nodeProps">
+          <AudioNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :task="taskSync.byNode.get(nodeProps.id) ?? null"
+            :retrying="retryingNode === nodeProps.id"
+            :connect-state="connection.stateOf(nodeProps.id)"
+            @retry="onRetry(nodeProps.id)"
+            @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
       </VueFlow>
@@ -2924,6 +3222,19 @@ function backToList(): void {
         :ip-id="canvasIPID || undefined"
         @toggle="onLevelPickToggle(levelPickerNode.id, $event)"
         @close="levelPickerNodeId = ''"
+      />
+      <!-- 57 号票:音色克隆样本的挑选面板(白名单仅音频),点选即绑样本,
+           再点取消;≤10MB 与音频种类的前置守卫在节点表单侧。 -->
+      <AssetPicker
+        v-else-if="voicePickerNode"
+        :key="`voice-picker-${voicePickerNode.id}`"
+        title="挑选声音样本"
+        :kind-whitelist="['audio']"
+        hint="点选挂为克隆样本,再点取消;建议 10–20 秒清晰人声。"
+        :selected-asset-ids="voicePickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
+        @toggle="onVoicePickToggle(voicePickerNode.id, $event)"
+        @close="closeVoicePicker"
       />
       <!-- 40 号票:预演台全屏编辑层(Teleport 到 body),场景改动走同一条
            scene-change 落盘链;渲染帧大图经编辑器级灯箱打开(灯箱入口收进
@@ -3371,6 +3682,13 @@ function backToList(): void {
 .add-character {
   background: rgba(45, 212, 191, 0.16);
   color: #2dd4bf;
+}
+
+/* 57 号票:音色入「创作」组,水绿与节点描边/小地图同源(audio 不进组,
+   只作台词合成产物与面板插入出现)。 */
+.add-voice {
+  background: rgba(94, 234, 212, 0.14);
+  color: #5eead4;
 }
 
 /* 53 号票:絵コンテ入「规划」组,橙色与节点描边/小地图同源。 */

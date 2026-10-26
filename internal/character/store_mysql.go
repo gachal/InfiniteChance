@@ -21,7 +21,8 @@ var _ Store = (*MySQLStore)(nil)
 
 // 三表空起步(51 号票,无存量迁移):label 存字符串不校验枚举;detail
 // TEXT 承载详细设定纯文本;两索引服务列表树的取数路径,普通索引不加唯一
-// (同 IP 重名允许)。
+// (同 IP 重名允许)。voice_id(57 号票)是可空列,新库随 CREATE 落地、
+// 存量库走 migrations 幂等加列。
 const charactersSchema = `
 CREATE TABLE IF NOT EXISTS characters (
 	id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS characters (
 	alias       VARCHAR(255) NOT NULL DEFAULT '',
 	description VARCHAR(1024) NOT NULL DEFAULT '',
 	detail      TEXT NOT NULL,
+	voice_id    BIGINT UNSIGNED NULL,
 	created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	updated_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
 	KEY idx_characters_ip (ip_id, id)
@@ -59,23 +61,52 @@ CREATE TABLE IF NOT EXISTS character_images (
 	KEY idx_character_images_variant (variant_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
-// EnsureSchema creates the three tables when missing. Idempotent; 空起步
-// 无迁移、无同序依赖(表自含,装配位置随意,服务器侧随 ips 之后)。
+// migrations widens tables created by earlier tickets in place (57 号票的
+// 角色绑定音色列):CREATE TABLE IF NOT EXISTS never widens an existing
+// table, an already-deployed canvas DB must upgrade without a rebuild.
+// Idempotent(canvases.ip_id 的 information_schema 先例)。
+var migrations = []struct{ column, ddl string }{
+	{"voice_id", "ALTER TABLE characters ADD COLUMN voice_id BIGINT UNSIGNED NULL"},
+}
+
+// EnsureSchema creates the three tables when missing and widens an existing
+// characters table in place. Idempotent; 空起步无同序依赖(表自含,装配
+// 位置随意,服务器侧随 ips 之后)。
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	for _, ddl := range []string{charactersSchema, variantsSchema, imagesSchema} {
 		if _, err := s.DB.ExecContext(ctx, ddl); err != nil {
 			return err
 		}
 	}
+	for _, m := range migrations {
+		var count int
+		if err := s.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM information_schema.COLUMNS
+			 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'characters' AND COLUMN_NAME = ?`,
+			m.column).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := s.DB.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-const mysqlCharacterColumns = `id, ip_id, name, alias, description, detail, created_at, updated_at`
+const mysqlCharacterColumns = `id, ip_id, name, alias, description, detail, voice_id, created_at, updated_at`
 
 func scanMySQLCharacter(row interface{ Scan(...any) error }) (Character, error) {
 	var c Character
-	err := row.Scan(&c.ID, &c.IPID, &c.Name, &c.Alias, &c.Description, &c.Detail, &c.CreatedAt, &c.UpdatedAt)
-	return c, err
+	var voiceID sql.NullInt64
+	err := row.Scan(&c.ID, &c.IPID, &c.Name, &c.Alias, &c.Description, &c.Detail, &voiceID, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return Character{}, err
+	}
+	c.VoiceID = voiceID.Int64
+	return c, nil
 }
 
 // touchCharacter bumps the character's updated_at: 变体/图动作让角色在卡
@@ -282,6 +313,15 @@ func (s *MySQLStore) UpdateCharacter(ctx context.Context, id int64, u *Character
 	if u.Detail != nil {
 		sets = append(sets, "detail = ?")
 		args = append(args, *u.Detail)
+	}
+	if u.VoiceID != nil {
+		// 0 = 解除绑定:可空列落 NULL,与「0 = 未绑定」的读回口径一致。
+		if *u.VoiceID == 0 {
+			sets = append(sets, "voice_id = NULL")
+		} else {
+			sets = append(sets, "voice_id = ?")
+			args = append(args, *u.VoiceID)
+		}
 	}
 	if len(sets) == 0 {
 		return s.GetCharacter(ctx, id)

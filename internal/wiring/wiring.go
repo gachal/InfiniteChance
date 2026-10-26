@@ -27,6 +27,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // GatewayStores carries the wired gateway stores.
@@ -106,11 +107,14 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 // (50 号票);nil 时校验缺口以运行时 500 暴露,生产装配恒非 nil。
 // Characters 承载 IP 级角色库(51 号票):/api/ips/:id/characters 目录与
 // /api/characters 系 CRUD,与 IPs 同用 IP 存在性裁决。
+// Voices 承载音色台账(57 号票):/api/voices 目录面(全局作用域,无
+// ip_id),nil 时目录 500 暴露装配缺口(生产装配恒非 nil)。
 type CanvasStores struct {
 	Auth       auth.Store
 	Canvases   canvas.Store
 	IPs        canvas.IPStore
 	Characters character.Store
+	Voices     voice.Store
 	Assets     asset.Store
 	Prices     pricing.Store
 	Tasks      canvastask.Store
@@ -142,6 +146,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Models:        s.Prices,
 		Assets:        s.Assets,
 		Gateway:       gateway,
+		Voices:        s.Voices,
 		PublicBaseURL: publicBase,
 	})
 	// IP 企划面(50 号票):CRUD 挂 JWT 会话,与画布同一令牌体系;
@@ -152,11 +157,22 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	// 目录挂 /ips/:id/characters(IP 存在性由 handler 经 IPs 裁决),
 	// 角色系 CRUD 与变体/图面挂 /characters 系;网关零改动(设定图引用
 	// 走既有素材契约)。
-	characterHandlers := &character.Handlers{Store: s.Characters, IPs: s.IPs}
+	characterHandlers := &character.Handlers{Store: s.Characters, IPs: s.IPs, Voices: s.Voices}
 	character.RegisterIPRoutes(r.Group("/ips/:id/characters", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterRoutes(r.Group("/characters", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterVariantRoutes(r.Group("/character-variants", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterImageRoutes(r.Group("/character-images", auth.RequireAuth(issuer)), characterHandlers)
+	// 音色台账(57 号票):/voices 目录面(全量/改名/删除)。删除先经网关
+	// delete_voice —— gateway(client)为 nil 时 handler 以
+	// gateway_unconfigured 拒绝,列表与改名不受影响。
+	var voiceGateway voice.UpstreamRemover
+	if gateway != nil {
+		if remover, ok := gateway.(voice.UpstreamRemover); ok {
+			voiceGateway = remover
+		}
+	}
+	voice.RegisterRoutes(r.Group("/voices", auth.RequireAuth(issuer)),
+		&voice.Handlers{Store: s.Voices, Gateway: voiceGateway})
 	// 提示词生成与画布任务共用同一服务 key:client 为 nil 时动作
 	// 直接以 gateway_unconfigured 拒绝。
 	var chatGateway promptgen.Gateway
@@ -173,11 +189,15 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		PublicBaseURL: publicBase,
 	})
 
-	// 目录面:图像/视频模型与提示词模板、提示词聊天模型,全挂 JWT 会话。
+	// 目录面:图像/视频/音频模型与提示词模板、提示词聊天模型,全挂 JWT
+	// 会话。/audio-models 以服务级 key 代理网关 /v1/audio/models(57 号票
+	// —— audio 能力过滤维度在渠道表,归网关管)。
 	canvastask.RegisterModelRoutes(r.Group("/image-models", auth.RequireAuth(issuer)),
 		&canvastask.ModelHandlers{Prices: s.Prices})
 	canvastask.RegisterVideoModelRoutes(r.Group("/video-models", auth.RequireAuth(issuer)),
 		&canvastask.ModelHandlers{Prices: s.Prices})
+	canvastask.RegisterAudioModelRoutes(r.Group("/audio-models", auth.RequireAuth(issuer)),
+		&canvastask.Handlers{Gateway: gateway, Voices: s.Voices})
 	promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
 		&promptgen.CatalogHandlers{Templates: s.Templates})
 	promptgen.RegisterModelRoutes(r.Group("/prompt-models", auth.RequireAuth(issuer)),

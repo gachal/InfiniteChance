@@ -12,12 +12,14 @@ import (
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
+	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 	"github.com/gachal/InfiniteChance/internal/settings"
+	"github.com/gachal/InfiniteChance/internal/voice"
 	"github.com/gachal/InfiniteChance/internal/wiring"
 )
 
@@ -50,6 +52,19 @@ func main() {
 		characters := character.NewMySQLStore(d.DB)
 		if err := characters.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure character schema: %v", err)
+		}
+		// 音色台账(57 号票):空起步单表,随 characters 之后;characters
+		// 的 voice_id 加列迁移也在这里一并跑(两表同库)。
+		voices := voice.NewMySQLStore(d.DB)
+		if err := voices.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure voice schema: %v", err)
+		}
+		// 渠道目录(57 号票):worker 为音色创建自动钉渠道的只读数据源
+		// (与网关共享同一张 channels 表;EnsureSchema 幂等,网关侧同款,
+		// 画布服务独立先启动时也保证表存在)。
+		channels := channel.NewMySQLStore(d.DB)
+		if err := channels.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure channel schema: %v", err)
 		}
 		prices := pricing.NewMySQLStore(d.DB)
 		if err := prices.EnsureSchema(context.Background()); err != nil {
@@ -88,6 +103,7 @@ func main() {
 			Canvases:   canvases,
 			IPs:        ips,
 			Characters: characters,
+			Voices:     voices,
 			Assets:     assets,
 			Prices:     prices,
 			Tasks:      tasks,
@@ -99,7 +115,7 @@ func main() {
 		if lifetime == nil {
 			lifetime = context.Background()
 		}
-		startWorker(tasks, gateway, d.Config, storage, lifetime, canvases)
+		startWorker(tasks, gateway, d.Config, storage, lifetime, canvases, channels, voices)
 	})
 }
 
@@ -117,8 +133,10 @@ func serviceGateway(cfg config.Config) canvastask.Gateway {
 // startWorker recovers orphaned generations (running rows from a previous
 // process go back to the queue) and drives the queue until lifetime is
 // canceled (SIGINT/SIGTERM, see app.Run). storage 非 nil 时产物在终态前转存
-// 对象存储;canvases 非 nil 时产物行随画布传导 IP 归属(50 号票)。
-func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store, lifetime context.Context, canvases *canvas.MySQLStore) {
+// 对象存储;canvases 非 nil 时产物行随画布传导 IP 归属(50 号票);
+// channels/voices 是音色闭环的只读伴 store(57 号票:自动钉渠道、tts 读
+// 台账)。
+func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg config.Config, storage objectstore.Store, lifetime context.Context, canvases *canvas.MySQLStore, channels *channel.MySQLStore, voices *voice.MySQLStore) {
 	if gateway == nil {
 		return
 	}
@@ -134,6 +152,12 @@ func startWorker(tasks *canvastask.MySQLStore, gateway canvastask.Gateway, cfg c
 	}
 	if canvases != nil {
 		opts = append(opts, canvastask.WithCanvases(canvases))
+	}
+	if channels != nil {
+		opts = append(opts, canvastask.WithChannels(channels))
+	}
+	if voices != nil {
+		opts = append(opts, canvastask.WithVoiceLedger(voices))
 	}
 	worker := canvastask.NewWorker(tasks, gateway, opts...)
 	go worker.Run(ctx)

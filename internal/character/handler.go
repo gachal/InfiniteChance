@@ -1,6 +1,7 @@
 package character
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // Handlers serves the 角色库 endpoints (51 号票). canvas/server mounts them
@@ -23,6 +25,16 @@ type Handlers struct {
 	// IPs 裁决建角色/列角色的 IP 存在性(角色严格限本 IP,不存在即 404;
 	// 消费面 52 号票的 character.ip_id == canvas.ip_id 校验另在画布侧)。
 	IPs canvas.IPStore
+	// Voices 裁决角色绑定音色的存在性与可用性(57 号票:只认台账里
+	// status=OK 的行);nil 时绑定请求以 500 暴露装配缺口(生产装配恒非
+	// nil,既有测试装配不受扰)。
+	Voices VoiceChecker
+}
+
+// VoiceChecker is the slice of the voice store the PATCH handler needs:
+// 绑定校验只问「行存在且状态可用」,不引整个台账接口。
+type VoiceChecker interface {
+	Get(ctx context.Context, id int64) (voice.Voice, error)
 }
 
 // 列宽对齐 schema(name/alias VARCHAR(255)、description/note VARCHAR(1024)、
@@ -100,7 +112,8 @@ type variantJSON struct {
 
 // characterJSON is the wire form of one character with its full tree;
 // cover_asset_id 是卡片首图投影(首个变体排序最前的视图类图,无则任意
-// 第一张,全空 0 = 卡片走渐变+首字占位)。
+// 第一张,全空 0 = 卡片走渐变+首字占位)。voice_id 是绑定音色的台账行
+// 引用(57 号票,0 = 未绑定)。
 type characterJSON struct {
 	ID           int64         `json:"id"`
 	IPID         int64         `json:"ip_id"`
@@ -109,6 +122,7 @@ type characterJSON struct {
 	Description  string        `json:"description"`
 	Detail       string        `json:"detail"`
 	CoverAssetID int64         `json:"cover_asset_id"`
+	VoiceID      int64         `json:"voice_id"`
 	Variants     []variantJSON `json:"variants"`
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
@@ -140,8 +154,8 @@ func toCharacterJSON(c Character) characterJSON {
 	return characterJSON{
 		ID: c.ID, IPID: c.IPID, Name: c.Name, Alias: c.Alias,
 		Description: c.Description, Detail: c.Detail,
-		CoverAssetID: CoverAssetID(c),
-		Variants:     variants, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		CoverAssetID: CoverAssetID(c), VoiceID: c.VoiceID,
+		Variants: variants, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
 
@@ -219,12 +233,14 @@ func (h *Handlers) Get(c *gin.Context) {
 }
 
 // characterUpdateInput is PATCH 的部分更新体:nil 字段不动;空串 = 清空
-// 可选字段(名字除外,非空才合法)。
+// 可选字段(名字除外,非空才合法)。voice_id 显式给出即「绑定/换绑」,
+// 0 = 解除(57 号票)。
 type characterUpdateInput struct {
 	Name        *string `json:"name"`
 	Alias       *string `json:"alias"`
 	Description *string `json:"description"`
 	Detail      *string `json:"detail"`
+	VoiceID     *int64  `json:"voice_id"`
 }
 
 func (h *Handlers) PatchCharacter(c *gin.Context) {
@@ -234,11 +250,11 @@ func (h *Handlers) PatchCharacter(c *gin.Context) {
 	}
 	var in characterUpdateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		apierr.InvalidRequest(c, "请求体必须是 {name?/alias?/description?/detail?} 的 JSON")
+		apierr.InvalidRequest(c, "请求体必须是 {name?/alias?/description?/detail?/voice_id?} 的 JSON")
 		return
 	}
-	if in.Name == nil && in.Alias == nil && in.Description == nil && in.Detail == nil {
-		apierr.InvalidRequest(c, "至少提供 name、alias、description 或 detail 之一")
+	if in.Name == nil && in.Alias == nil && in.Description == nil && in.Detail == nil && in.VoiceID == nil {
+		apierr.InvalidRequest(c, "至少提供 name、alias、description、detail 或 voice_id 之一")
 		return
 	}
 	u := &CharacterUpdate{}
@@ -269,6 +285,12 @@ func (h *Handlers) PatchCharacter(c *gin.Context) {
 			return
 		}
 		u.Detail = &detail
+	}
+	if in.VoiceID != nil {
+		if !h.validateVoiceBinding(c, *in.VoiceID) {
+			return
+		}
+		u.VoiceID = in.VoiceID
 	}
 	updated, err := h.Store.UpdateCharacter(c.Request.Context(), id, u)
 	if err != nil {
@@ -489,6 +511,39 @@ func (h *Handlers) DeleteImage(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// validateVoiceBinding rejects a character binding to a voice that is not
+// usable right now(57 号票:只认台账里 status=OK 的行;0 = 解除,直接
+// 放行)。false = 已应答 4xx/5xx。
+func (h *Handlers) validateVoiceBinding(c *gin.Context, voiceID int64) bool {
+	if voiceID == 0 {
+		return true
+	}
+	if voiceID < 0 {
+		apierr.InvalidRequest(c, "voice_id 必须是非负整数(0 = 解除绑定)")
+		return false
+	}
+	if h.Voices == nil {
+		log.Printf("character: voice binding without a voices store (装配缺口)")
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return false
+	}
+	v, err := h.Voices.Get(c.Request.Context(), voiceID)
+	if errors.Is(err, voice.ErrVoiceNotFound) {
+		apierr.InvalidRequest(c, "绑定的音色不存在")
+		return false
+	}
+	if err != nil {
+		log.Printf("character: load voice %d: %v", voiceID, err)
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return false
+	}
+	if v.Status != voice.StatusOK {
+		apierr.InvalidRequest(c, "音色「"+v.Name+"」当前不可用(状态 "+v.Status+"),暂不能绑定")
+		return false
+	}
+	return true
 }
 
 // requireIP parses the :id path segment and answers the IP's existence

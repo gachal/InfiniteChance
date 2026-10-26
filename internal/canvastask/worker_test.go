@@ -12,6 +12,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
+	"github.com/gachal/InfiniteChance/internal/pricing"
 )
 
 // stubGateway is a programmable Gateway for worker tests: it records the
@@ -34,6 +35,58 @@ type stubGateway struct {
 	videoPolls   int
 	submitFn     func(context.Context, canvastask.VideoRequest) (canvastask.VideoSubmitResult, error)
 	pollFn       func(call int) (canvastask.VideoPoll, error)
+
+	// 音色闭环面(57 号票):create/query/delete/speech 各自脚本化。
+	voices           []canvastask.VoiceCreateRequest
+	voiceQueries     []string
+	voiceQueriesChID []int64
+	speeches         []canvastask.SpeechRequest
+	createVoiceFn    func(context.Context, canvastask.VoiceCreateRequest) (canvastask.VoiceCreateResult, error)
+	queryVoiceFn     func(call int) (string, error)
+	speechFn         func(context.Context, canvastask.SpeechRequest) (canvastask.SpeechResult, error)
+}
+
+func (g *stubGateway) CreateVoice(ctx context.Context, req canvastask.VoiceCreateRequest) (canvastask.VoiceCreateResult, error) {
+	g.mu.Lock()
+	g.voices = append(g.voices, req)
+	fn := g.createVoiceFn
+	g.mu.Unlock()
+	if fn == nil {
+		return canvastask.VoiceCreateResult{}, errors.New("stub gateway: no voice script")
+	}
+	return fn(ctx, req)
+}
+
+func (g *stubGateway) QueryVoice(_ context.Context, channelID int64, voiceID, _ string) (string, error) {
+	g.mu.Lock()
+	g.voiceQueries = append(g.voiceQueries, voiceID)
+	g.voiceQueriesChID = append(g.voiceQueriesChID, channelID)
+	call := len(g.voiceQueries)
+	fn := g.queryVoiceFn
+	g.mu.Unlock()
+	if fn == nil {
+		return "DEPLOYING", nil
+	}
+	return fn(call)
+}
+
+func (g *stubGateway) DeleteVoice(_ context.Context, _ int64, _, _ string) error {
+	return nil
+}
+
+func (g *stubGateway) SynthesizeSpeech(ctx context.Context, req canvastask.SpeechRequest) (canvastask.SpeechResult, error) {
+	g.mu.Lock()
+	g.speeches = append(g.speeches, req)
+	fn := g.speechFn
+	g.mu.Unlock()
+	if fn == nil {
+		return canvastask.SpeechResult{}, errors.New("stub gateway: no speech script")
+	}
+	return fn(ctx, req)
+}
+
+func (g *stubGateway) ListAudioModels(_ context.Context) (canvastask.AudioModelCatalog, error) {
+	return canvastask.AudioModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
 }
 
 func (g *stubGateway) GenerateImage(ctx context.Context, req canvastask.ImageRequest) (canvastask.ImageResult, error) {

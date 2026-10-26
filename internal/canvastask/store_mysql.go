@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // MySQLStore backs Store with the canvas_tasks table; FinalizeSuccess shares
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	image_url      MEDIUMTEXT   NULL,
 	video_url      MEDIUMTEXT   NULL,
 	remote_task_id VARCHAR(64)  NOT NULL DEFAULT '',
+	voice_spec     MEDIUMTEXT   NULL,
 	created_at     TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	updated_at     TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
 	           ON UPDATE CURRENT_TIMESTAMP(6),
@@ -60,6 +62,7 @@ var migrations = []struct{ column, ddl string }{
 	{"background", "ALTER TABLE canvas_tasks ADD COLUMN background VARCHAR(32) NOT NULL DEFAULT ''"},
 	{"video_url", "ALTER TABLE canvas_tasks ADD COLUMN video_url MEDIUMTEXT NULL"},
 	{"remote_task_id", "ALTER TABLE canvas_tasks ADD COLUMN remote_task_id VARCHAR(64) NOT NULL DEFAULT ''"},
+	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec MEDIUMTEXT NULL"},
 }
 
 // EnsureSchema creates the canvas_tasks table when missing and widens an
@@ -90,17 +93,18 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 
 const taskColumns = `id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds,
 	image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
-	remote_task_id, created_at, updated_at`
+	remote_task_id, voice_spec, created_at, updated_at`
 
 func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 	if t.Status == "" {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, image_ref, image_refs, video_refs, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, image_ref, image_refs, video_refs, voice_spec, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs), t.Status)
+		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		encodeVoiceSpec(t.VoiceSpec), t.Status)
 	if err != nil {
 		return Task{}, err
 	}
@@ -337,6 +341,144 @@ func (s *MySQLStore) AttachRemote(ctx context.Context, id, remoteTaskID string) 
 	return t, true, err
 }
 
+// attachVoiceSpec merges one spec mutation into the voice_spec column of a
+// running task: 读改写以行内当前 JSON 为底(两个字段各自到达,互不覆盖),
+// 条件 UPDATE 的守卫与 AttachRemote 同款 —— 行已不在 running 即输家。
+func (s *MySQLStore) attachVoiceSpec(ctx context.Context, id string, mutate func(*VoiceSpec)) (Task, bool, error) {
+	t, err := s.Get(ctx, id)
+	if err != nil {
+		return Task{}, false, err
+	}
+	if t.Status != StatusRunning {
+		return t, false, nil
+	}
+	mutate(&t.VoiceSpec)
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE canvas_tasks SET voice_spec = ? WHERE id = ? AND status = ?`,
+		encodeVoiceSpec(t.VoiceSpec), id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	t, err = s.Get(ctx, id)
+	return t, true, err
+}
+
+func (s *MySQLStore) AttachVoiceChannel(ctx context.Context, id string, channelID int64) (Task, bool, error) {
+	return s.attachVoiceSpec(ctx, id, func(spec *VoiceSpec) { spec.ChannelID = channelID })
+}
+
+func (s *MySQLStore) AttachRemoteVoice(ctx context.Context, id, remoteVoiceID string) (Task, bool, error) {
+	return s.attachVoiceSpec(ctx, id, func(spec *VoiceSpec) { spec.RemoteVoiceID = remoteVoiceID })
+}
+
+// FinalizeVoiceSuccess lands the preview asset (nil = 无试听,崩溃恢复
+// 路径),the voices ledger row and the terminal state in one transaction
+// (57 号票):上游音色 OK 而台账未落 = 比删行更难收拾的悬空,三件事必须
+// 原子。输家(行被重试复活)的素材与台账行随事务回滚。
+func (s *MySQLStore) FinalizeVoiceSuccess(ctx context.Context, id string, in voice.CreateInput, preview *asset.Asset) (Task, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer tx.Rollback()
+
+	var previewID int64
+	if preview != nil {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			preview.Kind, preview.CanvasID, preview.TaskID, preview.Model, preview.Prompt, preview.URL,
+			preview.ObjectKey, preview.ContentType, preview.SizeBytes, preview.IPID)
+		if err != nil {
+			return Task{}, false, err
+		}
+		if previewID, err = res.LastInsertId(); err != nil {
+			return Task{}, false, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO voices (voice_id, channel_id, target_model, name, source_mode, source_prompt, sample_asset_id, preview_asset_id, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.VoiceID, in.ChannelID, in.TargetModel, in.Name, in.SourceMode,
+		voiceNullString(in.SourcePrompt), voiceNullInt64(in.SampleAssetID),
+		voiceNullInt64(previewID), in.Status); err != nil {
+		return Task{}, false, err
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE canvas_tasks SET status = ?, asset_id = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, previewID, id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		// 终态被别人(重试复活)改走:素材与台账一行不落,原样回滚。
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, false, err
+	}
+	t, err := s.Get(ctx, id)
+	return t, true, err
+}
+
+// FinalizeTtsSuccess inserts the audio asset and closes the task succeeded
+// in one transaction;任务行不设音频 URL 列 —— 产物地址(上游临时地址)
+// 只落素材行作出处,前端按 asset_id 拼内容寻址路径。
+func (s *MySQLStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Kind, a.CanvasID, a.TaskID, a.Model, a.Prompt, a.URL,
+		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID)
+	if err != nil {
+		return Task{}, false, err
+	}
+	assetID, err := res.LastInsertId()
+	if err != nil {
+		return Task{}, false, err
+	}
+
+	res, err = tx.ExecContext(ctx,
+		`UPDATE canvas_tasks SET status = ?, asset_id = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, assetID, id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, false, err
+	}
+	t, err := s.Get(ctx, id)
+	return t, true, err
+}
+
 // ResetForRetry sends one failed task of the canvas back to the queue and
 // clears the failure fields, keeping the row (and its attempt history)
 // intact so the same node keeps the same task id across retries.
@@ -362,17 +504,34 @@ func (s *MySQLStore) ResetForRetry(ctx context.Context, id string, canvasID int6
 	return s.Get(ctx, id)
 }
 
+// voiceNullString / voiceNullInt64 keep the voices nullable columns honest
+// (0 与空串落 NULL)—— FinalizeVoiceSuccess 事务内写入的行内辅助,与
+// voice 包的空值口径一致。
+func voiceNullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func voiceNullInt64(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec sql.NullString
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
 		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
-		&imageURL, &videoURL, &t.RemoteTaskID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}
 	t.Error = errMsg.String
@@ -382,5 +541,6 @@ func scanTask(row rowScanner) (Task, error) {
 	t.ImageRef = imageRef.String
 	t.ImageRefs = decodeImageRefs(imageRefs.String)
 	t.VideoRefs = decodeVideoRefs(videoRefs.String)
+	t.VoiceSpec = decodeVoiceSpec(voiceSpec.String)
 	return t, nil
 }

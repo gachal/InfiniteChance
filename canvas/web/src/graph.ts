@@ -166,6 +166,34 @@ export interface LevelNodeData {
   asset_ids: number[]
 }
 
+/** 音色节点数据(57 号票,第十种节点类型「创作」组):创建表单事实与
+ * 台账状态随身(整图 JSON)。提交 = kind=voice 的 canvas_task 绑本节点;
+ * ledger_id 是提交成功后由编辑器记录的台账行引用(读台账卡面即随目录
+ * 刷新 —— one source of truth,voice_node 数据只作表单回显与兜底)。
+ * status/preview 是最后一次同步的投影(刚提交时台账行还没有,节点先按
+ * DEPLOYING 展示,任务 succeeded 后由目录刷新覆盖)。 */
+export interface VoiceNodeData {
+  mode: 'design' | 'clone'
+  name: string
+  target_model?: string
+  voice_prompt?: string
+  preview_text?: string
+  sample_asset_id?: number
+  status?: string
+  ledger_id?: number
+}
+
+/** 音频节点数据(57 号票,第十一种节点类型):台词合成产物或素材面板/
+ * AssetPicker 插入的音频行。asset_id 是素材库引用(内容寻址路径由展示层
+ * 按 id 拼装,素材被删落「素材不可用」占位);text/model/chars 是产物-
+ * 元数据配对(27 号票先例,合成提交时写入;面板插入行没有)。 */
+export interface AudioNodeData {
+  asset_id: number
+  text?: string
+  model?: string
+  chars?: number
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
@@ -175,8 +203,21 @@ export type CanvasNodeData =
   | StoryboardNodeData
   | NameNodeData
   | LevelNodeData
+  | VoiceNodeData
+  | AudioNodeData
 
-export type CanvasNodeType = 'agent' | 'image' | 'video' | 'analysis' | 'previz' | 'character' | 'storyboard' | 'name' | 'level'
+export type CanvasNodeType =
+  | 'agent'
+  | 'image'
+  | 'video'
+  | 'analysis'
+  | 'previz'
+  | 'character'
+  | 'storyboard'
+  | 'name'
+  | 'level'
+  | 'voice'
+  | 'audio'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -188,7 +229,9 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'character' ||
     value === 'storyboard' ||
     value === 'name' ||
-    value === 'level'
+    value === 'level' ||
+    value === 'voice' ||
+    value === 'audio'
   )
 }
 
@@ -228,6 +271,12 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'level') {
     return defaultLevel()
   }
+  if (type === 'voice') {
+    return { mode: 'design' as const, name: '' }
+  }
+  if (type === 'audio') {
+    return { asset_id: 0 }
+  }
   return { url: '', note: '' }
 }
 
@@ -241,6 +290,8 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   storyboard: '分镜',
   name: '分镜稿',
   level: '关卡',
+  voice: '音色',
+  audio: '音频',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出

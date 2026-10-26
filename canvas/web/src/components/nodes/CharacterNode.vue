@@ -11,7 +11,7 @@
 // UI 态,不入节点 data。
 import { computed, ref } from 'vue'
 
-import type { CharacterImageRecord, CharacterRecord } from '@infinitechance/api'
+import type { CharacterImageRecord, CharacterRecord, VoiceRecord } from '@infinitechance/api'
 
 import type { CharacterNodeData } from '../../graph'
 import {
@@ -20,7 +20,8 @@ import {
   isViewLabel,
   orderedCharacterImages,
 } from '../../characters'
-import { useThumbFallback } from '../../thumbnail'
+import { useThumbFallback, assetContentURL } from '../../thumbnail'
+import { voiceStatusBadge } from '../../voice'
 
 const props = defineProps<{
   id: string
@@ -28,6 +29,8 @@ const props = defineProps<{
   data: CharacterNodeData
   /** 本 IP 的角色目录(编辑器按画布 ip_id 拉取并持有刷新)。 */
   characters: CharacterRecord[]
+  /** 音色台账目录(57 号票,编辑器拉取):绑定音色的徽章与试听从这解析。 */
+  voices?: VoiceRecord[]
 }>()
 
 const emit = defineEmits<{
@@ -60,6 +63,20 @@ const galleryImages = computed(() => orderedCharacterImages(activeVariant.value?
 const thumbs = useThumbFallback()
 const brokenCover = ref(false)
 const brokenImageIds = ref(new Set<number>())
+
+// 绑定音色(57 号票,角色级):台账行解析 + 状态徽章 + 试听(内容寻址;
+// 素材行被删 <audio> @error 落「暂无试听」,台账行不动)。
+const boundVoice = computed(() => {
+  const id = character.value?.voice_id ?? 0
+  if (!id) {
+    return null
+  }
+  return props.voices?.find((v) => v.id === id) ?? null
+})
+const voiceBadge = computed(() =>
+  boundVoice.value ? voiceStatusBadge(boundVoice.value.status) : null,
+)
+const brokenVoicePreview = ref(false)
 
 const coverURL = computed(() => {
   const coverId = character.value?.cover_asset_id ?? 0
@@ -183,6 +200,34 @@ function onBindChange(e: Event): void {
           class="alias"
         >{{ character.alias }}</span>
       </p>
+
+      <!-- 绑定音色(57 号票):徽章 + 试听;目录里找不到(已删)时只显示
+           解除提示,换绑在角色抽屉。 -->
+      <div
+        v-if="character.voice_id > 0"
+        class="voice-line"
+      >
+        <template v-if="boundVoice">
+          <span
+            class="voice-badge"
+            :class="voiceBadge?.tone"
+          >{{ voiceBadge?.label }}</span>
+          <span class="voice-name">{{ boundVoice.name }}</span>
+          <audio
+            v-if="boundVoice.preview_asset_id > 0 && !brokenVoicePreview"
+            class="voice-preview"
+            controls
+            preload="none"
+            :src="assetContentURL(boundVoice.preview_asset_id)"
+            @error="brokenVoicePreview = true"
+          />
+        </template>
+        <span
+          v-else
+          class="voice-badge rejected"
+          title="绑定的音色已不存在"
+        >音色已删</span>
+      </div>
 
       <div
         v-if="character.variants.length > 1"
@@ -349,6 +394,55 @@ function onBindChange(e: Event): void {
   align-items: baseline;
   gap: 6px;
   min-width: 0;
+}
+
+.voice-line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border: 1px dashed rgba(94, 234, 212, 0.35);
+  border-radius: 8px;
+}
+
+.voice-badge {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  background: rgba(94, 234, 212, 0.12);
+  color: #5eead4;
+  justify-self: start;
+}
+
+.voice-badge.ok {
+  background: rgba(74, 222, 128, 0.16);
+  color: #4ade80;
+}
+
+.voice-badge.deploying {
+  background: rgba(250, 204, 21, 0.16);
+  color: #facc15;
+}
+
+.voice-badge.rejected {
+  background: rgba(248, 113, 113, 0.16);
+  color: #f87171;
+}
+
+.voice-name {
+  font-size: 12px;
+  color: #8b91a7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-preview {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 30px;
 }
 
 .alias {

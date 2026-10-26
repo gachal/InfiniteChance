@@ -13,11 +13,13 @@ import {
   type CharacterImageRecord,
   type CharacterRecord,
   type CharacterVariantRecord,
+  type VoiceRecord,
 } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
-import { useThumbFallback } from '../thumbnail'
+import { useThumbFallback, assetContentURL } from '../thumbnail'
 import { CHARACTER_IMAGE_LABELS, characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
+import { voiceStatusBadge } from '../voice'
 import AssetPicker from './AssetPicker.vue'
 
 const props = defineProps<{
@@ -61,6 +63,42 @@ const uploading = ref(false)
 // 展示面回落簿:缩略失败先回原图,原图也失败才落「素材不可用」。
 const thumbs = useThumbFallback()
 const brokenAssetIds = ref(new Set<number>())
+
+// 音色绑定(57 号票,角色级):voices 全量 picker(状态徽章 + 试听)+
+// 解除;选中即 patchCharacter 提交(0 = 解除)。voices 全局作用域(可跨
+// IP 复用),目录自取自管(角色数据同款纪律)。
+const voices = ref<VoiceRecord[]>([])
+const voicesLoaded = ref(false)
+const brokenVoicePreviews = ref(new Set<number>())
+
+async function refreshVoices(): Promise<void> {
+  try {
+    voices.value = await client.listVoices()
+  } catch {
+    /* 拉不到就保持空,picker 内置空态提示 */
+  } finally {
+    voicesLoaded.value = true
+  }
+}
+
+const boundVoice = computed<VoiceRecord | null>(() => {
+  const id = character.value?.voice_id ?? 0
+  return id > 0 ? voices.value.find((v) => v.id === id) ?? null : null
+})
+
+async function bindVoice(voiceId: number): Promise<void> {
+  const c = character.value
+  if (!c || c.voice_id === voiceId) {
+    return
+  }
+  actionError.value = ''
+  try {
+    await client.patchCharacter(c.id, { voice_id: voiceId })
+    await refresh()
+  } catch (e) {
+    fail(e, '音色绑定失败,请稍后再试')
+  }
+}
 
 const activeVariant = computed<CharacterVariantRecord | null>(() => {
   const c = character.value
@@ -108,7 +146,10 @@ async function refresh(): Promise<void> {
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  void refreshVoices()
+})
 
 function fail(e: unknown, fallback: string): void {
   actionError.value = e instanceof ApiError ? e.message : fallback
@@ -425,6 +466,59 @@ function variantLabel(v: CharacterVariantRecord): string {
         </div>
       </section>
 
+      <!-- 音色(57 号票,角色级绑定:声音跟人不跟衣服,变体级显式不做)。
+           picker 列全量台账(状态徽章 + 试听),选中即提交,解除选占位。 -->
+      <section class="voices">
+        <h4>音色</h4>
+        <p
+          v-if="voicesLoaded && voices.length === 0"
+          class="hint"
+        >
+          还没有可用音色 —— 到画布添加「音色」节点创建(需先在管理端为
+          voice-enrollment 与合成模型配价)。
+        </p>
+        <select
+          v-else
+          :value="character.voice_id > 0 ? String(character.voice_id) : ''"
+          aria-label="绑定音色"
+          @change="bindVoice(Number(($event.target as HTMLSelectElement).value) || 0)"
+        >
+          <option value="">
+            — 不绑定 —
+          </option>
+          <option
+            v-for="v in voices"
+            :key="v.id"
+            :value="v.id"
+          >
+            {{ v.name }}({{ voiceStatusBadge(v.status).label }})
+          </option>
+        </select>
+        <div
+          v-if="boundVoice"
+          class="voice-line"
+        >
+          <span
+            class="voice-badge"
+            :class="voiceStatusBadge(boundVoice.status).tone"
+          >{{ voiceStatusBadge(boundVoice.status).label }}</span>
+          <span class="voice-name">{{ boundVoice.target_model }}</span>
+          <audio
+            v-if="boundVoice.preview_asset_id > 0 && !brokenVoicePreviews.has(boundVoice.id)"
+            controls
+            preload="none"
+            :src="assetContentURL(boundVoice.preview_asset_id)"
+            @error="brokenVoicePreviews = new Set([...brokenVoicePreviews, boundVoice.id])"
+          />
+          <p
+            v-else
+            class="hint"
+          >
+            暂无试听
+          </p>
+        </div>
+      </section>
+
       <p
         v-if="actionError"
         class="feedback error"
@@ -738,6 +832,66 @@ function variantLabel(v: CharacterVariantRecord): string {
 .close:hover {
   border-color: rgba(255, 255, 255, 0.32);
   color: inherit;
+}
+
+.voices {
+  display: grid;
+  gap: 8px;
+}
+
+.voices select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: inherit;
+  font-size: 13px;
+}
+
+.voices select option {
+  background: #141a2b;
+}
+
+.voice-line {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(94, 234, 212, 0.35);
+  border-radius: 8px;
+}
+
+.voice-line audio {
+  width: 100%;
+  height: 30px;
+}
+
+.voice-badge {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  background: rgba(94, 234, 212, 0.12);
+  color: #5eead4;
+}
+
+.voice-badge.ok {
+  background: rgba(74, 222, 128, 0.16);
+  color: #4ade80;
+}
+
+.voice-badge.deploying {
+  background: rgba(250, 204, 21, 0.16);
+  color: #facc15;
+}
+
+.voice-badge.rejected {
+  background: rgba(248, 113, 113, 0.16);
+  color: #f87171;
+}
+
+.voice-name {
+  color: #8b91a7;
+  font-size: 12px;
 }
 
 .fields {
