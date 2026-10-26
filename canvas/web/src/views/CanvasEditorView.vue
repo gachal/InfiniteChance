@@ -84,6 +84,12 @@ import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
 import { newNodeAnchor } from '../placement'
+import { useComposerPlacement } from '../composables/useComposerPlacement'
+import { useEditorToast } from '../composables/useEditorToast'
+import CanvasTopbar from '../components/editor/CanvasTopbar.vue'
+import EditorAlerts from '../components/editor/EditorAlerts.vue'
+import CanvasToolbar from '../components/editor/CanvasToolbar.vue'
+import EditorToast from '../components/editor/EditorToast.vue'
 import AssetPanel from '../components/AssetPanel.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
 import AssetPicker from '../components/AssetPicker.vue'
@@ -149,28 +155,8 @@ const loadError = ref('')
 const loading = ref(true)
 const missing = ref(false)
 
-const renaming = ref(false)
-const renameDraft = ref('')
-
 const autosave = useAutosave({
   save: (expectedVersion) => client.saveCanvasGraph(canvasId, snapshot(), expectedVersion),
-})
-
-const saveLabel = computed(() => {
-  switch (autosave.state.value) {
-    case 'dirty':
-      return '有未保存的更改'
-    case 'saving':
-      return '保存中…'
-    case 'saved':
-      return '已保存'
-    case 'error':
-      return '保存失败,将自动重试'
-    case 'conflict':
-      return '版本冲突'
-    default:
-      return '所有更改已保存'
-  }
 })
 
 /** 程序化连线与两击连线(30 号票)共用的落边形状:id 形制
@@ -270,19 +256,7 @@ function markChanged(): void {
 }
 
 // 轻提示(38 号票评审):删除可撤销提示、非法连线反馈共用,4 秒自动消退。
-const notice = ref('')
-let noticeTimer: ReturnType<typeof setTimeout> | undefined
-
-function showNotice(text: string): void {
-  notice.value = text
-  if (noticeTimer !== undefined) {
-    clearTimeout(noticeTimer)
-  }
-  noticeTimer = setTimeout(() => {
-    notice.value = ''
-    noticeTimer = undefined
-  }, 4000)
-}
+const { notice, show: showNotice } = useEditorToast()
 
 // ---- 生成任务(10 号票文生图,12 号票图生视频)----
 
@@ -478,6 +452,7 @@ async function submitImageTask(payload: {
 // ---- 生成对话框(21 号票图片模式;24 号票视频模式)----
 
 const wrapEl = ref<HTMLDivElement | null>(null)
+const topbarRef = ref<InstanceType<typeof CanvasTopbar> | null>(null)
 
 // 模式:选中视频节点时锁定视频生成,选中图片节点默认图片模式、可切视频
 // (切过去时节点产物自动进参考条、默认角色「首帧」)。两套草稿按模式独立
@@ -617,24 +592,13 @@ const composerDisabledReason = computed(() => {
 
 /** 悬浮定位:贴选中节点正下方(视口变换 + 节点尺寸换算成画布区坐标,
  * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。视频模式控件更多,
- * clamp 的估算高度按模式取档(评审:旧值一律 240,视频模式会贴边不准)。 */
-const composerStyle = computed(() => {
-  const node = composerNode.value
-  if (!node) {
-    // v-if 已挡住渲染,这里只是类型兜底。
-    return { display: 'none' }
-  }
-  const vp = viewport.value
-  const wrapW = wrapEl.value?.clientWidth ?? 0
-  const wrapH = wrapEl.value?.clientHeight ?? 0
-  const halfW = 280
-  const estH = composerMode.value === 'video' ? 360 : 260
-  const dims = node.dimensions
-  const left = vp.x + (node.position.x + (dims?.width ?? 200) / 2) * vp.zoom
-  const top = vp.y + (node.position.y + (dims?.height ?? 160)) * vp.zoom + 12
-  const clampedLeft = Math.min(Math.max(left, halfW + 8), Math.max(wrapW - halfW - 8, halfW + 8))
-  const clampedTop = Math.min(Math.max(top, 8), Math.max(wrapH - estH, 8))
-  return { left: `${clampedLeft}px`, top: `${clampedTop}px`, transform: 'translateX(-50%)' }
+ * clamp 的估算高度按模式取档(评审:旧值一律 240,视频模式会贴边不准)。
+ * 58 号票阶段一抽到 useComposerPlacement。 */
+const composerStyle = useComposerPlacement({
+  node: composerNode,
+  mode: composerMode,
+  wrapEl,
+  viewport,
 })
 
 /** 参考条移除(图片模式):第 0 位且来自选中节点 = 拆下产物 chip(发送
@@ -2244,8 +2208,7 @@ function onGlobalKeydown(e: KeyboardEvent): void {
       historyNodeId.value = ''
       return
     }
-    if (renaming.value) {
-      renaming.value = false
+    if (topbarRef.value?.cancelRenaming()) {
       return
     }
     if (connection.pending.value) {
@@ -2562,7 +2525,6 @@ function insertRecordTask(task: CanvasTask): void {
 // ---- 本机素材上传(18 号票)----
 
 const uploading = ref(false)
-const uploadInput = ref<HTMLInputElement | null>(null)
 
 /** 上传种类按浏览器 MIME 判断,缺失时按扩展名兜底;服务端按魔数嗅探最
  * 终裁决,这里的判断只为选对 kind 字段与立即反馈。 */
@@ -2702,9 +2664,8 @@ async function overwriteServer(): Promise<void> {
 
 // ---- 画布改名(编辑器内)----
 
-async function commitRename(): Promise<void> {
-  const name = renameDraft.value.trim()
-  renaming.value = false
+async function commitRename(draft: string): Promise<void> {
+  const name = draft.trim()
   if (!name || name === canvasName.value) {
     return
   }
@@ -2751,9 +2712,6 @@ onBeforeUnmount(() => {
   if (historyTimer !== undefined) {
     clearTimeout(historyTimer)
   }
-  if (noticeTimer !== undefined) {
-    clearTimeout(noticeTimer)
-  }
   taskSync.stop()
 })
 
@@ -2761,9 +2719,6 @@ onBeforeUnmount(() => {
  * 生产节点(analysis 仍仅由动作创建,不经面板);「规划」= 规划工件
  * 节点(絵コンテ + ネーム + 关卡,54/55 号票)。纯展示分组,无语义
  * 过滤 —— 全节点全画布可用(53 号票 A 段)。 */
-const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character', 'voice']
-const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level']
-
 function backToList(): void {
   // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
   if (canvasIPID.value > 0) {
@@ -2776,150 +2731,29 @@ function backToList(): void {
 
 <template>
   <div class="editor">
-    <header class="topbar">
-      <!-- 50 号票面包屑:「IP 名 / 画布名」,IP 段点击回详情页;53 号票 A 段
-           撤类型徽章 —— 画布回归通用,类型不再展示。 -->
-      <button
-        class="ghost breadcrumb-ip"
-        type="button"
-        :title="canvasIPID > 0 ? `回到「${canvasIPName || 'IP'}」详情` : '回到 IP 列表'"
-        @click="backToList"
-      >
-        ← {{ canvasIPID > 0 && canvasIPName ? canvasIPName : 'IP 列表' }}
-      </button>
-      <span
-        v-if="canvasIPID > 0 && canvasIPName"
-        class="breadcrumb-sep"
-      >/</span>
+    <CanvasTopbar
+      ref="topbarRef"
+      :ip-id="canvasIPID"
+      :ip-name="canvasIPName"
+      :canvas-name="canvasName"
+      :save-state="autosave.state.value"
+      :task-active-count="taskSync.activeCount.value"
+      @back="backToList"
+      @rename="commitRename"
+    />
 
-      <template v-if="renaming">
-        <form
-          class="rename-form"
-          @submit.prevent="commitRename"
-        >
-          <input
-            v-model="renameDraft"
-            type="text"
-            maxlength="128"
-            autofocus
-          >
-          <button
-            class="primary"
-            type="submit"
-          >
-            保存
-          </button>
-          <button
-            class="ghost"
-            type="button"
-            @click="renaming = false"
-          >
-            取消
-          </button>
-        </form>
-      </template>
-      <template v-else>
-        <button
-          class="title"
-          type="button"
-          title="点击重命名"
-          @click="renaming = true; renameDraft = canvasName"
-        >
-          {{ canvasName || '未命名画布' }}
-        </button>
-      </template>
-
-      <span
-        class="save-state"
-        :data-state="autosave.state.value"
-      >
-        {{ saveLabel }}
-      </span>
-
-      <span
-        v-if="taskSync.activeCount.value > 0"
-        class="task-state"
-      >
-        生成中 {{ taskSync.activeCount.value }} 个任务…
-      </span>
-    </header>
-
-    <!-- 横幅统一收纳(38 号票评审):多条同时出现时聚成一列,不再逐条
-         把画布往下推散。 -->
-    <div class="alerts">
-      <div
-        v-if="generateError"
-        class="generate-error"
-        role="alert"
-      >
-        <p>{{ generateError }}</p>
-        <button
-          class="ghost"
-          type="button"
-          @click="generateError = ''"
-        >
-          知道了
-        </button>
-      </div>
-
-      <div
-        v-if="autosave.state.value === 'conflict'"
-        class="conflict-banner"
-        role="alert"
-      >
-        <p>
-          画布已在其他窗口被修改,本地更改尚未保存。
-          可加载服务器版本(放弃本地更改),或以当前内容覆盖服务器。
-        </p>
-        <span class="conflict-actions">
-          <button
-            class="primary"
-            type="button"
-            :disabled="resolvingConflict"
-            @click="reloadServerVersion"
-          >
-            加载服务器版本
-          </button>
-          <button
-            class="danger"
-            type="button"
-            :disabled="resolvingConflict"
-            @click="overwriteServer"
-          >
-            以我的版本覆盖
-          </button>
-        </span>
-      </div>
-
-      <div
-        v-if="loadError"
-        class="load-error"
-        role="alert"
-      >
-        <p>{{ loadError }}</p>
-        <button
-          class="ghost"
-          type="button"
-          @click="loadCanvas"
-        >
-          重试
-        </button>
-      </div>
-
-      <div
-        v-if="missing"
-        class="load-error"
-      >
-        <p>画布不存在或已被删除。</p>
-        <button
-          class="ghost"
-          type="button"
-          @click="backToList"
-        >
-          返回列表
-        </button>
-      </div>
-    </div>
+    <EditorAlerts
+      :generate-error="generateError"
+      :load-error="loadError"
+      :missing="missing"
+      :autosave-state="autosave.state.value"
+      :resolving-conflict="resolvingConflict"
+      @dismiss-generate="generateError = ''"
+      @reload-server="reloadServerVersion"
+      @overwrite-server="overwriteServer"
+      @retry="loadCanvas"
+      @back="backToList"
+    />
 
     <div
       ref="wrapEl"
@@ -3307,82 +3141,18 @@ function backToList(): void {
         @capture-error="showNotice($event)"
       />
       <!-- 38 号票评审:轻提示(删除可撤销 / 非法连线反馈),自动消退。 -->
-      <div
-        v-if="notice"
-        class="toast"
-        role="status"
-      >
-        {{ notice }}
-      </div>
+      <EditorToast :text="notice" />
     </div>
 
-    <footer class="toolbar">
-      <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送。</span>
-      <span class="add-group">
-        <!-- 53 号票:添加按钮分「创作/规划」两组,组间分隔线(纯展示分组,
-             无语义过滤);素材库/生成记录/上传是容器动作,缀在组后。 -->
-        <span class="group-label">创作</span>
-        <button
-          v-for="t in CREATE_NODE_TYPES"
-          :key="t"
-          :class="`add-${t}`"
-          type="button"
-          @click="addNode(t)"
-        >
-          + {{ NODE_TYPE_LABEL[t] }}
-        </button>
-        <span
-          class="group-sep"
-          aria-hidden="true"
-        />
-        <span class="group-label">规划</span>
-        <button
-          v-for="t in PLAN_NODE_TYPES"
-          :key="t"
-          :class="`add-${t}`"
-          type="button"
-          @click="addNode(t)"
-        >
-          + {{ NODE_TYPE_LABEL[t] }}
-        </button>
-        <span
-          class="group-sep"
-          aria-hidden="true"
-        />
-        <button
-          class="add-asset"
-          type="button"
-          :title="assetPanelOpen ? '关闭素材库面板' : '打开素材库:浏览历史素材并插入画布'"
-          @click="toggleAssetPanel"
-        >
-          {{ assetPanelOpen ? '收起素材库' : '素材库' }}
-        </button>
-        <button
-          class="add-records"
-          type="button"
-          :title="recordsPanelOpen ? '关闭生成记录面板' : '打开生成记录:本画布的任务流水(最近 200 条)'"
-          @click="toggleRecordsPanel"
-        >
-          {{ recordsPanelOpen ? '收起记录' : '生成记录' }}
-        </button>
-        <button
-          class="add-upload"
-          type="button"
-          :disabled="uploading"
-          :title="uploading ? '上传中…' : '上传本机图片/视频进素材库,并作为节点插入画布'"
-          @click="uploadInput?.click()"
-        >
-          {{ uploading ? '上传中…' : '上传' }}
-        </button>
-        <input
-          ref="uploadInput"
-          class="upload-input"
-          type="file"
-          accept="image/*,video/*"
-          @change="onUploadChange"
-        >
-      </span>
-    </footer>
+    <CanvasToolbar
+      :asset-panel-open="assetPanelOpen"
+      :records-panel-open="recordsPanelOpen"
+      :uploading="uploading"
+      @add="addNode"
+      @toggle-asset="toggleAssetPanel"
+      @toggle-records="toggleRecordsPanel"
+      @upload-change="onUploadChange"
+    />
   </div>
 </template>
 
@@ -3393,156 +3163,8 @@ function backToList(): void {
   height: 100vh;
 }
 
-.breadcrumb-sep {
-  color: #4c5468;
-  font-size: 14px;
-  margin: 0 -4px;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--line-08);
-  background: rgba(var(--surface-panel-rgb), 0.9);
-}
-
-.topbar button {
-  border: none;
-  border-radius: var(--r-md);
-  padding: 8px 12px;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.title {
-  background: transparent;
-  color: inherit;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.title:hover {
-  background: var(--wash-06);
-}
-
-.rename-form {
-  display: flex;
-  gap: 8px;
-  flex: 1;
-}
-
-.rename-form input {
-  flex: 1;
-  max-width: 320px;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
-  border-radius: var(--r-md);
-  padding: 8px 10px;
-  color: inherit;
-  font-size: 14px;
-}
-
-.save-state {
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-/* 已保存态用中性蓝灰而不是绿(38 号票评审:绿色与图片节点/在途任务
-   撞色,状态色不该占用类型色)。 */
-.save-state[data-state='saved'] {
-  color: #a8b6d8;
-}
-
-.save-state[data-state='error'],
-.save-state[data-state='conflict'] {
-  color: var(--danger);
-}
-
-/* 在途任务 = 活动态,用交互蓝,不再与图片节点的绿色共用。 */
-.task-state {
-  color: var(--accent);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-/* 横幅收纳列(38 号票评审):多条横幅同列堆叠,视觉上是一个系统。 */
-.alerts {
-  display: flex;
-  flex-direction: column;
-}
-
-.generate-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 16px;
-  background: rgba(224, 49, 49, 0.12);
-  border-bottom: 1px solid rgba(224, 49, 49, 0.35);
-}
-
-.generate-error p {
-  margin: 0;
-  font-size: 14px;
-}
-
-.generate-error button {
-  border: 1px solid var(--line-16);
-  border-radius: var(--r-md);
-  padding: 8px 14px;
-  font-size: 13px;
-  cursor: pointer;
-  background: transparent;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.conflict-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  background: rgba(224, 49, 49, 0.16);
-  border-bottom: 1px solid rgba(224, 49, 49, 0.45);
-}
-
-.conflict-banner p {
-  margin: 0;
-  font-size: 14px;
-}
-
-.conflict-actions {
-  display: flex;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.conflict-actions button,
-.load-error button {
-  border: none;
-  border-radius: var(--r-md);
-  padding: 8px 14px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.load-error {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  background: rgba(224, 49, 49, 0.12);
-  border-bottom: 1px solid rgba(224, 49, 49, 0.35);
-}
-
-.load-error p {
-  margin: 0;
-  font-size: 14px;
-}
+/* 顶栏/横幅/工具栏/轻提示样式已随组件拆分迁出(58 号票阶段一):
+   CanvasTopbar / EditorAlerts / CanvasToolbar / EditorToast。 */
 
 .canvas-wrap {
   position: relative;
@@ -3582,171 +3204,5 @@ function backToList(): void {
 
 .connect-preview circle {
   fill: rgba(var(--accent-rgb), 0.9);
-}
-
-/* 轻提示(38 号票评审):画布底部居中,自动消退,不抢焦点。z 取 120 高于
-   灯箱(z-100,Teleport 到 body;.editor 不建层叠上下文,全局可比)——
-   41 号票截帧等浮层期间的反馈要浮在遮罩之上可见。 */
-.toast {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: var(--z-toast);
-  max-width: min(560px, calc(100% - 32px));
-  padding: 8px 14px;
-  border-radius: var(--r-lg);
-  background: rgba(20, 28, 48, 0.95);
-  border: 1px solid rgba(var(--accent-rgb), 0.4);
-  color: var(--text-bright);
-  font-size: 13px;
-  line-height: 1.5;
-  box-shadow: var(--shadow-dialog);
-  pointer-events: none;
-}
-
-.primary {
-  background: #3b5bdb;
-  color: #fff;
-  font-weight: 600;
-}
-
-.danger {
-  background: #e03131;
-  color: #fff;
-  font-weight: 600;
-}
-
-.ghost {
-  background: transparent;
-  border: 1px solid var(--line-16);
-  color: var(--text-secondary);
-}
-
-.ghost:hover {
-  border-color: var(--line-32);
-  color: inherit;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--line-08);
-  background: rgba(var(--surface-panel-rgb), 0.9);
-}
-
-.hint {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.add-group {
-  display: flex;
-  gap: 8px;
-}
-
-.add-group button {
-  border: none;
-  border-radius: var(--r-lg);
-  padding: 9px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* 53 号票:创作/规划两组的组名与组间分隔线(纯展示分组)。 */
-.group-label {
-  align-self: center;
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.group-sep {
-  align-self: stretch;
-  margin: 4px 2px;
-  width: 1px;
-  background: var(--wash-14);
-}
-
-.add-agent {
-  background: rgba(var(--accent-rgb), 0.2);
-  color: var(--accent);
-}
-
-.add-image {
-  background: rgba(var(--success-rgb), 0.16);
-  color: var(--success);
-}
-
-.add-video {
-  background: rgba(var(--amber-rgb), 0.14);
-  color: var(--amber);
-}
-
-.add-previz {
-  background: rgba(var(--pink-rgb), 0.16);
-  color: var(--pink);
-}
-
-/* 52 号票:角色引用节点入添加组,青色与节点描边/小地图同源。 */
-.add-character {
-  background: rgba(var(--teal-rgb), 0.16);
-  color: var(--teal);
-}
-
-/* 57 号票:音色入「创作」组,水绿与节点描边/小地图同源(audio 不进组,
-   只作台词合成产物与面板插入出现)。 */
-.add-voice {
-  background: rgba(var(--teal-light-rgb), 0.14);
-  color: var(--teal-light);
-}
-
-/* 53 号票:絵コンテ入「规划」组,橙色与节点描边/小地图同源。 */
-.add-storyboard {
-  background: rgba(var(--orange-rgb), 0.16);
-  color: var(--orange);
-}
-
-/* 54 号票:ネーム入「规划」组,天蓝与节点描边/小地图同源。 */
-.add-name {
-  background: rgba(var(--sky-rgb), 0.16);
-  color: var(--sky);
-}
-
-/* 55 号票:关卡入「规划」组,红色与节点描边/小地图同源。 */
-.add-level {
-  background: rgba(var(--red-signal-rgb), 0.16);
-  color: var(--red-signal);
-}
-
-/* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是
-   分析;类型色留给节点,容器类动作用中性色)。 */
-.add-asset {
-  background: rgba(168, 182, 216, 0.14);
-  color: #b6c2d8;
-}
-
-.add-records {
-  background: rgba(var(--orange-rgb), 0.14);
-  color: #fdba74;
-}
-
-.add-upload {
-  background: rgba(var(--teal-light-rgb), 0.14);
-  color: var(--teal-light);
-}
-
-.add-upload:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.upload-input {
-  display: none;
 }
 </style>
