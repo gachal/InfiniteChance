@@ -115,6 +115,10 @@ type VoiceSpec struct {
 
 	LedgerID    int64  `json:"ledger_id,omitempty"`
 	Instruction string `json:"instruction,omitempty"`
+	// Chars 是台词合成的服务端计费字符数(网关 usage.chars,56 号票对账
+	// 口径):任务成功时随终态落行,任务列表带出给编辑器回填音频节点的
+	// 元数据(27 号票产物-元数据配对家族;评审 F2)。
+	Chars int64 `json:"chars,omitempty"`
 }
 
 // encodeVoiceSpec serializes the spec for its column; a zero spec lands as
@@ -316,8 +320,10 @@ type Store interface {
 	FinalizeVoiceSuccess(ctx context.Context, id string, in voice.CreateInput, preview *asset.Asset) (Task, bool, error)
 	// FinalizeTtsSuccess inserts the audio asset and closes the task
 	// succeeded in one transaction;产物地址只落素材行(任务行不设音频
-	// URL 列,回填音频节点由前端按 asset_id 拼内容寻址路径)。
-	FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error)
+	// URL 列,回填音频节点由前端按 asset_id 拼内容寻址路径)。chars 是
+	// 网关的服务端计费字符数,随终态并入 voice_spec(评审 F2:任务列表
+	// 带出,编辑器回填音频节点元数据)。
+	FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset, chars int64) (Task, bool, error)
 	// ResetForRetry returns one failed task of the given canvas to the queue,
 	// clearing the failure fields; ErrNotRetryable when the row exists but is
 	// not failed, ErrNotFound when there is no row.

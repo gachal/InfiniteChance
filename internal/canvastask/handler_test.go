@@ -151,7 +151,7 @@ func (f *fakeTasks) FinalizeVoiceSuccess(_ context.Context, _ string, _ voice.Cr
 	return canvastask.Task{}, false, nil
 }
 
-func (f *fakeTasks) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset) (canvastask.Task, bool, error) {
+func (f *fakeTasks) FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset, chars int64) (canvastask.Task, bool, error) {
 	return f.FinalizeSuccess(ctx, id, a)
 }
 
