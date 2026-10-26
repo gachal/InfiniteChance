@@ -178,3 +178,30 @@ func TestMySQLPriceUpsertListByModelDelete(t *testing.T) {
 		t.Errorf("second Delete err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestMySQLPriceCharacterTrackRoundTrip(t *testing.T) {
+	store, _ := openPricingTestDB(t)
+	ctx := context.Background()
+
+	stored, err := store.Upsert(ctx, pricing.Price{
+		PublicModel: "qwen-audio-3.1-tts-plus", Unit: pricing.UnitCharacter,
+		Character: &pricing.CharacterPrice{CNYPer10KCharsMicros: 1_400_000},
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if stored.Character == nil || stored.Character.CNYPer10KCharsMicros != 1_400_000 {
+		t.Fatalf("upsert readback = %+v, want the character payload intact", stored)
+	}
+	got, err := store.ByModel(ctx, "qwen-audio-3.1-tts-plus")
+	if err != nil {
+		t.Fatalf("ByModel: %v", err)
+	}
+	if got.Unit != pricing.UnitCharacter || got.Character == nil || got.Character.CNYPer10KCharsMicros != 1_400_000 {
+		t.Fatalf("ByModel = %+v, want character track at 1400000 micros/万字符", got)
+	}
+	list, err := store.List(ctx)
+	if err != nil || len(list) != 1 || list[0].Character == nil {
+		t.Fatalf("List = %+v (%v), want the character row", list, err)
+	}
+}

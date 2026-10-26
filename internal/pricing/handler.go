@@ -48,6 +48,7 @@ type priceJSON struct {
 	DefaultTokensPerSecond float64            `json:"default_tokens_per_second,omitempty"`
 	CNYPerCall             float64            `json:"cny_per_call"`
 	SizeFactors            map[string]float64 `json:"size_factors,omitempty"`
+	CNYPer10KChars         float64            `json:"cny_per_10k_chars"`
 	CreatedAt              time.Time          `json:"created_at"`
 	UpdatedAt              time.Time          `json:"updated_at"`
 }
@@ -82,6 +83,10 @@ func toPriceJSON(p Price) priceJSON {
 				}
 				body.SizeFactors = factors
 			}
+		}
+	case UnitCharacter:
+		if p.Character != nil {
+			body.CNYPer10KChars = MicrosToCNY(p.Character.CNYPer10KCharsMicros)
 		}
 	}
 	return body
@@ -139,6 +144,7 @@ type priceInputJSON struct {
 	DefaultTokensPerSecond float64            `json:"default_tokens_per_second"`
 	CNYPerCall             float64            `json:"cny_per_call"`
 	SizeFactors            map[string]float64 `json:"size_factors"`
+	CNYPer10KChars         float64            `json:"cny_per_10k_chars"`
 }
 
 type listResponse struct {
@@ -187,6 +193,8 @@ func (h *Handlers) Upsert(c *gin.Context) {
 			CNYPerCallMicros: cnyToMicros(raw.CNYPerCall),
 			SizeFactorMicros: factors,
 		}
+	case UnitCharacter:
+		p.Character = &CharacterPrice{CNYPer10KCharsMicros: cnyToMicros(raw.CNYPer10KChars)}
 	}
 	p, err := p.Normalize()
 	if err != nil {

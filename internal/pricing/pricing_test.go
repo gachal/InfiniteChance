@@ -361,3 +361,131 @@ func TestTokenPriceNormalizeVideoTable(t *testing.T) {
 		t.Errorf("folded table = %v, want only 720p", folded.Token.SizeTokensPerSecond)
 	}
 }
+
+// TestCharacterPriceChargeMicros pins the character track's arithmetic
+// (56 号票): ⌈chars × 单价 / 10000⌉,向上取整不低估,big.Int 防溢出。
+// 1.4 元/万字符(qwen-audio-3.1-tts-plus 档)是活价。
+func TestCharacterPriceChargeMicros(t *testing.T) {
+	plus := CharacterPrice{CNYPer10KCharsMicros: 1_400_000} // 1.4 元/万字符
+	// 10000 字符 × 1.4 元 = 1_400_000 micros,整除不动。
+	if got := plus.ChargeMicros(10_000); got != 1_400_000 {
+		t.Errorf("ChargeMicros(10000) = %d, want 1400000", got)
+	}
+	// 不足一万字符按比例且向上取整:6000 × 1.4 元/10000 = 0.84 元 = 840000。
+	if got := plus.ChargeMicros(6_000); got != 840_000 {
+		t.Errorf("ChargeMicros(6000) = %d, want 840000", got)
+	}
+	// 不能整除的余数向上取整:1 字符 × 1.4 元 / 10000 = 140 micros 整;
+	// 3 字符 = 420;1 微不下的尾数必须进位 —— 单价 1 micro 时
+	// 9999 × 1 / 10000 = 0.9999 → ⌈⌉ = 1。
+	if got := plus.ChargeMicros(3); got != 420 {
+		t.Errorf("ChargeMicros(3) = %d, want 420", got)
+	}
+	tiny := CharacterPrice{CNYPer10KCharsMicros: 1}
+	if got := tiny.ChargeMicros(9_999); got != 1 {
+		t.Errorf("ChargeMicros ceil = %d, want 1 (尾数进位不低估)", got)
+	}
+	// 免费模型与防御:0 单价计 0,chars<1 计 0。
+	if got := (CharacterPrice{}).ChargeMicros(50_000); got != 0 {
+		t.Errorf("free model = %d, want 0", got)
+	}
+	if got := plus.ChargeMicros(0); got != 0 {
+		t.Errorf("zero chars = %d, want 0", got)
+	}
+	if got := plus.ChargeMicros(-7); got != 0 {
+		t.Errorf("negative chars = %d, want 0", got)
+	}
+	// 大数值不溢出:1000 元/万字符 × 1e13 字符,分子 1e22 超出 int64,
+	// 商 1e18 仍在范围内。
+	huge := CharacterPrice{CNYPer10KCharsMicros: 1000 * 1_000_000}
+	if got := huge.ChargeMicros(10_000_000_000_000); got != 100_000_000_000_000_000_0 {
+		t.Errorf("ChargeMicros huge = %d, want 1e18", got)
+	}
+	if got := huge.ChargeMicros(math.MaxInt64); got != math.MaxInt64 {
+		t.Errorf("ChargeMicros overflow = %d, want MaxInt64 clamp", got)
+	}
+}
+
+// TestCharacterPriceNormalize pins the character track's Normalize branch:
+// 恰好一个 Character 载荷,单价护盾 [0, MaxCNYPer10KChars] 元。
+func TestCharacterPriceNormalize(t *testing.T) {
+	valid := Price{PublicModel: " qwen-audio-3.1-tts-plus ", Unit: UnitCharacter,
+		Character: &CharacterPrice{CNYPer10KCharsMicros: 1_400_000}}
+	got, err := valid.Normalize()
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got.PublicModel != "qwen-audio-3.1-tts-plus" || got.Character.CNYPer10KCharsMicros != 1_400_000 {
+		t.Fatalf("normalized = %+v, want trimmed model and intact price", got)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		price Price
+	}{
+		{"missing character payload", Price{PublicModel: "m", Unit: UnitCharacter}},
+		{"token payload on character track", Price{PublicModel: "m", Unit: UnitCharacter, Character: &CharacterPrice{}, Token: &TokenPrice{}}},
+		{"call payload on character track", Price{PublicModel: "m", Unit: UnitCharacter, Character: &CharacterPrice{}, Call: &CallPrice{}}},
+		{"negative price", Price{PublicModel: "m", Unit: UnitCharacter, Character: &CharacterPrice{CNYPer10KCharsMicros: -1}}},
+		{"price over shield", Price{PublicModel: "m", Unit: UnitCharacter, Character: &CharacterPrice{CNYPer10KCharsMicros: (MaxCNYPer10KChars + 1) * 1_000_000}}},
+		{"token track with character payload", Price{PublicModel: "m", Unit: UnitToken, Token: &TokenPrice{}, Character: &CharacterPrice{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.price.Normalize(); err == nil {
+				t.Fatalf("Normalize = nil error, want rejection")
+			}
+		})
+	}
+}
+
+// TestCharacterSnapshots pins both snapshot shapes: Snapshot() 带 character
+// 载荷,CharacterSnapshot() 额外记请求事实(chars)供审计重算;字符轨
+// 价格取按次快照或按次价格取字符快照都是编程错误。
+func TestCharacterSnapshots(t *testing.T) {
+	p := Price{PublicModel: "qwen-audio-3.1-tts-plus", Unit: UnitCharacter,
+		Character: &CharacterPrice{CNYPer10KCharsMicros: 1_400_000}}
+	raw, err := p.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("snapshot not JSON: %v", err)
+	}
+	if got["unit"] != "character" {
+		t.Errorf("snapshot unit = %v, want character", got["unit"])
+	}
+	ch, ok := got["character"].(map[string]any)
+	if !ok || ch["cny_per_10k_chars_micros"] != float64(1_400_000) {
+		t.Errorf("snapshot character payload = %v, want cny_per_10k_chars_micros 1400000", got["character"])
+	}
+
+	craw, err := p.CharacterSnapshot(1234)
+	if err != nil {
+		t.Fatalf("CharacterSnapshot: %v", err)
+	}
+	var cgot struct {
+		Unit      string `json:"unit"`
+		Character *struct {
+			CNYPer10KCharsMicros int64 `json:"cny_per_10k_chars_micros"`
+		} `json:"character"`
+		Request struct {
+			Chars int64 `json:"chars"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal(craw, &cgot); err != nil {
+		t.Fatalf("character snapshot not JSON: %v (%s)", err, craw)
+	}
+	if cgot.Unit != "character" || cgot.Request.Chars != 1234 || cgot.Character == nil ||
+		cgot.Character.CNYPer10KCharsMicros != 1_400_000 {
+		t.Errorf("character snapshot = %s, want character track with request {chars:1234}", craw)
+	}
+
+	tp := Price{PublicModel: "m", Unit: UnitToken, Token: &TokenPrice{}}
+	if _, err := tp.CharacterSnapshot(10); err == nil {
+		t.Errorf("CharacterSnapshot of token price = nil error, want failure")
+	}
+	if _, err := p.CallSnapshot("1024x1024", 1); err == nil {
+		t.Errorf("CallSnapshot of character price = nil error, want failure")
+	}
+}

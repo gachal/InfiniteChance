@@ -61,6 +61,11 @@ func scanSQLiteRow(scan rowScanner) (Price, error) {
 		if err := json.Unmarshal(rawConfig, p.Call); err != nil {
 			return Price{}, err
 		}
+	case UnitCharacter:
+		p.Character = &CharacterPrice{}
+		if err := json.Unmarshal(rawConfig, p.Character); err != nil {
+			return Price{}, err
+		}
 	default:
 		return Price{}, errors.New("pricing: unknown unit " + string(p.Unit) + " in stored row")
 	}
@@ -98,10 +103,13 @@ func (s *SQLiteStore) ByModel(ctx context.Context, publicModel string) (Price, e
 }
 
 func (s *SQLiteStore) Upsert(ctx context.Context, p Price) (Price, error) {
-	// unit 决定 config 列的载荷形状(双轨不变量:恰好一个载荷)。
+	// unit 决定 config 列的载荷形状(多轨不变量:恰好一个载荷)。
 	var payload any = p.Token
 	if p.Unit == UnitCall || p.Unit == UnitSecond {
 		payload = p.Call
+	}
+	if p.Unit == UnitCharacter {
+		payload = p.Character
 	}
 	config, err := json.Marshal(payload)
 	if err != nil {
