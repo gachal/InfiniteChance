@@ -46,13 +46,13 @@ func newDashScopeAdaptor() *dashscopeAdaptor {
 
 // dashscopeSubmitPath / dashscopeQueryPrefix are the versioned task-face
 // paths appended to the channel's BaseURL (工作空间域名根,不含路径).
-// ttsCustomizationPath / speechSynthesizerPath are the audio face's two
+// ttsCustomizationPath / ttsSynthesisPath are the audio face's two
 // endpoints (56 号票 音色定制与台词合成,同步调用不带 X-DashScope-Async).
 const (
-	dashscopeSubmitPath   = "/api/v1/services/aigc/video-generation/video-synthesis"
-	dashscopeQueryPrefix  = "/api/v1/tasks/"
-	ttsCustomizationPath  = "/api/v1/services/audio/tts/customization"
-	speechSynthesizerPath = "/api/v1/services/audio/tts/SpeechSynthesizer"
+	dashscopeSubmitPath  = "/api/v1/services/aigc/video-generation/video-synthesis"
+	dashscopeQueryPrefix = "/api/v1/tasks/"
+	ttsCustomizationPath = "/api/v1/services/audio/tts/customization"
+	ttsSynthesisPath     = "/api/v1/services/audio/tts/SpeechSynthesizer"
 )
 
 // dashscopeReferenceType maps one gateway reference kind onto its DashScope
@@ -497,7 +497,7 @@ func (a *dashscopeAdaptor) SpeechSynthesis(ctx context.Context, ch channel.Chann
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: vodErrorBody("dashscope: " + err.Error())}, nil
 	}
-	upstream, err := a.dashscopeCall(ctx, ch, http.MethodPost, speechSynthesizerPath, translated, false)
+	upstream, err := a.dashscopeCall(ctx, ch, http.MethodPost, ttsSynthesisPath, translated, false)
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}
