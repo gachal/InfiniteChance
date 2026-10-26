@@ -64,6 +64,10 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/videos/generations", h.CreateVideoGeneration)
 	group.GET("/videos/tasks/:id", h.GetVideoTask)
 	group.POST("/videos/tasks/:id/cancel", h.CancelVideoTask)
+	group.POST("/audio/voices", h.CreateVoice)
+	group.POST("/audio/voices/:id/query", h.QueryVoice)
+	group.DELETE("/audio/voices/:id", h.DeleteVoice)
+	group.POST("/audio/speech", h.CreateSpeech)
 }
 
 // maxRequestBody caps how much of a client request body the /v1 surface

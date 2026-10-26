@@ -8,8 +8,9 @@
 
 import { requestClient } from '#/api/request';
 
-/** 计价轨道:token = 聊天/视频按 token ×倍率;call = 生图按张;second = 生视频按秒。 */
-export type PriceUnit = 'call' | 'second' | 'token';
+/** 计价轨道:token = 聊天/视频按 token ×倍率;call = 生图按张;second = 生视频按秒;
+ * character = 台词合成按万字符(56 号票)。 */
+export type PriceUnit = 'call' | 'character' | 'second' | 'token';
 
 /** 一条模型价格(GET 列表行 / PUT 响应)。哪些字段有意义随 unit 而定:
  * token 行用 per-mtokens/ratio 族,call/second 行用 cny_per_call/size_factors 族;
@@ -24,6 +25,7 @@ export interface ModelPrice {
   default_tokens_per_second?: number;
   cny_per_call: number;
   size_factors?: Record<string, number>;
+  cny_per_10k_chars: number;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +42,7 @@ export interface ModelPriceInput {
   default_tokens_per_second?: number;
   cny_per_call?: number;
   size_factors?: Record<string, number>;
+  cny_per_10k_chars?: number;
 }
 
 export async function listModelPrices(): Promise<ModelPrice[]> {

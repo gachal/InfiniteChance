@@ -597,7 +597,8 @@ function secretSummary(ch: Channel): string {
             v-else-if="isDashScope"
             class="mb-2 mt-0 text-neutral-500"
           >
-            dashscope 当前仅实现生视频(videos),BaseURL 填百炼工作空间域名根
+            dashscope 实现生视频(videos)与音频(audio:音色定制/台词合成,
+            56 号票),BaseURL 填百炼工作空间域名根
             (如 https://xxxx.cn-beijing.maas.aliyuncs.com,不含路径);密钥为
             百炼 API Key;勾选其他能力不会被转发。
           </p>
@@ -613,6 +614,9 @@ function secretSummary(ch: Channel): string {
             </Checkbox>
             <Checkbox value="videos">
               生视频(videos)
+            </Checkbox>
+            <Checkbox value="audio">
+              音频(audio)
             </Checkbox>
           </CheckboxGroup>
         </FormItem>

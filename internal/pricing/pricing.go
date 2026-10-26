@@ -24,12 +24,15 @@ import (
 // size coefficient — UnitCall for images (07 号票), UnitSecond for video
 // (08 号票:单价按秒,系数按分辨率). Both share CallPrice arithmetic; the
 // unit only decides which requests may use the row and what usage rows log.
+// UnitCharacter bills TTS by input characters (56 号票:单价按万字符,
+// 服务端自算字符数,预扣即实结).
 type Unit string
 
 const (
-	UnitToken  Unit = "token"
-	UnitCall   Unit = "call"
-	UnitSecond Unit = "second"
+	UnitToken     Unit = "token"
+	UnitCall      Unit = "call"
+	UnitSecond    Unit = "second"
+	UnitCharacter Unit = "character"
 )
 
 // ErrNotFound reports a public model with no price row.
@@ -53,6 +56,9 @@ const (
 	// MaxCallItems bounds how many items one request may bill for — the
 	// relay enforces it on the client's n, here it shields the arithmetic.
 	MaxCallItems = 100
+	// MaxCNYPer10KChars bounds a per-10k-chars TTS price at ¥1000 (56 号票)
+	// — a typo shield, not a business rule.
+	MaxCNYPer10KChars = 1_000
 	// MaxTokensPerSecond bounds one per-second token conversion rate in the
 	// video token track's estimate table (25 号票) — a typo shield, not a
 	// business rule. 100k tokens/s is orders above any vendor's published
@@ -68,6 +74,9 @@ const (
 	mtokensDenom = 1_000_000
 	ratioDenom   = 1_000_000
 	factorDenom  = 1_000_000
+	// charsDenom divides the character track: prices are per 10k chars, so
+	// (chars × micros-per-10k) / 10000 lands on micro-CNY.
+	charsDenom = 10_000
 )
 
 // TokenPrice is the token-track price of one public model. Costs are the
@@ -153,13 +162,43 @@ func (c CallPrice) ChargeMicros(size string, n int64) int64 {
 	return q.Int64()
 }
 
+// CharacterPrice is the character-track price of one public model (56 号票,
+// TTS): a CNY unit price per 10k input characters. The billed character
+// count is computed server-side from the request text — CJK 汉字与全角计 2、
+// 其余 rune 计 1 —— the client's own counts are never trusted.
+type CharacterPrice struct {
+	CNYPer10KCharsMicros int64 `json:"cny_per_10k_chars_micros"` // 微人民币/万字符
+}
+
+// ChargeMicros computes what chars billable characters cost the key:
+// ⌈chars × unit price / 10000⌉ rounded up to whole micros, so the smallest
+// fragment of a character still lands on a whole micro and billed amounts
+// never drift below true cost. chars below 1 (or a free model) yield 0. The
+// multiply runs in big.Int — chars × per-10k price can overflow int64 at
+// legitimate upper bounds.
+func (p CharacterPrice) ChargeMicros(chars int64) int64 {
+	if chars < 1 {
+		return 0
+	}
+	num := new(big.Int).Mul(big.NewInt(chars), big.NewInt(p.CNYPer10KCharsMicros))
+	q, rem := new(big.Int).QuoRem(num, big.NewInt(charsDenom), new(big.Int))
+	if rem.Sign() > 0 {
+		q.Add(q, big.NewInt(1))
+	}
+	if !q.IsInt64() {
+		return math.MaxInt64
+	}
+	return q.Int64()
+}
+
 // Price is one public model's price row: the track discriminator plus
 // exactly one track payload.
 type Price struct {
 	PublicModel string
 	Unit        Unit
-	Token       *TokenPrice // Unit == UnitToken 时非 nil
-	Call        *CallPrice  // Unit == UnitCall 时非 nil
+	Token       *TokenPrice     // Unit == UnitToken 时非 nil
+	Call        *CallPrice      // Unit == UnitCall/UnitSecond 时非 nil
+	Character   *CharacterPrice // Unit == UnitCharacter 时非 nil(56 号票)
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -197,15 +236,18 @@ func (t TokenPrice) ChargeMicros(promptTokens, completionTokens int64) int64 {
 // also records the request facts the charge derives from.
 func (p Price) Snapshot() (json.RawMessage, error) {
 	s := struct {
-		Unit  Unit        `json:"unit"`
-		Token *TokenPrice `json:"token,omitempty"`
-		Call  *CallPrice  `json:"call,omitempty"`
+		Unit      Unit            `json:"unit"`
+		Token     *TokenPrice     `json:"token,omitempty"`
+		Call      *CallPrice      `json:"call,omitempty"`
+		Character *CharacterPrice `json:"character,omitempty"`
 	}{Unit: p.Unit}
 	switch p.Unit {
 	case UnitToken:
 		s.Token = p.Token
 	case UnitCall:
 		s.Call = p.Call
+	case UnitCharacter:
+		s.Character = p.Character
 	}
 	return json.Marshal(s)
 }
@@ -232,6 +274,25 @@ func (p Price) CallSnapshot(size string, n int64) (json.RawMessage, error) {
 	return json.Marshal(s)
 }
 
+// CharacterSnapshot renders the character-track price plus the request fact
+// the charge derives from — the server-side billable character count (56
+// 号票). The charge is exact at request time (预扣即实结), the snapshot is
+// what lets an audit recompute it from the usage row alone.
+func (p Price) CharacterSnapshot(chars int64) (json.RawMessage, error) {
+	if p.Unit != UnitCharacter {
+		return nil, fmt.Errorf("pricing: character snapshot of a %s-track price", p.Unit)
+	}
+	s := struct {
+		Unit      Unit            `json:"unit"`
+		Character *CharacterPrice `json:"character,omitempty"`
+		Request   struct {
+			Chars int64 `json:"chars"`
+		} `json:"request"`
+	}{Unit: p.Unit, Character: p.Character}
+	s.Request.Chars = chars
+	return json.Marshal(s)
+}
+
 // Normalize validates and canonicalizes a Price. It enforces the dual-track
 // invariant: the unit decides the payload, exactly one of the two may be
 // present.
@@ -250,6 +311,9 @@ func (p Price) Normalize() (Price, error) {
 		}
 		if p.Call != nil {
 			return p, fmt.Errorf("token 计价不能带按次价格")
+		}
+		if p.Character != nil {
+			return p, fmt.Errorf("token 计价不能带字符价格")
 		}
 		t := *p.Token
 		if err := validatePerMTokens("输入单价", t.InputMicrosPerMTokens); err != nil {
@@ -293,6 +357,9 @@ func (p Price) Normalize() (Price, error) {
 		if p.Token != nil {
 			return p, fmt.Errorf("%s计价不能带 token 价格", unitLabel(p.Unit))
 		}
+		if p.Character != nil {
+			return p, fmt.Errorf("%s计价不能带字符价格", unitLabel(p.Unit))
+		}
 		c := *p.Call
 		if c.CNYPerCallMicros < 0 || c.CNYPerCallMicros > MaxCNYPerCall*apikey.MicrosPerCNY {
 			return p, fmt.Errorf("%s单价需在 0 到 %d 元之间", unitLabel(p.Unit), MaxCNYPerCall)
@@ -316,6 +383,18 @@ func (p Price) Normalize() (Price, error) {
 		}
 		c.SizeFactorMicros = factors
 		p.Call = &c
+	case UnitCharacter:
+		if p.Character == nil {
+			return p, fmt.Errorf("字符计价需要 人民币单价")
+		}
+		if p.Token != nil || p.Call != nil {
+			return p, fmt.Errorf("字符计价不能带 token/按次价格")
+		}
+		c := *p.Character
+		if c.CNYPer10KCharsMicros < 0 || c.CNYPer10KCharsMicros > MaxCNYPer10KChars*apikey.MicrosPerCNY {
+			return p, fmt.Errorf("字符单价需在 0 到 %d 元/万字符之间", MaxCNYPer10KChars)
+		}
+		p.Character = &c
 	default:
 		return p, fmt.Errorf("未知计价单位:%s", p.Unit)
 	}
@@ -328,10 +407,14 @@ const maxFactorEntries = 100
 
 // unitLabel names a unit in admin-facing validation messages.
 func unitLabel(u Unit) string {
-	if u == UnitSecond {
+	switch u {
+	case UnitSecond:
 		return "按秒"
+	case UnitCharacter:
+		return "按字符"
+	default:
+		return "按次"
 	}
-	return "按次"
 }
 
 func validatePerMTokens(label string, micros int64) error {

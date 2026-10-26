@@ -168,10 +168,14 @@ function formatCNY(cny: number): string {
   }).format(cny);
 }
 
-// 计费单位与数量:token 轨读列,按次/按秒轨读快照里的请求事实(张/秒)。
+// 计费单位与数量:token/character 轨读列(character 的量列存服务端计费
+// 字符数,56 号票),按次/按秒轨读快照里的请求事实(张/秒)。
 function formatQuantity(l: UsageLogRecord): string {
   if (l.unit === 'token') {
     return `${l.prompt_tokens} + ${l.completion_tokens} tok`;
+  }
+  if (l.unit === 'character') {
+    return `${l.completion_tokens} 字符`;
   }
   const n = l.request?.n;
   const amount = n === undefined || n === null ? '—' : String(n);

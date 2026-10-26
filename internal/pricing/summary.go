@@ -16,6 +16,9 @@ type PriceSummary struct {
 	// call/second 轨字段。
 	CNYPerCall  float64            `json:"cny_per_call,omitempty"` // 元/张 或 元/秒
 	SizeFactors map[string]float64 `json:"size_factors,omitempty"` // 尺寸/分辨率 → 系数(×1.0)
+
+	// character 轨字段(56 号票)。
+	CNYPer10KChars float64 `json:"cny_per_10k_chars,omitempty"` // 元/万字符
 }
 
 // Summary renders the price row as a catalog-facing summary in human CNY
@@ -40,6 +43,9 @@ func (p Price) Summary() PriceSummary {
 			}
 			s.SizeFactors = factors
 		}
+	}
+	if p.Character != nil {
+		s.CNYPer10KChars = MicrosToCNY(p.Character.CNYPer10KCharsMicros)
 	}
 	return s
 }

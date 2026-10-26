@@ -55,6 +55,7 @@ interface PriceForm {
   sizeFactors: { factor: number | undefined; size: string }[];
   unit: PriceUnit;
   cnyPerCall: number | undefined;
+  cnyPer10KChars: number | undefined;
   videoRates: { rate: number | undefined; size: string }[];
 }
 
@@ -68,6 +69,7 @@ function blankForm(): PriceForm {
     sizeFactors: [],
     unit: 'token',
     cnyPerCall: undefined,
+    cnyPer10KChars: undefined,
     videoRates: [],
   };
 }
@@ -86,12 +88,14 @@ const columns = [
 
 const UNIT_LABEL: Record<PriceUnit, string> = {
   call: '按次',
+  character: '按字符',
   second: '按秒',
   token: '按 token',
 };
 
 const UNIT_COLOR: Record<PriceUnit, string> = {
   call: 'success',
+  character: 'magenta',
   second: 'warning',
   token: 'processing',
 };
@@ -128,6 +132,7 @@ function openEdit(p: ModelPrice): void {
     sizeFactors: Object.entries(p.size_factors ?? {}).map(([size, factor]) => ({ factor, size })),
     unit: p.unit,
     cnyPerCall: p.cny_per_call,
+    cnyPer10KChars: p.cny_per_10k_chars,
     videoRates: Object.entries(p.size_tokens_per_second ?? {}).map(([size, rate]) => ({ rate, size })),
   } satisfies PriceForm);
   formError.value = '';
@@ -158,6 +163,13 @@ function buildInput() {
       ratio: formState.ratio,
       size_tokens_per_second: rates,
       default_tokens_per_second: formState.defaultTokensPerSecond ?? 0,
+    };
+  }
+  if (formState.unit === 'character') {
+    return {
+      public_model: publicModel,
+      unit: formState.unit,
+      cny_per_10k_chars: formState.cnyPer10KChars ?? 0,
     };
   }
   const factors: Record<string, number> = {};
@@ -236,11 +248,17 @@ function priceSummary(p: ModelPrice): string {
     }
     return parts.join(' · ');
   }
+  if (p.unit === 'character') {
+    return `${formatCNY(p.cny_per_10k_chars)} / 万字符`;
+  }
   return `${formatCNY(p.cny_per_call)} / ${p.unit === 'call' ? '张' : '秒'}`;
 }
 
 /** 尺寸表列:次/秒轨的尺寸系数或视频 token 轨的秒折算率,悬停看全表。 */
 function tableSummary(p: ModelPrice): string {
+  if (p.unit === 'character') {
+    return '—'; // 字符轨无尺寸表
+  }
   const entries =
     p.unit === 'token'
       ? Object.entries(p.size_tokens_per_second ?? {}).map(([k, v]) => `${k} ${v} tok/s`)
@@ -400,6 +418,9 @@ const modalTitle = computed(() =>
               <RadioButton value="second">
                 按秒
               </RadioButton>
+              <RadioButton value="character">
+                按字符
+              </RadioButton>
             </RadioGroup>
           </FormItem>
         </div>
@@ -490,6 +511,28 @@ const modalTitle = computed(() =>
               + 添加档位
             </Button>
           </div>
+        </template>
+
+        <!-- 字符轨(56 号票):单价 元/万字符,无尺寸表 -->
+        <template v-else-if="formState.unit === 'character'">
+          <FormItem
+            label="单价(元 / 万字符)"
+            name="cnyPer10KChars"
+            :rules="[{ required: true, message: '请输入单价' }]"
+          >
+            <InputNumber
+              v-model:value="formState.cnyPer10KChars"
+              class="w-full"
+              :min="0"
+              :max="1000"
+              :step="0.01"
+            />
+          </FormItem>
+          <Alert
+            type="info"
+            show-icon
+            message="台词合成轨:计费字符数由服务端自算(汉字与全角计 2、其余计 1,text + instruction 之和),预扣即实结。"
+          />
         </template>
 
         <!-- 次/秒轨:单价(元 每张/每秒)与尺寸系数(未配档恒 ×1.0) -->

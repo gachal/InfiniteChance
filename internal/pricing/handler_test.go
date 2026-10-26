@@ -263,3 +263,60 @@ func TestPricingUpsertValidation(t *testing.T) {
 		t.Fatalf("free call price status = %d body %s, want 200", w.Code, w.Body.String())
 	}
 }
+
+func TestPricingCharacterTrackRoundTrip(t *testing.T) {
+	r := newPricingServer(newFakeStore())
+
+	// 字符轨(56 号票):人类单位 元/万字符,微整数落库后原样回读;
+	// call 轨字段混进请求被忽略(unit 决定载荷)。
+	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model":      "qwen-audio-3.1-tts-plus",
+		"unit":              "character",
+		"cny_per_10k_chars": 1.4,
+		"cny_per_call":      9.9,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("Upsert status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var wire struct {
+		PublicModel    string             `json:"public_model"`
+		Unit           string             `json:"unit"`
+		CNYPer10KChars float64            `json:"cny_per_10k_chars"`
+		CNYPerCall     float64            `json:"cny_per_call"`
+		SizeFactors    map[string]float64 `json:"size_factors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("decode upsert response: %v", err)
+	}
+	if wire.PublicModel != "qwen-audio-3.1-tts-plus" || wire.Unit != "character" || wire.CNYPer10KChars != 1.4 {
+		t.Fatalf("upsert response = %+v, want echoed human-unit character price", wire)
+	}
+	if wire.CNYPerCall != 0 || wire.SizeFactors != nil {
+		t.Errorf("stray call fields = %v/%v on a character row, want zero/absent", wire.CNYPerCall, wire.SizeFactors)
+	}
+
+	// 越过护盾的单价被拒(400 形,统一管理面错误)。
+	w = doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model": "m", "unit": "character", "cny_per_10k_chars": 1001.0,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("over-shield price status = %d body %s, want 400", w.Code, w.Body.String())
+	}
+
+	// 回读:character 行人类单位单价原样。
+	w = doPricingJSON(r, "GET", "/admin/prices", nil)
+	var list struct {
+		Prices []struct {
+			PublicModel    string  `json:"public_model"`
+			Unit           string  `json:"unit"`
+			CNYPer10KChars float64 `json:"cny_per_10k_chars"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Prices) != 1 || list.Prices[0].Unit != "character" ||
+		list.Prices[0].CNYPer10KChars != 1.4 {
+		t.Fatalf("list = %+v, want the character row at 1.4", list.Prices)
+	}
+}

@@ -677,7 +677,7 @@ export interface UsageLogRecord {
   channel_name: string
   public_model: string
   upstream_model: string
-  unit: 'token' | 'call' | 'second'
+  unit: 'call' | 'character' | 'second' | 'token'
   prompt_tokens: number
   completion_tokens: number
   request: UsageRequestFacts | null
