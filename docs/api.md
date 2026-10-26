@@ -202,6 +202,74 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
 # 按公开模型一份,原生(minimax 渠道)与百炼(dashscope 渠道)同价共用。
 ```
 
+### 3.8 音色定制与台词合成(四端点,钉渠道)
+
+```bash
+# 音色定制统一说明:四端点请求体必带 channel_id(音色绑定创建渠道的工作
+# 空间,调度钉死该渠道不换道);渠道须启用、带 audio 能力、模型映射含
+# voice-enrollment(定制)与合成模型名。上游错误透传 OpenAI error object
+# (code=upstream_error);渠道不存在 channel_not_found(404)、未启用或
+# 熔断中 model_unavailable、映射未命中 model_not_found(404)。
+
+# 创建音色(design = 文本描述设计;mode=clone 时必填 audio 且仅收 http(s)
+# 地址,data: 内联 400 audio_inline_unsupported)。计费走 voice-enrollment
+# 次轨(预扣→实结,失败全额退款);preview_text 15-200 字;prefix 缺省自动
+# 生成(≤10 位字母数字);响应含 Base64 试听音频。
+curl -X POST $GATEWAY/v1/audio/voices \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "voice-enrollment",      # 定制调度与计费键(上游同名)
+    "target_model": "qwen-audio-3.1-tts-plus",  # 音色绑定的合成模型
+    "mode": "design",                 # design(voice_prompt)或 clone(audio)
+    "channel_id": 3,                  # 钉死百炼渠道
+    "voice_prompt": "低沉磁性青年男声,语速平稳",  # design 必填,≤500 字
+    "preview_text": "这一段台词用来试听音色的整体效果如何。",  # 15-200 字
+    "prefix": "zn56"                  # 可选,≤10 位字母数字
+  }'
+# → {"voice_id":"qwen-audio-3.1-tts-plus-vd-zn56-xxxx","target_model":"...",
+#    "status":"DEPLOYING","preview_audio":{"data":"<base64>","sample_rate":24000,"format":"wav"}}
+#   生命周期靠 query 轮询:DEPLOYING → OK(可用)/ UNDEPLOYED(审核未通过)
+
+# 查询音色状态(管理动作:不计费、不落用量行)
+curl -X POST $GATEWAY/v1/audio/voices/$VOICE_ID/query \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"channel_id": 3}'
+# → {"voice_id":"...","status":"OK"}
+
+# 删除音色(管理动作,204;删除前先停用引用是调用方职责)
+curl -X DELETE $GATEWAY/v1/audio/voices/$VOICE_ID \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"channel_id": 3}'
+
+# 台词合成(同步):计费走字符轨 —— 计费字符数服务端自算(text +
+# instruction 之和;汉字与全角计 2、其余 rune 计 1),预扣 = ⌈字符数 ×
+# 单价 / 10000⌉,预扣即实结、失败全额退款;text 服务端上限 600 字符;
+# 输出固定 WAV 24kHz;返回的是上游约 24h 临时地址,转存由调用方负责。
+curl -X POST $GATEWAY/v1/audio/speech \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen-audio-3.1-tts-plus",
+    "voice": "qwen-audio-3.1-tts-plus-vd-zn56-xxxx",  # 自定义 voice_id 或系统音色名
+    "text": "你好,世界。",             # 1-600 字符
+    "instruction": "用河南话,带笑意",   # 可选演绎指令(计入计费字符)
+    "channel_id": 3                    # 须是音色所在渠道
+  }'
+# → {"audio":{"url":"https://...oss.../out.wav"},"usage":{"chars":16}}
+
+# 配价示例:合成模型走字符轨(1.4 元/万字符,qwen-audio-3.1-tts-plus 档)
+curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "public_model":"qwen-audio-3.1-tts-plus","unit":"character",
+    "cny_per_10k_chars":1.4
+  }'
+
+# 配价示例:音色定制走次轨(定价页 0.01 元/个,上游指南称免费,以账单为准)
+curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "public_model":"voice-enrollment","unit":"call","cny_per_call":0.01
+  }'
+```
+
 ## 四、管理面(/admin,JWT)
 
 ### 4.1 渠道管理
