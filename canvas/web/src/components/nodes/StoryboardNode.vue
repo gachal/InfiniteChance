@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 絵コンテ板卡(53 号票,预演台帧卡范式):板名(可编辑,缺省「絵コンテ」
+// 絵コンテ板卡(53 号票,预演台帧卡范式):板名(可编辑,缺省「分镜」
 // 占位)+ 汇总(N cut · 合计 M:SS,时长非空求和)+ cut 画面缩略横条;
 // 整卡点击进全屏编辑层(StoryboardEditorLayer),排序/增删/画面三入口
 // 都在编辑层。手势零拦截:拖拽位移 >5px 不算点击(40 号票教训,与预演台
@@ -72,11 +72,11 @@ function markBroken(assetId: number): void {
     @mousedown="onPointerDown"
     @click="onCardClick"
   >
-    <!-- 板名可编辑(缺省「絵コンテ」):输入框点击不触发进层。 -->
+    <!-- 板名可编辑(缺省「分镜」):输入框点击不触发进层。 -->
     <input
       class="board-title"
       :value="data.title"
-      placeholder="絵コンテ"
+      placeholder="分镜"
       maxlength="128"
       title="板名"
       aria-label="板名"

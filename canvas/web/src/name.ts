@@ -20,7 +20,7 @@ export function emptyNamePage(): NamePage {
   return { panels: [emptyNamePanel()] }
 }
 
-/** 新ネーム板的初始 data:板名空(展示层回落「ネーム」)+ 1 页 1 格
+/** 新ネーム板的初始 data:板名空(展示层回落「分镜稿」)+ 1 页 1 格
  * (添加即可编辑,预演台「添加即可见」先例)。 */
 export function defaultName(): NameNodeData {
   return { title: '', pages: [emptyNamePage()] }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ネーム板卡(54 号票,絵コンテ板卡 53 号票范式):板名(可编辑,缺省
-// 「ネーム」占位)+ 汇总(N 页 · M 格)+ 页首格缩略条(每页取第 1 格
+// 「分镜稿」占位)+ 汇总(N 页 · M 格)+ 页首格缩略条(每页取第 1 格
 // 的画面;空格显页序号);整卡点击进全屏编辑层(NameEditorLayer),页/格
 // 增删移与画面三入口都在编辑层。手势零拦截:拖拽位移 >5px 不算点击
 // (40 号票教训,与絵コンテ/预演台同款阈值过滤)。只渲染右 +
@@ -83,16 +83,16 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   <div
     class="node name"
     :class="connectState ? `connect-${connectState}` : undefined"
-    title="点击进入ネーム编辑"
+    title="点击进入分镜稿编辑"
     @pointerdown="onPointerDown"
     @mousedown="onPointerDown"
     @click="onCardClick"
   >
-    <!-- 板名可编辑(缺省「ネーム」):输入框点击不触发进层。 -->
+    <!-- 板名可编辑(缺省「分镜稿」):输入框点击不触发进层。 -->
     <input
       class="board-title"
       :value="data.title"
-      placeholder="ネーム"
+      placeholder="分镜稿"
       maxlength="128"
       title="板名"
       aria-label="板名"

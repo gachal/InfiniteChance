@@ -1903,7 +1903,7 @@ const connection = useConnection({
   onReject: ({ sourceType, targetType }) => {
     const label = (t?: string) => NODE_TYPE_LABEL[normalizeNodeType(t)] ?? t ?? '未知节点'
     showNotice(
-      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体、预演台→图片、分镜→图片、ネーム→图片)`,
+      `「${label(sourceType)}」→「${label(targetType)}」不可连线(合法:Agent→媒体、视频→Agent、媒体→分析、媒体→媒体、预演台→图片、分镜→图片、分镜稿→图片)`,
     )
   },
 })

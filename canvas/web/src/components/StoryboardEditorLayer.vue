@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
           ← 返回画布
         </button>
         <span class="title">
-          絵コンテ<span v-if="data.title"> · {{ data.title }}</span>
+          分镜<span v-if="data.title"> · {{ data.title }}</span>
         </span>
         <span class="meta">{{ data.cuts.length }} cut</span>
       </header>

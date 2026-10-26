@@ -13,6 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import {
   ApiError,
+  type AssetRecord,
   type CanvasSummary,
   type CharacterRecord,
   type IPRecord,
@@ -22,6 +23,7 @@ import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
 import { characterImageContentURL, characterImageThumbURL } from '../characters'
 import AssetPanel from '../components/AssetPanel.vue'
+import AssetPicker from '../components/AssetPicker.vue'
 import CharacterDrawer from '../components/CharacterDrawer.vue'
 
 const route = useRoute()
@@ -51,11 +53,23 @@ const createOpen = ref(false)
 const createName = ref('')
 const creating = ref(false)
 
-// IP 编辑对话框(名称 + 简介)。
+// IP 编辑对话框(名称 + 简介 + 封面;封面交互对齐 IP 列表页编辑态:
+// 素材库选记 id 随保存 PATCH,本机上传即时生效)。
 const editOpen = ref(false)
 const editName = ref('')
 const editDescription = ref('')
+const editCoverId = ref(0)
 const savingIP = ref(false)
+
+// 封面挑选与上传(列表页同款三入口:素材库选/本机上传/清除)。
+const coverPickerOpen = ref(false)
+const coverFileInput = ref<HTMLInputElement | null>(null)
+const uploadingCover = ref(false)
+
+/** 对话框封面预览地址(缩略 302,49 号票)。 */
+const editCoverURL = computed(() =>
+  editCoverId.value > 0 ? `/api/assets/${editCoverId.value}/thumb` : '',
+)
 
 /** 图片缩略走 thumbnail_url(49 号票)。 */
 const thumbs = useThumbFallback()
@@ -188,8 +202,53 @@ function openEditIP(): void {
   }
   editName.value = ip.value.name
   editDescription.value = ip.value.description
+  editCoverId.value = ip.value.cover_asset_id
+  coverPickerOpen.value = false
   actionError.value = ''
   editOpen.value = true
+}
+
+function closeEditIP(): void {
+  editOpen.value = false
+  coverPickerOpen.value = false
+}
+
+/** 素材库选中封面:记 id,随保存一并 PATCH(列表页同语义)。 */
+function onCoverPicked(a: AssetRecord): void {
+  editCoverId.value = a.id
+  coverPickerOpen.value = false
+}
+
+/** 本机上传封面:详情页只有编辑态(IP 必已存在),直接带该 IP 上传并
+ * 即时 PATCH(列表页编辑态同语义),头部封面随之刷新。 */
+function onCoverFileChange(e: Event): void {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) {
+    void uploadCoverIP(file)
+  }
+}
+
+async function uploadCoverIP(file: File): Promise<void> {
+  if (!ip.value) {
+    return
+  }
+  uploadingCover.value = true
+  actionError.value = ''
+  try {
+    const a = await client.uploadAsset(file, 'image', ip.value.id)
+    ip.value = await client.patchIP(ip.value.id, { cover_asset_id: a.id })
+    editCoverId.value = a.id
+  } catch (e) {
+    actionError.value = e instanceof ApiError ? e.message : '封面上传失败,请稍后再试'
+  } finally {
+    uploadingCover.value = false
+  }
+}
+
+function clearCover(): void {
+  editCoverId.value = 0
 }
 
 async function saveIP(): Promise<void> {
@@ -203,8 +262,12 @@ async function saveIP(): Promise<void> {
   savingIP.value = true
   actionError.value = ''
   try {
-    ip.value = await client.patchIP(ip.value.id, { name, description: editDescription.value.trim() })
-    editOpen.value = false
+    ip.value = await client.patchIP(ip.value.id, {
+      name,
+      description: editDescription.value.trim(),
+      cover_asset_id: editCoverId.value,
+    })
+    closeEditIP()
   } catch (e) {
     actionError.value = e instanceof ApiError ? e.message : '保存失败,请稍后再试'
   } finally {
@@ -715,11 +778,11 @@ function back(): void {
       </div>
     </div>
 
-    <!-- 编辑 IP 对话框:名称 + 简介(封面在 IP 列表页编辑)。 -->
+    <!-- 编辑 IP 对话框:名称 + 简介 + 封面(交互与 IP 列表页编辑态同款)。 -->
     <div
       v-if="editOpen"
       class="dialog-mask"
-      @click.self="editOpen = false"
+      @click.self="closeEditIP"
     >
       <div class="dialog">
         <h3>编辑 IP 企划</h3>
@@ -744,6 +807,53 @@ function back(): void {
               maxlength="1024"
             >
           </label>
+          <div class="cover-field">
+            <span class="cover-label">封面</span>
+            <span class="cover-preview">
+              <img
+                v-if="editCoverURL"
+                :src="editCoverURL"
+                alt="封面预览"
+                @error="($event.target as HTMLImageElement).style.display = 'none'"
+              >
+              <span
+                v-else
+                class="placeholder"
+              >{{ editName.trim().slice(0, 1) || '?' }}</span>
+            </span>
+            <span class="cover-actions">
+              <button
+                type="button"
+                class="ghost"
+                @click="coverPickerOpen = !coverPickerOpen"
+              >
+                从素材库选
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                :disabled="uploadingCover"
+                @click="coverFileInput?.click()"
+              >
+                {{ uploadingCover ? '上传中…' : '本机上传' }}
+              </button>
+              <button
+                v-if="editCoverId > 0"
+                type="button"
+                class="ghost"
+                @click="clearCover"
+              >
+                清除
+              </button>
+            </span>
+            <input
+              ref="coverFileInput"
+              type="file"
+              accept="image/*"
+              class="sr-input"
+              @change="onCoverFileChange"
+            >
+          </div>
           <p
             v-if="actionError"
             class="feedback error"
@@ -762,12 +872,23 @@ function back(): void {
             <button
               type="button"
               class="ghost"
-              @click="editOpen = false"
+              @click="closeEditIP"
             >
               取消
             </button>
           </div>
         </form>
+        <!-- 封面挑选:本 IP + 全局(scope=ip),单选图片;面板盖住对话框右缘。 -->
+        <AssetPicker
+          v-if="coverPickerOpen"
+          title="选择封面素材"
+          :kind-whitelist="['image']"
+          hint="点选设为封面;也可本机上传(即时生效)。"
+          :selected-asset-ids="editCoverId > 0 ? [editCoverId] : []"
+          :ip-id="ipId"
+          @toggle="onCoverPicked"
+          @close="coverPickerOpen = false"
+        />
       </div>
     </div>
     <!-- 新建角色对话框(51 号票):名称必填 + 别名/简介/详细设定;
@@ -1240,6 +1361,8 @@ function back(): void {
 }
 
 .dialog {
+  position: relative;
+  overflow: hidden;
   width: min(520px, calc(100vw - 48px));
   background: #101a2e;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1271,6 +1394,63 @@ function back(): void {
   gap: 6px;
   font-size: 13px;
   color: #aab1c5;
+}
+
+/* 封面字段(IP 列表页编辑对话框同款):预览 + 三入口 + 隐藏 file input。 */
+.cover-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cover-label {
+  font-size: 13px;
+  color: #aab1c5;
+}
+
+.cover-preview {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 50px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cover-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-preview .placeholder {
+  background: linear-gradient(135deg, #243b8f 0%, #57348a 55%, #8a2f5c 100%);
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.cover-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.cover-actions button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.sr-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .form-actions {

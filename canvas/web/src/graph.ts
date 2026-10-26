@@ -114,7 +114,7 @@ export interface StoryboardCut {
 
 /** 絵コンテ节点数据(53 号票,第七种节点类型「规划」组):板名 + cut
  * 列表随节点 data 存整图 JSON(预演台先例)。title 空 = 展示层回落
- * 「絵コンテ」;cuts 可删到空 —— 板是画布工作件而非库实体,删节点只删
+ * 「分镜」;cuts 可删到空 —— 板是画布工作件而非库实体,删节点只删
  * 图 JSON 里的节点,素材行不动。 */
 export interface StoryboardNodeData {
   title?: string
@@ -142,7 +142,7 @@ export interface NamePage {
 }
 
 /** ネーム节点数据(54 号票):板名 + 页列表随节点 data 存整图 JSON。
- * title 空 = 展示层回落「ネーム」;页可删到空(板可空页)、格可删到空
+ * title 空 = 展示层回落「分镜稿」;页可删到空(板可空页)、格可删到空
  * (空页保留),删节点只删图 JSON 里的节点,素材行不动。 */
 export interface NameNodeData {
   title?: string
@@ -238,8 +238,8 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   analysis: '分析',
   previz: '预演台',
   character: '角色',
-  storyboard: '絵コンテ',
-  name: 'ネーム',
+  storyboard: '分镜',
+  name: '分镜稿',
   level: '关卡',
 }
 

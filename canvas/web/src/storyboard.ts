@@ -20,7 +20,7 @@ export function emptyStoryboardCut(): StoryboardCut {
   return { asset_id: 0, lines: '', camera_moves: [] }
 }
 
-/** 新分镜板的初始 data:板名空(展示层回落「絵コンテ」)+ 1 个空 cut
+/** 新分镜板的初始 data:板名空(展示层回落「分镜」)+ 1 个空 cut
  * (添加即可编辑,预演台「添加即可见」先例)。 */
 export function defaultStoryboard(): StoryboardNodeData {
   return { title: '', cuts: [emptyStoryboardCut()] }

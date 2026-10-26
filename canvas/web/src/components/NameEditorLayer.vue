@@ -206,13 +206,13 @@ onBeforeUnmount(() => {
         <button
           class="back"
           type="button"
-          title="关闭ネーム编辑,返回画布(Esc)"
+          title="关闭分镜稿编辑,返回画布(Esc)"
           @click="emit('close')"
         >
           ← 返回画布
         </button>
         <span class="title">
-          ネーム<span v-if="data.title"> · {{ data.title }}</span>
+          分镜稿<span v-if="data.title"> · {{ data.title }}</span>
         </span>
         <span class="meta">{{ data.pages.length }} 页 · {{ countPanels(data.pages) }} 格</span>
       </header>

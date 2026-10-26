@@ -75,7 +75,7 @@ describe('isCanvasNodeType / initialData', () => {
     const data = initialData('storyboard') as { title?: string; cuts: unknown[] }
     expect(data.title).toBe('')
     expect(data.cuts).toHaveLength(1)
-    expect(NODE_TYPE_LABEL.storyboard).toBe('絵コンテ')
+    expect(NODE_TYPE_LABEL.storyboard).toBe('分镜')
   })
 
   it('seeds name nodes with one page holding one empty panel (54 号票)', () => {
@@ -89,7 +89,7 @@ describe('isCanvasNodeType / initialData', () => {
     expect(data.pages).toHaveLength(1)
     expect(data.pages[0].panels).toHaveLength(1)
     expect(data.pages[0].panels[0]).toEqual({ asset_id: 0, lines: '', size: 'large' })
-    expect(NODE_TYPE_LABEL.name).toBe('ネーム')
+    expect(NODE_TYPE_LABEL.name).toBe('分镜稿')
   })
 
   it('seeds level nodes as 新关卡 with empty beats and asset slots (55 号票)', () => {

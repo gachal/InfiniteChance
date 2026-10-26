@@ -29,7 +29,7 @@ describe('CAMERA_MOVE_OPTIONS', () => {
 describe('defaultStoryboard / emptyStoryboardCut', () => {
   it('seeds a board with one empty cut', () => {
     // 添加即带 1 个空 cut(预演台「添加即可见」先例):画面空、时长未填、
-    // 台词空、无运镜、无备注;板名缺省空串(展示层回落「絵コンテ」)。
+    // 台词空、无运镜、无备注;板名缺省空串(展示层回落「分镜」)。
     const data = defaultStoryboard()
     expect(data.title).toBe('')
     expect(data.cuts).toHaveLength(1)
