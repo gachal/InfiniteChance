@@ -31,6 +31,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/sqlitedb"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
+	"github.com/gachal/InfiniteChance/internal/voice"
 	"github.com/gachal/InfiniteChance/internal/wiring"
 )
 
@@ -48,6 +49,10 @@ type Desktop struct {
 	storage objectstore.Store
 	// canvases 留给画布 worker 的 IP 传导(50 号票,Start 时挂 option)。
 	canvases *canvas.SQLiteStore
+	// voices / channels 是音色闭环的伴 store(57 号票):台账面与 worker
+	// 自动钉渠道的只读数据源(单库同形)。
+	voices   *voice.SQLiteStore
+	channels *channel.SQLiteStore
 
 	gateway   *app.App
 	canvas    *app.App
@@ -94,11 +99,14 @@ func NewDesktop() (*Desktop, error) {
 	ipStore := canvas.NewSQLiteIPStore(db)
 	// 角色库(51 号票):三表空起步无迁移,表自含无同序依赖。
 	characters := character.NewSQLiteStore(db)
+	// 音色台账(57 号票):空起步单表;characters 的 voice_id 加列迁移
+	// 在各自 EnsureSchema 里幂等跑。
+	voices := voice.NewSQLiteStore(db)
 	tasks := canvastask.NewSQLiteStore(db, assets)
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, ipStore, characters, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, ipStore, characters, voices, tasks,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -189,6 +197,7 @@ func NewDesktop() (*Desktop, error) {
 			Canvases:   canvases,
 			IPs:        ipStore,
 			Characters: characters,
+			Voices:     voices,
 			Assets:     assets,
 			Prices:     prices,
 			Tasks:      tasks,
@@ -213,6 +222,8 @@ func NewDesktop() (*Desktop, error) {
 		tasks:    tasks,
 		storage:  storage,
 		canvases: canvases,
+		voices:   voices,
+		channels: channels,
 		gateway:  gatewayApp,
 		canvas:   canvasApp,
 	}, nil
@@ -246,9 +257,16 @@ func (dt *Desktop) Start() error {
 		opts = append(opts, canvastask.WithStorage(dt.storage))
 	}
 	// 产物行随画布传导 IP 归属(50 号票);canvases 恒非 nil(nil 分支只
-	// 是 worker 自身的宽容路径)。
+	// 是 worker 自身的宽容路径)。音色闭环的只读伴 store 同款挂上(57 号
+	// 票:自动钉渠道、tts 读台账;桌面单库,渠道表本就就位)。
 	if dt.canvases != nil {
 		opts = append(opts, canvastask.WithCanvases(dt.canvases))
+	}
+	if dt.channels != nil {
+		opts = append(opts, canvastask.WithChannels(dt.channels))
+	}
+	if dt.voices != nil {
+		opts = append(opts, canvastask.WithVoiceLedger(dt.voices))
 	}
 	worker := canvastask.NewWorker(dt.tasks, canvastask.NewClient(
 		fmt.Sprintf("http://127.0.0.1:%d", dt.cfg.GatewayPort), dt.cfg.CanvasServiceKey,
