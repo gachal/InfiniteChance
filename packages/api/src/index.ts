@@ -279,6 +279,9 @@ export interface CharacterRecord {
   description: string
   detail: string
   cover_asset_id: number
+  /** 绑定音色的台账行引用(57 号票,0 = 未绑定;粒度角色级,变体级显式
+   * 不做 —— 声音跟人不跟衣服)。 */
+  voice_id: number
   variants: CharacterVariantRecord[]
   created_at: string
   updated_at: string
@@ -291,12 +294,14 @@ export interface CreateCharacterInput {
   detail?: string
 }
 
-/** 角色部分更新:字段任选;空串 = 清空可选字段。 */
+/** 角色部分更新:字段任选;空串 = 清空可选字段。voice_id 显式给出即
+ * 「绑定/换绑」,0 = 解除(57 号票,服务端校验台账行存在且 status=OK)。 */
 export interface PatchCharacterInput {
   name?: string
   alias?: string
   description?: string
   detail?: string
+  voice_id?: number
 }
 
 export interface CreateCharacterVariantInput {
@@ -325,6 +330,33 @@ export interface PatchCharacterImageInput {
   label?: string
   sort?: number
   variant_id?: number
+}
+
+/** 上游音色生命周期(56 号票契约,原样英文态字):DEPLOYING 部署中、
+ * OK 可用、UNDEPLOYED 上游审核未通过。 */
+export type VoiceStatus = 'DEPLOYING' | 'OK' | 'UNDEPLOYED'
+
+/** 音色台账行(57 号票):worker 在上游部署完成时落库;channel_id 是
+ * 钉定渠道(合成/删除必须回同一渠道),voice_id 是上游句柄。全局作用域,
+ * 不带 ip_id(音色可跨 IP 复用)。 */
+export interface VoiceRecord {
+  id: number
+  voice_id: string
+  channel_id: number
+  target_model: string
+  name: string
+  source_mode: 'design' | 'clone'
+  source_prompt: string
+  sample_asset_id: number
+  preview_asset_id: number
+  status: VoiceStatus
+  created_at: string
+  updated_at: string
+}
+
+/** 音色改名(仅本地显示名)。 */
+export interface PatchVoiceInput {
+  name: string
 }
 
 /** 自动保存成功后的版本指针,下一次保存必须带上它。 */
@@ -385,7 +417,7 @@ export interface CanvasVideoRef {
  * size 为分辨率档位串(480p/720p/1080p),ratio 为显式宽高比。 */
 export interface CreateCanvasTaskInput {
   node_id: string
-  kind: 'image' | 'video'
+  kind: 'image' | 'video' | 'voice' | 'tts'
   prompt: string
   model: string
   size?: string
@@ -395,6 +427,30 @@ export interface CreateCanvasTaskInput {
   image_urls?: string[]
   video_refs?: CanvasVideoRef[]
   seconds?: number
+  /** kind=voice 的创建表单事实(57 号票):mode/name/target_model + 
+   * design 的 voice_prompt 或 clone 的 sample_asset_id(素材行引用,
+   * 服务端就地解出 http(s) 地址),preview_text 15–200 字。 */
+  voice?: CreateVoiceTaskSpec
+  /** kind=tts 的合成入参:voice_ledger_id 指向 voices 台账行,text 是
+   * 台词(≤600,原文计费),instruction 可选演绎指令(≤500)。 */
+  tts?: CreateTtsTaskSpec
+}
+
+/** 音色创建任务的表单(57 号票)。 */
+export interface CreateVoiceTaskSpec {
+  mode: 'design' | 'clone'
+  name: string
+  target_model: string
+  voice_prompt?: string
+  preview_text: string
+  sample_asset_id?: number
+}
+
+/** 台词合成任务的入参(57 号票)。 */
+export interface CreateTtsTaskSpec {
+  voice_ledger_id: number
+  text: string
+  instruction?: string
 }
 
 /** 画布侧技能目录项(仅启用中的技能;29 号票带描述与目标徽章)。 */
@@ -417,6 +473,8 @@ export interface ModelPriceSummary {
   default_tokens_per_second?: number
   cny_per_call?: number
   size_factors?: Record<string, number>
+  /** character 轨单价:元/万字符(56 号票,台词合成按输入字符计)。 */
+  cny_per_10k_chars?: number
 }
 
 /** 模型目录(38 号票):models 名单照旧,prices 是按模型名索引的价格摘要
@@ -1035,6 +1093,26 @@ export class ApiClient {
     await this.request<void>(`/character-images/${imageId}`, { method: 'DELETE' })
   }
 
+  // ---- 音色台账(57 号票,需 JWT 会话;全局作用域,与 IP 无关)----
+
+  /** 音色台账全量(最近更新在前):定制完成的音色行,status 为上游
+   * 生命周期(OK 可用);sample/preview_asset_id 是素材行引用(0 = 无)。 */
+  async listVoices(): Promise<VoiceRecord[]> {
+    const body = await this.request<{ voices: VoiceRecord[] }>('/voices')
+    return body.voices
+  }
+
+  /** 音色改名(仅本地台账,上游无改名 API)。 */
+  patchVoice(voiceId: number, input: PatchVoiceInput): Promise<VoiceRecord> {
+    return this.request<VoiceRecord>(`/voices/${voiceId}`, { method: 'PATCH', body: input })
+  }
+
+  /** 删除音色:先经网关 delete_voice 成功再删台账行;被角色绑定时后端
+   * 409 voice_in_use;网关侧失败原样透传状态与摘要(upstream_error)。 */
+  async deleteVoice(voiceId: number): Promise<void> {
+    await this.request<void>(`/voices/${voiceId}`, { method: 'DELETE' })
+  }
+
   // ---- 画布生成任务(挂 /canvases/:id/tasks,需 JWT 会话)----
 
   /** 提交生成任务(文生图 / 图生视频):任务行落库即返回(queued),
@@ -1081,6 +1159,16 @@ export class ApiClient {
   async listVideoModels(): Promise<ModelCatalog> {
     const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
       '/video-models',
+    )
+    return { models: body.models, prices: body.prices ?? {} }
+  }
+
+  /** 可用于音色定制/台词合成的公开模型(57 号票):audio 能力渠道可服务
+   * 且按字符轨配价,名字排序;价格摘要随行(character 轨的
+   * cny_per_10k_chars),供创建表单选型与发送前预估。 */
+  async listAudioModels(): Promise<ModelCatalog> {
+    const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
+      '/audio-models',
     )
     return { models: body.models, prices: body.prices ?? {} }
   }
