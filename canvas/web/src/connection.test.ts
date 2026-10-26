@@ -111,3 +111,26 @@ describe('canConnect', () => {
     }
   })
 })
+
+describe('voice → audio(57 号票)', () => {
+  it('admits only the synthesis-source edge', () => {
+    // 音色→音频是台词合成的产出边(絵コンテ→图片同族来源语义);音频
+    // 不作任何连线的源,音色不作任何连线的目标。
+    expect(canConnect('voice', 'audio')).toBe(true)
+    expect(canConnect('voice', 'image')).toBe(false)
+    expect(canConnect('voice', 'video')).toBe(false)
+    expect(canConnect('voice', 'voice')).toBe(false)
+    expect(canConnect('audio', 'voice')).toBe(false)
+    expect(canConnect('audio', 'image')).toBe(false)
+    expect(canConnect('audio', 'audio')).toBe(false)
+    expect(canConnect('image', 'audio')).toBe(false)
+    expect(canConnect('voice', 'character')).toBe(false)
+  })
+
+  it('keeps the matrix total over the eleven node types', () => {
+    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):11 种节点各有条目。
+    expect(Object.keys(EDGE_MATRIX).sort()).toEqual(
+      ['agent', 'analysis', 'audio', 'character', 'image', 'level', 'name', 'previz', 'storyboard', 'video', 'voice'].sort(),
+    )
+  })
+})

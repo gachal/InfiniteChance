@@ -183,3 +183,17 @@ describe('agentCharacterInjection(52 号票历史固化)', () => {
     expect(agentCharacterInjection([], undefined)).toEqual({})
   })
 })
+
+describe('voice / audio 节点类型(57 号票)', () => {
+  it('registers the two new types with labels and initial data', () => {
+    expect(isCanvasNodeType('voice')).toBe(true)
+    expect(isCanvasNodeType('audio')).toBe(true)
+    expect(isCanvasNodeType('voic')).toBe(false)
+    expect(NODE_TYPE_LABEL.voice).toBe('音色')
+    expect(NODE_TYPE_LABEL.audio).toBe('音频')
+    // 音色新节点是未提交的设计表单(name 空、无台账引用);音频新节点
+    // 是空产物占位(asset_id 0)。
+    expect(initialData('voice')).toEqual({ mode: 'design', name: '' })
+    expect(initialData('audio')).toEqual({ asset_id: 0 })
+  })
+})
