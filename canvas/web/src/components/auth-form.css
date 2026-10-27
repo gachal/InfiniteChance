@@ -10,48 +10,53 @@ label {
 }
 
 label span {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-muted);
 }
 
 input {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
-  border-radius: var(--r-lg);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
   padding: 10px 12px;
   color: inherit;
-  font-size: 15px;
+  font-size: var(--fs-title);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
+/* 工作灯焦点:与全站输入一致(描边转交互蓝 + 极淡光晕)。 */
 input:focus {
-  outline: 2px solid rgba(var(--accent-rgb), 0.6);
-  outline-offset: 1px;
-  border-color: transparent;
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 button {
   margin-top: 4px;
-  background: #3b5bdb;
+  background: var(--accent);
   border: none;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   padding: 11px 0;
-  color: #fff;
-  font-size: 15px;
-  font-weight: 600;
+  color: var(--accent-ink);
+  font-size: var(--fs-title);
+  font-weight: 700;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
 }
 
 button:hover:not(:disabled) {
-  background: #4263eb;
+  background: var(--accent-soft);
 }
 
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: default;
 }
 
 .error {
   margin: 0;
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }

@@ -590,7 +590,7 @@ function onFileChange(e: Event): void {
 .composer {
   position: absolute;
   z-index: var(--z-canvas-float);
-  width: min(560px, calc(100% - 32px));
+  width: 560px;
   display: grid;
   gap: var(--sp-sm);
   padding: var(--sp-md);

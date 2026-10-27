@@ -24,7 +24,7 @@ defineProps<{ text: string }>()
   bottom: 18px;
   transform: translateX(-50%);
   z-index: var(--z-toast);
-  max-width: min(560px, calc(100% - 32px));
+  max-width: 560px;
   padding: 8px 16px;
   border-radius: var(--r-lg);
   background: rgba(var(--surface-card-rgb), 0.95);

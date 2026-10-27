@@ -1407,7 +1407,7 @@ function back(): void {
 .dialog {
   position: relative;
   overflow: hidden;
-  width: min(520px, calc(100vw - 48px));
+  width: 520px;
   background: var(--bg-navy);
   border: 1px solid var(--line-control);
   border-radius: var(--r-xl);

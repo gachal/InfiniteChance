@@ -37,13 +37,14 @@ func main() {
 
 	// 画布主窗口;首启(还没有管理员账号)时画布自己的 /init 引导就绪,
 	// 同时自动带开管理台窗口方便走完向导。
+	// 最小窗 1440×900(58 号票):PC 基准的最低可用档,低于不兜底。
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:            "canvas",
 		Title:           "InfiniteChance",
 		Width:           1440,
 		Height:          900,
-		MinWidth:        960,
-		MinHeight:       640,
+		MinWidth:        1440,
+		MinHeight:       900,
 		URL:             devOverride("INFINITECHANCE_DEV_CANVAS", dt.CanvasURL()),
 		DevToolsEnabled: devTools,
 	})

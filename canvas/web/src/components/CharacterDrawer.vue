@@ -795,7 +795,7 @@ function variantLabel(v: CharacterVariantRecord): string {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(var(--w-drawer), calc(100vw - 40px));
+  width: var(--w-drawer);
   display: flex;
   flex-direction: column;
   gap: var(--sp-md);

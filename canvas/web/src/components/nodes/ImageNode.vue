@@ -284,12 +284,6 @@ function submitAnalyze(): void {
   opacity: 1;
 }
 
-@media (hover: none) {
-  .media-frame .download {
-    opacity: 1;
-  }
-}
-
 .placeholder {
   display: grid;
   gap: 4px;

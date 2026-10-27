@@ -679,7 +679,7 @@ async function logout(): Promise<void> {
 
 .dialog {
   position: relative;
-  width: min(440px, calc(100vw - 48px));
+  width: 440px;
   background: var(--bg-navy);
   border: 1px solid var(--line-control);
   border-radius: var(--r-xl);
