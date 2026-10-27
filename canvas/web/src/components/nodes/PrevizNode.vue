@@ -174,7 +174,7 @@ watch(
   font-size: var(--fs-body);
   text-decoration: none;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .media-frame:hover .download,

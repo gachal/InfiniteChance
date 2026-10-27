@@ -415,15 +415,6 @@ onBeforeUnmount(() => {
   animation: layer-in var(--dur) var(--ease);
 }
 
-@keyframes layer-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 .layer:focus {
   outline: none;
 }

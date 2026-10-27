@@ -1060,7 +1060,7 @@ function back(): void {
   border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
   padding: 20px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: var(--glass-highlight);
 }
 
 .cover {
@@ -1395,15 +1395,6 @@ function back(): void {
   animation: mask-in var(--dur) var(--ease);
 }
 
-@keyframes mask-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 .dialog {
   position: relative;
   overflow: hidden;
@@ -1414,17 +1405,6 @@ function back(): void {
   padding: 20px;
   box-shadow: var(--shadow-dialog-strong);
   animation: dialog-in var(--dur-slow) var(--ease);
-}
-
-@keyframes dialog-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 .dialog h3 {

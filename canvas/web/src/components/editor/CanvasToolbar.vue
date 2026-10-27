@@ -121,25 +121,24 @@ const uploadInput = ref<HTMLInputElement | null>(null)
   flex-shrink: 0;
 }
 
-/* 阶段二质感:inset 细描边给色底按钮一层「玻璃片」轮廓,hover 提亮,
-   不动布局(不用实体 border,避免 +2px 跳动);标签不许折行。 */
+/* 阶段二质感:色底按钮配 1px 白系细描边(hover 提到可点击档),
+   遵循「描边即轮廓规则」——不用 box-shadow 充当轮廓。 */
 .add-group button {
-  border: none;
+  border: 1px solid var(--line-section);
   border-radius: var(--r-md);
   padding: 8px 14px;
   font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
   transition:
     filter var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease);
+    border-color var(--dur-fast) var(--ease);
 }
 
 .add-group button:hover {
   filter: brightness(1.18);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  border-color: var(--line-action);
 }
 
 .add-group button:active {

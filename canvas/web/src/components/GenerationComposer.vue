@@ -597,7 +597,7 @@ function onFileChange(e: Event): void {
   background: rgba(var(--surface-panel-rgb), 0.96);
   border: 1px solid var(--line-control);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-overlay), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: var(--shadow-overlay), var(--glass-highlight);
   box-sizing: border-box;
   animation: composer-in var(--dur-slow) var(--ease);
 }

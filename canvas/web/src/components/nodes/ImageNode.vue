@@ -276,7 +276,7 @@ function submitAnalyze(): void {
   font-size: var(--fs-body);
   text-decoration: none;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .media-frame:hover .download,
@@ -313,16 +313,6 @@ function submitAnalyze(): void {
 
 .node[data-task='running'] .pill {
   animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
 }
 
 .failed {

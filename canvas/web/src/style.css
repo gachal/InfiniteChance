@@ -63,6 +63,10 @@
   --dur-slow: 260ms;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
+  /* 玻璃受光面:顶缘 1px 内高光,深夜玻璃质感的通用一层
+     (box-shadow 列表里与其他阴影逗号组合使用) */
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
   /* 工作灯蓝:唯一的全局交互色 */
   --accent: #7aa2f7;
   --accent-rgb: 122, 162, 247;
@@ -149,6 +153,60 @@
   box-sizing: border-box;
 }
 
+/* ---- 基础过渡包:入场 keyframes 全局一份(58 号票 code review 收敛)----
+   组件 scoped 样式直接引用这些名字,本地不再定义同形 keyframes;
+   入场语义见 DESIGN.md Motion 段,退场不做动画(工具要快关)。 */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes layer-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 运行态呼吸(任务进行中的节点徽章,1.4s 循环,三节点组件共用) */
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -172,9 +230,9 @@ body {
    边缘外半枚;样式全局一份,四个节点组件共用。 */
 .vue-flow__node .node {
   position: relative;
-  /* 玻璃受光面:顶缘 1px 内高光 + 描边过渡(58 号票阶段二质感层)。
+  /* 玻璃受光面(--glass-highlight)+ 描边过渡(58 号票阶段二质感层)。
      连接态的 glow 规则会整体覆写 box-shadow,连线期间不要玻璃高光。 */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: var(--glass-highlight);
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
@@ -199,7 +257,7 @@ body {
 
 .port:hover {
   border-color: rgba(var(--accent-rgb), 0.85);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .port-left {

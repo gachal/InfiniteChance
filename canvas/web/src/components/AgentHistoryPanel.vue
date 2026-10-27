@@ -142,17 +142,6 @@ function onImageError(ref: string, messageIndex: number, mediaIndex: number): vo
   animation: panel-in var(--dur-slow) var(--ease);
 }
 
-@keyframes panel-in {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 .panel-head {
   display: flex;
   align-items: center;

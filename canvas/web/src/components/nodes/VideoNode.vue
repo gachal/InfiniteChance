@@ -328,16 +328,6 @@ video {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-
 .cancel {
   margin-top: 6px;
   border: 1px solid var(--line-control);

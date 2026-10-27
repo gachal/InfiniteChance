@@ -668,15 +668,6 @@ async function logout(): Promise<void> {
   animation: mask-in var(--dur) var(--ease);
 }
 
-@keyframes mask-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 .dialog {
   position: relative;
   width: 440px;
@@ -686,17 +677,6 @@ async function logout(): Promise<void> {
   overflow: hidden;
   box-shadow: var(--shadow-dialog-strong);
   animation: dialog-in var(--dur-slow) var(--ease);
-}
-
-@keyframes dialog-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 .dialog-inner {
