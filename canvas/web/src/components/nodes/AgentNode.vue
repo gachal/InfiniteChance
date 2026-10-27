@@ -33,6 +33,13 @@ import {
   isAgentMediaUploading,
   readyAgentMediaRefs,
 } from '../../agentMedia'
+import {
+  agentAttachmentBadge,
+  agentAttachmentMentions,
+  insertMentionToken,
+  mentionTriggerIndex,
+  type MentionCandidate,
+} from '../../refmention'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
 import { useThumbFallback } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
@@ -159,6 +166,16 @@ function toggleCharacter(characterId: number): void {
   emit('characters-change', toggleCharacterChip(props.data.character_ids ?? [], characterId))
 }
 
+/** 开/关角色选择浮层(59 号票起走函数):开角色浮层即收 @ 与技能浮层
+ * (三浮层互斥,后触发者优先)。 */
+function toggleCharacterOverlay(): void {
+  characterOverlayOpen.value = !characterOverlayOpen.value
+  if (characterOverlayOpen.value) {
+    mentionOpen.value = false
+    overlayOpen.value = false
+  }
+}
+
 function removeCharacter(characterId: number): void {
   emit(
     'characters-change',
@@ -203,11 +220,13 @@ function onInputPointermove(): void {
   }
 }
 
-// 打 `/` 唤起浮层:`/` 后的文本即搜索词(名称/描述),清掉即收起。
+// 打 `/` 唤起浮层:`/` 后的文本即搜索词(名称/描述),清掉即收起;
+// @ 浮层在场时让位(59 号票三浮层互斥,后触发者优先)。
 watch(input, (value) => {
-  if (value.startsWith('/')) {
+  if (value.startsWith('/') && !mentionOpen.value) {
     overlayOpen.value = true
     highlight.value = 0
+    mentionOpen.value = false
   } else {
     overlayOpen.value = false
   }
@@ -226,6 +245,75 @@ watch(input, () => {
     el.style.height = `${Math.min(el.scrollHeight, 110)}px`
   })
 })
+
+// ---- @ 引用浮层(59 号票)----
+
+// 触发与保活同一条判定:光标前一字符是 @ 且待发附件里有可引用条目;
+// 继续输入、移动光标离开 @ 位即收,不做文本过滤。列表只收就绪附件
+// (图片 @图N、视频 @视频N)—— 上传中/失败的 chip 没有可引用素材。
+const mentionOpen = ref(false)
+const mentionHighlight = ref(0)
+const mentionTriggerAt = ref(-1)
+
+const mentionCandidates = computed(() => agentAttachmentMentions(props.attachments))
+
+watch(mentionCandidates, (list) => {
+  if (mentionOpen.value && list.length === 0) {
+    closeMention()
+  }
+  if (mentionHighlight.value >= list.length) {
+    mentionHighlight.value = Math.max(list.length - 1, 0)
+  }
+})
+
+function syncMention(): void {
+  const el = inputEl.value
+  if (!el) {
+    closeMention()
+    return
+  }
+  const trigger = mentionTriggerIndex(el.value, el.selectionStart ?? 0)
+  mentionTriggerAt.value = trigger
+  if (trigger >= 0 && mentionCandidates.value.length > 0) {
+    if (!mentionOpen.value) {
+      mentionHighlight.value = 0
+    }
+    mentionOpen.value = true
+    // 后触发者优先:@ 一触发,技能与角色浮层让位。
+    overlayOpen.value = false
+    characterOverlayOpen.value = false
+  } else {
+    mentionOpen.value = false
+  }
+}
+
+function closeMention(): void {
+  mentionOpen.value = false
+  mentionTriggerAt.value = -1
+}
+
+// 键盘抬起的光标同步:方向键/点击移走光标即收;Enter/Tab/Esc 的 keyup
+// 不重判 —— 选中/Esc 刚收起浮层而光标仍在 @ 位,重判会立刻弹回。
+function onMentionKeyup(e: KeyboardEvent): void {
+  if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Escape') {
+    return
+  }
+  syncMention()
+}
+
+function insertMention(c: MentionCandidate): void {
+  const el = inputEl.value
+  if (!el || mentionTriggerAt.value < 0) {
+    return
+  }
+  const { text, cursor } = insertMentionToken(input.value, mentionTriggerAt.value, c.token)
+  input.value = text
+  closeMention()
+  void nextTick(() => {
+    el.focus()
+    el.setSelectionRange(cursor, cursor)
+  })
+}
 
 const filteredSkills = computed(() => {
   const query = input.value.slice(1).trim().toLowerCase()
@@ -267,6 +355,36 @@ function removeSkill(): void {
 function onInputKeydown(e: KeyboardEvent): void {
   // 中文输入法的选词回车/方向键不属于节点交互,交给 IME。
   if (e.isComposing) {
+    return
+  }
+  // @ 浮层(59 号票)优先:↑↓ 移高亮、Enter/Tab 选中插入、Esc 仅关
+  // 浮层(不清输入 —— 与技能浮层「Esc 清输入」的既有行为互不影响);
+  // 其余按键放行,输入事件会把光标移离 @ 位、浮层自收。
+  if (mentionOpen.value) {
+    const len = mentionCandidates.value.length
+    if (e.key === 'ArrowDown' && len > 0) {
+      e.preventDefault()
+      mentionHighlight.value = (mentionHighlight.value + 1) % len
+      return
+    }
+    if (e.key === 'ArrowUp' && len > 0) {
+      e.preventDefault()
+      mentionHighlight.value = (mentionHighlight.value - 1 + len) % len
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const picked = mentionCandidates.value[mentionHighlight.value] ?? mentionCandidates.value[0]
+      if (picked) {
+        insertMention(picked)
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMention()
+      return
+    }
     return
   }
   if (overlayOpen.value) {
@@ -447,6 +565,11 @@ function onDeliver(): void {
           :data-state="m.state"
           :title="m.state === 'failed' ? m.error || '上传失败' : m.kind === 'image' ? '图片附件' : '视频附件'"
         >
+          <!-- 编号角标(59 号票):@ 浮层与 chip 编号互相印证,仅就绪附件有号。 -->
+          <span
+            v-if="m.state === 'ready'"
+            class="media-num"
+          >{{ agentAttachmentBadge(attachments, m.id) }}</span>
           <img
             v-if="m.state === 'ready' && m.kind === 'image'"
             :src="m.ref ? thumbs.displayURL(m.ref) : ''"
@@ -476,10 +599,42 @@ function onDeliver(): void {
           placeholder="输入主题,或打 / 选技能…(Shift+Enter 换行)"
           maxlength="4000"
           @keydown="onInputKeydown"
+          @input="syncMention"
+          @keyup="onMentionKeyup"
+          @click="syncMention"
+          @blur="closeMention"
           @resize="onInputResize"
           @pointerdown="onInputPointerdown"
           @pointermove="onInputPointermove"
         />
+        <!-- @ 引用浮层(59 号票):贴输入行上沿,列表 = 缩略/视频徽章 +
+             token;键盘交互见 onInputKeydown 的 mention 分支。 -->
+        <div
+          v-if="mentionOpen"
+          class="skill-overlay mention-overlay"
+          aria-label="参考引用选择"
+        >
+          <ul class="skill-list mention-list">
+            <li
+              v-for="(c, i) in mentionCandidates"
+              :key="`${c.token}-${c.url}`"
+              :class="{ on: i === mentionHighlight }"
+              @mousedown.prevent="insertMention(c)"
+            >
+              <img
+                v-if="c.kind === 'image'"
+                :src="thumbs.displayURL(c.url)"
+                alt=""
+                @error="thumbs.onThumbError(c.url)"
+              >
+              <span
+                v-else
+                class="mention-video"
+              >▶</span>
+              <span class="mention-token">{{ c.token }}</span>
+            </li>
+          </ul>
+        </div>
       </div>
 
       <!-- 32 号票:附件双入口(本机上传 / 素材库选)+ 历史面板与新会话
@@ -491,7 +646,7 @@ function onDeliver(): void {
           type="button"
           :class="{ on: characterOverlayOpen }"
           title="选择本 IP 角色注入设定文本(可多选,按选择序注入)"
-          @click="characterOverlayOpen = !characterOverlayOpen"
+          @click="toggleCharacterOverlay"
         >
           角色
         </button>
@@ -848,6 +1003,22 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* 附件编号角标(59 号票):@ 浮层与 chip 编号互相印证(图片 1..N、
+   视频「视频1」);上传中/失败无号。 */
+.media-num {
+  flex-shrink: 0;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+}
+
 /* 32 号票:附件双入口 + 历史/新会话工具行。 */
 .tools-row {
   display: flex;
@@ -888,6 +1059,11 @@ textarea:focus {
 
 .file-input {
   display: none;
+}
+
+/* 输入行是 @ 浮层(59 号票)的定位锚:浮层贴输入行上沿弹出。 */
+.input-row {
+  position: relative;
 }
 
 /* 对话输入是多行 textarea(31 号票):默认高度由脚本随内容调节,1 行起、
@@ -1067,5 +1243,41 @@ textarea:focus {
   white-space: nowrap;
   font-size: var(--fs-micro);
   color: var(--text-muted);
+}
+
+/* @ 引用浮层(59 号票):复用技能浮层的面板壳(skill-overlay),列表
+   行改单行缩略 + token 布局 —— 置于文件尾以覆盖 .skill-list li 的
+   grid 布局。 */
+.mention-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.mention-list img {
+  width: 26px;
+  height: 26px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-action);
+  display: block;
+}
+
+.mention-video {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-action);
+  background: var(--wash-soft);
+  color: var(--text-secondary);
+  font-size: var(--fs-micro);
+}
+
+.mention-token {
+  font-size: var(--fs-label);
+  font-weight: 600;
 }
 </style>

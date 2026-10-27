@@ -5,7 +5,7 @@
 // = 提交画布任务。视频模式 = 文生视频/图生视频/首尾帧/多参考的组合形态,
 // 参考组合自然成模式,无显式模式 tab;选中视频节点时模式锁定视频(视频
 // 产物不能当生图参考),底栏模式下拉的「图片生成」禁选。
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
 
@@ -24,6 +24,14 @@ import {
   type VideoComposerRef,
   type VideoRefRole,
 } from '../composer'
+import {
+  composerRefMentions,
+  insertMentionToken,
+  mentionTriggerIndex,
+  videoRefBadge,
+  videoRefMentions,
+  type MentionCandidate,
+} from '../refmention'
 import { useThumbFallback } from '../thumbnail'
 
 const props = defineProps<{
@@ -203,10 +211,116 @@ const estimate = computed<string>(() => {
   return ''
 })
 
+// ---- @ 引用浮层(59 号票)----
+
+// 触发与保活同一条判定:光标前一字符是 @ 且参考条有可 @ 条目(口径随
+// 模式:图片模式全条目、视频模式仅参考图角色);继续输入、移动光标离开
+// @ 位即收,不做文本过滤。
+const promptEl = ref<HTMLTextAreaElement | null>(null)
+const mentionOpen = ref(false)
+const mentionHighlight = ref(0)
+const mentionTriggerAt = ref(-1)
+
+const mentionCandidates = computed(() =>
+  isVideo.value ? videoRefMentions(props.videoRefs) : composerRefMentions(props.refs),
+)
+
+watch(mentionCandidates, (list) => {
+  if (mentionOpen.value && list.length === 0) {
+    closeMention()
+  }
+  if (mentionHighlight.value >= list.length) {
+    mentionHighlight.value = Math.max(list.length - 1, 0)
+  }
+})
+
+function syncMention(): void {
+  const el = promptEl.value
+  if (!el || props.disabledReason !== '') {
+    closeMention()
+    return
+  }
+  const trigger = mentionTriggerIndex(el.value, el.selectionStart ?? 0)
+  mentionTriggerAt.value = trigger
+  if (trigger >= 0 && mentionCandidates.value.length > 0) {
+    if (!mentionOpen.value) {
+      mentionHighlight.value = 0
+    }
+    mentionOpen.value = true
+  } else {
+    mentionOpen.value = false
+  }
+}
+
+function closeMention(): void {
+  mentionOpen.value = false
+  mentionTriggerAt.value = -1
+}
+
+function onPromptInput(e: Event): void {
+  emit('update:prompt', (e.target as HTMLTextAreaElement).value)
+  syncMention()
+}
+
+// 键盘抬起的光标同步:方向键/点击移走光标即收;Enter/Tab/Esc 的 keyup
+// 不重判 —— 选中/Esc 刚收起浮层而光标仍在 @ 位,重判会立刻弹回。
+function onMentionKeyup(e: KeyboardEvent): void {
+  if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Escape') {
+    return
+  }
+  syncMention()
+}
+
+function insertMention(c: MentionCandidate): void {
+  const el = promptEl.value
+  if (!el || mentionTriggerAt.value < 0) {
+    return
+  }
+  const { text, cursor } = insertMentionToken(el.value, mentionTriggerAt.value, c.token)
+  emit('update:prompt', text)
+  closeMention()
+  void nextTick(() => {
+    el.focus()
+    el.setSelectionRange(cursor, cursor)
+  })
+}
+
 /** 键盘发送(38 号票评审):Enter 发送、Shift+Enter 换行,Cmd/Ctrl+Enter
- * 同样发送;输入法组词中不触发(isComposing,31 号票同款纪律)。 */
+ * 同样发送;输入法组词中不触发(isComposing,31 号票同款纪律)。
+ * 59 号票:@ 浮层开着时键盘归浮层 —— ↑↓ 移高亮、Enter/Tab 选中插入、
+ * Esc 仅关浮层,不波及对话框与发送。 */
 function onPromptKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Enter' || e.isComposing) {
+  if (e.isComposing) {
+    return
+  }
+  if (mentionOpen.value) {
+    const len = mentionCandidates.value.length
+    if (e.key === 'ArrowDown' && len > 0) {
+      e.preventDefault()
+      mentionHighlight.value = (mentionHighlight.value + 1) % len
+      return
+    }
+    if (e.key === 'ArrowUp' && len > 0) {
+      e.preventDefault()
+      mentionHighlight.value = (mentionHighlight.value - 1 + len) % len
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const picked = mentionCandidates.value[mentionHighlight.value] ?? mentionCandidates.value[0]
+      if (picked) {
+        insertMention(picked)
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMention()
+      return
+    }
+    return
+  }
+  if (e.key !== 'Enter') {
     return
   }
   if (e.shiftKey && !(e.metaKey || e.ctrlKey)) {
@@ -297,6 +411,7 @@ function onFileChange(e: Event): void {
         :key="r.url"
         class="ref-chip"
       >
+        <span class="ref-badge">{{ i + 1 }}</span>
         <img
           :src="thumbs.displayURL(r.url)"
           alt="参考图"
@@ -355,6 +470,10 @@ function onFileChange(e: Event): void {
         class="vref-chip"
         :data-kind="r.kind"
       >
+        <span
+          v-if="r.role === 'reference_image'"
+          class="ref-badge"
+        >{{ videoRefBadge(videoRefs, i) }}</span>
         <img
           v-if="r.kind === 'image'"
           :src="thumbs.displayURL(r.url)"
@@ -443,15 +562,48 @@ function onFileChange(e: Event): void {
       4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
     </p>
 
-    <textarea
-      :value="prompt"
-      :placeholder="placeholder"
-      :disabled="disabledReason !== ''"
-      rows="3"
-      aria-label="生成提示词"
-      @input="emit('update:prompt', ($event.target as HTMLTextAreaElement).value)"
-      @keydown="onPromptKeydown"
-    />
+    <div class="prompt-wrap">
+      <textarea
+        ref="promptEl"
+        :value="prompt"
+        :placeholder="placeholder"
+        :disabled="disabledReason !== ''"
+        rows="3"
+        aria-label="生成提示词"
+        @input="onPromptInput"
+        @keydown="onPromptKeydown"
+        @keyup="onMentionKeyup"
+        @click="syncMention"
+        @blur="closeMention"
+      />
+      <!-- @ 引用浮层(59 号票):贴输入框上沿,列表 = 缩略 + token(视频
+           模式加角色标签);↑↓/Enter/Tab/Esc 见 onPromptKeydown。 -->
+      <div
+        v-if="mentionOpen"
+        class="mention-overlay"
+        aria-label="参考引用选择"
+      >
+        <ul class="mention-list">
+          <li
+            v-for="(c, i) in mentionCandidates"
+            :key="`${c.token}-${c.url}`"
+            :class="{ on: i === mentionHighlight }"
+            @mousedown.prevent="insertMention(c)"
+          >
+            <img
+              :src="thumbs.displayURL(c.url)"
+              alt=""
+              @error="thumbs.onThumbError(c.url)"
+            >
+            <span class="mention-token">{{ c.token }}</span>
+            <span
+              v-if="c.roleLabel"
+              class="mention-role"
+            >{{ c.roleLabel }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
 
     <!-- 成本预估(38 号票):有价才显示,随参数联动。 -->
     <p
@@ -781,6 +933,88 @@ button.vref-icon:hover {
 
 .ref-file {
   display: none;
+}
+
+/* chip 编号角标(59 号票):@ 浮层与 chip 编号互相印证;视频模式仅
+   参考图角色有号。贴左上角,与右上角的移除钮对称。 */
+.ref-badge {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  z-index: 1;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* @ 引用浮层:贴输入框上沿左对齐,列表常显全部可 @ 条目(不做过滤)。 */
+.prompt-wrap {
+  position: relative;
+}
+
+.mention-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 2;
+  padding: 4px;
+  background: rgba(var(--surface-panel-rgb), 0.98);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.mention-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: grid;
+  gap: 2px;
+}
+
+.mention-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--r-md);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.mention-list li.on {
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+.mention-list img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-action);
+  display: block;
+}
+
+.mention-token {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mention-role {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
 }
 
 /* 目录不可用禁态:整体降不透明度,交互面全部 :disabled。 */
