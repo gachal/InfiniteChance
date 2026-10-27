@@ -127,66 +127,76 @@ defineExpose({ cancelRenaming })
 
 <style scoped>
 .breadcrumb-sep {
-  color: #4c5468;
-  font-size: 14px;
+  color: var(--text-faint);
+  font-size: var(--fs-body);
   margin: 0 -4px;
 }
 
 .topbar {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--line-08);
+  gap: var(--sp-lg);
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line-section);
   background: rgba(var(--surface-panel-rgb), 0.9);
 }
 
 .topbar button {
   border: none;
   border-radius: var(--r-md);
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: 7px 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .title {
   background: transparent;
   color: inherit;
-  font-size: 16px;
+  font-size: var(--fs-title);
   font-weight: 600;
 }
 
 .title:hover {
-  background: var(--wash-06);
+  background: var(--wash-soft);
 }
 
 .rename-form {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-sm);
   flex: 1;
 }
 
 .rename-form input {
   flex: 1;
   max-width: 320px;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
-  padding: 8px 10px;
+  padding: 7px 10px;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.rename-form input:focus {
+  border-color: rgba(var(--accent-rgb), 0.85);
+  outline: none;
 }
 
 .save-state {
   margin-left: auto;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 /* 已保存态用中性蓝灰而不是绿(38 号票评审:绿色与图片节点/在途任务
    撞色,状态色不该占用类型色)。 */
 .save-state[data-state='saved'] {
-  color: #a8b6d8;
+  color: var(--estimate-ink);
 }
 
 .save-state[data-state='error'],
@@ -197,24 +207,29 @@ defineExpose({ cancelRenaming })
 /* 在途任务 = 活动态,用交互蓝,不再与图片节点的绿色共用。 */
 .task-state {
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-body);
   white-space: nowrap;
 }
 
 .primary {
-  background: #3b5bdb;
-  color: #fff;
-  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.primary:hover {
+  background: var(--accent-soft);
 }
 
 .ghost {
   background: transparent;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   color: var(--text-secondary);
 }
 
 .ghost:hover {
-  border-color: var(--line-32);
-  color: inherit;
+  border-color: var(--line-action);
+  background: var(--wash-soft);
+  color: var(--text-primary);
 }
 </style>

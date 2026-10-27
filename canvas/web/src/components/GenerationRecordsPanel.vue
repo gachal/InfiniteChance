@@ -197,38 +197,53 @@ function statusClass(task: CanvasTask): string {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 320px;
+  width: var(--w-panel);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--sp-md);
+  padding: var(--sp-lg);
   background: rgba(var(--surface-panel-rgb), 0.96);
-  border-left: 1px solid var(--line-10);
+  border-left: 1px solid var(--line-control);
+  box-shadow: var(--shadow-slide);
   z-index: var(--z-side-panel);
   overflow-y: auto;
+  animation: panel-in var(--dur-slow) var(--ease);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .panel-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-sm);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-section);
 }
 
 .panel-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-title);
 }
 
 .limit-note {
-  color: #8f97ad;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-label);
 }
 
 .panel-empty {
   margin: 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .record-list {
@@ -242,16 +257,17 @@ function statusClass(task: CanvasTask): string {
 .record-card {
   display: grid;
   grid-template-columns: 72px 1fr;
-  gap: 8px;
-  padding: 8px;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  gap: var(--sp-sm);
+  padding: var(--sp-sm);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-lg);
   cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
 }
 
 .record-card:hover {
-  border-color: var(--line-20);
+  border-color: var(--line-action);
 }
 
 .thumb {
@@ -260,7 +276,7 @@ function statusClass(task: CanvasTask): string {
   height: 72px;
   object-fit: cover;
   border-radius: var(--r-md);
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 /* 失败/取消/排队/生成中的行没有产物可看:kind 徽章占位。 */
@@ -271,19 +287,19 @@ function statusClass(task: CanvasTask): string {
 .thumb-badge {
   display: grid;
   place-items: center;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 /* 成功但素材已删/地址过期的行:失联占位,不再尝试加载。 */
 .thumb-broken {
   display: grid;
   place-items: center;
-  font-size: 12px;
-  color: #8f97ad;
-  background: var(--wash-03);
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  background: var(--wash-subtle);
 }
 
 .meta {
@@ -296,13 +312,13 @@ function statusClass(task: CanvasTask): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .kind {
   padding: 1px 6px;
   border-radius: var(--r-sm);
-  background: var(--wash-08);
+  background: var(--wash-fill);
   color: var(--text-secondary);
 }
 
@@ -337,7 +353,7 @@ function statusClass(task: CanvasTask): string {
 
 .time {
   margin-left: auto;
-  color: #8f97ad;
+  color: var(--text-muted);
 }
 
 .prompt {
@@ -346,7 +362,7 @@ function statusClass(task: CanvasTask): string {
   color: inherit;
   padding: 0;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   overflow: hidden;
   display: -webkit-box;
@@ -357,7 +373,7 @@ function statusClass(task: CanvasTask): string {
 }
 
 .model {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -365,7 +381,7 @@ function statusClass(task: CanvasTask): string {
 }
 
 .error {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--danger);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -384,10 +400,10 @@ function statusClass(task: CanvasTask): string {
   border: none;
   border-radius: var(--r-md);
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
-  background: rgba(76, 110, 245, 0.25);
-  color: var(--indigo-soft);
+  background: rgba(var(--accent-rgb), 0.25);
+  color: var(--accent-soft);
   font-weight: 600;
 }
 </style>

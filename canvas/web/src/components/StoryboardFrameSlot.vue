@@ -135,7 +135,7 @@ function onFileChange(e: Event): void {
   max-height: 150px;
   object-fit: contain;
   border-radius: var(--r-md);
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 .frame-box {
@@ -144,7 +144,7 @@ function onFileChange(e: Event): void {
   place-items: center;
   min-height: 84px;
   padding: 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
   text-align: center;
@@ -152,11 +152,11 @@ function onFileChange(e: Event): void {
 
 .frame-box span {
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .frame-box small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .frame-box.missing {
@@ -172,12 +172,12 @@ function onFileChange(e: Event): void {
 .frame-actions button {
   flex: 1;
   min-width: 0;
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 4px 0;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   cursor: pointer;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   color: var(--text-bright);
   white-space: nowrap;
 }

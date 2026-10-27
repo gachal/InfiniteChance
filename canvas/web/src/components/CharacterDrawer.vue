@@ -795,42 +795,60 @@ function variantLabel(v: CharacterVariantRecord): string {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(460px, calc(100vw - 40px));
+  width: min(var(--w-drawer), calc(100vw - 40px));
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  gap: var(--sp-md);
+  padding: var(--sp-lg);
   background: rgba(var(--surface-panel-rgb), 0.98);
-  border-left: 1px solid var(--line-12);
+  border-left: 1px solid var(--line-control);
   box-shadow: var(--shadow-slide);
   z-index: var(--z-drawer);
   overflow-y: auto;
+  animation: drawer-in var(--dur-slow) var(--ease);
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .drawer-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-sm);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-section);
 }
 
 .drawer-head h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fs-title);
 }
 
 .close {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .close:hover {
-  border-color: var(--line-32);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -840,16 +858,16 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .voices select {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 8px 10px;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .voices select option {
-  background: #141a2b;
+  background: rgba(var(--surface-card-rgb), 1);
 }
 
 .voice-line {
@@ -869,7 +887,7 @@ function variantLabel(v: CharacterVariantRecord): string {
   justify-self: start;
   border-radius: var(--r-pill);
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   background: rgba(var(--teal-light-rgb), 0.12);
   color: var(--teal-light);
 }
@@ -891,7 +909,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 
 .voice-name {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .fields {
@@ -902,7 +920,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 .field {
   display: grid;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-secondary);
 }
 
@@ -910,12 +928,25 @@ function variantLabel(v: CharacterVariantRecord): string {
 .field textarea,
 .variant-new input,
 .variant-edit input {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 8px 10px;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+/* 工作灯焦点:与生成对话框输入同款(描边转交互蓝 + 极淡光晕)。 */
+.field input:focus,
+.field textarea:focus,
+.variant-new input:focus,
+.variant-edit input:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 .field textarea {
@@ -929,29 +960,44 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .primary {
-  background: #3b5bdb;
-  color: #fff;
-  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
   border: none;
   border-radius: var(--r-md);
   padding: 7px 14px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 .primary:disabled {
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: default;
 }
 
 .mini {
   background: transparent;
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   color: var(--text-secondary);
-  border-radius: 7px;
+  border-radius: var(--r-md);
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.mini:hover:not(:disabled) {
+  border-color: var(--line-action);
+  background: var(--wash-soft);
+  color: var(--text-primary);
 }
 
 .mini:disabled {
@@ -960,9 +1006,14 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .mini.primary {
-  background: #3b5bdb;
-  border-color: #3b5bdb;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.mini.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
 }
 
 .danger-text {
@@ -972,7 +1023,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 .variants h4,
 .gallery h4 {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -980,7 +1031,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 
 .gallery .count {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 400;
 }
 
@@ -997,14 +1048,14 @@ function variantLabel(v: CharacterVariantRecord): string {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid var(--line-08);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-lg);
   padding: 6px 8px;
 }
 
 .variant-list li.active {
   border-color: rgba(var(--accent-rgb), 0.6);
-  background: rgba(76, 110, 245, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .variant-open {
@@ -1021,13 +1072,13 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .variant-name {
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 
 .variant-note {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1075,8 +1126,8 @@ function variantLabel(v: CharacterVariantRecord): string {
   position: relative;
   display: grid;
   gap: 4px;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-lg);
   padding: 6px;
 }
@@ -1086,7 +1137,7 @@ function variantLabel(v: CharacterVariantRecord): string {
   height: 110px;
   object-fit: cover;
   border-radius: var(--r-md);
-  background: var(--wash-05);
+  background: var(--wash-soft);
   display: block;
 }
 
@@ -1095,9 +1146,9 @@ function variantLabel(v: CharacterVariantRecord): string {
   top: 10px;
   left: 10px;
   background: rgba(var(--surface-panel-rgb), 0.85);
-  border: 1px solid var(--line-20);
-  color: #cbd3ea;
-  font-size: 11px;
+  border: 1px solid var(--line-action);
+  color: var(--text-bright);
+  font-size: var(--fs-micro);
   border-radius: var(--r-pill);
   padding: 1px 8px;
 }
@@ -1113,8 +1164,8 @@ function variantLabel(v: CharacterVariantRecord): string {
   gap: 6px;
   height: 110px;
   color: var(--text-muted);
-  font-size: 12px;
-  border: 1px dashed var(--line-16);
+  font-size: var(--fs-label);
+  border: 1px dashed var(--line-control);
   border-radius: var(--r-md);
 }
 
@@ -1126,12 +1177,12 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .label-select {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: 7px;
   color: var(--text-secondary);
   padding: 2px 4px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   max-width: 96px;
 }
 
@@ -1143,7 +1194,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 .feedback {
   margin: 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .feedback.error {
@@ -1151,7 +1202,7 @@ function variantLabel(v: CharacterVariantRecord): string {
 }
 
 .feedback.hint {
-  color: #d3b571;
+  color: var(--gold);
   margin-bottom: 8px;
 }
 </style>

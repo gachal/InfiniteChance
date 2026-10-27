@@ -98,36 +98,59 @@ const uploadInput = ref<HTMLInputElement | null>(null)
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--line-08);
+  gap: var(--sp-lg);
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-section);
   background: rgba(var(--surface-panel-rgb), 0.9);
 }
 
+/* 提示行可让位:窄窗(1440 档)下单行省略,把横向空间让给按钮组。 */
 .hint {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .add-group {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-sm);
+  flex-shrink: 0;
 }
 
+/* 阶段二质感:inset 细描边给色底按钮一层「玻璃片」轮廓,hover 提亮,
+   不动布局(不用实体 border,避免 +2px 跳动);标签不许折行。 */
 .add-group button {
   border: none;
-  border-radius: var(--r-lg);
-  padding: 9px 16px;
-  font-size: 14px;
+  border-radius: var(--r-md);
+  padding: 8px 14px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition:
+    filter var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.add-group button:hover {
+  filter: brightness(1.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.add-group button:active {
+  filter: brightness(0.92);
 }
 
 /* 53 号票:创作/规划两组的组名与组间分隔线(纯展示分组)。 */
 .group-label {
   align-self: center;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -136,7 +159,7 @@ const uploadInput = ref<HTMLInputElement | null>(null)
   align-self: stretch;
   margin: 4px 2px;
   width: 1px;
-  background: var(--wash-14);
+  background: var(--line-control);
 }
 
 .add-agent {
@@ -193,13 +216,13 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是
    分析;类型色留给节点,容器类动作用中性色)。 */
 .add-asset {
-  background: rgba(168, 182, 216, 0.14);
-  color: #b6c2d8;
+  background: rgba(var(--estimate-ink-rgb), 0.14);
+  color: var(--estimate-ink);
 }
 
 .add-records {
   background: rgba(var(--orange-rgb), 0.14);
-  color: #fdba74;
+  color: var(--orange);
 }
 
 .add-upload {
@@ -209,7 +232,7 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 
 .add-upload:disabled {
   cursor: default;
-  opacity: 0.6;
+  opacity: 0.4;
 }
 
 .upload-input {

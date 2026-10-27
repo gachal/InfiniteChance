@@ -316,7 +316,7 @@ function onBindChange(e: Event): void {
   border: 1px solid rgba(var(--teal-rgb), 0.45);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   display: grid;
   gap: 8px;
 }
@@ -331,7 +331,7 @@ function onBindChange(e: Event): void {
   display: grid;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .placeholder p {
@@ -339,24 +339,24 @@ function onBindChange(e: Event): void {
 }
 
 .placeholder.unavailable {
-  border: 1px dashed var(--line-18);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   padding: 10px;
 }
 
 .bind-select {
   width: 100%;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-faint);
 }
 
@@ -365,7 +365,7 @@ function onBindChange(e: Event): void {
   height: 140px;
   border-radius: var(--r-md);
   overflow: hidden;
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 .cover img {
@@ -388,7 +388,7 @@ function onBindChange(e: Event): void {
 
 .name {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   display: flex;
   align-items: baseline;
@@ -410,7 +410,7 @@ function onBindChange(e: Event): void {
 .voice-badge {
   border-radius: var(--r-pill);
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   background: rgba(var(--teal-light-rgb), 0.12);
   color: var(--teal-light);
   justify-self: start;
@@ -432,7 +432,7 @@ function onBindChange(e: Event): void {
 }
 
 .voice-name {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -446,7 +446,7 @@ function onBindChange(e: Event): void {
 }
 
 .alias {
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 400;
   color: var(--text-muted);
   overflow: hidden;
@@ -461,12 +461,12 @@ function onBindChange(e: Event): void {
 }
 
 .variant-tabs button {
-  border: 1px solid var(--line-12);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-muted);
   border-radius: var(--r-pill);
   padding: 2px 10px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   max-width: 100%;
   overflow: hidden;
@@ -499,7 +499,7 @@ function onBindChange(e: Event): void {
   height: 64px;
   object-fit: cover;
   border-radius: var(--r-md);
-  background: var(--wash-05);
+  background: var(--wash-soft);
   display: block;
 }
 
@@ -508,9 +508,9 @@ function onBindChange(e: Event): void {
   height: 64px;
   display: grid;
   place-items: center;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--text-muted);
-  border: 1px dashed var(--line-16);
+  border: 1px dashed var(--line-control);
   border-radius: var(--r-md);
   text-align: center;
 }
@@ -524,9 +524,9 @@ function onBindChange(e: Event): void {
 }
 
 .label-badge {
-  border: 1px solid var(--line-20);
-  color: #cbd3ea;
-  font-size: 10px;
+  border: 1px solid var(--line-action);
+  color: var(--text-bright);
+  font-size: var(--fs-micro);
   border-radius: var(--r-pill);
   padding: 1px 7px;
   overflow: hidden;
@@ -546,7 +546,7 @@ function onBindChange(e: Event): void {
   color: var(--teal);
   border-radius: 7px;
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -556,7 +556,7 @@ function onBindChange(e: Event): void {
 }
 
 .rebind {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-muted);
 }
 </style>

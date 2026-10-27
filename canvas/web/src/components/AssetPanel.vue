@@ -294,27 +294,42 @@ onMounted(refresh)
   top: 0;
   right: 0;
   bottom: 0;
-  width: 320px;
+  width: var(--w-panel);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--sp-md);
+  padding: var(--sp-lg);
   background: rgba(var(--surface-panel-rgb), 0.96);
-  border-left: 1px solid var(--line-10);
+  border-left: 1px solid var(--line-control);
+  box-shadow: var(--shadow-slide);
   z-index: var(--z-side-panel);
   overflow-y: auto;
+  animation: panel-in var(--dur-slow) var(--ease);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-sm);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-section);
 }
 
 .panel-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-title);
 }
 
 .head-filters {
@@ -332,20 +347,31 @@ onMounted(refresh)
 .scope-filter button,
 .kind-filter button,
 .upload {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.scope-filter button:hover,
+.kind-filter button:hover,
+.upload:hover {
+  border-color: var(--line-action);
+  color: var(--text-primary);
 }
 
 .scope-filter button.active,
 .kind-filter button.active {
-  background: rgba(76, 110, 245, 0.25);
+  background: rgba(var(--accent-rgb), 0.25);
   color: inherit;
-  border-color: rgba(76, 110, 245, 0.6);
+  border-color: rgba(var(--accent-rgb), 0.6);
 }
 
 .upload-row {
@@ -358,7 +384,7 @@ onMounted(refresh)
 }
 
 .upload:disabled {
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -374,13 +400,13 @@ onMounted(refresh)
 .panel-error {
   margin: 0;
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .panel-empty {
   margin: 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .asset-list {
@@ -394,11 +420,16 @@ onMounted(refresh)
 .asset-card {
   display: grid;
   grid-template-columns: 72px 1fr;
-  gap: 8px;
-  padding: 8px;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  gap: var(--sp-sm);
+  padding: var(--sp-sm);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-lg);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.asset-card:hover {
+  border-color: var(--line-action);
 }
 
 .thumb {
@@ -407,7 +438,7 @@ onMounted(refresh)
   height: 72px;
   object-fit: cover;
   border-radius: var(--r-md);
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 /* 音频卡片:试听条占缩略位,下方照常给元信息。 */
@@ -425,12 +456,12 @@ onMounted(refresh)
 }
 
 .meta .model {
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
 }
 
 .meta .prompt {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
   overflow: hidden;
   display: -webkit-box;
@@ -439,8 +470,8 @@ onMounted(refresh)
 }
 
 .meta .origin {
-  font-size: 12px;
-  color: #8f97ad;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
 }
 
 .actions {
@@ -454,36 +485,36 @@ onMounted(refresh)
   border: none;
   border-radius: var(--r-md);
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   text-decoration: none;
   text-align: center;
 }
 
 .insert {
-  background: rgba(76, 110, 245, 0.25);
-  color: var(--indigo-soft);
+  background: rgba(var(--accent-rgb), 0.25);
+  color: var(--accent-soft);
   font-weight: 600;
 }
 
 .download {
   background: transparent;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   color: var(--text-secondary);
 }
 
 .more {
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 7px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 
 .more:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 </style>

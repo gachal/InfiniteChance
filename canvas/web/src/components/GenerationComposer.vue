@@ -585,19 +585,32 @@ function onFileChange(e: Event): void {
 </template>
 
 <style scoped>
-/* 即梦式深色面板:参考条 + 输入区 + 参数栏,悬浮在画布上。 */
+/* 即梦式深色面板:参考条 + 输入区 + 参数栏,悬浮在画布上。
+   阶段二:弹层入场(缩放 0.98 + 上浮)、顶缘玻璃受光面。 */
 .composer {
   position: absolute;
   z-index: var(--z-canvas-float);
   width: min(560px, calc(100% - 32px));
   display: grid;
-  gap: 8px;
-  padding: 12px;
-  background: rgba(13, 18, 32, 0.96);
-  border: 1px solid var(--line-14);
-  border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  gap: var(--sp-sm);
+  padding: var(--sp-md);
+  background: rgba(var(--surface-panel-rgb), 0.96);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-overlay), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   box-sizing: border-box;
+  animation: composer-in var(--dur-slow) var(--ease);
+}
+
+@keyframes composer-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .ref-strip {
@@ -620,7 +633,7 @@ function onFileChange(e: Event): void {
   height: 100%;
   object-fit: cover;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-18);
+  border: 1px solid var(--line-action);
   display: block;
   cursor: zoom-in;
 }
@@ -640,7 +653,7 @@ function onFileChange(e: Event): void {
   height: 48px;
   object-fit: cover;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-18);
+  border: 1px solid var(--line-action);
   display: block;
   cursor: zoom-in;
 }
@@ -651,8 +664,8 @@ function onFileChange(e: Event): void {
   display: grid;
   place-items: center;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-18);
-  background: var(--wash-05);
+  border: 1px solid var(--line-action);
+  background: var(--wash-soft);
   color: var(--text-secondary);
   font-size: 18px;
 }
@@ -666,23 +679,23 @@ button.vref-icon {
 }
 
 button.vref-icon:hover {
-  background: var(--wash-12);
+  background: var(--wash-active);
 }
 
 .vref-role {
   width: 100%;
-  background: var(--wash-07);
-  border: 1px solid var(--line-14);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-sm);
   color: inherit;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   padding: 1px 2px;
 }
 
 .vref-role.fixed {
   text-align: center;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--fs-micro);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -696,26 +709,41 @@ button.vref-icon:hover {
   height: 18px;
   border: none;
   border-radius: 50%;
-  background: rgba(60, 64, 80, 0.95);
-  color: #dfe3ee;
-  font-size: 12px;
+  background: rgba(var(--surface-raised-rgb), 0.95);
+  color: var(--text-bright);
+  font-size: var(--fs-label);
   line-height: 1;
   cursor: pointer;
   display: grid;
   place-items: center;
   padding: 0;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.ref-remove:hover {
+  background: rgba(var(--danger-rgb), 0.9);
 }
 
 .ref-add {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  border: 1px dashed var(--line-30);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-lg);
   background: transparent;
   color: var(--text-secondary);
   font-size: 20px;
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.ref-add:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.85);
+  color: var(--text-primary);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .ref-add:disabled {
@@ -728,12 +756,22 @@ button.vref-icon:hover {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  border: 1px solid var(--line-30);
+  border: 1px solid var(--line-action);
   border-radius: var(--r-lg);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--fs-body);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.ref-library:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.85);
+  color: var(--text-primary);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .ref-library:disabled {
@@ -759,37 +797,37 @@ button.vref-icon:hover {
   border: 1px solid rgba(var(--amber-rgb), 0.4);
   border-radius: var(--r-lg);
   background: rgba(var(--amber-rgb), 0.08);
-  font-size: 12px;
-  color: #fde68a;
+  font-size: var(--fs-label);
+  color: var(--amber);
 }
 
 .catalog-error button {
-  border: 1px solid rgba(253, 230, 138, 0.5);
+  border: 1px solid rgba(var(--amber-rgb), 0.5);
   border-radius: var(--r-md);
   background: transparent;
-  color: #fde68a;
+  color: var(--amber);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .catalog-error button:hover {
-  background: rgba(253, 230, 138, 0.12);
+  background: rgba(var(--amber-rgb), 0.12);
 }
 
 /* 编辑型契约提示:参考视频在场的单行小字,与预估行同款安静的视觉级别。 */
 .vref-hint {
   margin: 0;
-  font-size: 12px;
-  color: #fde68a;
+  font-size: var(--fs-label);
+  color: var(--amber);
   line-height: 1.5;
 }
 
 /* 成本预估行:安静的单行小字,参数变化即时刷新。 */
 .estimate {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--estimate-ink);
   white-space: nowrap;
   overflow: hidden;
@@ -800,20 +838,25 @@ textarea {
   width: 100%;
   resize: vertical;
   min-height: 64px;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-lg);
   padding: 8px 10px;
   color: inherit;
   font: inherit;
   line-height: 1.5;
   box-sizing: border-box;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
+/* 工作灯:焦点即灯亮——描边转交互蓝,一圈极淡的光晕,
+   替代旧的 outline 双指示(键盘导航仍由全局 :focus-visible 兜底)。 */
 textarea:focus {
-  outline: 2px solid rgba(var(--accent-rgb), 0.6);
-  outline-offset: 1px;
-  border-color: transparent;
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 .controls {
@@ -824,13 +867,24 @@ textarea:focus {
 }
 
 .controls select {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
   max-width: 150px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.controls select:hover {
+  border-color: var(--line-action);
+}
+
+.controls select:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .controls .mode,
@@ -844,12 +898,12 @@ textarea:focus {
 /* 时长数字输入比下拉窄,单位(秒)缀在 placeholder 语义里。 */
 .controls input.duration {
   width: 64px;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
   box-sizing: border-box;
 }
 
@@ -859,7 +913,7 @@ textarea:focus {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
@@ -881,7 +935,7 @@ textarea:focus {
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--r-pill);
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 16px;
@@ -890,6 +944,18 @@ textarea:focus {
   display: grid;
   place-items: center;
   padding: 0;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.send:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.35);
+}
+
+.send:active:not(:disabled) {
+  box-shadow: none;
 }
 
 .send:disabled {

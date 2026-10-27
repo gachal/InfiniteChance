@@ -323,9 +323,19 @@ onBeforeUnmount(() => {
   z-index: var(--z-editor-layer);
   display: flex;
   flex-direction: column;
-  background: #10162a;
+  background: var(--bg-layer);
   color: var(--text-bright);
-  font-size: 13px;
+  font-size: var(--fs-body);
+  animation: layer-in var(--dur) var(--ease);
+}
+
+@keyframes layer-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .layer:focus {
@@ -339,7 +349,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--line-08);
+  border-bottom: 1px solid var(--line-section);
   background: rgba(var(--surface-card-rgb), 0.95);
 }
 
@@ -350,16 +360,16 @@ onBeforeUnmount(() => {
 
 .bar .meta {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .bar button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   color: var(--text-bright);
   white-space: nowrap;
 }
@@ -404,10 +414,10 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 36px 1fr;
   gap: 12px;
-  border: 1px solid var(--line-10);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-xl);
   padding: 12px;
-  background: var(--wash-03);
+  background: var(--wash-subtle);
 }
 
 .cut-no {
@@ -436,18 +446,18 @@ onBeforeUnmount(() => {
 .field {
   display: grid;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
 }
 
 .field input,
 .field textarea {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 10px;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   width: 100%;
   box-sizing: border-box;
 }
@@ -476,10 +486,10 @@ onBeforeUnmount(() => {
 }
 
 .chip {
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-pill);
   padding: 3px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
@@ -504,10 +514,10 @@ onBeforeUnmount(() => {
 }
 
 .cut-actions button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
@@ -534,7 +544,7 @@ onBeforeUnmount(() => {
   border: 1px dashed rgba(var(--orange-rgb), 0.5);
   border-radius: var(--r-lg);
   padding: 8px 18px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   cursor: pointer;
   background: transparent;

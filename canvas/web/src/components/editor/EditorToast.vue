@@ -25,14 +25,26 @@ defineProps<{ text: string }>()
   transform: translateX(-50%);
   z-index: var(--z-toast);
   max-width: min(560px, calc(100% - 32px));
-  padding: 8px 14px;
+  padding: 8px 16px;
   border-radius: var(--r-lg);
-  background: rgba(20, 28, 48, 0.95);
+  background: rgba(var(--surface-card-rgb), 0.95);
   border: 1px solid rgba(var(--accent-rgb), 0.4);
   color: var(--text-bright);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   box-shadow: var(--shadow-dialog);
   pointer-events: none;
+  animation: toast-in var(--dur) var(--ease);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 </style>

@@ -165,8 +165,18 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   padding: 32px;
-  background: rgba(6, 9, 18, 0.88);
+  background: rgba(var(--bg-deep-rgb), 0.88);
   cursor: zoom-out;
+  animation: lightbox-in var(--dur) var(--ease);
+}
+
+@keyframes lightbox-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .lightbox img,
@@ -181,9 +191,21 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 64px);
   max-height: calc(100vh - 64px);
   border-radius: var(--r-xl);
-  background: #0d1220;
+  background: rgba(var(--surface-panel-rgb), 1);
   box-shadow: var(--shadow-overlay-strong);
   cursor: default;
+  animation: media-in var(--dur-slow) var(--ease);
+}
+
+@keyframes media-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* 操作组:右上角,下载 + 关闭;点按钮不冒泡到遮罩。 */
@@ -200,16 +222,16 @@ onBeforeUnmount(() => {
   height: 36px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-lg);
-  background: rgba(13, 18, 32, 0.85);
-  color: #dfe3ee;
-  font-size: 15px;
+  background: rgba(var(--surface-panel-rgb), 0.85);
+  color: var(--text-bright);
+  font-size: var(--fs-title);
   text-decoration: none;
   cursor: pointer;
 }
 
 .action:hover {
-  background: rgba(30, 38, 60, 0.9);
+  background: rgba(var(--surface-raised-rgb), 0.9);
 }
 </style>

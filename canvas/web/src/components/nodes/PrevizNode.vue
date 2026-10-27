@@ -133,7 +133,7 @@ watch(
   border: 1px solid rgba(var(--pink-rgb), 0.4);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
@@ -169,9 +169,9 @@ watch(
   place-items: center;
   border: none;
   border-radius: var(--r-md);
-  background: rgba(13, 18, 32, 0.85);
-  color: #dfe3ee;
-  font-size: 14px;
+  background: rgba(var(--surface-panel-rgb), 0.85);
+  color: var(--text-bright);
+  font-size: var(--fs-body);
   text-decoration: none;
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -193,7 +193,7 @@ watch(
   gap: 4px;
   justify-items: center;
   padding: 34px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -203,7 +203,7 @@ watch(
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .placeholder.missing {
@@ -217,7 +217,7 @@ watch(
   border: 1px solid rgba(var(--accent-rgb), 0.55);
   border-radius: var(--r-md);
   padding: 7px 0;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   background: rgba(var(--accent-rgb), 0.12);

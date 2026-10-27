@@ -142,11 +142,11 @@ function onAudioError(): void {
   border: 1px solid rgba(var(--violet-rgb), 0.45);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 header {
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   color: var(--violet);
   margin-bottom: 8px;
@@ -161,7 +161,7 @@ audio {
 .excerpt {
   margin: 8px 0 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -172,7 +172,7 @@ audio {
   gap: 4px;
   justify-items: center;
   padding: 22px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -182,7 +182,7 @@ audio {
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .placeholder.missing {
@@ -195,7 +195,7 @@ audio {
   background: rgba(var(--accent-rgb), 0.18);
   color: var(--accent);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .failed {
@@ -206,7 +206,7 @@ audio {
 .error {
   margin: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-label);
   word-break: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -222,7 +222,7 @@ audio {
   color: var(--accent);
   padding: 6px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .retry:disabled {

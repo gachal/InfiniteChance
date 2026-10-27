@@ -701,7 +701,7 @@ function onDeliver(): void {
   border: 1px solid rgba(var(--accent-rgb), 0.45);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .node header {
@@ -713,8 +713,8 @@ function onDeliver(): void {
 textarea {
   width: 100%;
   resize: vertical;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 8px;
   color: inherit;
@@ -748,15 +748,15 @@ textarea:focus {
   border: 1px solid rgba(var(--accent-rgb), 0.4);
   border-radius: var(--r-pill);
   padding: 2px 4px 2px 8px;
-  font-size: 11px;
-  color: #c4cdf3;
+  font-size: var(--fs-micro);
+  color: var(--indigo-soft);
 }
 
 .chip-target {
   flex-shrink: 0;
   border-radius: var(--r-pill);
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   background: rgba(var(--accent-rgb), 0.2);
   color: var(--accent-soft);
 }
@@ -782,7 +782,7 @@ textarea:focus {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1;
   cursor: pointer;
   padding: 2px 4px;
@@ -821,8 +821,8 @@ textarea:focus {
   border: 1px solid rgba(var(--accent-rgb), 0.35);
   border-radius: var(--r-md);
   padding: 2px;
-  font-size: 11px;
-  color: #c4cdf3;
+  font-size: var(--fs-micro);
+  color: var(--indigo-soft);
 }
 
 .media-chip[data-state='uploading'] {
@@ -831,7 +831,7 @@ textarea:focus {
 }
 
 .media-chip[data-state='failed'] {
-  border-color: rgba(224, 49, 49, 0.5);
+  border-color: rgba(var(--danger-rgb), 0.5);
   color: var(--danger);
 }
 
@@ -856,19 +856,19 @@ textarea:focus {
 }
 
 .tool {
-  border: 1px solid var(--line-12);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-muted);
   border-radius: 7px;
   padding: 3px 7px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .tool:hover {
   border-color: rgba(var(--accent-rgb), 0.5);
-  color: #c4cdf3;
+  color: var(--indigo-soft);
 }
 
 .tool.on {
@@ -898,12 +898,12 @@ textarea:focus {
   min-height: 32px;
   resize: vertical;
   overflow-y: auto;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
   line-height: 1.5;
 }
 
@@ -921,12 +921,12 @@ textarea:focus {
 .action-row select {
   flex: 1;
   min-width: 0;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .action-row button {
@@ -934,7 +934,7 @@ textarea:focus {
   border: none;
   border-radius: var(--r-md);
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
 }
@@ -959,7 +959,7 @@ textarea:focus {
 .rounds,
 .no-models {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-muted);
 }
 
@@ -984,12 +984,12 @@ textarea:focus {
 }
 
 .overlay-filter button {
-  border: 1px solid var(--line-12);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-muted);
   border-radius: var(--r-pill);
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   cursor: pointer;
 }
 
@@ -1023,7 +1023,7 @@ textarea:focus {
 .skill-list li.empty {
   cursor: default;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .skill-line {
@@ -1039,14 +1039,14 @@ textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .skill-list .badge {
   flex-shrink: 0;
   border-radius: var(--r-pill);
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   background: rgba(var(--accent-rgb), 0.2);
   color: var(--accent-soft);
 }
@@ -1065,7 +1065,7 @@ textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-muted);
 }
 </style>

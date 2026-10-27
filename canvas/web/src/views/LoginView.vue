@@ -93,7 +93,7 @@ async function submit(): Promise<void> {
 .hint {
   margin: 0 0 16px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.6;
 }
 </style>

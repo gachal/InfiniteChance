@@ -615,7 +615,7 @@ onBeforeUnmount(() => {
   height: 100%;
   border-radius: var(--r-lg);
   overflow: hidden;
-  background: #1d2434;
+  background: rgba(var(--surface-card-rgb), 1);
   border: 1px solid rgba(var(--pink-rgb), 0.25);
   touch-action: none;
   cursor: grab;
@@ -640,16 +640,16 @@ onBeforeUnmount(() => {
   height: 26px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--line-18);
+  border: 1px solid var(--line-action);
   border-radius: var(--r-md);
-  background: rgba(13, 18, 32, 0.85);
-  color: #dfe3ee;
-  font-size: 14px;
+  background: rgba(var(--surface-panel-rgb), 0.85);
+  color: var(--text-bright);
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
 .reset-view:hover {
   border-color: rgba(var(--accent-rgb), 0.85);
-  color: #fff;
+  color: var(--text-primary);
 }
 </style>

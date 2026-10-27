@@ -346,7 +346,7 @@ function onUploadChange(event: Event): void {
   border: 1px solid rgba(var(--red-signal-rgb), 0.4);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .level-name {
@@ -358,7 +358,7 @@ function onUploadChange(event: Event): void {
   border-radius: var(--r-sm);
   padding: 2px 4px;
   color: var(--red-signal);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 
@@ -373,7 +373,7 @@ function onUploadChange(event: Event): void {
 
 .level-name:focus {
   outline: none;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   border-bottom-color: rgba(var(--red-signal-rgb), 0.6);
   color: inherit;
 }
@@ -381,13 +381,13 @@ function onUploadChange(event: Event): void {
 .summary {
   margin: 6px 0 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .goal {
   margin: 0 0 8px;
   color: var(--text-bright);
-  font-size: 12px;
+  font-size: var(--fs-label);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -408,14 +408,14 @@ function onUploadChange(event: Event): void {
   width: 56px;
   height: 40px;
   border-radius: var(--r-sm);
-  border: 1px dashed var(--line-20);
-  background: var(--wash-04);
+  border: 1px dashed var(--line-action);
+  background: var(--wash-subtle);
   overflow: hidden;
 }
 
 .thumb.filled {
   border-style: solid;
-  border-color: var(--line-08);
+  border-color: var(--line-section);
 }
 
 .thumb.missing {
@@ -430,12 +430,12 @@ function onUploadChange(event: Event): void {
 }
 
 .thumb-text {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-faint);
 }
 
 .thumb-text.bad {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--danger);
 }
 
@@ -450,7 +450,7 @@ function onUploadChange(event: Event): void {
   gap: 4px;
   justify-items: center;
   padding: 18px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -460,17 +460,17 @@ function onUploadChange(event: Event): void {
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .toggle {
   margin-top: 8px;
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 3px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 
@@ -485,24 +485,24 @@ function onUploadChange(event: Event): void {
   gap: 4px;
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid var(--line-08);
+  border-top: 1px solid var(--line-section);
 }
 
 .field-label {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 600;
 }
 
 .field-input {
   width: 100%;
   box-sizing: border-box;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-sm);
   padding: 5px 8px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .field-input:focus {
@@ -535,18 +535,18 @@ function onUploadChange(event: Event): void {
   flex: 0 0 18px;
   text-align: center;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .beat-text {
   flex: 1;
   min-width: 0;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-sm);
   padding: 4px 6px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .beat-text:focus {
@@ -560,14 +560,14 @@ function onUploadChange(event: Event): void {
 }
 
 .beat-actions button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: 5px;
   width: 20px;
   height: 20px;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   line-height: 1;
   cursor: pointer;
 }
@@ -584,12 +584,12 @@ function onUploadChange(event: Event): void {
 
 .add-beat {
   justify-self: start;
-  border: 1px dashed var(--line-20);
+  border: 1px dashed var(--line-action);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-sm);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 
@@ -611,8 +611,8 @@ function onUploadChange(event: Event): void {
   width: 64px;
   height: 46px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--line-12);
-  background: var(--wash-04);
+  border: 1px solid var(--line-control);
+  background: var(--wash-subtle);
   overflow: hidden;
 }
 
@@ -634,24 +634,24 @@ function onUploadChange(event: Event): void {
   width: 16px;
   height: 16px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: rgba(var(--surface-panel-rgb), 0.85);
   color: var(--danger);
-  font-size: 11px;
+  font-size: var(--fs-micro);
   line-height: 1;
   padding: 0;
   cursor: pointer;
 }
 
 .slot-remove:hover {
-  background: rgba(224, 49, 49, 0.6);
-  color: #fff;
+  background: rgba(var(--danger-rgb), 0.6);
+  color: var(--text-primary);
 }
 
 .slots-empty {
   margin: 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .slot-entries {
@@ -660,12 +660,12 @@ function onUploadChange(event: Event): void {
 }
 
 .slot-entries .entry {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-sm);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 

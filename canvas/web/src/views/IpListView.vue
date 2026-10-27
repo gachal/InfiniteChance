@@ -479,7 +479,7 @@ async function logout(): Promise<void> {
 .subtitle {
   margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .toolbar {
@@ -494,7 +494,7 @@ async function logout(): Promise<void> {
   border: none;
   border-radius: var(--r-lg);
   padding: 10px 16px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
@@ -505,7 +505,7 @@ async function logout(): Promise<void> {
 }
 
 .primary:hover:not(:disabled) {
-  background: #4263eb;
+  background: var(--accent-soft);
 }
 
 .primary:disabled {
@@ -515,12 +515,12 @@ async function logout(): Promise<void> {
 
 .ghost {
   background: transparent;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   color: var(--text-secondary);
 }
 
 .ghost:hover:not(:disabled) {
-  border-color: var(--line-32);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -533,7 +533,7 @@ async function logout(): Promise<void> {
 .feedback {
   margin: 16px 0 0;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .error {
@@ -552,8 +552,8 @@ async function logout(): Promise<void> {
 .ip-card {
   display: grid;
   gap: 8px;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
   padding: 12px;
 }
@@ -571,7 +571,7 @@ async function logout(): Promise<void> {
 }
 
 .card-body:hover {
-  background: var(--wash-06);
+  background: var(--wash-soft);
 }
 
 .cover {
@@ -579,7 +579,7 @@ async function logout(): Promise<void> {
   aspect-ratio: 16 / 9;
   border-radius: var(--r-lg);
   overflow: hidden;
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 .cover-img {
@@ -606,7 +606,7 @@ async function logout(): Promise<void> {
 
 .description {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -615,7 +615,7 @@ async function logout(): Promise<void> {
 
 .meta {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .row-actions {
@@ -626,13 +626,13 @@ async function logout(): Promise<void> {
 
 .row-actions button {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .dialog-mask {
   position: fixed;
   inset: 0;
-  background: rgba(4, 8, 18, 0.7);
+  background: rgba(var(--bg-deep-rgb), 0.7);
   display: grid;
   place-items: center;
   z-index: var(--z-dialog-mask);
@@ -641,8 +641,8 @@ async function logout(): Promise<void> {
 .dialog {
   position: relative;
   width: min(440px, calc(100vw - 48px));
-  background: #101a2e;
-  border: 1px solid var(--line-12);
+  background: var(--bg-navy);
+  border: 1px solid var(--line-control);
   border-radius: 14px;
   overflow: hidden;
 }
@@ -664,17 +664,17 @@ async function logout(): Promise<void> {
 .ip-form label {
   display: grid;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-secondary);
 }
 
 .ip-form input {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-lg);
   padding: 9px 12px;
   color: inherit;
-  font-size: 15px;
+  font-size: var(--fs-title);
 }
 
 .ip-form input:focus {
@@ -691,7 +691,7 @@ async function logout(): Promise<void> {
 }
 
 .cover-label {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-secondary);
 }
 
@@ -702,7 +702,7 @@ async function logout(): Promise<void> {
   height: 50px;
   border-radius: var(--r-md);
   overflow: hidden;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   font-size: 18px;
   font-weight: 700;
 }
@@ -722,7 +722,7 @@ async function logout(): Promise<void> {
 }
 
 .cover-preview .pending {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-muted);
   padding: 4px;
   text-align: center;
@@ -739,7 +739,7 @@ async function logout(): Promise<void> {
 
 .cover-actions button {
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .sr-input {

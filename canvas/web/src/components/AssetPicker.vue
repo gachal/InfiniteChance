@@ -475,48 +475,67 @@ onMounted(refresh)
   top: 0;
   right: 0;
   bottom: 0;
-  width: 340px;
+  width: var(--w-panel);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--sp-md);
+  padding: var(--sp-lg);
   background: rgba(var(--surface-panel-rgb), 0.96);
-  border-left: 1px solid var(--line-10);
+  border-left: 1px solid var(--line-control);
+  box-shadow: var(--shadow-slide);
   z-index: var(--z-side-panel);
   overflow-y: auto;
+  animation: panel-in var(--dur-slow) var(--ease);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-sm);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-section);
 }
 
 .panel-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-title);
 }
 
 .head-actions button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .head-actions button:hover {
-  border-color: var(--line-32);
+  border-color: var(--line-action);
   color: inherit;
 }
 
 .panel-hint {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .kind-filter,
@@ -528,21 +547,25 @@ onMounted(refresh)
 .scope-filter button,
 .kind-filter button,
 .view-switch button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .scope-filter button.active,
 .kind-filter button.active,
 .view-switch button.active {
-  background: rgba(76, 110, 245, 0.25);
+  background: rgba(var(--accent-rgb), 0.25);
   color: inherit;
-  border-color: rgba(76, 110, 245, 0.6);
+  border-color: rgba(var(--accent-rgb), 0.6);
 }
 
 /* 角色视图(51 号票):角色 → 变体两级分组。 */
@@ -550,17 +573,17 @@ onMounted(refresh)
   display: grid;
   gap: 8px;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--line-08);
+  border-bottom: 1px solid var(--line-section);
 }
 
 .character-name {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .character-alias {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 400;
   margin-left: 6px;
 }
@@ -568,7 +591,7 @@ onMounted(refresh)
 .variant-group .variant-name {
   margin: 0 0 6px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .variant-group .variant-note {
@@ -579,7 +602,7 @@ onMounted(refresh)
 .variant-empty {
   margin: 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .character-unavailable {
@@ -587,20 +610,20 @@ onMounted(refresh)
   place-items: center;
   height: 84px;
   color: var(--text-muted);
-  font-size: 12px;
-  border: 1px dashed var(--line-16);
+  font-size: var(--fs-label);
+  border: 1px dashed var(--line-control);
   border-radius: var(--r-md);
 }
 
 .kind-tag.view-label {
-  color: #d3b571;
+  color: var(--gold);
 }
 
 .panel-error,
 .panel-empty {
   margin: 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .panel-error {
@@ -621,8 +644,8 @@ onMounted(refresh)
   display: grid;
   gap: 4px;
   padding: 6px;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-lg);
   cursor: pointer;
 }
@@ -641,7 +664,7 @@ onMounted(refresh)
   height: 84px;
   object-fit: cover;
   border-radius: var(--r-md);
-  background: var(--wash-05);
+  background: var(--wash-soft);
   display: block;
 }
 
@@ -659,12 +682,12 @@ onMounted(refresh)
 }
 
 .kind-tag {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--accent-soft);
 }
 
 .meta .prompt {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
   overflow: hidden;
   display: -webkit-box;
@@ -683,22 +706,22 @@ onMounted(refresh)
   border-radius: var(--r-pill);
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 700;
 }
 
 .more {
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 7px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 
 .more:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 </style>

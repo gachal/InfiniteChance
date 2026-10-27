@@ -99,10 +99,26 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-/* 横幅收纳列(38 号票评审):多条横幅同列堆叠,视觉上是一个系统。 */
+/* 横幅收纳列(38 号票评审):多条横幅同列堆叠,视觉上是一个系统。
+   阶段二:横幅出现用基础过渡包的下滑入场。 */
 .alerts {
   display: flex;
   flex-direction: column;
+}
+
+.alerts > div {
+  animation: alert-in var(--dur-slow) var(--ease);
+}
+
+@keyframes alert-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .generate-error {
@@ -110,25 +126,29 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 12px 16px;
-  background: rgba(224, 49, 49, 0.12);
-  border-bottom: 1px solid rgba(224, 49, 49, 0.35);
+  padding: 12px 20px;
+  background: rgba(var(--danger-rgb), 0.12);
+  border-bottom: 1px solid rgba(var(--danger-rgb), 0.35);
 }
 
 .generate-error p {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .generate-error button {
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
-  padding: 8px 14px;
-  font-size: 13px;
+  padding: 7px 14px;
+  font-size: var(--fs-body);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
   white-space: nowrap;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .conflict-banner {
@@ -136,19 +156,19 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 16px;
-  background: rgba(224, 49, 49, 0.16);
-  border-bottom: 1px solid rgba(224, 49, 49, 0.45);
+  padding: 12px 20px;
+  background: rgba(var(--danger-rgb), 0.16);
+  border-bottom: 1px solid rgba(var(--danger-rgb), 0.45);
 }
 
 .conflict-banner p {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .conflict-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-sm);
   white-space: nowrap;
 }
 
@@ -156,45 +176,60 @@ const emit = defineEmits<{
 .load-error button {
   border: none;
   border-radius: var(--r-md);
-  padding: 8px 14px;
-  font-size: 13px;
+  padding: 7px 14px;
+  font-size: var(--fs-body);
   cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .load-error {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 16px;
-  background: rgba(224, 49, 49, 0.12);
-  border-bottom: 1px solid rgba(224, 49, 49, 0.35);
+  padding: 12px 20px;
+  background: rgba(var(--danger-rgb), 0.12);
+  border-bottom: 1px solid rgba(var(--danger-rgb), 0.35);
 }
 
 .load-error p {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .primary {
-  background: #3b5bdb;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.primary:hover {
+  background: var(--accent-soft);
+}
+
+/* 危险操作 = 失败绯文字而非红底(DESIGN.md):描边玻璃 + 红字,
+   hover 才升起红雾,避免横幅区变成一堵红墙。 */
+.danger {
+  background: transparent;
+  border: 1px solid rgba(var(--danger-rgb), 0.5);
+  color: var(--danger);
   font-weight: 600;
 }
 
-.danger {
-  background: #e03131;
-  color: #fff;
-  font-weight: 600;
+.danger:hover {
+  background: rgba(var(--danger-rgb), 0.12);
 }
 
 .ghost {
   background: transparent;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   color: var(--text-secondary);
 }
 
 .ghost:hover {
-  border-color: var(--line-32);
-  color: inherit;
+  border-color: var(--line-action);
+  background: var(--wash-soft);
+  color: var(--text-primary);
 }
 </style>

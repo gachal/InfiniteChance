@@ -221,7 +221,7 @@ function submitAnalyze(): void {
   border: 1px solid rgba(var(--success-rgb), 0.4);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .node header {
@@ -271,9 +271,9 @@ function submitAnalyze(): void {
   place-items: center;
   border: none;
   border-radius: var(--r-md);
-  background: rgba(13, 18, 32, 0.85);
-  color: #dfe3ee;
-  font-size: 14px;
+  background: rgba(var(--surface-panel-rgb), 0.85);
+  color: var(--text-bright);
+  font-size: var(--fs-body);
   text-decoration: none;
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -295,7 +295,7 @@ function submitAnalyze(): void {
   gap: 4px;
   justify-items: center;
   padding: 26px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -305,7 +305,7 @@ function submitAnalyze(): void {
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .placeholder.missing {
@@ -342,7 +342,7 @@ function submitAnalyze(): void {
 
 .failed .error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--danger);
   word-break: break-all;
 }
@@ -351,10 +351,10 @@ function submitAnalyze(): void {
   border: none;
   border-radius: var(--r-md);
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
-  background: var(--wash-10);
+  background: var(--wash-fill);
   color: inherit;
 }
 
@@ -376,12 +376,12 @@ function submitAnalyze(): void {
 .analyze-row select {
   flex: 1;
   min-width: 0;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .analyze-btn {
@@ -390,7 +390,7 @@ function submitAnalyze(): void {
   border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   color: var(--indigo-soft);

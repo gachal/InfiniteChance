@@ -11,9 +11,9 @@
     -apple-system,
     sans-serif;
 
-  /* ==== 设计 Token(58 号票阶段一地基)====
-     值为基线忠实提取:同名 token 是对应色值/档位的唯一事实源;
-     档位收敛(17 档白系 alpha → 三档描边)与间距 token 留待阶段二改版。
+  /* ==== 设计 Token(58 号票地基)====
+     同名 token 是对应色值/档位的唯一事实源。阶段二起描边收敛为三档、
+     底纹收敛为四档(DESIGN.md「描边即轮廓规则」);
      rgb 三元组 token 供 rgba(var(--x-rgb), α) 派生透明度用。 */
 
   /* 深夜三层底(只作页面底,不作面板) */
@@ -23,24 +23,54 @@
   --bg-navy-rgb: 13, 21, 36;
   --bg-glow: #14284b;
   --bg-glow-rgb: 20, 40, 75;
+  /* 全屏编辑层的工作台底(比面板更沉一级,灯只照内容区) */
+  --bg-layer: #10162a;
 
   /* 玻璃面板 */
   --surface-card-rgb: 20, 26, 43;
   --surface-panel-rgb: 13, 21, 36;
+  /* 提亮面:hover 反馈与浮起小件(控件 hover、chip 删除钮、灯箱按钮) */
+  --surface-raised-rgb: 28, 40, 68;
 
   /* 文字字阶 */
   --text-primary: #e8eaf2;
   --text-bright: #cdd7ee;
   --text-secondary: #aab1c5;
   --text-muted: #8b91a7;
+  --text-muted-rgb: 139, 145, 167;
   --text-faint: #6f7690;
+
+  /* 字号阶梯(深夜小字规则:界面文字 11–15px,15px 封顶) */
+  --fs-micro: 11px;
+  --fs-label: 12px;
+  --fs-body: 13px;
+  --fs-title: 15px;
+
+  /* 间距阶梯(DESIGN.md spacing 五档) */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 12px;
+  --sp-lg: 16px;
+  --sp-xl: 24px;
+
+  /* 侧滑面板宽度族(320/340 收敛):右缘面板一律 380,抽屉最宽 400 */
+  --w-panel: 380px;
+  --w-drawer: 400px;
+
+  /* 基础过渡包:面板滑入/浮层出现用 slow,控件 hover 用 fast */
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 260ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /* 工作灯蓝:唯一的全局交互色 */
   --accent: #7aa2f7;
   --accent-rgb: 122, 162, 247;
   --accent-ink: #10152a;
   --accent-soft: #9fb4f9;
+  /* 安静信息蓝灰:价格预估、保存态、中性容器动作——是信息,不是警报 */
   --estimate-ink: #9fb3d9;
+  --estimate-ink-rgb: 159, 179, 217;
 
   /* 信号色与节点类型色板(描边身份 0.4–0.45 透明度) */
   --success: #4ade80;
@@ -71,43 +101,21 @@
   --ip-violet: #57348a;
   --ip-wine: #8a2f5c;
 
-  /* 白系描边档(border 族,基线逐档忠实提取;阶段二收敛为三档) */
-  --line-02: rgba(255, 255, 255, 0.02);
-  --line-03: rgba(255, 255, 255, 0.03);
-  --line-04: rgba(255, 255, 255, 0.04);
-  --line-05: rgba(255, 255, 255, 0.05);
-  --line-06: rgba(255, 255, 255, 0.06);
-  --line-07: rgba(255, 255, 255, 0.07);
-  --line-08: rgba(255, 255, 255, 0.08);
-  --line-10: rgba(255, 255, 255, 0.1);
-  --line-12: rgba(255, 255, 255, 0.12);
-  --line-14: rgba(255, 255, 255, 0.14);
-  --line-16: rgba(255, 255, 255, 0.16);
-  --line-18: rgba(255, 255, 255, 0.18);
-  --line-20: rgba(255, 255, 255, 0.2);
-  --line-22: rgba(255, 255, 255, 0.22);
-  --line-28: rgba(255, 255, 255, 0.28);
-  --line-30: rgba(255, 255, 255, 0.3);
-  --line-32: rgba(255, 255, 255, 0.32);
+  /* 寂静金:视频素材标签与声纹克隆提示的识别色(低饱和,不与琥珀警报混) */
+  --gold: #d3b571;
 
-  /* 白系底纹档(background 族,同值不同语义:面不是线) */
-  --wash-02: rgba(255, 255, 255, 0.02);
-  --wash-03: rgba(255, 255, 255, 0.03);
-  --wash-04: rgba(255, 255, 255, 0.04);
-  --wash-05: rgba(255, 255, 255, 0.05);
-  --wash-06: rgba(255, 255, 255, 0.06);
-  --wash-07: rgba(255, 255, 255, 0.07);
-  --wash-08: rgba(255, 255, 255, 0.08);
-  --wash-10: rgba(255, 255, 255, 0.1);
-  --wash-12: rgba(255, 255, 255, 0.12);
-  --wash-14: rgba(255, 255, 255, 0.14);
-  --wash-16: rgba(255, 255, 255, 0.16);
-  --wash-18: rgba(255, 255, 255, 0.18);
-  --wash-20: rgba(255, 255, 255, 0.2);
-  --wash-22: rgba(255, 255, 255, 0.22);
-  --wash-28: rgba(255, 255, 255, 0.28);
-  --wash-30: rgba(255, 255, 255, 0.3);
-  --wash-32: rgba(255, 255, 255, 0.32);
+  /* 白系描边三档(「描边即轮廓规则」:0.08 分区 / 0.14 控件边界 /
+     0.28 可点击件;基线 17 档已按语义归档) */
+  --line-section: rgba(255, 255, 255, 0.08);
+  --line-control: rgba(255, 255, 255, 0.14);
+  --line-action: rgba(255, 255, 255, 0.28);
+
+  /* 白系底纹四档(同值不同语义:面不是线)——极淡衬底 / 次级面 /
+     常规控件底 / 激活-选中底 */
+  --wash-subtle: rgba(255, 255, 255, 0.04);
+  --wash-soft: rgba(255, 255, 255, 0.06);
+  --wash-fill: rgba(255, 255, 255, 0.1);
+  --wash-active: rgba(255, 255, 255, 0.14);
 
   /* 圆角档(8px 为骨、999 胶囊为饰) */
   --r-sm: 6px;
@@ -164,6 +172,10 @@ body {
    边缘外半枚;样式全局一份,四个节点组件共用。 */
 .vue-flow__node .node {
   position: relative;
+  /* 玻璃受光面:顶缘 1px 内高光 + 描边过渡(58 号票阶段二质感层)。
+     连接态的 glow 规则会整体覆写 box-shadow,连线期间不要玻璃高光。 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .port {
@@ -220,7 +232,8 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  /* 不设 border-radius:现代浏览器 outline 自动跟随元素自身圆角,
+     此处覆写会把胶囊按钮在键盘聚焦时压成方角(58 号票阶段二修)。 */
 }
 
 /* 连接态非法目标:透明度之外叠加去饱和与虚线描边,状态区分不再只靠
@@ -247,7 +260,7 @@ body {
 }
 
 .vue-flow__controls-button:hover {
-  background: rgba(28, 40, 68, 0.95);
+  background: rgba(var(--surface-raised-rgb), 0.95);
 }
 
 .vue-flow__controls-button svg {

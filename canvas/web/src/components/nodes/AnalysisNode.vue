@@ -166,7 +166,7 @@ async function copyText(): Promise<void> {
   border: 1px solid rgba(var(--indigo-soft-rgb), 0.45);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .node header {
@@ -187,8 +187,8 @@ async function copyText(): Promise<void> {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.55;
-  background: var(--wash-04);
-  border: 1px solid var(--line-10);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 8px;
 }
@@ -203,7 +203,7 @@ async function copyText(): Promise<void> {
 
 .report-meta small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-micro);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -211,17 +211,17 @@ async function copyText(): Promise<void> {
 
 .copy {
   flex-shrink: 0;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
 }
 
 .copy:hover {
-  border-color: var(--line-32);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -230,7 +230,7 @@ async function copyText(): Promise<void> {
   gap: 4px;
   justify-items: center;
   padding: 18px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -240,7 +240,7 @@ async function copyText(): Promise<void> {
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .placeholder .pill {
@@ -268,12 +268,12 @@ async function copyText(): Promise<void> {
 .redo-row select {
   flex: 1;
   min-width: 0;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .redo {
@@ -282,7 +282,7 @@ async function copyText(): Promise<void> {
   border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   color: var(--indigo-soft);

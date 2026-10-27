@@ -165,7 +165,7 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   border: 1px solid rgba(var(--sky-rgb), 0.4);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
@@ -178,7 +178,7 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   border-radius: var(--r-sm);
   padding: 2px 4px;
   color: var(--sky);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 
@@ -193,7 +193,7 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
 
 .board-title:focus {
   outline: none;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   border-bottom-color: rgba(var(--sky-rgb), 0.6);
   color: inherit;
 }
@@ -201,7 +201,7 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
 .summary {
   margin: 6px 0 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .strip {
@@ -218,14 +218,14 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   width: 56px;
   height: 40px;
   border-radius: var(--r-sm);
-  border: 1px dashed var(--line-20);
-  background: var(--wash-04);
+  border: 1px dashed var(--line-action);
+  background: var(--wash-subtle);
   overflow: hidden;
 }
 
 .thumb.filled {
   border-style: solid;
-  border-color: var(--line-08);
+  border-color: var(--line-section);
 }
 
 .thumb.missing {
@@ -240,12 +240,12 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
 }
 
 .thumb-text {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-faint);
 }
 
 .thumb-text.bad {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--danger);
 }
 
@@ -259,7 +259,7 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
   gap: 4px;
   justify-items: center;
   padding: 26px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -269,6 +269,6 @@ function thumbTitle(assetId: number, pageIndex: number, broken: boolean): string
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 </style>

@@ -443,9 +443,19 @@ onBeforeUnmount(() => {
   z-index: var(--z-editor-layer);
   display: flex;
   flex-direction: column;
-  background: #10162a;
+  background: var(--bg-layer);
   color: var(--text-bright);
-  font-size: 13px;
+  font-size: var(--fs-body);
+  animation: layer-in var(--dur) var(--ease);
+}
+
+@keyframes layer-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .layer:focus {
@@ -459,7 +469,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--line-08);
+  border-bottom: 1px solid var(--line-section);
   background: rgba(var(--surface-card-rgb), 0.95);
 }
 
@@ -474,12 +484,12 @@ onBeforeUnmount(() => {
 
 .bar button,
 .camera-pick select {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   color: var(--text-bright);
   white-space: nowrap;
 }
@@ -513,7 +523,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
 }
 
@@ -541,11 +551,11 @@ onBeforeUnmount(() => {
 }
 
 .panel:first-child {
-  border-right: 1px solid var(--line-08);
+  border-right: 1px solid var(--line-section);
 }
 
 .panel:last-child {
-  border-left: 1px solid var(--line-08);
+  border-left: 1px solid var(--line-section);
 }
 
 .group {
@@ -554,7 +564,7 @@ onBeforeUnmount(() => {
 }
 
 .group-title {
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -567,12 +577,12 @@ onBeforeUnmount(() => {
 .add-row button {
   flex: 1;
   min-width: 0;
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 5px 0;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   color: var(--text-bright);
   white-space: nowrap;
 }
@@ -602,12 +612,12 @@ onBeforeUnmount(() => {
 }
 
 .entities li:hover {
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 .entities li.active {
   background: rgba(var(--accent-rgb), 0.16);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .entities .dot {
@@ -638,7 +648,7 @@ onBeforeUnmount(() => {
 .entities .badge {
   flex-shrink: 0;
   font-style: normal;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   padding: 1px 6px;
   border-radius: var(--r-sm);
   background: rgba(var(--pink-rgb), 0.2);
@@ -657,7 +667,7 @@ onBeforeUnmount(() => {
 /* ---- 检查器 ---- */
 
 .inspector {
-  border: 1px solid var(--line-10);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 8px;
   display: grid;
@@ -677,7 +687,7 @@ onBeforeUnmount(() => {
 
 .inspector-head .name {
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-bright);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -689,7 +699,7 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(var(--danger-rgb), 0.4);
   border-radius: var(--r-md);
   padding: 2px 10px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   cursor: pointer;
   background: transparent;
   color: var(--danger);
@@ -704,7 +714,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
 }
 
@@ -728,7 +738,7 @@ onBeforeUnmount(() => {
 }
 
 .hint {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-muted);
   line-height: 1.6;
 }

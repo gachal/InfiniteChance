@@ -1002,18 +1002,18 @@ function back(): void {
   border: none;
   border-radius: var(--r-lg);
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
 .ghost {
   background: transparent;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   color: var(--text-secondary);
 }
 
 .ghost:hover:not(:disabled) {
-  border-color: var(--line-32);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -1038,8 +1038,8 @@ function back(): void {
   display: flex;
   gap: 18px;
   align-items: flex-start;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: 14px;
   padding: 16px;
 }
@@ -1051,7 +1051,7 @@ function back(): void {
   border-radius: var(--r-lg);
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 .cover-img {
@@ -1084,13 +1084,13 @@ function back(): void {
 .description {
   margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .meta {
   margin: 8px 0 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .head-actions {
@@ -1113,7 +1113,7 @@ function back(): void {
 
 .canvas-section .count {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 400;
 }
 
@@ -1130,8 +1130,8 @@ function back(): void {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
   padding: 8px 12px;
 }
@@ -1150,17 +1150,17 @@ function back(): void {
 }
 
 .open:hover {
-  background: var(--wash-06);
+  background: var(--wash-soft);
 }
 
 .open .name {
-  font-size: 15px;
+  font-size: var(--fs-title);
   font-weight: 600;
 }
 
 .open .meta {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .row-actions {
@@ -1171,16 +1171,16 @@ function back(): void {
 
 .row-actions button {
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .move-select {
-  background: var(--wash-05);
-  border: 1px solid var(--line-14);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   color: var(--text-secondary);
   padding: 5px 8px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .move-select.placeholder {
@@ -1195,18 +1195,18 @@ function back(): void {
 
 .rename-form input {
   flex: 1;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-lg);
   padding: 8px 12px;
   color: inherit;
-  font-size: 15px;
+  font-size: var(--fs-title);
 }
 
 .feedback {
   margin: 14px 0 0;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .error {
@@ -1237,13 +1237,13 @@ function back(): void {
 
 .section-count {
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .section-head button {
   margin-left: auto;
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .character-wall {
@@ -1260,8 +1260,8 @@ function back(): void {
   gap: 6px;
   text-align: left;
   width: 100%;
-  background: var(--wash-04);
-  border: 1px solid var(--line-08);
+  background: var(--wash-subtle);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
   padding: 10px;
   color: inherit;
@@ -1278,7 +1278,7 @@ function back(): void {
   aspect-ratio: 1 / 1;
   border-radius: var(--r-lg);
   overflow: hidden;
-  background: var(--wash-05);
+  background: var(--wash-soft);
 }
 
 .character-cover img {
@@ -1300,7 +1300,7 @@ function back(): void {
 }
 
 .character-name {
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1312,22 +1312,22 @@ function back(): void {
   font-weight: 400;
   color: var(--text-muted);
   margin-left: 6px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .character-meta {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 /* 新建角色对话框的文本域与详情抽屉共用 pre-wrap 纯文本口径。 */
 .create-form textarea {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-lg);
   padding: 10px 12px;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   resize: vertical;
   white-space: pre-wrap;
 }
@@ -1339,7 +1339,7 @@ function back(): void {
 
 .asset-holder {
   position: relative;
-  border: 1px solid var(--line-10);
+  border: 1px solid var(--line-control);
   border-radius: 14px;
   overflow: hidden;
   height: 420px;
@@ -1354,7 +1354,7 @@ function back(): void {
 .dialog-mask {
   position: fixed;
   inset: 0;
-  background: rgba(4, 8, 18, 0.7);
+  background: rgba(var(--bg-deep-rgb), 0.7);
   display: grid;
   place-items: center;
   z-index: var(--z-dialog-mask);
@@ -1364,8 +1364,8 @@ function back(): void {
   position: relative;
   overflow: hidden;
   width: min(520px, calc(100vw - 48px));
-  background: #101a2e;
-  border: 1px solid var(--line-12);
+  background: var(--bg-navy);
+  border: 1px solid var(--line-control);
   border-radius: 14px;
   padding: 20px;
 }
@@ -1381,18 +1381,18 @@ function back(): void {
 }
 
 .create-form input {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-lg);
   padding: 10px 12px;
   color: inherit;
-  font-size: 15px;
+  font-size: var(--fs-title);
 }
 
 .field {
   display: grid;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-secondary);
 }
 
@@ -1405,7 +1405,7 @@ function back(): void {
 }
 
 .cover-label {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-secondary);
 }
 
@@ -1416,7 +1416,7 @@ function back(): void {
   height: 50px;
   border-radius: var(--r-md);
   overflow: hidden;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   font-size: 18px;
   font-weight: 700;
 }
@@ -1442,7 +1442,7 @@ function back(): void {
 
 .cover-actions button {
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .sr-input {

@@ -518,13 +518,13 @@ const previewBroken = ref(false)
   border: 1px solid rgba(var(--teal-light-rgb), 0.4);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   display: grid;
   gap: 8px;
 }
 
 header {
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   color: var(--teal-light);
   display: flex;
@@ -535,7 +535,7 @@ header {
 .badge {
   border-radius: var(--r-pill);
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 500;
 }
 
@@ -555,14 +555,14 @@ header {
 }
 
 .ledger-name {
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: inherit;
 }
 
 .meta {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 audio {
@@ -573,7 +573,7 @@ audio {
 
 .preview-fallback {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .mode-row {
@@ -583,13 +583,13 @@ audio {
 
 .mode-row button {
   flex: 1;
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   background: transparent;
   color: var(--text-muted);
   border-radius: var(--r-md);
   padding: 5px 0;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .mode-row button.on {
@@ -601,12 +601,12 @@ audio {
 .field {
   width: 100%;
   box-sizing: border-box;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-family: inherit;
   resize: vertical;
 }
@@ -621,14 +621,14 @@ audio {
 }
 
 select.field option {
-  background: #141a2b;
+  background: rgba(var(--surface-card-rgb), 1);
 }
 
 .rune-count {
   margin-top: -4px;
   text-align: right;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .sample {
@@ -650,7 +650,7 @@ select.field option {
   background: rgba(var(--teal-light-rgb), 0.12);
   color: var(--teal-light);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -663,23 +663,23 @@ select.field option {
   color: inherit;
   cursor: pointer;
   padding: 0 2px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .hint {
   margin: -2px 0 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .action {
   border: none;
   border-radius: var(--r-md);
-  background: var(--wash-08);
-  color: #b6c2d8;
+  background: var(--wash-fill);
+  color: var(--estimate-ink);
   padding: 6px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .action:disabled {
@@ -706,13 +706,13 @@ select.field option {
 
 .estimate {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .form-error {
   margin: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .speech-form {
@@ -724,12 +724,12 @@ select.field option {
 .speech-form input {
   width: 100%;
   box-sizing: border-box;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-family: inherit;
   resize: vertical;
 }
@@ -750,13 +750,13 @@ select.field option {
   gap: 4px;
   justify-items: center;
   padding: 20px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .pill {
@@ -764,7 +764,7 @@ select.field option {
   background: rgba(var(--amber-rgb), 0.14);
   color: var(--amber);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .failed {
@@ -775,7 +775,7 @@ select.field option {
 .error {
   margin: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-label);
   word-break: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 3;

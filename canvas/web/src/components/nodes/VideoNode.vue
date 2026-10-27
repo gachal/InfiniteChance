@@ -247,7 +247,7 @@ function submitAnalyze(): void {
   border: 1px solid rgba(var(--amber-rgb), 0.4);
   border-radius: var(--r-xl);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .node header {
@@ -289,9 +289,9 @@ video {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: rgba(13, 18, 32, 0.75);
-  color: #fff;
-  font-size: 15px;
+  background: rgba(var(--surface-panel-rgb), 0.75);
+  color: var(--text-primary);
+  font-size: var(--fs-title);
   /* 视觉上把 ▶ 拨正(三角形几何中心偏左)。 */
   padding-left: 3px;
   pointer-events: none;
@@ -302,7 +302,7 @@ video {
   gap: 4px;
   justify-items: center;
   padding: 26px 8px;
-  border: 1px dashed var(--line-22);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -312,7 +312,7 @@ video {
 }
 
 .placeholder small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 .placeholder.missing {
@@ -340,10 +340,10 @@ video {
 
 .cancel {
   margin-top: 6px;
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
@@ -365,7 +365,7 @@ video {
 
 .failed .error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--danger);
   word-break: break-all;
 }
@@ -374,10 +374,10 @@ video {
   border: none;
   border-radius: var(--r-md);
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
-  background: var(--wash-10);
+  background: var(--wash-fill);
   color: inherit;
 }
 
@@ -391,7 +391,7 @@ video {
   gap: 4px;
   justify-items: center;
   padding: 18px 8px;
-  border: 1px dashed rgba(139, 145, 167, 0.45);
+  border: 1px dashed rgba(var(--text-muted-rgb), 0.45);
   border-radius: var(--r-md);
   color: var(--text-muted);
 }
@@ -401,7 +401,7 @@ video {
 }
 
 .canceled small {
-  font-size: 11px;
+  font-size: var(--fs-micro);
 }
 
 /* 反推提示词入口(13 号票):模型选择 + 触发按钮,描边样式与提示词
@@ -418,12 +418,12 @@ video {
 .reverse-row select {
   flex: 1;
   min-width: 0;
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .reverse-btn {
@@ -432,7 +432,7 @@ video {
   border: 1px solid rgba(var(--accent-rgb), 0.55);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   color: var(--accent);
@@ -451,7 +451,7 @@ video {
   border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   color: var(--indigo-soft);

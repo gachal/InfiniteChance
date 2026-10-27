@@ -409,9 +409,19 @@ onBeforeUnmount(() => {
   z-index: var(--z-editor-layer);
   display: flex;
   flex-direction: column;
-  background: #10162a;
+  background: var(--bg-layer);
   color: var(--text-bright);
-  font-size: 13px;
+  font-size: var(--fs-body);
+  animation: layer-in var(--dur) var(--ease);
+}
+
+@keyframes layer-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .layer:focus {
@@ -425,7 +435,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--line-08);
+  border-bottom: 1px solid var(--line-section);
   background: rgba(var(--surface-card-rgb), 0.95);
 }
 
@@ -436,16 +446,16 @@ onBeforeUnmount(() => {
 
 .bar .meta {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .bar button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
-  background: var(--wash-05);
+  background: var(--wash-soft);
   color: var(--text-bright);
   white-space: nowrap;
 }
@@ -489,10 +499,10 @@ onBeforeUnmount(() => {
 .page {
   display: grid;
   gap: 10px;
-  border: 1px solid var(--line-10);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-xl);
   padding: 12px;
-  background: var(--wash-03);
+  background: var(--wash-subtle);
 }
 
 .page-head {
@@ -503,19 +513,19 @@ onBeforeUnmount(() => {
 }
 
 .page-no {
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--sky);
   white-space: nowrap;
 }
 
 .page-title {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 5px 10px;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   min-width: 0;
   box-sizing: border-box;
 }
@@ -534,10 +544,10 @@ onBeforeUnmount(() => {
 
 .page-actions button,
 .panel-actions button {
-  border: 1px solid var(--line-14);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
@@ -565,24 +575,24 @@ onBeforeUnmount(() => {
 .page-empty {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 .panel {
   display: grid;
   grid-template-columns: 26px 1fr;
   gap: 10px;
-  border: 1px solid var(--line-07);
+  border: 1px solid var(--line-section);
   border-radius: var(--r-lg);
   padding: 10px;
-  background: var(--wash-02);
+  background: var(--wash-subtle);
 }
 
 .panel-no {
   display: grid;
   place-items: start center;
   padding-top: 4px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--sky);
 }
@@ -604,17 +614,17 @@ onBeforeUnmount(() => {
 .field {
   display: grid;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
 }
 
 .field textarea {
-  background: var(--wash-05);
-  border: 1px solid var(--line-12);
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 10px;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
@@ -632,10 +642,10 @@ onBeforeUnmount(() => {
 }
 
 .chip {
-  border: 1px solid var(--line-16);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-pill);
   padding: 3px 12px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
@@ -661,7 +671,7 @@ onBeforeUnmount(() => {
   border: 1px dashed rgba(var(--sky-rgb), 0.4);
   border-radius: var(--r-md);
   padding: 5px 14px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
   background: transparent;
@@ -677,7 +687,7 @@ onBeforeUnmount(() => {
   border: 1px dashed rgba(var(--sky-rgb), 0.5);
   border-radius: var(--r-lg);
   padding: 8px 18px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   cursor: pointer;
   background: transparent;
