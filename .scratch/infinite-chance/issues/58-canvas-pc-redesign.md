@@ -1,7 +1,7 @@
 # 58 画布前端 PC 化全面重构(impeccable 改版)
 
 Type: refactor
-Status: defined(2026-10-26 grilling 两轮定案,待实现)
+Status: implemented(2026-10-27 四阶段全落地;双档截图待用户确认后 push/部署,桌面冒烟留待实机)
 
 ## Question
 
@@ -38,11 +38,24 @@ Status: defined(2026-10-26 grilling 两轮定案,待实现)
 
 ### 白名单清单(逐条确认后改,实现中登记)
 
-(空)
+(空——实现中未发现需越权修改的交互行为;以下为**保留项说明**,非白名单)
+
+- 预演台编辑层实体类型四色(#5b6b8c/#5c8a72/#8c7a5b/#d8dce6):领域色板,仅 PrevizEditorLayer 一处,保留字面量。
+- 运行态 pulse 循环 1.4s:任务进行中的循环呼吸动画,不属基础过渡包(过渡包管入场/hover),时长保留。
+- CanvasEditorView 内 minimap 节点色的 JS hex:SVG fill 走 JS 字符串,无法引用 CSS var,保留(值与类型色 token 镜像)。
+- 底栏快捷键提示文案与常驻行为未动(critique 曾提「页脚提示永不消失」,涉内容/行为变更,按冻结纪律不静默改)。
 
 ### 阶段进度
 
 - **阶段一完成(2026-10-26,feat/canvas-pc-redesign)**:基线 docs 固化(main e18c140)→ token 地基 + 全量 var() 化 924 处(1bb0b2d,codemod 只动 `.vue` style 段,scoped 原样)→ CanvasEditorView 拆分(ce97e20,3752→3208 行,新增 components/editor/ 四组件 + composables/ 两枚,Escape 取消改名经 defineExpose 保真)。vue-tsc/vitest 224 例/eslint 全绿;1920×1080 与 1440×900 双档浏览器实测(对话框贴节点定位/侧滑面板/改名/Esc 链/IP 墙)零破版;impeccable detect 28 条全部 advisory、零阻断——advisory 清单(散色 #fff/#3b5bdb/#e03131、4px 圆角、字号散档、rgba(28,40,68,0.95) 等)即阶段二档位收敛的工作清单。注:间距 token 化未做,留阶段二随改版落(值要变,先 token 化是白费)。
+
+- **阶段二完成(2026-10-27,main 56763f5)**:token 扩充(字阶 11/12/13/15、间距五档、基础过渡包 120/180/260ms+缓出、面板宽度族 380/400、提亮面/工作台底/寂静金)→ 白系描边 17 档收敛三档、底纹收敛四档(全仓 codemod,散色字面量约 25 组映射归零)→ 语义修正(#3b5bdb/#fff 主按钮全换工作灯蓝+深夜墨、危险按钮红字不红底)→ 质感层(节点卡玻璃受光面、按钮描边、输入工作灯焦点、:focus-visible 越权圆角修复)→ 面板 380/400 一族 + 顶底栏从容 + 基础过渡包入场。1440 档发现并修复底栏按钮折行破版(nowrap + hint 单行省略)。构建/224 例/eslint 全绿;1920/1440 双档实测(基础视图/素材库面板/对话框贴节点)。
+
+- **阶段三完成(2026-10-27,main bb43a8e)**:卡片墙海报感(壳 960→1200、卡格 300/间距 20、悬浮上浮+封面 1.03 呼吸)→ 详情页改版(壳 1080、IP 头海报位 h1 28 展示档+玻璃受光、区块 token 节奏、角色卡墙 180+悬浮呼吸)→ 按钮语义化收尾(IP 两页 #3b5bdb/#e03131/#fff 归零)→ 对话框族 token 化(圆角/标题/对话框影/弹入动画/工作灯焦点)。构建/224 例全绿;1920 卡片墙+详情页实测(计算样式核实 accent=rgb(122,162,247))。
+
+- **阶段四完成(2026-10-27,main 9247a59 + review 修复 7970dd9)**:删 min() 兜底 ×5(实际存量比票记 3 处多 2 处:IpListView 对话框 440/IpDetailView 对话框 520 一并删)与 hover:none ×2,全仓 grep 归零 → auth-form.css 补进 codemod 盲区(.css 不在 .vue glob,旧档名/#3b5bdb 残留全清)→ Wails 画布主窗最小窗 960×640→1440×900(admin 配置窗不属画布面,未动)→ DESIGN.md 五修订点全落(1920 基准/1440 最低可用不兜底/Wails 最小窗、深夜小字 1920 锚定+字阶 token、面板宽度族、Motion 过渡规范段、阴影词汇与 z-index 档位表回引 style.css)。go vet + 前端三连全绿。
+
+- **code review 双轴(2026-10-27,修复 7970dd9)**:Standards 轴 1 硬伤(工具栏 inset box-shadow 充当轮廓→改 1px 实描边)+2 smell(keyframes 同形 ×14 收敛全局 style.css、玻璃高光升 --glass-highlight token;运行时核实 scoped 引用全局 keyframes 生效);Spec 轴 1 漏网(ImageNode/PrevizNode 写死 0.15s ease→过渡包 token)。行为冻结复核:全 diff 零 script/template 逻辑改动,白名单空。
 
 ## 产出面
 
