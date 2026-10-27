@@ -982,17 +982,19 @@ function back(): void {
 </template>
 
 <style scoped>
+/* 详情页改版(58 号票阶段三):1080 壳、IP 头升格海报位(28px 展示档
+   属于 IP 身份时刻)、区块节奏 token 化。 */
 .shell {
-  max-width: 960px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 40px 24px 64px;
+  padding: 40px 32px 64px;
 }
 
 .masthead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--sp-lg);
   margin-bottom: 20px;
 }
 
@@ -1000,10 +1002,14 @@ function back(): void {
 .danger,
 .primary {
   border: none;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   padding: 8px 14px;
   font-size: var(--fs-body);
   cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .ghost {
@@ -1014,34 +1020,47 @@ function back(): void {
 
 .ghost:hover:not(:disabled) {
   border-color: var(--line-action);
-  color: inherit;
+  background: var(--wash-soft);
+  color: var(--text-primary);
 }
 
+/* 危险操作 = 失败绯文字而非红底(DESIGN.md)。 */
 .danger {
-  background: #e03131;
-  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(var(--danger-rgb), 0.5);
+  color: var(--danger);
   font-weight: 600;
+}
+
+.danger:hover:not(:disabled) {
+  background: rgba(var(--danger-rgb), 0.12);
 }
 
 .primary {
-  background: #3b5bdb;
-  color: #fff;
-  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 .primary:disabled {
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: default;
 }
 
+/* IP 头:全站唯一的海报位之一,玻璃顶缘受光 + 展示档标题。 */
 .ip-head {
   display: flex;
-  gap: 18px;
+  gap: 20px;
   align-items: flex-start;
   background: var(--wash-subtle);
   border: 1px solid var(--line-section);
-  border-radius: 14px;
-  padding: 16px;
+  border-radius: var(--r-xl);
+  padding: 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .cover {
@@ -1078,7 +1097,8 @@ function back(): void {
 
 .head-info h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 28px;
+  letter-spacing: 0.5px;
 }
 
 .description {
@@ -1100,15 +1120,15 @@ function back(): void {
 }
 
 .canvas-section {
-  margin-top: 22px;
+  margin-top: 24px;
 }
 
 .canvas-section h2 {
   margin: 0 0 10px;
-  font-size: 16px;
+  font-size: var(--fs-title);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-sm);
 }
 
 .canvas-section .count {
@@ -1122,18 +1142,23 @@ function back(): void {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: var(--sp-sm);
 }
 
 .list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-md);
   background: var(--wash-subtle);
   border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
   padding: 8px 12px;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.list li:hover {
+  border-color: var(--line-action);
 }
 
 .open {
@@ -1232,7 +1257,7 @@ function back(): void {
 
 .section-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-title);
 }
 
 .section-count {
@@ -1251,8 +1276,8 @@ function back(): void {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--sp-md);
 }
 
 .character-card {
@@ -1266,9 +1291,13 @@ function back(): void {
   padding: 10px;
   color: inherit;
   cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .character-card:hover {
+  transform: translateY(-2px);
   border-color: rgba(var(--accent-rgb), 0.5);
 }
 
@@ -1286,6 +1315,11 @@ function back(): void {
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform var(--dur-slow) var(--ease);
+}
+
+.character-card:hover .character-cover img {
+  transform: scale(1.03);
 }
 
 .cover-fallback.small {
@@ -1340,7 +1374,7 @@ function back(): void {
 .asset-holder {
   position: relative;
   border: 1px solid var(--line-control);
-  border-radius: 14px;
+  border-radius: var(--r-xl);
   overflow: hidden;
   height: 420px;
 }
@@ -1358,6 +1392,16 @@ function back(): void {
   display: grid;
   place-items: center;
   z-index: var(--z-dialog-mask);
+  animation: mask-in var(--dur) var(--ease);
+}
+
+@keyframes mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .dialog {
@@ -1366,13 +1410,26 @@ function back(): void {
   width: min(520px, calc(100vw - 48px));
   background: var(--bg-navy);
   border: 1px solid var(--line-control);
-  border-radius: 14px;
+  border-radius: var(--r-xl);
   padding: 20px;
+  box-shadow: var(--shadow-dialog-strong);
+  animation: dialog-in var(--dur-slow) var(--ease);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .dialog h3 {
   margin: 0 0 14px;
-  font-size: 18px;
+  font-size: var(--fs-title);
 }
 
 .create-form {
@@ -1383,10 +1440,19 @@ function back(): void {
 .create-form input {
   background: var(--wash-soft);
   border: 1px solid var(--line-control);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   padding: 10px 12px;
   color: inherit;
   font-size: var(--fs-title);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.create-form input:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 .field {

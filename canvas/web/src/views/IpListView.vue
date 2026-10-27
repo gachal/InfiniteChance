@@ -457,17 +457,19 @@ async function logout(): Promise<void> {
 </template>
 
 <style scoped>
+/* 卡片墙海报感(58 号票阶段三):1920 基准下壳放宽到 1200,封面更大、
+   悬浮有呼吸,企划渐变只留在封面与徽标(DESIGN.md IP 身份时刻)。 */
 .shell {
-  max-width: 960px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 48px 24px;
+  padding: 48px 32px;
 }
 
 .masthead {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--sp-lg);
 }
 
 .masthead h1 {
@@ -485,23 +487,27 @@ async function logout(): Promise<void> {
 .toolbar {
   display: flex;
   gap: 10px;
-  margin: 28px 0 12px;
+  margin: 32px 0 12px;
 }
 
 .toolbar button,
 .ghost,
 .danger {
   border: none;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   padding: 10px 16px;
   font-size: var(--fs-body);
   cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .primary {
-  background: #3b5bdb;
-  color: #fff;
-  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
 }
 
 .primary:hover:not(:disabled) {
@@ -509,7 +515,7 @@ async function logout(): Promise<void> {
 }
 
 .primary:disabled {
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -521,13 +527,20 @@ async function logout(): Promise<void> {
 
 .ghost:hover:not(:disabled) {
   border-color: var(--line-action);
-  color: inherit;
+  background: var(--wash-soft);
+  color: var(--text-primary);
 }
 
+/* 危险操作 = 失败绯文字而非红底(DESIGN.md)。 */
 .danger {
-  background: #e03131;
-  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(var(--danger-rgb), 0.5);
+  color: var(--danger);
   font-weight: 600;
+}
+
+.danger:hover:not(:disabled) {
+  background: rgba(var(--danger-rgb), 0.12);
 }
 
 .feedback {
@@ -545,17 +558,27 @@ async function logout(): Promise<void> {
   margin: 16px 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
 }
 
 .ip-card {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-sm);
   background: var(--wash-subtle);
   border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
-  padding: 12px;
+  padding: var(--sp-md);
+  transition:
+    transform var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.ip-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-action);
+  background: var(--wash-soft);
 }
 
 .card-body {
@@ -586,6 +609,12 @@ async function logout(): Promise<void> {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform var(--dur-slow) var(--ease);
+}
+
+/* 海报呼吸:悬浮时封面极缓放大一档,像海报被拿近看。 */
+.ip-card:hover .cover-img {
+  transform: scale(1.03);
 }
 
 .cover-fallback {
@@ -600,7 +629,7 @@ async function logout(): Promise<void> {
 }
 
 .name {
-  font-size: 17px;
+  font-size: var(--fs-title);
   font-weight: 600;
 }
 
@@ -636,6 +665,16 @@ async function logout(): Promise<void> {
   display: grid;
   place-items: center;
   z-index: var(--z-dialog-mask);
+  animation: mask-in var(--dur) var(--ease);
+}
+
+@keyframes mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .dialog {
@@ -643,8 +682,21 @@ async function logout(): Promise<void> {
   width: min(440px, calc(100vw - 48px));
   background: var(--bg-navy);
   border: 1px solid var(--line-control);
-  border-radius: 14px;
+  border-radius: var(--r-xl);
   overflow: hidden;
+  box-shadow: var(--shadow-dialog-strong);
+  animation: dialog-in var(--dur-slow) var(--ease);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .dialog-inner {
@@ -653,12 +705,12 @@ async function logout(): Promise<void> {
 
 .dialog h3 {
   margin: 0 0 14px;
-  font-size: 18px;
+  font-size: var(--fs-title);
 }
 
 .ip-form {
   display: grid;
-  gap: 12px;
+  gap: var(--sp-md);
 }
 
 .ip-form label {
@@ -671,16 +723,19 @@ async function logout(): Promise<void> {
 .ip-form input {
   background: var(--wash-soft);
   border: 1px solid var(--line-control);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   padding: 9px 12px;
   color: inherit;
   font-size: var(--fs-title);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .ip-form input:focus {
-  outline: 2px solid rgba(var(--accent-rgb), 0.6);
-  outline-offset: 1px;
-  border-color: transparent;
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 .cover-field {
