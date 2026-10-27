@@ -487,6 +487,51 @@ func (s *MySQLStore) FinalizeTtsSuccess(ctx context.Context, id string, a asset.
 	return t, true, err
 }
 
+// FinalizeMusicSuccess inserts the audio asset and closes the task
+// succeeded in one transaction;任务行不设音频 URL 列(与 TTS 版同构),
+// voice_spec 一列不动 —— 配乐的事实都在任务行的 prompt/model 列,前端按
+// source 判别回填(60 号票)。
+func (s *MySQLStore) FinalizeMusicSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO assets (kind, canvas_id, task_id, model, prompt, url, object_key, content_type, size_bytes, ip_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Kind, a.CanvasID, a.TaskID, a.Model, a.Prompt, a.URL,
+		a.ObjectKey, a.ContentType, a.SizeBytes, a.IPID)
+	if err != nil {
+		return Task{}, false, err
+	}
+	assetID, err := res.LastInsertId()
+	if err != nil {
+		return Task{}, false, err
+	}
+
+	res, err = tx.ExecContext(ctx,
+		`UPDATE canvas_tasks SET status = ?, asset_id = ? WHERE id = ? AND status = ?`,
+		StatusSucceeded, assetID, id, StatusRunning)
+	if err != nil {
+		return Task{}, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Task{}, false, err
+	}
+	if n == 0 {
+		t, err := s.Get(ctx, id)
+		return t, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, false, err
+	}
+	t, err := s.Get(ctx, id)
+	return t, true, err
+}
+
 // ResetForRetry sends one failed task of the canvas back to the queue and
 // clears the failure fields, keeping the row (and its attempt history)
 // intact so the same node keeps the same task id across retries.

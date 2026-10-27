@@ -272,9 +272,12 @@ func (h *Handlers) Create(c *gin.Context) {
 	case KindTts:
 		h.createTtsTask(c, canvasID, nodeID, in)
 		return
+	case KindMusic:
+		h.createMusicTask(c, canvasID, nodeID, in)
+		return
 	case KindImage, KindVideo:
 	default:
-		apierr.InvalidRequest(c, "kind 只支持 image(文生图)、video(图生视频)、voice(音色创建)或 tts(台词合成)")
+		apierr.InvalidRequest(c, "kind 只支持 image(文生图)、video(图生视频)、voice(音色创建)、tts(台词合成)或 music(配乐)")
 		return
 	}
 	// 视频任务的专属入参(24 号票对话框范式):结构化参考 video_refs、
@@ -1126,6 +1129,83 @@ func (h *Handlers) ListAudioModels(c *gin.Context) {
 		log.Printf("canvastask: list audio models: %v", err)
 		apierr.Write(c, http.StatusBadGateway, "upstream_error",
 			"获取音频模型目录失败:"+err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"models": catalog.Models, "prices": catalog.Prices})
+}
+
+// maxMusicPromptRunes 是配乐风格描述的上限(60 号票,与 relay/mps.go 的
+// mpsMaxPromptRunes 同源 —— MPS Prompt 厂商上限 2000 字);超限在落任务
+// 行之前就拒,不让注定失败的任务进队列。
+const maxMusicPromptRunes = 2000
+
+// createMusicTask lands one 配乐 task (60 号票):prompt 是风格描述(1–2000
+// 字,对齐 MPS Prompt 上限)、model 须按次配价(预检照 createVoiceTask
+// 先例 —— 注定失败的提交在落行前拒绝);music-models 目录命中由前端
+// 下拉与网关调度两端裁(canvas 不持有渠道维度,与 voice/tts 同款)。
+// 产物是 kind=audio 素材行,事实落任务行的 prompt/model 列。
+func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string, in createInput) {
+	prompt := strings.TrimSpace(in.Prompt)
+	if n := utf8.RuneCountInString(prompt); n < 1 {
+		apierr.InvalidRequest(c, "prompt 不能为空")
+		return
+	} else if n > maxMusicPromptRunes {
+		apierr.InvalidRequest(c, fmt.Sprintf("prompt 最多 %d 个字符", maxMusicPromptRunes))
+		return
+	}
+	model := strings.TrimSpace(in.Model)
+	if model == "" {
+		apierr.InvalidRequest(c, "model 不能为空")
+		return
+	}
+	if utf8.RuneCountInString(model) > pricing.ModelNameRunes {
+		apierr.InvalidRequest(c, "model 名最多 200 个字符")
+		return
+	}
+
+	// 提交前先看价:配乐按次轨(一任务一首),未配价或轨道不符的提交
+	// 注定失败,当场拒绝。
+	price, err := h.Models.ByModel(c.Request.Context(), model)
+	if errors.Is(err, pricing.ErrNotFound) {
+		apierr.Write(c, http.StatusBadRequest, "model_not_priced",
+			"模型 "+model+" 未配置计价,请先在管理端配置价格")
+		return
+	}
+	if err != nil {
+		h.failStore(c, err)
+		return
+	}
+	if price.Unit != pricing.UnitCall || price.Call == nil {
+		apierr.Write(c, http.StatusBadRequest, "model_not_priced",
+			"模型 "+model+" 不是按次计价的配乐模型")
+		return
+	}
+
+	h.submitTask(c, canvasID, nodeID, Task{
+		Kind: KindMusic, Prompt: prompt, Model: model,
+	})
+}
+
+// RegisterMusicModelRoutes mounts (relative to the group, mounted at
+// /music-models behind the JWT middleware):
+//
+//	GET / — 按次配价且 music 能力渠道可服务的配乐模型(带价,60 号票)
+func RegisterMusicModelRoutes(group *gin.RouterGroup, h *Handlers) {
+	group.GET("", h.ListMusicModels)
+}
+
+// ListMusicModels proxies the gateway's /v1/audio/music-models with the
+// service key —— 「过滤 music 能力渠道」的维度在渠道表,归网关管;canvas
+// 只做带服务级 key 的代理。网关未配置时 503 gateway_unconfigured。
+func (h *Handlers) ListMusicModels(c *gin.Context) {
+	if !h.requireGateway(c) {
+		return
+	}
+	catalog, err := h.Gateway.ListMusicModels(c.Request.Context())
+	if err != nil {
+		log.Printf("canvastask: list music models: %v", err)
+		apierr.Write(c, http.StatusBadGateway, "upstream_error",
+			"获取配乐模型目录失败:"+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"models": catalog.Models, "prices": catalog.Prices})

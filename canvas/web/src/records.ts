@@ -42,7 +42,7 @@ export function recordStatusLabel(status: CanvasTask['status']): string {
   }
 }
 
-/** 任务种类的徽章文案(57 号票四元:音色闭环的 voice/tts 加入)。 */
+/** 任务种类的徽章文案(57 号票四元 + 60 号票配乐)。 */
 export function recordKindLabel(kind: string): string {
   switch (kind) {
     case 'video':
@@ -51,15 +51,22 @@ export function recordKindLabel(kind: string): string {
       return '音色'
     case 'tts':
       return '台词'
+    case 'music':
+      return '配乐'
     default:
       return '图片'
   }
 }
 
-/** 音频行(57 号票):kind=tts 的成功行有 kind=audio 素材产物,行内直接
- * 给 <audio> 试听(素材面板同款;voice 行的产物在台账试听,不走这里)。 */
+/** 音频行(57 号票 tts;60 号票 music):成功行有 kind=audio 素材产物,
+ * 行内直接给 <audio> 试听(素材面板同款;voice 行的产物在台账试听,
+ * 不走这里)。 */
 export function isAudioRecord(task: CanvasTask): boolean {
-  return task.kind === 'tts' && task.status === 'succeeded' && task.asset_id > 0
+  return (
+    (task.kind === 'tts' || task.kind === 'music') &&
+    task.status === 'succeeded' &&
+    task.asset_id > 0
+  )
 }
 
 /** 提示词单行截断:超上限裁到上限并以省略号结尾;空提示词给占位。全文由

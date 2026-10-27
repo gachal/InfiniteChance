@@ -277,6 +277,45 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   }'
 ```
 
+### 3.9 配乐(异步两面:提交 → 轮询,无取消;60 号票)
+
+```bash
+# 配乐统一说明:契约照 /v1/videos 的两面(受理回任务句柄、轮询五态),
+# 但无取消端点(MPS 取消接口未查证,超时由计费时限收尾退款)。调度常规
+# 语义 —— 受理时按优先级/权重选渠道、上游临时失败可换道、受理后钉死;
+# 计费按次(unit=call,一任务一首):提交预扣、成功实结、失败全额退款。
+# 渠道类型 tencent-mps(腾讯云 MPS 媒资 AIGC),须启用 + music 能力 +
+# 模型映射(上游名填 "ModelName ModelVersion" 空格串,如 MiniMaxMusic 3.0、
+# Mureka instrumental_9.5);MPS 要求输出 COS 桶,渠道 config 带
+# secret_id/secret_key/bucket/region。错误形状照 /v1 OpenAI error object。
+
+# 提交配乐任务(风格描述 1-2000 字,对齐 MPS Prompt 上限)
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"minimax-music","prompt":"轻快的电子爵士,带复古合成器,适用于城市夜跑场景"}'
+# → {"id":"mt_1a2b…","status":"queued","model":"minimax-music","created_at":1767000000}
+
+# 轮询任务(五态 queued/running/succeeded/failed/canceled;成功带 audio.url
+# —— 上游写进渠道指定 COS 桶的临时地址,约 24h 过期,转存由调用方负责)
+curl $GATEWAY/v1/audio/music/tasks/mt_1a2b… -H "Authorization: Bearer $GWKEY"
+# → {"id":"mt_1a2b…","status":"succeeded","model":"minimax-music",
+#    "created_at":1767000000,"audio":{"url":"https://music-xxx.cos.ap-guangzhou…/a.mp3"}}
+#   失败时 {"status":"failed","error":{"message":"…厂商原因…"}}
+
+# 配乐模型目录:启用 + music 能力渠道的映射并集 ∩ 按次轨配价,价格随行
+# PriceSummary;/v1/audio/models(TTS 字符轨)不受影响。画布服务的
+# /music-models(JWT)以服务级 key 代理本端点。
+curl $GATEWAY/v1/audio/music-models -H "Authorization: Bearer $GWKEY"
+# → {"models":["minimax-music"],"prices":{"minimax-music":{"unit":"call","cny_per_call":0.5}}}
+
+# 配价示例:配乐按次轨(单价未公开时按资源包折算估价录入;未配价一律
+# model_not_priced 拒绝)
+curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "public_model":"minimax-music","unit":"call","cny_per_call":0.5
+  }'
+```
+
 ## 四、管理面(/admin,JWT)
 
 ### 4.1 渠道管理
@@ -467,7 +506,7 @@ curl -X PUT $CANVAS/canvases/1/graph -H "Authorization: Bearer $TOKEN" \
 curl -X DELETE $CANVAS/canvases/1 -H "Authorization: Bearer $TOKEN"
 ```
 
-### 5.2 画布任务(文生图 / 图生图 / 视频生成)
+### 5.2 画布任务(文生图 / 图生图 / 视频生成 / 配乐)
 
 ```bash
 # 文生图
@@ -501,6 +540,14 @@ curl $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN"
 curl $CANVAS/canvases/1/tasks/ct_1a2b3c -H "Authorization: Bearer $TOKEN"
 curl -X POST $CANVAS/canvases/1/tasks/ct_1a2b3c/retry  -H "Authorization: Bearer $TOKEN"
 curl -X POST $CANVAS/canvases/1/tasks/ct_1a2b3c/cancel -H "Authorization: Bearer $TOKEN"
+
+# 配乐(60 号票):kind=music,prompt 是风格描述(1-2000 字)、model 取
+# /music-models 目录;无专属表单,无取消态(网关无取消面,前端不出取消
+# 按钮)。产物为 kind=audio 素材行,前端按 asset_id 回填音频节点并记录
+# prompt/model 配对(来源判别 source='music')。
+curl -X POST $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"node_id":"n_audio_1","kind":"music","prompt":"轻快的电子爵士","model":"minimax-music"}'
 ```
 
 ### 5.3 同步动作(不进任务队列)
@@ -565,6 +612,8 @@ curl -X POST $CANVAS/canvases/1/analyze -H "Authorization: Bearer $TOKEN" \
 ```bash
 curl $CANVAS/image-models     -H "Authorization: Bearer $TOKEN"   # 次轨(call)模型
 curl $CANVAS/video-models     -H "Authorization: Bearer $TOKEN"   # 秒轨(second)模型
+curl $CANVAS/audio-models     -H "Authorization: Bearer $TOKEN"   # 字符轨 TTS 模型(57 号票)
+curl $CANVAS/music-models     -H "Authorization: Bearer $TOKEN"   # 按次配乐模型(60 号票)
 curl $CANVAS/prompt-templates -H "Authorization: Bearer $TOKEN"   # 启用中的技能(带 description/target)
 curl $CANVAS/prompt-models    -H "Authorization: Bearer $TOKEN"   # token 轨聊天模型
 ```

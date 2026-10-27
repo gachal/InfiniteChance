@@ -105,6 +105,17 @@ type Adaptor interface {
 	// normalized to {"audio":{…}} with the vendor's temporary URL —
 	// synthesized 502 when it carries none.
 	SpeechSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
+	// MusicSubmit submits one async music generation (60 号票 配乐). payload
+	// is the gateway body {"model","prompt"} with the upstream model name
+	// already set. A 2xx answer carries {"task_id": "<vendor task id>"} —
+	// the handle every later poll goes through. 无取消面(MPS 取消接口未
+	// 查证),adaptor 族不提供 MusicCancel。
+	MusicSubmit(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
+	// MusicQuery polls one submitted music task. A 2xx body carries
+	// {"task_status": "<vendor raw status>", "audio_url": "…when
+	// succeeded…", "error": {"message": "…when failed…"}}; the relay merges
+	// task_status into the external five states (musictask.MergeStatus).
+	MusicQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error)
 	// Normalize converts a 2xx upstream chat-completion body into the
 	// client-facing body (model rewritten to the public name) and extracts
 	// the usage.
@@ -441,6 +452,17 @@ func (a *openAIAdaptor) VoicesDelete(ctx context.Context, ch channel.Channel, up
 
 func (a *openAIAdaptor) SpeechSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
 	return nil, errors.New("relay: openai adaptor does not relay speech synthesis")
+}
+
+// 配乐两方法(60 号票)只归 mps adaptor:vod/ark/minimax/dashscope 嵌入
+// 本类型同款继承这些桩;OpenAI 兼容上游暂无音乐端点,显式不支持 —— 调度
+// 已按 music 能力过滤,桩只作兜底(与音频四桩同款)。
+func (a *openAIAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay music tasks")
+}
+
+func (a *openAIAdaptor) MusicQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay music tasks")
 }
 
 // ChatCompletionsStream opens the streaming variant of the same upstream

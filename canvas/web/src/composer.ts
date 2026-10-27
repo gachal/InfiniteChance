@@ -429,16 +429,19 @@ export function mediaSyncPatch(
   return patch
 }
 
-/** 终态 tts 任务对音频节点数据的对账补丁(57 号票;评审 F2):asset_id
- * 回填(展示层按 id 拼内容寻址路径,音频节点不落 url)、台词 text 与
- * model 缺失补写(27 号票产物-元数据配对)、服务端计费字符数 chars
- * 回填(任务行 voice_spec 带出,只认已落的非零值)。节点已带的字段不
- * 覆盖;无可写内容返回 null(调用方据此不落盘)。 */
+/** 终态生成任务对音频节点数据的对账补丁(57 号票 tts;60 号票 music):
+ * asset_id 回填(展示层按 id 拼内容寻址路径,音频节点不落 url)、来源
+ * 判别 source 按 kind 落(tts/music)、元数据按来源配对 —— 台词 text 与
+ * chars(服务端计费字符数,任务行 voice_spec 带出)归 tts,风格描述
+ * prompt 归 music;model 两种生成来源都补写(27 号票产物-元数据配对)。
+ * 节点已带的字段不覆盖;无可写内容返回 null(调用方据此不落盘)。 */
 export interface AudioNodeSyncPatch {
   asset_id: number
+  source?: 'tts' | 'music'
   text?: string
   model?: string
   chars?: number
+  prompt?: string
 }
 
 export function audioSyncPatch(
@@ -448,20 +451,33 @@ export function audioSyncPatch(
   if (task.status !== 'succeeded' || task.asset_id <= 0) {
     return null
   }
-  const patch: AudioNodeSyncPatch = { asset_id: task.asset_id }
-  if ((data.text ?? '') === '' && task.prompt !== '') {
-    patch.text = task.prompt
+  const isMusic = task.kind === 'music'
+  const patch: AudioNodeSyncPatch = {
+    asset_id: task.asset_id,
+    source: isMusic ? 'music' : 'tts',
   }
   if ((data.model ?? '') === '' && task.model !== '') {
     patch.model = task.model
   }
-  if ((data.chars ?? 0) === 0 && (task.chars ?? 0) > 0) {
-    patch.chars = task.chars
+  if (isMusic) {
+    if ((data.prompt ?? '') === '' && task.prompt !== '') {
+      patch.prompt = task.prompt
+    }
+  } else {
+    if ((data.text ?? '') === '' && task.prompt !== '') {
+      patch.text = task.prompt
+    }
+    if ((data.chars ?? 0) === 0 && (task.chars ?? 0) > 0) {
+      patch.chars = task.chars
+    }
   }
   if (
     data.asset_id === task.asset_id &&
-    patch.text === undefined &&
+    patch.source !== undefined &&
+    (data.source ?? '') === patch.source &&
     patch.model === undefined &&
+    patch.text === undefined &&
+    patch.prompt === undefined &&
     patch.chars === undefined
   ) {
     return null

@@ -17,8 +17,9 @@ import (
 
 // Gateway is the worker's view of the relay surface: the synchronous image
 // calls — text-to-image (10 号票) and image-to-image (21 号票) — the async
-// video contract's three faces — submit, poll, cancel (12 号票) — and the
-// 音色闭环的四端点加合成模型目录 (57 号票,钉渠道不换道).
+// video contract's three faces — submit, poll, cancel (12 号票) — the
+// 音色闭环的四端点加合成模型目录 (57 号票,钉渠道不换道) and the 配乐异步
+// 两面加模型目录 (60 号票,常规调度换道、无取消面).
 // *Client satisfies it; tests substitute fakes.
 type Gateway interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error)
@@ -31,6 +32,9 @@ type Gateway interface {
 	DeleteVoice(ctx context.Context, channelID int64, voiceID, source string) error
 	SynthesizeSpeech(ctx context.Context, req SpeechRequest) (SpeechResult, error)
 	ListAudioModels(ctx context.Context) (AudioModelCatalog, error)
+	SubmitMusic(ctx context.Context, req MusicRequest) (MusicSubmitResult, error)
+	PollMusic(ctx context.Context, taskID string) (MusicPoll, error)
+	ListMusicModels(ctx context.Context) (MusicModelCatalog, error)
 }
 
 // ChannelLister is the slice of the channel store the worker needs to
@@ -80,6 +84,11 @@ type Worker struct {
 	// 续查不重复创建。
 	voicePollInterval time.Duration
 	voiceTaskTimeout  time.Duration
+	// 配乐任务的旋钮(60 号票):音乐生成普遍分钟级,轮询照视频 3s、
+	// 总时限 15min。无取消面 —— 超时后任务按失败收尾,worker 继续在后台
+	// 排空轮询,驱动网关侧计费时限收尾退款(见 runMusic)。
+	musicPollInterval time.Duration
+	musicTaskTimeout  time.Duration
 	logger            *log.Logger
 }
 
@@ -96,6 +105,8 @@ const (
 	defaultVideoTaskTimeout = 15 * time.Minute
 	defaultVoicePoll        = 2 * time.Second
 	defaultVoiceTaskTimeout = 2 * time.Minute
+	defaultMusicPoll        = 3 * time.Second
+	defaultMusicTaskTimeout = 15 * time.Minute
 )
 
 // NewWorker wires a worker with production defaults; the With… options
@@ -111,6 +122,8 @@ func NewWorker(store Store, gateway Gateway, opts ...WorkerOption) *Worker {
 		videoTaskTimeout:  defaultVideoTaskTimeout,
 		voicePollInterval: defaultVoicePoll,
 		voiceTaskTimeout:  defaultVoiceTaskTimeout,
+		musicPollInterval: defaultMusicPoll,
+		musicTaskTimeout:  defaultMusicTaskTimeout,
 		logger:            log.Default(),
 	}
 	for _, opt := range opts {
@@ -161,6 +174,18 @@ func WithVoicePollInterval(d time.Duration) WorkerOption {
 // to terminal state (57 号票:2min 上限,超时句柄保留)。
 func WithVoiceTaskTimeout(d time.Duration) WorkerOption {
 	return func(w *Worker) { w.voiceTaskTimeout = d }
+}
+
+// WithMusicPollInterval sets the cadence of the music task's gateway polls
+// (60 号票:3s,与视频同拍)。
+func WithMusicPollInterval(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.musicPollInterval = d }
+}
+
+// WithMusicTaskTimeout bounds one music task from submit to terminal state
+// (60 号票:15min 上限;超时先失败收尾,再后台排空驱动网关退款)。
+func WithMusicTaskTimeout(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.musicTaskTimeout = d }
 }
 
 // WithChannels lets the worker auto-pin a channel for voice-creation tasks
@@ -289,6 +314,9 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 		return
 	case KindTts:
 		w.runTts(parent, t)
+		return
+	case KindMusic:
+		w.runMusic(parent, t)
 		return
 	}
 
@@ -524,9 +552,10 @@ func (w *Worker) runVideo(parent context.Context, t Task) {
 	}
 }
 
-// voiceTaskSource 是音色闭环两支的 X-InfiniteChance-Source 值(图片/视频
-// 的 canvas=%d task=%s node=%s 同族,kind 进来源串供审计分辨)。
-func voiceTaskSource(t Task) string {
+// nodeTaskSource 是节点任务的 X-InfiniteChance-Source 值(图片/视频的
+// canvas=%d task=%s node=%s 同族,kind 进来源串供审计分辨;音色闭环两支
+// 与配乐共用)。
+func nodeTaskSource(t Task) string {
 	return fmt.Sprintf("canvas=%d task=%s node=%s kind=%s", t.CanvasID, t.ID, t.NodeID, t.Kind)
 }
 
@@ -576,7 +605,7 @@ func (w *Worker) runVoice(parent context.Context, t Task) {
 	bookkeeping := context.WithoutCancel(parent)
 
 	spec := t.VoiceSpec
-	source := voiceTaskSource(t)
+	source := nodeTaskSource(t)
 	if spec.TargetModel == "" || spec.Name == "" || spec.PreviewText == "" {
 		w.fail(bookkeeping, t.ID, "任务行缺少音色创建事实(target_model/name/preview_text)")
 		return
@@ -801,7 +830,7 @@ func (w *Worker) runTts(parent context.Context, t Task) {
 		Text:        t.Prompt,
 		Instruction: spec.Instruction,
 		ChannelID:   v.ChannelID,
-		Source:      voiceTaskSource(t),
+		Source:      nodeTaskSource(t),
 	})
 	if err != nil {
 		w.fail(bookkeeping, t.ID, err.Error())
@@ -853,4 +882,164 @@ func (w *Worker) archiveAudio(ctx context.Context, t Task, url, prompt string) (
 	a.SizeBytes = stored.SizeBytes
 	a.ContentHash = stored.ContentHash // 48 号票:转存链只落列不复用
 	return a, nil
+}
+
+// musicMaxConsecutivePollErrors 是配乐轮询的连续失败容忍:超过即按失败
+// 收尾(网关持续不可达时不能无限占用 worker 槽位)。3s 轮询下 20 次
+// ≈ 1 分钟,远宽于一次网络抖动。
+const musicMaxConsecutivePollErrors = 20
+
+// runMusic drives one 配乐 task through the gateway's async two-face
+// contract (60 号票): submit → persist the remote handle → poll until the
+// gateway reaches a terminal state. 无取消面 —— 超时语义分两层:网关侧
+// musicBillingDeadline(30min)是账务的最终裁决,active 超龄任务在任意
+// 一次轮询时按失败收尾退款;worker 侧 musicTaskTimeout(15min)只裁
+// 「轮询持续失败/网关不可达」,健康的任务即便过了 15min 也继续等网关的
+// 终态(音乐生成普遍分钟级,真跑满 15min 极罕见;由网关时限兜底收尾,
+// worker 的续期轮询驱动它)。行上重试/重启恢复带句柄时不再重复提交 ——
+// 旧句柄继续轮询(与音色句柄续查同哲学:提交即计费,重复提交是双倍
+// 账);句柄已终态失败才就地重新提交。
+func (w *Worker) runMusic(parent context.Context, t Task) {
+	ctx, cancel := context.WithTimeout(parent, w.musicTaskTimeout)
+	defer cancel()
+	bookkeeping := context.WithoutCancel(parent)
+
+	w.logger.Printf("canvastask: running %s (canvas %d, node %s, kind music, attempt %d)",
+		t.ID, t.CanvasID, t.NodeID, t.Attempts)
+	source := nodeTaskSource(t)
+
+	handle := t.RemoteTaskID
+	if handle != "" {
+		// 恢复/重试:先验旧句柄。成功 → 直接走收尾(崩溃前已交付);仍在
+		// 途或查询暂态失败 → 续查(waitMusic 的失败容忍兜底)—— 提交即
+		// 计费,查询没成功就重提是双倍账;只有查询成功且句柄已终态失败/
+		// 取消才重走全新提交(重试口径)。
+		poll, err := w.gateway.PollMusic(ctx, handle)
+		switch {
+		case err == nil && poll.Status == string(StatusSucceeded):
+			w.finishMusic(bookkeeping, t, poll)
+			return
+		case err == nil && Terminal(Status(poll.Status)):
+			// 终态失败/取消:句柄作废,重走全新提交(重试口径)。
+			w.logger.Printf("canvastask: stale music remote %s of %s terminal (%s), resubmitting",
+				handle, t.ID, poll.Status)
+		default:
+			w.waitMusic(ctx, bookkeeping, t, handle, source)
+			return
+		}
+	}
+
+	ref, err := w.gateway.SubmitMusic(ctx, MusicRequest{
+		Model:  t.Model,
+		Prompt: t.Prompt,
+		Source: source,
+	})
+	if err != nil {
+		w.fail(bookkeeping, t.ID, err.Error())
+		return
+	}
+
+	// 远端句柄落行,恢复与重试才找得到它。落行失败不拦轮询:句柄仍在
+	// 进程手里,丢进程的极端情形由重启恢复兜底;行已不在 running(提交
+	// 在途时被收尾)则放弃 —— 网关侧任务由计费时限收尾退款。
+	if _, ok, aerr := w.store.AttachRemote(bookkeeping, t.ID, ref.TaskID); aerr != nil {
+		w.logger.Printf("canvastask: attach remote %s to %s: %v", ref.TaskID, t.ID, aerr)
+	} else if !ok {
+		w.logger.Printf("canvastask: task %s left running before remote attach; gateway task %s will be closed at the billing deadline", t.ID, ref.TaskID)
+		return
+	}
+
+	w.waitMusic(ctx, bookkeeping, t, ref.TaskID, source)
+}
+
+// waitMusic is runMusic's poll loop: poll the gateway until a terminal
+// state, renewing once past the worker deadline for as long as the gateway
+// itself stays reachable (它的计费时限是终态的保证)。连续轮询失败超过
+// 容忍即就地失败(网关不可达时不能无限占用槽位);超时且最后一拍健康
+// 则续期一轮 —— 网关的计费时限(30min)必然在两轮时限内给出终态。
+func (w *Worker) waitMusic(ctx context.Context, bookkeeping context.Context, t Task, handle, source string) {
+	for phase := 0; ; phase++ {
+		if phase > 0 {
+			// 续期轮:上一轮 deadline 到点但网关仍健康可达 —— 新开一个
+			// 时限继续等它的终态(由网关计费时限兜底,不会无限续)。
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(bookkeeping, w.musicTaskTimeout)
+			defer cancel()
+			w.logger.Printf("canvastask: music %s (remote %s) still active past deadline; waiting for the gateway's terminal state", t.ID, handle)
+		}
+		consecutiveErrors := 0
+	watch:
+		for {
+			select {
+			case <-ctx.Done():
+				if consecutiveErrors > 0 {
+					w.fail(bookkeeping, t.ID,
+						fmt.Sprintf("网关轮询持续失败(连续 %d 次),已停止等待;网关侧预扣最迟由计费时限收尾退款", consecutiveErrors))
+					return
+				}
+				// 最后一拍健康:网关还在跑。外层 phase 循环续期一轮。
+				break watch
+			case <-time.After(w.musicPollInterval):
+			}
+
+			poll, err := w.gateway.PollMusic(ctx, handle)
+			if err != nil {
+				consecutiveErrors++
+				w.logger.Printf("canvastask: poll music %s (remote %s): %v", t.ID, handle, err)
+				if consecutiveErrors >= musicMaxConsecutivePollErrors {
+					w.fail(bookkeeping, t.ID,
+						fmt.Sprintf("网关轮询连续失败 %d 次: %v", consecutiveErrors, err))
+					return
+				}
+				continue
+			}
+			consecutiveErrors = 0
+
+			switch poll.Status {
+			case string(StatusQueued), string(StatusRunning):
+				continue
+			case string(StatusCanceled):
+				if _, _, ferr := w.store.FinalizeCanceled(bookkeeping, t.ID); ferr != nil {
+					w.logger.Printf("canvastask: finalize canceled %s: %v", t.ID, ferr)
+				}
+				return
+			case string(StatusSucceeded):
+				w.finishMusic(bookkeeping, t, poll)
+				return
+			default: // failed(网关已把未知态归并 failed)
+				reason := poll.Error
+				if reason == "" {
+					reason = "上游报告任务失败"
+				}
+				w.fail(bookkeeping, t.ID, reason)
+				return
+			}
+		}
+	}
+}
+
+// finishMusic archives the delivered artifact and closes the task through
+// the store's one-transaction finalizer. 排队晚到的成功(超时收尾后仍可能
+// 被续期轮询观察到)与竞态输家都只留日志 —— 素材行随终态同事务,行不在
+// running 就一起回滚,不落孤儿素材。
+func (w *Worker) finishMusic(ctx context.Context, t Task, poll MusicPoll) {
+	if poll.AudioURL == "" {
+		w.fail(ctx, t.ID, "网关报告任务成功但没有音频地址")
+		return
+	}
+	a, aerr := w.archiveAudio(ctx, t, poll.AudioURL, t.Prompt)
+	if aerr != nil {
+		w.fail(ctx, t.ID, aerr.Error())
+		return
+	}
+	finalized, won, err := w.store.FinalizeMusicSuccess(ctx, t.ID, *a)
+	if err != nil {
+		w.logger.Printf("canvastask: finalize music success %s: %v", t.ID, err)
+		return
+	}
+	if !won {
+		w.logger.Printf("canvastask: finalize music success %s lost the race (status now %s)", t.ID, finalized.Status)
+		return
+	}
+	w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)
 }

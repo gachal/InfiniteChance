@@ -272,8 +272,12 @@ const modelCatalogsLoaded = ref(false)
 // 音频目录(57 号票):字符轨合成模型(/audio-models,网关代理),音色
 // 创建表单的模型下拉与台词预估共用。enrollment(定制按次价)不在字符轨
 // 目录里,从 image-models 的按次轨投影取(voice-enrollment 配了价就在)。
+// 配乐目录(60 号票):按次配乐模型(/music-models),音频节点创作态表单
+// 下拉与预估共用。
 const audioModels = ref<string[]>([])
 const audioPrices = ref<Record<string, ModelPriceSummary>>({})
+const musicModels = ref<string[]>([])
+const musicPrices = ref<Record<string, ModelPriceSummary>>({})
 const enrollmentPrice = computed(() => imagePrices.value['voice-enrollment'])
 
 /** 拉取生图/视频模型目录:成功写名单与价格摘要,失败置失败位(对话框
@@ -310,6 +314,15 @@ function refreshModelCatalogs(): void {
     })
     .catch(() => {
       /* 目录失败静默保持旧值:创建表单下拉可能为空,重试随窗口聚焦 */
+    })
+  void client
+    .listMusicModels()
+    .then((catalog) => {
+      musicModels.value = catalog.models
+      musicPrices.value = catalog.prices
+    })
+    .catch(() => {
+      /* 目录失败静默保持旧值:创作态下拉可能为空,重试随窗口聚焦 */
     })
 }
 
@@ -1143,6 +1156,47 @@ async function submitVoiceTask(nodeId: string): Promise<void> {
   }
 }
 
+// 配乐节点创作态的提交路径(60 号票):kind=music 任务绑本节点(表单即
+// 在节点上,数据已随整图 JSON 持久化);照音色先例先 markChanged + flush
+// 再提交,防抖窗口里的表单编辑必须先落图。产物由 audioSyncPatch 按配乐
+// 对(account)回填(prompt/model/source),节点从表单态翻产物态。
+const musicSubmitting = ref(false)
+
+/** 配乐创作表单的事实变更(逐键上抛 → updateNodeData 浅合并落盘,
+ * 自动保存免费获得;与音色表单同一纪律)。 */
+function onMusicFormChange(nodeId: string, patch: Partial<AudioNodeData>): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
+async function submitMusicTask(nodeId: string): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as AudioNodeData | undefined
+  if (!node || !data || musicSubmitting.value) {
+    return
+  }
+  musicSubmitting.value = true
+  try {
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'music',
+      prompt: data.prompt ?? '',
+      model: data.model ?? '',
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '配乐任务提交失败,请稍后再试')
+  } finally {
+    musicSubmitting.value = false
+  }
+}
+
 // 克隆样本:本机上传 kind=audio 入素材库(服务端魔数裁决),成功回写
 // sample_asset_id;失败轻提示,节点侧表单保持可再选。
 const voiceUploading = ref(false)
@@ -1222,7 +1276,7 @@ async function onVoiceSpeech(nodeId: string, payload: { text: string; instructio
         id: audioId,
         type: 'audio',
         position: { x: node.position.x + 380, y: node.position.y },
-        data: { asset_id: 0, text: payload.text } satisfies AudioNodeData,
+        data: { asset_id: 0, source: 'tts', text: payload.text } satisfies AudioNodeData,
       },
     ])
     const added = findNode(audioId)
@@ -2470,7 +2524,8 @@ function insertAssetRef(kind: 'image' | 'video', assetId: number, contentUrl: st
 }
 
 /** 音频素材的插入落点(57 号票):音频节点持 asset_id,内容寻址路径由
- * 展示层按 id 拼装;24 号票「音频不落画布」随音频节点翻案。 */
+ * 展示层按 id 拼装;24 号票「音频不落画布」随音频节点翻案。60 号票起
+ * 落 source='insert'(来源判别:素材插入)。 */
 function insertAudioAsset(assetId: number): void {
   nodeSeq += 1
   addNodes([
@@ -2478,7 +2533,7 @@ function insertAudioAsset(assetId: number): void {
       id: `audio-${Date.now()}-${nodeSeq}`,
       type: 'audio',
       position: viewportCenterPosition(),
-      data: { asset_id: assetId } satisfies AudioNodeData,
+      data: { asset_id: assetId, source: 'insert' } satisfies AudioNodeData,
     },
   ])
 }
@@ -2955,8 +3010,13 @@ function backToList(): void {
             :data="nodeProps.data"
             :task="taskSync.byNode.get(nodeProps.id) ?? null"
             :retrying="retryingNode === nodeProps.id"
+            :music-models="musicModels"
+            :music-prices="musicPrices"
+            :music-submitting="musicSubmitting"
             :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
+            @form-change="onMusicFormChange(nodeProps.id, $event)"
+            @submit="submitMusicTask(nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>

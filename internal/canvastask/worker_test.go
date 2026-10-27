@@ -44,6 +44,12 @@ type stubGateway struct {
 	createVoiceFn    func(context.Context, canvastask.VoiceCreateRequest) (canvastask.VoiceCreateResult, error)
 	queryVoiceFn     func(call int) (string, error)
 	speechFn         func(context.Context, canvastask.SpeechRequest) (canvastask.SpeechResult, error)
+
+	// 配乐面(60 号票):submit/poll 各自脚本化。
+	musicSubmits  []canvastask.MusicRequest
+	musicPolls    int
+	musicSubmitFn func(context.Context, canvastask.MusicRequest) (canvastask.MusicSubmitResult, error)
+	musicPollFn   func(call int) (canvastask.MusicPoll, error)
 }
 
 func (g *stubGateway) CreateVoice(ctx context.Context, req canvastask.VoiceCreateRequest) (canvastask.VoiceCreateResult, error) {
@@ -87,6 +93,33 @@ func (g *stubGateway) SynthesizeSpeech(ctx context.Context, req canvastask.Speec
 
 func (g *stubGateway) ListAudioModels(_ context.Context) (canvastask.AudioModelCatalog, error) {
 	return canvastask.AudioModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
+}
+
+func (g *stubGateway) SubmitMusic(ctx context.Context, req canvastask.MusicRequest) (canvastask.MusicSubmitResult, error) {
+	g.mu.Lock()
+	g.musicSubmits = append(g.musicSubmits, req)
+	fn := g.musicSubmitFn
+	g.mu.Unlock()
+	if fn == nil {
+		return canvastask.MusicSubmitResult{}, errors.New("stub gateway: no music script")
+	}
+	return fn(ctx, req)
+}
+
+func (g *stubGateway) PollMusic(_ context.Context, _ string) (canvastask.MusicPoll, error) {
+	g.mu.Lock()
+	g.musicPolls++
+	call := g.musicPolls
+	fn := g.musicPollFn
+	g.mu.Unlock()
+	if fn == nil {
+		return canvastask.MusicPoll{}, errors.New("stub gateway: no music poll script")
+	}
+	return fn(call)
+}
+
+func (g *stubGateway) ListMusicModels(_ context.Context) (canvastask.MusicModelCatalog, error) {
+	return canvastask.MusicModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
 }
 
 func (g *stubGateway) GenerateImage(ctx context.Context, req canvastask.ImageRequest) (canvastask.ImageResult, error) {

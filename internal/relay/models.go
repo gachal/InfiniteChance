@@ -106,3 +106,44 @@ func (h *Handlers) AudioModels(c *gin.Context) {
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
 }
+
+// MusicModels answers GET /v1/audio/music-models (60 号票):启用渠道中带
+// music 能力的 model_map 并集,与按次轨配价(unit=call)取交集 —— 目录只
+// 列「能被某条 music 渠道服务且已按次配价」的配乐模型,价格随行走
+// PriceSummary(38 号票),画布的 /music-models 以服务级 key 代理本端点。
+// 不动 /v1/audio/models 的 character 过滤(TTS 下拉不混入音乐模型)。
+func (h *Handlers) MusicModels(c *gin.Context) {
+	channels, err := h.listChannels(c.Request.Context())
+	if err != nil {
+		h.failInternal(c, err)
+		return
+	}
+	capable := map[string]bool{}
+	for _, ch := range channels {
+		if !ch.Enabled || !ch.HasCapability(channel.CapMusic) {
+			continue
+		}
+		for public := range ch.ModelMap {
+			capable[public] = true
+		}
+	}
+	prices, err := h.Prices.List(c.Request.Context())
+	if err != nil {
+		h.failInternal(c, err)
+		return
+	}
+	models := make([]string, 0, len(prices))
+	summaries := make(map[string]pricing.PriceSummary, len(prices))
+	for _, p := range prices {
+		if p.Unit != pricing.UnitCall || p.Call == nil {
+			continue
+		}
+		if !capable[p.PublicModel] {
+			continue
+		}
+		models = append(models, p.PublicModel)
+		summaries[p.PublicModel] = p.Summary()
+	}
+	sort.Strings(models)
+	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
+}

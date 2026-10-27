@@ -55,6 +55,9 @@ func (t *Tester) Test(ctx context.Context, ch Channel) Result {
 	if ch.Type == TypeTencentVod {
 		return t.testTencentVod(ctx, ch)
 	}
+	if ch.Type == TypeTencentMps {
+		return t.testTencentMps(ctx, ch)
+	}
 	if ch.Type == TypeVolcengineArk {
 		return t.testVolcengineArk(ctx, ch)
 	}
@@ -188,6 +191,70 @@ func (t *Tester) testTencentVod(ctx context.Context, ch Channel) Result {
 	if strings.Contains(e.Code, "SubAppId") || strings.Contains(e.Message, "SubAppId") {
 		return Result{LatencyMS: latency, Error: fmt.Sprintf(
 			"SubAppId 不被接受(%s):%s", e.Code, truncateRunes(e.Message, maxErrorSnippet))}
+	}
+	// 任务不存在一类业务错:签名与凭据全部走通,连通即成功。
+	return Result{OK: true, LatencyMS: latency,
+		Detail: fmt.Sprintf("HTTP %d,凭据与网络正常(腾讯云应答 %s)", status, e.Code)}
+}
+
+// mpsDefaultEndpoint is where Tencent Cloud serves the MPS API when a
+// channel leaves BaseURL empty (mirror of the relay adaptor's default).
+const mpsDefaultEndpoint = "https://mps.tencentcloudapi.com"
+
+// testTencentMps probes one tencent-mps channel with a TC3-signed
+// DescribeAigcAudioTask for a task id that cannot exist(testTencentVod
+// 同款套路,60 号票):任务不存在的业务错证明网络、端点、签名与
+// SecretId/SecretKey 全链走通;AuthFailure(密钥错或时钟漂移)是可裁决
+// 失败。MPS 无 SubAppId 维度,凭据校验之外顺带确认 bucket/region 已填。
+func (t *Tester) testTencentMps(ctx context.Context, ch Channel) Result {
+	secretID := ch.Config["secret_id"]
+	secretKey := ch.Config["secret_key"]
+	if secretID == "" || secretKey == "" {
+		return Result{Error: "tencent-mps 渠道未配置 secret_id/secret_key,请先保存凭据再测试"}
+	}
+	if ch.Config["bucket"] == "" || ch.Config["region"] == "" {
+		return Result{Error: "tencent-mps 渠道未配置输出 COS 桶(bucket/region),请先补齐再测试"}
+	}
+	endpoint := ch.BaseURL
+	if endpoint == "" {
+		endpoint = mpsDefaultEndpoint
+	}
+	payload := []byte(`{"TaskId":"infinitechance-probe-not-a-task"}`)
+
+	client := t.Client
+	if client == nil {
+		client = probeClient
+	}
+	start := time.Now()
+	status, body, err := tc3.Call(ctx, client, endpoint, "DescribeAigcAudioTask",
+		"2019-06-12", "mps", secretID, secretKey, ch.Config["region"], payload)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return Result{LatencyMS: latency, Error: fmt.Sprintf("连接腾讯云失败:%v", err)}
+	}
+
+	var env struct {
+		Response struct {
+			Error *struct {
+				Code    string `json:"Code"`
+				Message string `json:"Message"`
+			} `json:"Error"`
+		} `json:"Response"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return Result{LatencyMS: latency,
+			Error: fmt.Sprintf("腾讯云应答不是 JSON(HTTP %d)", status)}
+	}
+	e := env.Response.Error
+	if e == nil {
+		// 理论上到不了:探测的 TaskId 必不存在。到了也算连通成功。
+		return Result{OK: true, LatencyMS: latency,
+			Detail: fmt.Sprintf("HTTP %d,凭据与网络正常", status)}
+	}
+	if strings.HasPrefix(e.Code, "AuthFailure") {
+		return Result{LatencyMS: latency, Error: fmt.Sprintf(
+			"凭据或签名失败(%s):%s(密钥错误,或本机时钟漂移超过 5 分钟)",
+			e.Code, truncateRunes(e.Message, maxErrorSnippet))}
 	}
 	// 任务不存在一类业务错:签名与凭据全部走通,连通即成功。
 	return Result{OK: true, LatencyMS: latency,

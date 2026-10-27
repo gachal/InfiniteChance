@@ -12,6 +12,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -47,6 +48,10 @@ func main() {
 		if err := videoTasks.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure video task schema: %v", err)
 		}
+		musicTasks := musictask.NewMySQLStore(d.DB)
+		if err := musicTasks.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure music task schema: %v", err)
+		}
 		promptTemplates := prompttemplate.NewMySQLStore(d.DB)
 		if err := promptTemplates.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure prompt template schema: %v", err)
@@ -78,6 +83,7 @@ func main() {
 			Prices:          prices,
 			UsageLogs:       usageLogs,
 			VideoTasks:      videoTasks,
+			MusicTasks:      musicTasks,
 			PromptTemplates: promptTemplates,
 			Settings:        settingsStore,
 			Assets:          assets,

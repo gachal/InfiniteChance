@@ -393,7 +393,7 @@ describe('mediaSyncPatch', () => {
   })
 })
 
-describe('audioSyncPatch(57 号票音频节点回填;评审 F2 chars)', () => {
+describe('audioSyncPatch(57 号票音频节点回填;60 号票 source 判别与配乐)', () => {
   it('returns null for non-succeeded tasks or tasks without an asset row', () => {
     const data = { asset_id: 0, text: '你好' }
     expect(audioSyncPatch(makeTask({ kind: 'tts', status: 'failed' }), data)).toBeNull()
@@ -401,11 +401,12 @@ describe('audioSyncPatch(57 号票音频节点回填;评审 F2 chars)', () => {
     expect(audioSyncPatch(makeTask({ kind: 'tts', asset_id: 0 }), data)).toBeNull()
   })
 
-  it('backfills asset_id, text and model onto a fresh audio node', () => {
+  it('backfills asset_id, source, text and model onto a fresh audio node', () => {
     const task = makeTask({ kind: 'tts', asset_id: 9, prompt: '你好,世界。', model: 'qwen-tts-plus', chars: 6 })
     // 提交时创建的节点只带 text(asset_id 占 0,model 未写)。
     expect(audioSyncPatch(task, { asset_id: 0, text: '你好,世界。' })).toEqual({
       asset_id: 9,
+      source: 'tts',
       model: 'qwen-tts-plus',
       chars: 6,
     })
@@ -416,6 +417,7 @@ describe('audioSyncPatch(57 号票音频节点回填;评审 F2 chars)', () => {
     // 旧任务行/未落 chars 的任务:不写 0 进节点,保住「未落值」语义。
     expect(audioSyncPatch(task, { asset_id: 0, text: '你好' })).toEqual({
       asset_id: 9,
+      source: 'tts',
       model: 'qwen-tts-plus',
     })
   })
@@ -423,7 +425,28 @@ describe('audioSyncPatch(57 号票音频节点回填;评审 F2 chars)', () => {
   it('never overwrites text/model/chars the node already carries', () => {
     const task = makeTask({ kind: 'tts', asset_id: 9, prompt: '新词', model: 'm-b', chars: 9 })
     const data = { asset_id: 9, text: '旧词', model: 'm-a', chars: 3 }
-    expect(audioSyncPatch(task, data)).toBeNull()
+    // 元数据一个不动;唯一的补丁内容是历史行的 source 判别回填。
+    expect(audioSyncPatch(task, data)).toEqual({ asset_id: 9, source: 'tts' })
+  })
+
+  it('writes the music pair (prompt/model) and the music source', () => {
+    const task = makeTask({ kind: 'music', asset_id: 12, prompt: '轻快的电子爵士', model: 'minimax-music', chars: 0 })
+    expect(audioSyncPatch(task, { asset_id: 0, prompt: '轻快的电子爵士' })).toEqual({
+      asset_id: 12,
+      source: 'music',
+      model: 'minimax-music',
+    })
+  })
+
+  it('does not touch the text pair on a music task', () => {
+    const task = makeTask({ kind: 'music', asset_id: 12, prompt: '描述', model: 'm-music' })
+    // 配乐任务的 prompt 不冒充台词;行内 chars 恒 0 也不落节点。
+    expect(audioSyncPatch(task, { asset_id: 0, text: '旧台词' })).toEqual({
+      asset_id: 12,
+      source: 'music',
+      model: 'm-music',
+      prompt: '描述',
+    })
   })
 })
 

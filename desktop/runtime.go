@@ -24,6 +24,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/health"
+	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -90,6 +91,8 @@ func NewDesktop() (*Desktop, error) {
 	prices := pricing.NewSQLiteStore(db)
 	usageLogs := usage.NewSQLiteStore(db)
 	videoTasks := videotask.NewSQLiteStore(db)
+	// 配乐异步任务(60 号票):与 videoTasks 平行的网关持久层。
+	musicTasks := musictask.NewSQLiteStore(db)
 	templates := prompttemplate.NewSQLiteStore(db)
 	settingsStore := settings.NewSQLiteStore(db)
 	canvases := canvas.NewSQLiteStore(db)
@@ -106,7 +109,7 @@ func NewDesktop() (*Desktop, error) {
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, templates, settingsStore, canvases, assets, ipStore, characters, voices, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, musicTasks, templates, settingsStore, canvases, assets, ipStore, characters, voices, tasks,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -171,6 +174,7 @@ func NewDesktop() (*Desktop, error) {
 			Prices:          prices,
 			UsageLogs:       usageLogs,
 			VideoTasks:      videoTasks,
+			MusicTasks:      musicTasks,
 			PromptTemplates: templates,
 			Settings:        settingsStore,
 			// relay_persist(23 号票):桌面 SQLite 资产行 + 同一 Dynamic,

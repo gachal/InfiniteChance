@@ -183,15 +183,20 @@ export interface VoiceNodeData {
   ledger_id?: number
 }
 
-/** 音频节点数据(57 号票,第十一种节点类型):台词合成产物或素材面板/
- * AssetPicker 插入的音频行。asset_id 是素材库引用(内容寻址路径由展示层
- * 按 id 拼装,素材被删落「素材不可用」占位);text/model/chars 是产物-
- * 元数据配对(27 号票先例,合成提交时写入;面板插入行没有)。 */
+/** 音频节点数据(57 号票,第十一种节点类型;60 号票增补来源判别):
+ * 台词合成产物、配乐产物或素材面板/AssetPicker 插入的音频行。asset_id
+ * 是素材库引用(内容寻址路径由展示层按 id 拼装,素材被删落「素材不可
+ * 用」占位)。source 是来源判别:tts = 台词合成、music = 配乐、insert =
+ * 素材插入(缺省 = 60 号票前的历史行,展示按 tts 同族处理)。随身元
+ * 数据按来源配对(27 号票产物-元数据配对家族):台词合成记 text/chars,
+ * 配乐记 prompt/model;model 在两种生成来源下都记(插入行没有)。 */
 export interface AudioNodeData {
   asset_id: number
+  source?: 'tts' | 'music' | 'insert'
   text?: string
-  model?: string
   chars?: number
+  prompt?: string
+  model?: string
 }
 
 export type CanvasNodeData =

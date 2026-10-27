@@ -49,6 +49,7 @@ const formError = ref('');
 interface ChannelForm {
   apiKey: string;
   baseUrl: string;
+  bucket: string;
   capabilities: string[];
   enabled: boolean;
   mappings: { from: string; to: string }[];
@@ -66,6 +67,7 @@ function blankForm(): ChannelForm {
   return {
     apiKey: '',
     baseUrl: '',
+    bucket: '',
     // 不勾任何项后端按仅聊天处理,表单缺省勾上 chat。
     capabilities: ['chat'],
     enabled: true,
@@ -82,6 +84,12 @@ function blankForm(): ChannelForm {
 }
 
 const isVod = computed(() => formState.type === 'tencent-vod');
+
+// tencent-mps(60 号票):腾讯云 MPS 媒资 AIGC 的配乐聚合面。凭据同款
+// SecretId/SecretKey(可与 VOD 共用同一对),config 另带输出 COS 桶
+// bucket 与 region(MPS 要求产物写进指定桶,桶地域同时充签名地域);
+// BaseURL 可空(缺省 mps.tencentcloudapi.com)。MVP 仅 music 能力。
+const isMps = computed(() => formState.type === 'tencent-mps');
 
 // volcengine-ark(25 号票):单 Bearer key 存「厂商密钥」字段,BaseURL 必填
 // 含版本路径;MVP 仅实现 videos 能力(表单上提示,不强制改勾选)。
@@ -106,6 +114,7 @@ const formTitle = computed(() => (editingId.value === null ? '新建渠道' : '�
 const typeOptions = [
   { label: 'OpenAI 兼容', value: 'openai' },
   { label: '腾讯云 VOD AIGC', value: 'tencent-vod' },
+  { label: '腾讯云 MPS(配乐生成)', value: 'tencent-mps' },
   { label: '火山方舟 Ark(Seedance)', value: 'volcengine-ark' },
   { label: 'MiniMax(H3 视频生成)', value: 'minimax' },
   { label: '阿里云百炼(DashScope 视频生成)', value: 'dashscope' },
@@ -150,6 +159,7 @@ function openEdit(ch: Channel): void {
   Object.assign(formState, {
     apiKey: '', // 留空 = 保留已存密钥
     baseUrl: ch.base_url,
+    bucket: ch.config?.bucket ?? '',
     capabilities: [...ch.capabilities],
     enabled: ch.enabled,
     mappings: mappings.length > 0 ? mappings : [{ from: '', to: '' }],
@@ -188,7 +198,7 @@ function buildInput(): Parameters<typeof auth.client.createChannel>[0] {
     name: formState.name.trim(),
     type: formState.type,
     base_url: formState.baseUrl.trim(),
-    api_key: isVod.value ? '' : formState.apiKey.trim(),
+    api_key: isVod.value || isMps.value ? '' : formState.apiKey.trim(),
     capabilities: formState.capabilities,
     model_map: modelMap,
     priority: formState.priority,
@@ -201,6 +211,15 @@ function buildInput(): Parameters<typeof auth.client.createChannel>[0] {
       secret_id: formState.secretId.trim(),
       secret_key: formState.secretKey.trim(),
       sub_app_id: formState.subAppId.trim(),
+      region: formState.region.trim(),
+    };
+  }
+  if (isMps.value) {
+    // 敏感键留空 = 后端保留已存值;bucket/region 非敏感键原值回传。
+    input.config = {
+      secret_id: formState.secretId.trim(),
+      secret_key: formState.secretKey.trim(),
+      bucket: formState.bucket.trim(),
       region: formState.region.trim(),
     };
   }
@@ -302,7 +321,7 @@ function modelMapSummary(ch: Channel): string {
 }
 
 function secretSummary(ch: Channel): string {
-  if (ch.type === 'tencent-vod') {
+  if (ch.type === 'tencent-vod' || ch.type === 'tencent-mps') {
     return ch.config_hints?.secret_id
       ? `已设置 ${Object.values(ch.config_hints).join(' / ')}`
       : '未设置';
@@ -352,7 +371,7 @@ function secretSummary(ch: Channel): string {
           <template v-else-if="column.key === 'base_url'">
             <Tooltip :title="record.base_url">
               <code class="block max-w-[240px] truncate text-xs">
-                {{ record.base_url || (record.type === 'tencent-vod' ? 'https://vod.tencentcloudapi.com(缺省)' : '-') }}
+                {{ record.base_url || (record.type === 'tencent-vod' ? 'https://vod.tencentcloudapi.com(缺省)' : record.type === 'tencent-mps' ? 'https://mps.tencentcloudapi.com(缺省)' : '-') }}
               </code>
             </Tooltip>
           </template>
@@ -473,19 +492,19 @@ function secretSummary(ch: Channel): string {
           </FormItem>
           <FormItem
             class="md:col-span-2"
-            :label="`BaseURL${isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : '(含版本路径)'}`"
+            :label="`BaseURL${isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : (isMps ? '(可空,缺省 mps.tencentcloudapi.com)' : '(含版本路径)')}`"
             name="baseUrl"
-            :rules="[{ required: !isVod, message: '请输入 BaseURL' }]"
+            :rules="[{ required: !isVod && !isMps, message: '请输入 BaseURL' }]"
           >
             <Input
               v-model:value="formState.baseUrl"
-              :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : 'https://api.openai.com/v1')"
+              :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isMps ? '留空 = https://mps.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : 'https://api.openai.com/v1'))"
             />
           </FormItem>
 
-          <!-- openai / ark:单 Bearer 密钥;vod:SecretId/SecretKey + 子应用/地域 -->
+          <!-- openai / ark:单 Bearer 密钥;vod/mps:SecretId/SecretKey(可共用),mps 另带输出桶 -->
           <FormItem
-            v-if="!isVod"
+            v-if="!isVod && !isMps"
             class="md:col-span-2"
             :label="`厂商密钥${editingId === null ? '' : '(留空保持现有密钥)'}`"
             name="apiKey"
@@ -497,6 +516,56 @@ function secretSummary(ch: Channel): string {
               placeholder="sk-…"
             />
           </FormItem>
+          <template v-else-if="isMps">
+            <FormItem
+              :label="`SecretId${editingId === null ? '' : '(留空保持现有)'}`"
+              name="secretId"
+              :rules="[{ required: editingId === null, message: '请输入 SecretId' }]"
+            >
+              <InputPassword
+                v-model:value="formState.secretId"
+                autocomplete="off"
+                placeholder="AKID…(可与 VOD 渠道共用同一对密钥)"
+              />
+            </FormItem>
+            <FormItem
+              :label="`SecretKey${editingId === null ? '' : '(留空保持现有)'}`"
+              name="secretKey"
+              :rules="[{ required: editingId === null, message: '请输入 SecretKey' }]"
+            >
+              <InputPassword
+                v-model:value="formState.secretKey"
+                autocomplete="off"
+                placeholder="腾讯云 API 密钥"
+              />
+            </FormItem>
+            <FormItem
+              label="输出 COS 桶(MPS 产物落桶)"
+              name="bucket"
+              :rules="[{ required: editingId === null, message: '请输入输出 COS 桶名' }]"
+            >
+              <Input
+                v-model:value="formState.bucket"
+                placeholder="音乐产物写入的桶名,需授权 MPS_QcsRole"
+              />
+            </FormItem>
+            <FormItem
+              label="桶地域"
+              name="region"
+              :rules="[{ required: editingId === null, message: '请输入桶地域' }]"
+            >
+              <Input
+                v-model:value="formState.region"
+                placeholder="ap-guangzhou(同时充 TC3 签名地域)"
+              />
+            </FormItem>
+            <p
+              v-if="editingId !== null && editingHints"
+              class="mb-2 md:col-span-2 text-neutral-500"
+            >
+              已存凭据:{{ editingHints }}
+            </p>
+          </template>
           <template v-else>
             <FormItem
               :label="`SecretId${editingId === null ? '' : '(留空保持现有)'}`"
@@ -602,6 +671,15 @@ function secretSummary(ch: Channel): string {
             (如 https://xxxx.cn-beijing.maas.aliyuncs.com,不含路径);密钥为
             百炼 API Key;勾选其他能力不会被转发。
           </p>
+          <p
+            v-else-if="isMps"
+            class="mb-2 mt-0 text-neutral-500"
+          >
+            tencent-mps 实现配乐生成(music,60 号票):CreateAigcAudioTask
+            聚合 MiniMaxMusic/Mureka/GL/EL 等音乐模型;模型映射的上游名填
+            「ModelName ModelVersion」(空格分隔,如 MiniMaxMusic 3.0、
+            Mureka instrumental_9.5);勾选其他能力不会被转发。
+          </p>
           <CheckboxGroup
             v-model:value="formState.capabilities"
             class="flex flex-wrap gap-5"
@@ -617,6 +695,9 @@ function secretSummary(ch: Channel): string {
             </Checkbox>
             <Checkbox value="audio">
               音频(audio)
+            </Checkbox>
+            <Checkbox value="music">
+              配乐(music)
             </Checkbox>
           </CheckboxGroup>
         </FormItem>

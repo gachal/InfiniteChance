@@ -12,6 +12,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/apikey"
 	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
@@ -33,10 +34,13 @@ type Handlers struct {
 	Prices   pricing.Store
 	Usage    usage.Store
 	Tasks    videotask.Store
-	Adaptor  Adaptor
-	Breaker  *channel.Breaker
-	Rand     *rand.Rand
-	CacheTTL time.Duration
+	// MusicTasks 是配乐异步任务(60 号票)的持久层:提交受理落行、轮询
+	// 推进五态并在终态结账,与 Tasks(视频)平行互不混用。
+	MusicTasks musictask.Store
+	Adaptor    Adaptor
+	Breaker    *channel.Breaker
+	Rand       *rand.Rand
+	CacheTTL   time.Duration
 	// Persist archives relay-delivered image URLs into the configured
 	// bucket and rewrites them to the durable public address (23 号票
 	// relay_persist)。nil = 未装配,行为与透传现状一致。
@@ -69,6 +73,10 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.DELETE("/audio/voices/:id", h.DeleteVoice)
 	group.POST("/audio/speech", h.CreateSpeech)
 	group.GET("/audio/models", h.AudioModels)
+	// 配乐异步任务(60 号票):两面契约照 /v1/videos,无取消面。
+	group.POST("/audio/music", h.CreateMusicGeneration)
+	group.GET("/audio/music/tasks/:id", h.GetMusicTask)
+	group.GET("/audio/music-models", h.MusicModels)
 }
 
 // maxRequestBody caps how much of a client request body the /v1 surface
@@ -124,12 +132,17 @@ var minimaxAdaptorInstance = newMiniMaxAdaptor()
 // same shape: stateless apart from the pooled transport.
 var dashscopeAdaptorInstance = newDashScopeAdaptor()
 
+// mpsAdaptorInstance is the shared tencent-mps seam (60 号票) — same shape:
+// stateless apart from the pooled transport.
+var mpsAdaptorInstance = newMPSAdaptor()
+
 // adaptorFor returns the vendor seam serving one channel's type (20 号票起
 // 渠道类型不再只有 openai):注入的 Adaptor 仍是测试/单缝覆盖的赢家;
 // 生产分发按类型 —— OpenAI 兼容上游共用 OpenAI adaptor,tencent-vod 走
 // TC3 签名的 VOD adaptor,volcengine-ark 走 Ark 任务面 adaptor,minimax 走
 // MiniMax 原生视频任务面 adaptor,dashscope 走阿里云百炼 DashScope 任务面
-// adaptor,新厂商类型在这里各加一行。
+// adaptor,tencent-mps 走 TC3 签名的 MPS 音乐 adaptor,新厂商类型在这里
+// 各加一行。
 func (h *Handlers) adaptorFor(ch channel.Channel) Adaptor {
 	if h.Adaptor != nil {
 		return h.Adaptor
@@ -145,6 +158,9 @@ func (h *Handlers) adaptorFor(ch channel.Channel) Adaptor {
 	}
 	if ch.Type == channel.TypeDashScope {
 		return dashscopeAdaptorInstance
+	}
+	if ch.Type == channel.TypeTencentMps {
+		return mpsAdaptorInstance
 	}
 	return NewOpenAIAdaptor()
 }

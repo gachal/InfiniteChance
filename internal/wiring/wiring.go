@@ -19,6 +19,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/config"
+	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
@@ -32,12 +33,15 @@ import (
 
 // GatewayStores carries the wired gateway stores.
 type GatewayStores struct {
-	Auth            auth.Store
-	Channels        channel.Store
-	Keys            apikey.Store
-	Prices          pricing.Store
-	UsageLogs       usage.Store
-	VideoTasks      videotask.Store
+	Auth       auth.Store
+	Channels   channel.Store
+	Keys       apikey.Store
+	Prices     pricing.Store
+	UsageLogs  usage.Store
+	VideoTasks videotask.Store
+	// MusicTasks 承载配乐异步任务(60 号票):/v1/audio/music 两面的
+	// 持久层,与 VideoTasks 平行互不混用。
+	MusicTasks      musictask.Store
 	PromptTemplates prompttemplate.Store
 	// Settings backs the admin storage-config CRUD (19 号票);canvas/server
 	// reads the same table.
@@ -89,13 +93,14 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 		persist = &relay.ImagePersist{Cloud: s.Storage, Assets: s.Assets}
 	}
 	relay.RegisterRoutes(v1, &relay.Handlers{
-		Channels: s.Channels,
-		Keys:     s.Keys,
-		Prices:   s.Prices,
-		Usage:    s.UsageLogs,
-		Tasks:    s.VideoTasks,
-		CacheTTL: relay.DefaultCacheTTL,
-		Persist:  persist,
+		Channels:   s.Channels,
+		Keys:       s.Keys,
+		Prices:     s.Prices,
+		Usage:      s.UsageLogs,
+		Tasks:      s.VideoTasks,
+		MusicTasks: s.MusicTasks,
+		CacheTTL:   relay.DefaultCacheTTL,
+		Persist:    persist,
 	})
 }
 
@@ -202,6 +207,10 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	canvastask.RegisterVideoModelRoutes(r.Group("/video-models", auth.RequireAuth(issuer)),
 		&canvastask.ModelHandlers{Prices: s.Prices})
 	canvastask.RegisterAudioModelRoutes(r.Group("/audio-models", auth.RequireAuth(issuer)),
+		&canvastask.Handlers{Gateway: gateway, Voices: s.Voices})
+	// /music-models 以服务级 key 代理网关 /v1/audio/music-models(60 号票
+	// —— music 能力过滤维度在渠道表,归网关管)。
+	canvastask.RegisterMusicModelRoutes(r.Group("/music-models", auth.RequireAuth(issuer)),
 		&canvastask.Handlers{Gateway: gateway, Voices: s.Voices})
 	promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
 		&promptgen.CatalogHandlers{Templates: s.Templates})

@@ -420,7 +420,7 @@ export interface CanvasVideoRef {
  * size 为分辨率档位串(480p/720p/1080p),ratio 为显式宽高比。 */
 export interface CreateCanvasTaskInput {
   node_id: string
-  kind: 'image' | 'video' | 'voice' | 'tts'
+  kind: 'image' | 'video' | 'voice' | 'tts' | 'music'
   prompt: string
   model: string
   size?: string
@@ -437,6 +437,8 @@ export interface CreateCanvasTaskInput {
   /** kind=tts 的合成入参:voice_ledger_id 指向 voices 台账行,text 是
    * 台词(≤600,原文计费),instruction 可选演绎指令(≤500)。 */
   tts?: CreateTtsTaskSpec
+  // kind=music(60 号票配乐)无专属表单:prompt 是风格描述(1–2000 字,
+  // 对齐 MPS 上限),model 是 /music-models 目录的公开模型名,按次计价。
 }
 
 /** 音色创建任务的表单(57 号票)。 */
@@ -1172,6 +1174,16 @@ export class ApiClient {
   async listAudioModels(): Promise<ModelCatalog> {
     const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
       '/audio-models',
+    )
+    return { models: body.models, prices: body.prices ?? {} }
+  }
+
+  /** 可用于配乐生成的公开模型(60 号票):music 能力渠道可服务且按次轨
+   * 配价,名字排序;价格摘要随行(call 轨的 cny_per_call,一任务一首),
+   * 供配乐表单选型与发送前预估。 */
+  async listMusicModels(): Promise<ModelCatalog> {
+    const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
+      '/music-models',
     )
     return { models: body.models, prices: body.prices ?? {} }
   }

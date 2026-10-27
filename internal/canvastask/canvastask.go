@@ -56,12 +56,16 @@ func Terminal(s Status) bool {
 
 // Task kinds. 10 号票落了文生图;12 号票的图生视频沿用同一张表与状态机;
 // 57 号票的音色闭环追加 voice(音色创建)与 tts(台词合成)—— 同步秒级
-// 到分钟级的短任务,无 canceled 态(不可撤销,取消语义只属于视频)。
+// 到分钟级的短任务,无 canceled 态(不可撤销,取消语义只属于视频);
+// 60 号票追加 music(配乐)—— 走网关的异步两面(MPS 上游,分钟级),
+// 产物是 kind=audio 素材行,同样无取消面(网关不做取消端点,前端不出
+// 取消按钮)。
 const (
 	KindImage = "image"
 	KindVideo = "video"
 	KindVoice = "voice"
 	KindTts   = "tts"
+	KindMusic = "music"
 )
 
 // 视频参考的角色集(24 号票,对齐即梦「全能参考」):首帧/尾帧/参考图是
@@ -324,6 +328,10 @@ type Store interface {
 	// 网关的服务端计费字符数,随终态并入 voice_spec(评审 F2:任务列表
 	// 带出,编辑器回填音频节点元数据)。
 	FinalizeTtsSuccess(ctx context.Context, id string, a asset.Asset, chars int64) (Task, bool, error)
+	// FinalizeMusicSuccess is the music twin of FinalizeTtsSuccess (60 号
+	// 票):kind=audio 素材行与任务终态同事务,voice_spec 一列不动(配乐
+	// 的事实都在任务行的 prompt/model 列,前端按 source 判别回填)。
+	FinalizeMusicSuccess(ctx context.Context, id string, a asset.Asset) (Task, bool, error)
 	// ResetForRetry returns one failed task of the given canvas to the queue,
 	// clearing the failure fields; ErrNotRetryable when the row exists but is
 	// not failed, ErrNotFound when there is no row.

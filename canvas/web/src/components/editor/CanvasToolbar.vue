@@ -19,8 +19,14 @@ const emit = defineEmits<{
 }>()
 
 // 53 号票:添加按钮分「创作/规划」两组(组间分隔线纯展示分组)。
-const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character', 'voice']
+// 60 号票:audio 以「配乐」入创作组(唯一的工具栏锚点,落创作态空音频
+// 节点;台词合成产物与面板插入仍不在此列)。
+const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character', 'voice', 'audio']
 const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level']
+
+/** 添加按钮的文案:audio 的工具栏语义是「配乐」(NODE_TYPE_LABEL 的
+ * 「音频」是节点卡头的中性称谓,两者不混用)。 */
+const ADD_LABELS: Partial<Record<CanvasNodeType, string>> = { audio: '配乐' }
 
 const uploadInput = ref<HTMLInputElement | null>(null)
 </script>
@@ -37,7 +43,7 @@ const uploadInput = ref<HTMLInputElement | null>(null)
         type="button"
         @click="emit('add', t)"
       >
-        + {{ NODE_TYPE_LABEL[t] }}
+        + {{ ADD_LABELS[t] ?? NODE_TYPE_LABEL[t] }}
       </button>
       <span
         class="group-sep"
@@ -187,11 +193,16 @@ const uploadInput = ref<HTMLInputElement | null>(null)
   color: var(--teal);
 }
 
-/* 57 号票:音色入「创作」组,水绿与节点描边/小地图同源(audio 不进组,
-   只作台词合成产物与面板插入出现)。 */
+/* 57 号票:音色入「创作」组,水绿与节点描边/小地图同源。 */
 .add-voice {
   background: rgba(var(--teal-light-rgb), 0.14);
   color: var(--teal-light);
+}
+
+/* 60 号票:配乐(audio 节点)入「创作」组,紫与节点描边同源。 */
+.add-audio {
+  background: rgba(var(--violet-rgb), 0.14);
+  color: var(--violet);
 }
 
 /* 53 号票:絵コンテ入「规划」组,橙色与节点描边/小地图同源。 */

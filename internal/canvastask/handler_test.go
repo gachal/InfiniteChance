@@ -113,6 +113,14 @@ func (f *fakeTasks) FinalizeVideoSuccess(_ context.Context, id string, _ asset.A
 	return t, t.Status == canvastask.StatusRunning, nil
 }
 
+func (f *fakeTasks) FinalizeMusicSuccess(_ context.Context, id string, _ asset.Asset) (canvastask.Task, bool, error) {
+	t, err := f.Get(context.Background(), id)
+	if err != nil {
+		return canvastask.Task{}, false, err
+	}
+	return t, t.Status == canvastask.StatusRunning, nil
+}
+
 func (f *fakeTasks) FinalizeCanceled(_ context.Context, id string) (canvastask.Task, bool, error) {
 	t, err := f.Get(context.Background(), id)
 	if err != nil {
@@ -225,6 +233,10 @@ func (fakePrices) ByModel(_ context.Context, model string) (pricing.Price, error
 	case "img-m":
 		return pricing.Price{PublicModel: model, Unit: pricing.UnitCall,
 			Call: &pricing.CallPrice{CNYPerCallMicros: 40_000}}, nil
+	case "bgm-m":
+		// 60 号票:配乐按次轨(一任务一首)。
+		return pricing.Price{PublicModel: model, Unit: pricing.UnitCall,
+			Call: &pricing.CallPrice{CNYPerCallMicros: 200_000}}, nil
 	case "vid-m":
 		return pricing.Price{PublicModel: model, Unit: pricing.UnitSecond,
 			Call: &pricing.CallPrice{CNYPerCallMicros: 5_000}}, nil
@@ -355,6 +367,18 @@ func (g *okGateway) ListAudioModels(context.Context) (canvastask.AudioModelCatal
 	return canvastask.AudioModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
 }
 
+func (g *okGateway) SubmitMusic(context.Context, canvastask.MusicRequest) (canvastask.MusicSubmitResult, error) {
+	return canvastask.MusicSubmitResult{TaskID: "mt_handler_ok"}, nil
+}
+
+func (g *okGateway) PollMusic(context.Context, string) (canvastask.MusicPoll, error) {
+	return canvastask.MusicPoll{Status: "running"}, nil
+}
+
+func (g *okGateway) ListMusicModels(context.Context) (canvastask.MusicModelCatalog, error) {
+	return canvastask.MusicModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
+}
+
 func TestHandlerCreateTaskQueuesWork(t *testing.T) {
 	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
 
@@ -421,6 +445,54 @@ func TestHandlerCreateTaskValidations(t *testing.T) {
 	w := env.do(t, http.MethodPost, "/canvases/7/tasks", `{"node_id":"n","prompt":"p","model":"nope"}`)
 	if !strings.Contains(w.Body.String(), "model_not_priced") {
 		t.Errorf("body = %s, want the model_not_priced code", w.Body.String())
+	}
+}
+
+// 60 号票配乐提交:kind=music 落 queued 任务(prompt/model 进任务行,
+// 产物素材与元数据回填由 worker/前端对账);按次轨预检 —— 未配价与轨道
+// 错位的提交当场 400,不让注定失败的任务进队列。
+func TestHandlerCreateMusicTask(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+
+	w := env.postTask(t, `{"node_id":"audio-1","kind":"music","prompt":"轻快的电子爵士","model":"bgm-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID     string `json:"id"`
+			Kind   string `json:"kind"`
+			Status string `json:"status"`
+			Prompt string `json:"prompt"`
+			Model  string `json:"model"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	task := resp.Task
+	if !strings.HasPrefix(task.ID, "ct_") || task.Kind != "music" || task.Status != "queued" ||
+		task.Prompt != "轻快的电子爵士" || task.Model != "bgm-m" {
+		t.Fatalf("task = %+v, want a queued music task with the form facts", task)
+	}
+	if _, ok := env.tasks.tasks[task.ID]; !ok {
+		t.Errorf("task %s not stored", task.ID)
+	}
+
+	cases := []struct {
+		name string
+		code int
+		body string
+	}{
+		{"未配价", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"p","model":"nope"}`},
+		{"轨道错位", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"p","model":"vid-m"}`},
+		{"空描述", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"   ","model":"bgm-m"}`},
+		{"超长描述", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"` + strings.Repeat("雨", 2001) + `","model":"bgm-m"}`},
+	}
+	for _, tc := range cases {
+		if w := env.postTask(t, tc.body); w.Code != tc.code {
+			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
+		}
 	}
 }
 

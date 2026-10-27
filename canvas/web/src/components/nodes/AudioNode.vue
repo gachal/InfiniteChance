@@ -1,17 +1,22 @@
 <script setup lang="ts">
-// 音频节点(57 号票,第十一种节点类型):台词合成产物与素材面板/
-// AssetPicker 音频行的插入载体。卡面 = 内联 <audio controls> + 台词摘录
-// (27 号票产物-元数据配对);素材行被删落「素材不可用」占位(照
-// ImageNode 两阶段回落 —— <audio> @error 即落占位,音频没有缩略阶段)。
-// 只渲染左把手(voice → audio 合成来源边的目标端),不进生成对话框、
-// 无灯箱入口。
+// 音频节点(57 号票,第十一种节点类型;60 号票增补配乐创作态):三种
+// 形态 ——
+// · 创作态(工具栏「配乐」落的空节点):内联表单(模型下拉 + 风格描述
+//   + 按次预估价 + 提交),与音色节点同款范式,不进生成对话框;提交 =
+//   kind=music 的 canvas_task 绑本节点,表单事实随整图 JSON 持久化。
+// · 在途/失败:状态徽章(排队/生成中)+ 失败原因 + 原地重试。
+// · 产物:内联 <audio controls> + 元数据区(27 号票产物-元数据配对,
+//   台词摘录或配乐风格描述按 source 判别)。素材面板/生成记录插入行
+//   (无任务)与台词合成产物走同款产物卡面。
+// 只渲染左把手(voice → audio 合成来源边;配乐不作任何边的源),无灯箱。
 import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
-import type { CanvasTask } from '@infinitechance/api'
+import type { CanvasTask, ModelPriceSummary } from '@infinitechance/api'
 
 import type { AudioNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import { estimateMusicCNY, fmtCNY, MAX_MUSIC_PROMPT_RUNES, validateMusicForm } from '../../music'
 import { assetContentURL } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
 import MediaPrompt from './MediaPrompt.vue'
@@ -20,27 +25,44 @@ const props = defineProps<{
   id: string
   type: string
   data: AudioNodeData
-  /** 绑定到本节点的生成任务(编辑器轮询保持最新;null = 面板插入行)。 */
+  /** 绑定到本节点的生成任务(编辑器轮询保持最新;null = 面板插入行/
+   * 未提交的创作态节点)。 */
   task?: CanvasTask | null
   /** 重试请求在途时禁用重试按钮。 */
   retrying: boolean
+  /** /music-models 目录:按次配乐模型与价格(创作态表单下拉 + 预估)。 */
+  musicModels: string[]
+  musicPrices: Record<string, ModelPriceSummary>
+  /** 配乐提交请求在途(编辑器级,禁提交按钮)。 */
+  musicSubmitting?: boolean
   /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
   connectState?: ConnectState
 }>()
 
 const emit = defineEmits<{
   retry: []
+  /** 创作态表单事实变更(逐键上抛,编辑器 updateNodeData 浅合并落盘)。 */
+  'form-change': [patch: Partial<AudioNodeData>]
+  /** 创作态提交(以当前 data 为准;校验在节点侧,提示本地展示)。 */
+  submit: []
   /** 左 + 接上游(voice → audio 合成来源)。 */
   'connect-start': [side: ConnectSide]
 }>()
 
 const status = computed(() => props.task?.status)
+// 创作态 = 没有产物、没有任务,工具栏「配乐」落下的空节点。
+const creating = computed(
+  () => !(props.data.asset_id > 0) && !status.value,
+)
 
-/** 台词摘录(卡面一行,完整台词进 MediaPrompt 配对区)。 */
+/** 元数据摘录(卡面一行):配乐显风格描述,台词显摘录,完整内容进
+ * MediaPrompt 配对区。 */
+const metaLine = computed(() => props.data.source === 'music' ? (props.data.prompt ?? '') : (props.data.text ?? ''))
 const excerpt = computed(() => {
-  const text = props.data.text ?? ''
+  const text = metaLine.value
   return text.length > 42 ? `${text.slice(0, 42)}…` : text
 })
+const excerptTitle = computed(() => props.data.source === 'music' ? props.data.prompt : props.data.text)
 
 // 内容寻址地址按素材 id 拼装;asset_id 变化(重新生成/换插)即复位重试。
 const src = computed(() => (props.data.asset_id > 0 ? assetContentURL(props.data.asset_id) : ''))
@@ -55,6 +77,38 @@ watch(
 function onAudioError(): void {
   loadFailed.value = true
 }
+
+// ---- 创作态表单(受控:所有编辑 emit form-change)----
+
+const formError = ref('')
+const promptRunes = computed(() => [...(props.data.prompt ?? '').trim()].length)
+
+const selectedModelPrice = computed(() => {
+  const m = props.data.model
+  return m ? props.musicPrices[m] : undefined
+})
+
+const createEstimate = computed(() => {
+  const cny = estimateMusicCNY(selectedModelPrice.value)
+  if (cny !== null) {
+    return `一次 ${fmtCNY(cny)}(整曲)`
+  }
+  return '按次计费,以管理端配价为准'
+})
+
+const canSubmit = computed(
+  () => validateMusicForm({ prompt: props.data.prompt ?? '', model: props.data.model ?? '' }) === null,
+)
+
+function submitForm(): void {
+  const invalid = validateMusicForm({ prompt: props.data.prompt ?? '', model: props.data.model ?? '' })
+  if (invalid) {
+    formError.value = invalid
+    return
+  }
+  formError.value = ''
+  emit('submit')
+}
 </script>
 
 <template>
@@ -64,11 +118,73 @@ function onAudioError(): void {
     :data-task="status ?? 'none'"
   >
     <header>音频</header>
+
+    <!-- 创作态内联表单(60 号票:配乐的唯一生成入口,工具栏「配乐」落下)。 -->
+    <template v-if="creating">
+      <textarea
+        class="field"
+        rows="3"
+        :value="data.prompt"
+        :maxlength="MAX_MUSIC_PROMPT_RUNES"
+        placeholder="风格描述:情绪、节奏、乐器、场景……(≤2000 字)"
+        aria-label="配乐风格描述"
+        @input="emit('form-change', { prompt: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div class="rune-count">
+        {{ promptRunes }}/{{ MAX_MUSIC_PROMPT_RUNES }}
+      </div>
+      <select
+        class="field"
+        :value="data.model ?? ''"
+        aria-label="配乐模型"
+        @change="emit('form-change', { model: ($event.target as HTMLSelectElement).value })"
+      >
+        <option
+          value=""
+          disabled
+        >
+          选择配乐模型
+        </option>
+        <option
+          v-for="m in musicModels"
+          :key="m"
+          :value="m"
+        >
+          {{ m }}<template v-if="musicPrices[m]?.cny_per_call != null">
+            · {{ fmtCNY(musicPrices[m].cny_per_call!) }}/次
+          </template>
+        </option>
+      </select>
+      <p
+        v-if="formError"
+        class="form-error"
+        role="alert"
+      >
+        {{ formError }}
+      </p>
+      <div class="form-foot">
+        <span
+          class="estimate"
+          :title="selectedModelPrice ? undefined : '模型目录未带价,以管理端配价为准'"
+        >
+          {{ createEstimate }}
+        </span>
+        <button
+          class="action primary"
+          type="button"
+          :disabled="!canSubmit || musicSubmitting"
+          @click="submitForm"
+        >
+          {{ musicSubmitting ? '提交中…' : '生成配乐' }}
+        </button>
+      </div>
+    </template>
+
     <div
-      v-if="status === 'queued' || status === 'running'"
+      v-else-if="status === 'queued' || status === 'running'"
       class="placeholder working"
     >
-      <span class="pill">{{ status === 'queued' ? '排队中…' : '合成中…' }}</span>
+      <span class="pill">{{ status === 'queued' ? '排队中…' : '生成中…' }}</span>
       <small>任务在服务端进行,关闭页面不丢失</small>
     </div>
     <div
@@ -77,7 +193,7 @@ function onAudioError(): void {
       role="alert"
     >
       <p class="error">
-        {{ task?.error || '合成失败' }}
+        {{ task?.error || '生成失败' }}
       </p>
       <button
         class="retry"
@@ -98,13 +214,13 @@ function onAudioError(): void {
       <p
         v-if="excerpt"
         class="excerpt"
-        :title="data.text"
+        :title="excerptTitle"
       >
         {{ excerpt }}
       </p>
       <MediaPrompt
         v-if="data.model"
-        :prompt="data.text ?? ''"
+        :prompt="data.source === 'music' ? data.prompt ?? '' : data.text ?? ''"
         :model="data.model"
       />
     </template>
@@ -120,7 +236,7 @@ function onAudioError(): void {
       class="placeholder"
     >
       <span>音频占位</span>
-      <small>台词合成结果将出现在这里</small>
+      <small>台词合成或配乐结果将出现在这里</small>
     </div>
 
     <!-- 57 号票:audio 只作为连线目标,只渲染左 +。 -->
@@ -143,19 +259,91 @@ function onAudioError(): void {
   border-radius: var(--r-xl);
   padding: 10px 12px;
   font-size: var(--fs-body);
+  display: grid;
+  gap: 8px;
 }
 
 header {
   font-size: var(--fs-label);
   font-weight: 600;
   color: var(--violet);
-  margin-bottom: 8px;
 }
 
 audio {
   width: 100%;
   height: 36px;
   display: block;
+}
+
+.field {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
+  padding: 7px 9px;
+  color: inherit;
+  font-size: var(--fs-body);
+  font-family: inherit;
+  resize: vertical;
+}
+
+.field:focus {
+  outline: none;
+  border-color: rgba(var(--violet-rgb), 0.6);
+}
+
+.field::placeholder {
+  color: var(--text-faint);
+}
+
+select.field option {
+  background: rgba(var(--surface-card-rgb), 1);
+}
+
+.rune-count {
+  margin-top: -4px;
+  text-align: right;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.estimate {
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+}
+
+.action {
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--wash-fill);
+  color: var(--estimate-ink);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: var(--fs-label);
+}
+
+.action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.action.primary {
+  background: rgba(var(--violet-rgb), 0.18);
+  color: var(--violet);
+}
+
+.form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-label);
 }
 
 .excerpt {

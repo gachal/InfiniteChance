@@ -57,6 +57,14 @@ const TypeMiniMax = "minimax"
 // the X-DashScope-Async header and there is no public cancel API.
 const TypeDashScope = "dashscope"
 
+// TypeTencentMps marks Tencent Cloud MPS (媒资 AIGC,60 号票):TC3-signed
+// async music tasks on mps.tencentcloudapi.com (CreateAigcAudioTask 提交 →
+// DescribeAigcAudioTask 轮询). Its secrets are a SecretId/SecretKey pair on
+// the channel's config map (与 tencent-vod 同款,APIKey 字段留空,可与
+// tencent-vod 共用同一对密钥);MPS 要求任务产物写进调用方指定的 COS 桶,
+// config 另带 bucket 与 region(bucket 所属地域,同时充当 TC3 签名地域)。
+const TypeTencentMps = "tencent-mps"
+
 // Capability marks what a channel may relay. Scheduling only ever selects a
 // channel whose capabilities cover the request kind, so a chat-only vendor
 // never receives a mapped image model by accident (07 号票).
@@ -67,13 +75,14 @@ const (
 	CapImages Capability = "images"
 	CapVideos Capability = "videos" // 异步视频任务(08 号票)
 	CapAudio  Capability = "audio"  // 音色定制与台词合成(56 号票)
+	CapMusic  Capability = "music"  // 配乐生成(60 号票,第五种能力:显式开启互不串道)
 )
 
 // SupportedCapabilities lists what a channel may declare.
-var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio}
+var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio, CapMusic}
 
 // SupportedTypes lists the channel types this build can relay and probe.
-var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope}
+var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope, TypeTencentMps}
 
 // SupportedType reports whether t is a channel type this build understands.
 func SupportedType(t string) bool {
@@ -118,9 +127,10 @@ func (ch Channel) HasCapability(c Capability) bool {
 }
 
 // Input is the admin-supplied configuration. APIKey empty on update means
-// "keep the stored secret"; on create it is required (tencent-vod excepted:
-// its secrets live in Config). Config's secret-key entries follow the same
-// empty-means-keep rule, enforced by the handler reading the stored row.
+// "keep the stored secret"; on create it is required (tencent-vod 与
+// tencent-mps excepted: 其凭据以 SecretId/SecretKey 形态 live in Config).
+// Config's secret-key entries follow the same empty-means-keep rule,
+// enforced by the handler reading the stored row.
 type Input struct {
 	Name         string
 	Type         string
@@ -173,9 +183,9 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 		return in, fmt.Errorf("不支持的渠道类型:%s", in.Type)
 	}
 
-	// BaseURL:openai 兼容上游必须显式给(含版本路径);tencent-vod 可空,
-	// 空 = adaptor 用厂商缺省域名(国际站/代理才需要填)。
-	if in.BaseURL != "" || in.Type != TypeTencentVod {
+	// BaseURL:openai 兼容上游必须显式给(含版本路径);tencent-vod 与
+	// tencent-mps 可空,空 = adaptor 用厂商缺省域名(国际站/代理才需要填)。
+	if in.BaseURL != "" || (in.Type != TypeTencentVod && in.Type != TypeTencentMps) {
 		parsed, err := url.Parse(in.BaseURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return in, fmt.Errorf("BaseURL 必须是 http(s) 地址,例如 https://api.openai.com/v1")
@@ -186,7 +196,7 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 	}
 	in.BaseURL = strings.TrimRight(in.BaseURL, "/")
 
-	if requireKey && in.APIKey == "" && in.Type != TypeTencentVod {
+	if requireKey && in.APIKey == "" && in.Type != TypeTencentVod && in.Type != TypeTencentMps {
 		return in, fmt.Errorf("渠道密钥不能为空")
 	}
 	if in.APIKey != "" && utf8.RuneCountInString(in.APIKey) > maxAPIKeyRunes {
@@ -221,6 +231,16 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 	if requireKey && in.Type == TypeTencentVod {
 		if cfg["secret_id"] == "" || cfg["secret_key"] == "" {
 			return in, fmt.Errorf("tencent-vod 渠道需在配置中提供 secret_id 与 secret_key")
+		}
+	}
+	// tencent-mps(60 号票):凭据同款在 config,另要求输出 COS 桶与地域 ——
+	// MPS 把任务产物写进调用方指定的桶,桶地域同时充当 TC3 签名地域。
+	if requireKey && in.Type == TypeTencentMps {
+		if cfg["secret_id"] == "" || cfg["secret_key"] == "" {
+			return in, fmt.Errorf("tencent-mps 渠道需在配置中提供 secret_id 与 secret_key")
+		}
+		if cfg["bucket"] == "" || cfg["region"] == "" {
+			return in, fmt.Errorf("tencent-mps 渠道需在配置中提供 bucket 与 region(MPS 输出 COS 桶及其地域)")
 		}
 	}
 

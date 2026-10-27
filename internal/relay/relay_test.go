@@ -20,6 +20,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apikey"
 	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/relay"
 	"github.com/gachal/InfiniteChance/internal/usage"
@@ -31,12 +32,13 @@ import (
 // MYSQL_TEST_DSN overrides the DSN. Tests skip when MySQL is unreachable so
 // `go test ./...` stays green without infra.
 type relayStores struct {
-	channels *channel.MySQLStore
-	keys     *apikey.MySQLStore
-	prices   *pricing.MySQLStore
-	usage    *usage.MySQLStore
-	tasks    *videotask.MySQLStore
-	db       *sql.DB
+	channels   *channel.MySQLStore
+	keys       *apikey.MySQLStore
+	prices     *pricing.MySQLStore
+	usage      *usage.MySQLStore
+	tasks      *videotask.MySQLStore
+	musicTasks *musictask.MySQLStore
+	db         *sql.DB
 }
 
 func openRelayTestDB(t *testing.T) *relayStores {
@@ -74,23 +76,24 @@ func openRelayTestDB(t *testing.T) *relayStores {
 		t.Fatalf("open test database: %v", err)
 	}
 	stores := &relayStores{
-		channels: channel.NewMySQLStore(db),
-		keys:     apikey.NewMySQLStore(db),
-		prices:   pricing.NewMySQLStore(db),
-		usage:    usage.NewMySQLStore(db),
-		tasks:    videotask.NewMySQLStore(db),
-		db:       db,
+		channels:   channel.NewMySQLStore(db),
+		keys:       apikey.NewMySQLStore(db),
+		prices:     pricing.NewMySQLStore(db),
+		usage:      usage.NewMySQLStore(db),
+		tasks:      videotask.NewMySQLStore(db),
+		musicTasks: musictask.NewMySQLStore(db),
+		db:         db,
 	}
 	for _, ensure := range []func(context.Context) error{
 		stores.channels.EnsureSchema, stores.keys.EnsureSchema,
 		stores.prices.EnsureSchema, stores.usage.EnsureSchema,
-		stores.tasks.EnsureSchema,
+		stores.tasks.EnsureSchema, stores.musicTasks.EnsureSchema,
 	} {
 		if err := ensure(ctx); err != nil {
 			t.Fatalf("EnsureSchema: %v", err)
 		}
 	}
-	for _, table := range []string{"api_key_quota_log", "api_keys", "channels", "model_prices", "usage_logs", "video_tasks"} {
+	for _, table := range []string{"api_key_quota_log", "api_keys", "channels", "model_prices", "usage_logs", "video_tasks", "music_tasks"} {
 		if _, err := db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			t.Fatalf("clean %s: %v", table, err)
 		}
@@ -191,12 +194,13 @@ func newRelayEnv(t *testing.T, adaptor relay.Adaptor) *relayEnv {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	handlers := &relay.Handlers{
-		Channels: stores.channels,
-		Keys:     stores.keys,
-		Prices:   stores.prices,
-		Usage:    stores.usage,
-		Tasks:    stores.tasks,
-		Adaptor:  adaptor,
+		Channels:   stores.channels,
+		Keys:       stores.keys,
+		Prices:     stores.prices,
+		Usage:      stores.usage,
+		Tasks:      stores.tasks,
+		MusicTasks: stores.musicTasks,
+		Adaptor:    adaptor,
 	}
 	v1 := r.Group("/v1", apikey.RequireKey(stores.keys))
 	relay.RegisterRoutes(v1, handlers)
