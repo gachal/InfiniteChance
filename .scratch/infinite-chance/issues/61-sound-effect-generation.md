@@ -1,36 +1,34 @@
-# 61 音效生成(SFX)——占位票,挂「新增海外渠道类型」前提
+# 61 音效生成(SFX)——VOD AIGC 聚合渠道(2026-10-28 重开改写)
 
 Type: feat
-Status: drafted(2026-10-27 随 60 号票 Q1 拆出;物种定义已回写 CONTEXT.md「音效」词条;本票只存调研底座与边界,实现前要先 grilling 渠道与可达性)
+Status: drafted(2026-10-27 随 60 号票 Q1 拆出;物种定义已回写 CONTEXT.md「音效」词条;**2026-10-28 渠道前提重写**——原挂「新增海外渠道类型(ElevenLabs)」,因 VOD AIGC 聚合出现大陆可达的独立音效上游而触发本票自设的「渠道选择重开」验证点;62 号票(歌曲,同走 VOD)先行实现,本票紧随)
 
 ## Question
 
-60 号票 Q1 定案把「BGM/音效生成」拆成两票:配乐先行(60),音效独立。音效与配乐是**不同模型、不同端点、不同计价**的物种,且已接入的五类渠道**均无独立音效端点**——本票记录事实底座与预案,等渠道落定再 grilling。
+60 号票 Q1 定案把「BGM/音效生成」拆成两票:配乐先行(60),音效独立。音效与配乐是**不同模型、不同端点、不同计价**的物种(≤30 秒短音频)。本票记录事实底座与定案。
 
-事实底座(2026-10-27 调研,`[官方]` / `[二手]` 标注置信度):
+事实底座(2026-10-28 更新;`[官方]` = 厂商文档或用户提供的接入指南摘录):
 
-- 业界事实标准 **ElevenLabs** `POST /v1/sound-generation` `[官方]`:`text` + `duration_seconds`(0.5–30)+ `prompt_influence`(默认 0.3)+ `loop`;模型 `eleven_text_to_sound_v2/v3`;**同步返回音频字节流**;按生成的**音频秒数**计 credit(与 TTS 的按字符无关);大陆不可达(无国内节点);商用授权按套餐分级,v3 可能有最低套餐门槛 `[二手]`。
-- 已接五类渠道逐一核过:MiniMax 无独立音效端点(音效只在 H3 视频模型联合生成里);百炼 Fun-Music 只做音乐;方舟 **Doubao-Seed-Audio 1.0**(2026-06-23 发布)是人声/配乐/音效/环境声**一体化成品音轨**(单次 2 分钟上限),不是独立音效素材,API 开放状态为「体验中心创作者测试」`[二手]`;腾讯 MPS `CreateAigcAudioTask` 无文生音效(只有「给视频配音效」吃参考视频的场景);OpenAI 无。
-- 其他:Stable Audio 3.0 音乐与音效**同端点**靠 `TrackType: Music/SFX` 标签区分 `[二手]`,端点路径与计价未核实;Mureka/Lyria/Suno 均只做音乐。
-- 分镜 cut「台词/音效」是文本注记(53 号票),不是音效产物;未来可作生成入口,不在本票。
+- **腾讯云 VOD AIGC 聚合**(接入指南 3.13 章)`[官方]`:文生音效两个模型——**Kling**(`SceneType=sfx`,`Duration` [3,10] 秒)与 **EL sound_t2s_v2**(`Duration` [1,30] 秒);与歌曲(62 号票)同走 `CreateAigcAudioTask` @ `vod.tencentcloudapi.com` → `DescribeTaskDetail` 轮询,渠道凭据与 20 号票生图共用;**大陆直连**。OutputConfig 同族:`StorageMode` Temporary(临时 URL 7 天)/Permanent、`OutputAudioFormat`。
+- **原 ElevenLabs 调研底座(渠道已否,留作历史参照)**:业界事实标准 `POST /v1/sound-generation` `[官方]`:`text` + `duration_seconds`(0.5–30)+ `prompt_influence` + `loop`;同步返回音频字节流;按秒计 credit;**大陆不可达**——此可达性前提是本次重开的直接原因。
+- 其余排查线(2026-10-27 调研,仍成立):已接渠道中 MiniMax 无独立音效端点;百炼 Fun-Music 只做音乐;方舟 Doubao-Seed-Audio 1.0 是一体化成品音轨不是独立音效素材,API 开放状态存疑 `[二手]`;OpenAI 无;Stable Audio 3.0 音乐与音效同端点靠 `TrackType` 区分 `[二手]`,未核实。
 
-## Answer(草案,未定案)
+## 定案(2026-10-28 grilling;原 ElevenLabs 草案的契约骨架保留,渠道段重写)
 
-预案方向(待 grilling 逐项确认,不要当定案实现):
+1. **渠道**:`tencent-vod`(与 62 号票同渠道同凭据),首批模型 **Kling sfx**(秒数域 [3,10])。能力位**独立 `sfx`**,不复用 60 号票的 `music`——物种/计价/时长域不同,能力显式开启互不串道(原判不变)。EL sound_t2s_v2 列后续(秒数域 [1,30],model_map 加行 + 域校验按模型映射)。
+2. **契约**:同步 `POST /v1/audio/sfx`(`{model, text, seconds}` → 直接回音频 URL),照 `/v1/audio/speech` 同步形状,无需异步三面。VOD sfx 虽是异步任务,但照 `vod.go` 生图先例**在 adaptor 内同步等待**(独立预算,建议 3 分钟 + 5 秒轮询;vodPollInterval/vodTotalBudget 有测试可收紧的先例)。**`loop` 字段删除**——Kling/EL 上游均无循环参数,原 ElevenLabs 特性无处翻译。`seconds` 网关统一 1–30 预校验,模型域(Kling [3,10])交上游裁。
+3. **计价**:按秒(`UnitSecond`)——请求 `seconds` 预扣 → 实结多退少补(照「预扣 → 多退少补 → 失败退款」时序);Kling sfx 在 VOD 的刊例未公开收录,**估价录入挂部署欠账**(与 62 号票音乐同款),`model_not_priced` 兜底。
+4. **画布**:复用 AudioNode 创作态(`source` 加 `'sfx'`),表单 = 模型 + 描述 + 秒数;产物落音频节点;不进对话框、不作源。`canvas_tasks` 加 `seconds` 列(MySQL+SQLite 双方言同改;text 复用 prompt 列)。产物照旧 `archiveAudio` 转存。
+5. **可达性**:前提删除(大陆直连),网关无需代理/海外部署。
 
-1. **渠道**:新增海外渠道类型(首选 ElevenLabs)。能力位倾向**新 `sfx`**而不复用 60 号票的 `music`——契约形状(同步 vs 异步)、计价轨(按秒 vs 按次)、时长语义都不同,与「能力显式开启互不串道」一致。
-2. **契约**:同步 `POST /v1/audio/sfx`(`{model, text, seconds, loop?}` → 直接回音频 URL),照 `/v1/audio/speech` 同步形状;**无需异步三面**。产物由调用方转存(canvas worker `archiveAudio` 复用)。
-3. **计价:按秒(`UnitSecond`)**——`seconds` 由调用方显式指定 → 按请求秒数预扣 → 响应实际时长多退少补(套既有「预扣 → 多退少补 → 失败退款」时序);零新单位。
-4. **画布**:复用 60 号票的 AudioNode 创作态(来源判别加 `sfx`),表单 = 模型 + 描述 + 秒数(0.5–30)+ loop 开关;产物落音频节点;不进对话框、不作源。
-5. **可达性**:大陆不可达——网关出网需代理或海外部署,是本票最大的**非技术前提**,先于一切代码。
+## 验证点(真 key,实现前)
 
-## 验证点(立项前)
-
-- 海外渠道可达路径(代理/海外节点)与账号套餐、商用授权分级确认。
-- ElevenLabs SFX 响应形态(字节流 vs URL)、credit 换算人民币的口径、v3 最低套餐门槛。
-- 复核是否出现大陆可达的独立音效上游(Seed-Audio 开放状态、腾讯 MPS 新增场景、Stable Audio 端点与计价)——有则渠道选择重开。
+- VOD 控制台「权限管理」给 Kling 音效开模型白名单。
+- `SceneType=sfx` 全链:同步端点出音频、转存落素材、秒数与产物时长一致(计费实结依据)。
+- 刊例核对后修正估价配价。
 
 ## Out of Scope
 
 - 一体化音频(Seed-Audio 式成品音轨)——物种不同,不冒充音效。
 - 音效进视频链、分镜注记直发生成、成片时间线。
+- 视频生音效(Kling 吃参考视频的场景)——文生音效先行,要时另票。
