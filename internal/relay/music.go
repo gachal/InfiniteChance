@@ -187,16 +187,24 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 			"The 'prompt' parameter exceeds the "+strconv.Itoa(mpsMaxPromptRunes)+"-character limit.")
 		return nil
 	}
-	// 62 号票歌曲面:歌词上限与纯音乐互斥。显式 instrumental:true 携带
-	// 歌词是客户端错误 —— 显式 400 优于静默忽略(歌词会被上游丢弃);
-	// 纯空白歌词按未携带处理。打到 MPS 侧模型(非 vod- 前缀)时歌词会被
-	// 静默降级成纯音乐,是 62 号票文档写明的已知边界,不在网关裁。
+	// 62 号票歌曲面:歌词上限与纯音乐互斥。instrumental 语义为 true(显式
+	// 传 true 或缺省 —— 缺省即纯音乐,60 号票既有语义)携带歌词是客户端
+	// 错误:先物化缺省再判,与 canvas 侧 createMusicTask(先物化后校验)
+	// 及前端 validateMusicForm 三处口径一致;不物化缺省,vod adaptor 会向
+	// MiniMaxMusic 发 is_instrumental:true + lyrics 的矛盾体。显式 400 优于
+	// 静默忽略(歌词会被上游丢弃);纯空白歌词按未携带处理。打到 MPS 侧
+	// 模型(非 vod- 前缀)时歌词会被静默降级成纯音乐,是 62 号票文档写明
+	// 的已知边界,不在网关裁。
 	if n := utf8.RuneCountInString(req.Lyrics); n > maxMusicLyricsRunes {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
 			"The 'lyrics' parameter exceeds the "+strconv.Itoa(maxMusicLyricsRunes)+"-character limit.")
 		return nil
 	}
-	if req.Instrumental != nil && *req.Instrumental && strings.TrimSpace(req.Lyrics) != "" {
+	instrumental := true
+	if req.Instrumental != nil {
+		instrumental = *req.Instrumental
+	}
+	if instrumental && strings.TrimSpace(req.Lyrics) != "" {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
 			"'lyrics' cannot be combined with instrumental:true; omit 'lyrics' or set instrumental:false for a vocal song.")
 		return nil

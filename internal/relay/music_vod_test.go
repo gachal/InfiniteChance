@@ -198,6 +198,37 @@ func TestRelayVODMusicInstrumentalRejectsLyrics(t *testing.T) {
 	}
 }
 
+// 互斥校验的缺省口径(评审修复):instrumental 不传语义即 true(60 号票
+// 纯音乐缺省),携带 lyrics 同样在拨号之前 400 —— 与 canvas 侧
+// createMusicTask(先物化后校验)及前端 validateMusicForm 三处口径一致;
+// 不补这道闸,vod adaptor 会向 MiniMaxMusic 发 is_instrumental:true +
+// lyrics 的矛盾体。对照面:instrumental:false + lyrics(人声歌曲)照常
+// 受理。
+func TestRelayVODMusicOmittedInstrumentalRejectsLyrics(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	vendor := newFakeVODVendor(t)
+	env.seedVODMusicChannel(t, vendor.server.URL, "vod-minimax-music-3.0", "MiniMaxMusic 3.0")
+	_, full := env.seedKey(t, 2_000_000)
+	env.seedMusicPrice(t, "vod-minimax-music-3.0")
+
+	// instrumental 缺省(语义 true)+ 歌词:400,且不拨号。
+	w := env.postMusic(t, full,
+		`{"model":"vod-minimax-music-3.0","prompt":"x","lyrics":"多余的歌"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request_error") {
+		t.Fatalf("status = %d body %s, want 400 invalid_request_error", w.Code, w.Body.String())
+	}
+	if submits := len(vendor.bodies); submits != 0 {
+		t.Errorf("vendor submits = %d, want 0 (refused before dialing)", submits)
+	}
+
+	// 对照面:instrumental:false + 歌词照常受理(人声歌曲)。
+	w = env.postMusic(t, full,
+		`{"model":"vod-minimax-music-3.0","prompt":"x","instrumental":false,"lyrics":"夜色慢慢降落"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("vocal submit status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+}
+
 // Mureka 只透传 lyrics(不带 is_instrumental,其纯音乐参数表达未证)。
 func TestRelayVODMusicMurekaPassesLyricsOnly(t *testing.T) {
 	env := newRelayEnv(t, nil)

@@ -832,18 +832,15 @@ func (a *vodAdaptor) MusicQuery(ctx context.Context, ch channel.Channel, upstrea
 
 // vodSfxRequest is the gateway sfx body's adaptor slice (61 号票):model 已
 // 被 relay 换成上游 "ModelName ModelVersion" 串;text 是音效描述(网关与
-// adaptor 双侧 1–2000 runes 校验),seconds 是期望时长(网关统一 1–30 预
-// 校验;模型域如 Kling [3,10] 交上游裁)。
+// adaptor 双侧 1–2000 runes 校验,maxSfxTextRunes 同包共享);seconds 是
+// 期望时长(网关统一 1–30 预校验,域复用 sfx.go 的 sfxMinSeconds/
+// sfxMaxSeconds 同一份契约常量,maxSfxTextRunes 同款先例;模型域如
+// Kling [3,10] 交上游裁)。
 type vodSfxRequest struct {
 	Model   string `json:"model"`
 	Text    string `json:"text"`
 	Seconds int64  `json:"seconds"`
 }
-
-const (
-	vodSfxMinSeconds = int64(1)
-	vodSfxMaxSeconds = int64(30)
-)
 
 // SfxSynthesis translates one sfx body into a submitted VOD
 // CreateAigcAudioTask, then waits it to a terminal state inside the sfx
@@ -869,9 +866,9 @@ func (a *vodAdaptor) SfxSynthesis(ctx context.Context, ch channel.Channel, paylo
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: vodErrorBody(fmt.Sprintf("tencent vod: 'text' exceeds the %d-character limit", maxSfxTextRunes))}, nil
 	}
-	if req.Seconds < vodSfxMinSeconds || req.Seconds > vodSfxMaxSeconds {
+	if req.Seconds < sfxMinSeconds || req.Seconds > sfxMaxSeconds {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
-			Body: vodErrorBody(fmt.Sprintf("tencent vod: 'seconds' must be an integer between %d and %d.", vodSfxMinSeconds, vodSfxMaxSeconds))}, nil
+			Body: vodErrorBody(fmt.Sprintf("tencent vod: 'seconds' must be an integer between %d and %d.", sfxMinSeconds, sfxMaxSeconds))}, nil
 	}
 	modelName, modelVersion, _ := strings.Cut(strings.TrimSpace(req.Model), " ")
 	if modelName == "" {
