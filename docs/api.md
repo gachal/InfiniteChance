@@ -277,23 +277,56 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   }'
 ```
 
-### 3.9 配乐(异步两面:提交 → 轮询,无取消;60 号票)
+### 3.9 配乐 / 歌曲(异步两面:提交 → 轮询,无取消;60 号票;62 号票歌曲)
 
 ```bash
 # 配乐统一说明:契约照 /v1/videos 的两面(受理回任务句柄、轮询五态),
 # 但无取消端点(MPS 取消接口未查证,超时由计费时限收尾退款)。调度常规
 # 语义 —— 受理时按优先级/权重选渠道、上游临时失败可换道、受理后钉死;
 # 计费按次(unit=call,一任务一首):提交预扣、成功实结、失败全额退款。
-# 渠道类型 tencent-mps(腾讯云 MPS 媒资 AIGC),须启用 + music 能力 +
-# 模型映射(上游名填 "ModelName ModelVersion" 空格串,如 MiniMaxMusic 3.0、
-# Mureka instrumental_9.5);MPS 要求输出 COS 桶,渠道 config 带
-# secret_id/secret_key/bucket/region。错误形状照 /v1 OpenAI error object。
+# 渠道类型 tencent-mps(腾讯云 MPS 媒资 AIGC)或 tencent-vod(62 号票歌曲,
+# VOD AIGC 聚合的 CreateAigcAudioTask),须启用 + music 能力 + 模型映射
+# (上游名填 "ModelName ModelVersion" 空格串,如 MiniMaxMusic 3.0、
+# Mureka instrumental_9.5、Mureka song_9);MPS 要求输出 COS 桶,渠道
+# config 带 secret_id/secret_key/bucket/region,VOD 走 sub_app_id、产物是
+# 临时 URL(约 7 天)。错误形状照 /v1 OpenAI error object。
+#
+# 62 号票歌曲参数面(同一提交端点):instrumental(bool,缺省 true = 纯
+# 音乐,60 号票既有调用完全兼容;false = 人声歌曲)与 lyrics(可选字符串,
+# ≤3500 字符,留空由模型自动写词)。互斥校验:instrumental:true 且携带
+# lyrics → 400 invalid_request_error(显式拒绝优于静默忽略)。VOD 侧模型
+# 公开名带 vod- 前缀(vod-minimax-music-3.0、vod-mureka-song-9);MiniMaxMusic
+# 翻译 is_instrumental + lyrics,Mureka 只透传 lyrics。已知边界:MPS 侧模型
+# (非 vod- 前缀)收到 instrumental:false + lyrics 会静默产出纯音乐(MPS
+# adaptor 写死 is_instrumental:true),选型以 vod- 前缀为准。
 
 # 提交配乐任务(风格描述 1-2000 字,对齐 MPS Prompt 上限)
 curl -X POST $GATEWAY/v1/audio/music \
   -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
   -d '{"model":"minimax-music","prompt":"轻快的电子爵士,带复古合成器,适用于城市夜跑场景"}'
 # → {"id":"mt_1a2b…","status":"queued","model":"minimax-music","created_at":1767000000}
+
+# 提交歌曲任务(62 号票:instrumental=false 即人声;lyrics 选填,≤3500 字)
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "vod-minimax-music-3.0",
+    "prompt": "city night run, synthwave",
+    "instrumental": false,
+    "lyrics": "夜色慢慢降落\n霓虹在雨里闪烁"
+  }'
+# → {"id":"mt_3c4d…","status":"queued","model":"vod-minimax-music-3.0","created_at":1767000000}
+#   instrumental:false 不带 lyrics = 模型自动写词,同样合法。
+
+# 互斥 400 用例:纯音乐(instrumental:true,或缺省)携带歌词直接拒绝,
+# 不拨上游:
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"vod-minimax-music-3.0","prompt":"x","instrumental":true,"lyrics":"多余的歌"}'
+# → 400 {"error":{"code":"invalid_request_error","message":"'lyrics' cannot be
+#   combined with instrumental:true; omit 'lyrics' or set instrumental:false
+#   for a vocal song.","type":"invalid_request_error"}}
+#   lyrics 超过 3500 字符同码拒绝。
 
 # 轮询任务(五态 queued/running/succeeded/failed/canceled;成功带 audio.url
 # —— 上游写进渠道指定 COS 桶的临时地址,约 24h 过期,转存由调用方负责)

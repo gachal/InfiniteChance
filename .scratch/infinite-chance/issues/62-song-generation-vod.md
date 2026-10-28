@@ -1,7 +1,14 @@
 # 62 歌曲生成(带歌词人声音乐)——VOD AIGC 聚合渠道
 
 Type: feat
-Status: drafted(2026-10-28 grilling 定案;实现前无需再 grilling,真 key 验证点见文末)
+Status: implemented(2026-10-28 实现收口:网关 adaptor 两方法 + 提交校验、canvas_tasks 歌曲两列与 worker 重提保真、前端开关/歌词表单与 'song' 来源判别、文档回写;go vet/test 全绿,canvas-web vitest 252 用例与 vue-tsc build 零错。**部署欠账**:①VOD 控制台「用量统计 > 生图/生视频 > 权限管理」给 MiniMaxMusic 3.0、Mureka song_9 开模型白名单(指南 2.5.4 节);②tencent-vod 渠道勾 music 能力;③model_map 配 `vod-minimax-music-3.0` → `MiniMaxMusic 3.0`、`vod-mureka-song-9` → `Mureka song_9`;④估价配价 call 轨(VOD AIGC 音乐刊例未公开,账单出后核对修正)。真 key 验证点见文末,过不了再回 grilling)
+
+## 实现注记(2026-10-28)
+
+- **instrumental 列补全**(集成方对票面的补全):定案 6 只写了 lyrics 列,实现把 `instrumental`(TINYINT/INTEGER NOT NULL DEFAULT 1,1=纯音乐)一并落 `canvas_tasks` 双方言——失败重试 ResetForRetry 后 worker 要原样重提,`instrumental=false` 不落库会把人声歌曲重提成纯音乐。存量行零迁移(DEFAULT 1 = 60 号票纯音乐语义);任务 JSON 序列化恒带 lyrics/instrumental(前端 composer 回填源)。
+- **MPS 静默降级边界**(集成方裁决 #5,只写文档不修):`instrumental:false` + `lyrics` 打到 tencent-mps 渠道的模型(非 `vod-` 前缀)会静默产出纯音乐(MPS adaptor 写死 `is_instrumental:true`,60 号票「MPS 不动」);`vod-` 前缀公开名防混调度,边界已写进 CONTEXT.md「歌曲」词条与 docs/api.md §3.9。
+- VOD 状态词翻译按定案 3 显式映射落地(WAITING→WAIT、RUNNING→RUN、SUCCESS/FINISH/DONE→DONE、FAIL/FAILED/ERROR→FAIL,未知词原样交词表 default 兜底);DescribeTaskDetail 详情解不出状态字段按暂态 502 回,不推进任务状态。
+- 网关 music_tasks 零迁移照定案 5(歌词只落 canvas 侧);models.go MusicModels 不动(vod 模型走 call 配价自动进目录);admin-web 零改动(music 能力勾选现成);61 号票范围未动(无 CapSfx/无 /v1/audio/sfx/无 KindSfx)。
 
 ## Question
 
