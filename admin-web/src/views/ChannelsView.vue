@@ -649,7 +649,17 @@ function secretSummary(ch: Channel): string {
             能力(该渠道可转发的请求;不勾任何项按仅聊天处理)
           </template>
           <p
-            v-if="isArk"
+            v-if="isVod"
+            class="mb-2 mt-0 text-neutral-500"
+          >
+            tencent-vod 实现生图(images,20 号票)、配乐/歌曲(music,60/62
+            号票)与音效(sfx,61 号票)—— 同一 CreateAigcAudioTask 聚合上游
+            (音乐 SceneType=music、音效 SceneType=sfx);音乐/音效模型映射的
+            上游名填「ModelName ModelVersion」(空格分隔,如 MiniMaxMusic
+            3.0、Kling sfx);勾选其他能力不会被转发。
+          </p>
+          <p
+            v-else-if="isArk"
             class="mb-2 mt-0 text-neutral-500"
           >
             volcengine-ark 当前仅实现生视频(videos);勾选其他能力不会被转发。
@@ -698,6 +708,9 @@ function secretSummary(ch: Channel): string {
             </Checkbox>
             <Checkbox value="music">
               配乐(music)
+            </Checkbox>
+            <Checkbox value="sfx">
+              音效(sfx)
             </Checkbox>
           </CheckboxGroup>
         </FormItem>
