@@ -77,6 +77,9 @@ func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/audio/music", h.CreateMusicGeneration)
 	group.GET("/audio/music/tasks/:id", h.GetMusicTask)
 	group.GET("/audio/music-models", h.MusicModels)
+	// 音效同步生成(61 号票):单面契约照 /v1/audio/speech,常规调度换道。
+	group.POST("/audio/sfx", h.CreateSfx)
+	group.GET("/audio/sfx-models", h.SfxModels)
 }
 
 // maxRequestBody caps how much of a client request body the /v1 surface

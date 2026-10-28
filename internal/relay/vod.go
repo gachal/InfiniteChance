@@ -7,8 +7,11 @@
 // 这里完成,relay 骨架(调度/熔断/换道/计费)零改动。62 号票追加文生音乐
 // (CreateAigcAudioTask,SceneType=music):对外是 MusicSubmit/MusicQuery
 // 两个异步窄方法,形状与 mps adaptor 对齐(handler 零改动),状态词在
-// adaptor 内翻成 MPS 词表防误杀。聊天/视频方法返回不支持错误:调度不会
-// 把别的请求落上来(images/music 之外的能力不声明)。
+// adaptor 内翻成 MPS 词表防误杀。61 号票追加文生音效(SceneType=sfx):
+// 对外是 SfxSynthesis 一个同步方法 —— 上游仍是异步任务,但在 adaptor 内
+// 以独立预算(3min + 5s 轮询)等待到终态,归一 {"audio":{"url"}}。聊天/
+// 视频方法返回不支持错误:调度不会把别的请求落上来(images/music/sfx
+// 之外的能力不声明)。
 package relay
 
 import (
@@ -45,6 +48,12 @@ const (
 	vodPollInterval = 5 * time.Second
 	vodTotalBudget  = 10 * time.Minute
 
+	// vodSfxPollInterval / vodSfxTotalBudget bound one synchronous sfx wait
+	// (61 号票):音效是 ≤30 秒短音频,预算独立于生图的 10 分钟档收紧到
+	// 3 分钟(票面建议值);超时同款按临时失败收尾(504 → relay 退款换道)。
+	vodSfxPollInterval = 5 * time.Second
+	vodSfxTotalBudget  = 3 * time.Minute
+
 	// vodMaxOutputImages is the vendor-side OutputImageCount ceiling (OG 系
 	// 1-8); beyond it the request is refused before submit as a client error.
 	vodMaxOutputImages = 8
@@ -76,14 +85,20 @@ type vodAdaptor struct {
 	// production gets the ticketed constants from newVODAdaptor.
 	pollInterval time.Duration
 	budget       time.Duration
+	// sfxPollInterval / sfxBudget 是音效同步等待的独立旋钮(61 号票):
+	// 与生图档互不影响,测试同样可收紧。
+	sfxPollInterval time.Duration
+	sfxBudget       time.Duration
 }
 
 // newVODAdaptor returns the production adaptor with the ticketed wait budget.
 func newVODAdaptor() *vodAdaptor {
 	return &vodAdaptor{
-		openAIAdaptor: openAIAdaptor{Client: &http.Client{Transport: upstreamTransport}},
-		pollInterval:  vodPollInterval,
-		budget:        vodTotalBudget,
+		openAIAdaptor:   openAIAdaptor{Client: &http.Client{Transport: upstreamTransport}},
+		pollInterval:    vodPollInterval,
+		budget:          vodTotalBudget,
+		sfxPollInterval: vodSfxPollInterval,
+		sfxBudget:       vodSfxTotalBudget,
 	}
 }
 
@@ -813,4 +828,147 @@ func (a *vodAdaptor) MusicQuery(ctx context.Context, ch channel.Channel, upstrea
 	}
 	normalized, _ := json.Marshal(out)
 	return &UpstreamResponse{Status: http.StatusOK, Body: normalized, OK: true}, nil
+}
+
+// vodSfxRequest is the gateway sfx body's adaptor slice (61 号票):model 已
+// 被 relay 换成上游 "ModelName ModelVersion" 串;text 是音效描述(网关与
+// adaptor 双侧 1–2000 runes 校验),seconds 是期望时长(网关统一 1–30 预
+// 校验;模型域如 Kling [3,10] 交上游裁)。
+type vodSfxRequest struct {
+	Model   string `json:"model"`
+	Text    string `json:"text"`
+	Seconds int64  `json:"seconds"`
+}
+
+const (
+	vodSfxMinSeconds = int64(1)
+	vodSfxMaxSeconds = int64(30)
+)
+
+// SfxSynthesis translates one sfx body into a submitted VOD
+// CreateAigcAudioTask, then waits it to a terminal state inside the sfx
+// budget — 同步面在 adaptor 内完成(照生图 vodWaitTask 先例,但独立预算
+// 与独立常量)。请求体与音乐同族:SceneType 换 "sfx"、多 Duration(秒);
+// AdditionalParameters 不给(Kling 无需,61 号票定案)。终态 SUCCESS 归一
+// {"audio":{"url": 第一个 Output 产物}}(与 speech 的 handler 取 URL 方式
+// 对齐,audio.go 的 parseSpeechAudioURL 直接消费);FAIL → 502;超预算 →
+// 504(临时失败,relay 退款换道;腾讯侧任务可能仍在跑,生图超时同款已知
+// 泄漏)。轮询暂态失败容忍/清零逻辑照 vodWaitTask 抄。
+func (a *vodAdaptor) SfxSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	var req vodSfxRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("tencent vod: request body is not a valid JSON object")}, nil
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("tencent vod: 'text' is required for sfx generation")}, nil
+	}
+	if n := len([]rune(text)); n > maxSfxTextRunes {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody(fmt.Sprintf("tencent vod: 'text' exceeds the %d-character limit", maxSfxTextRunes))}, nil
+	}
+	if req.Seconds < vodSfxMinSeconds || req.Seconds > vodSfxMaxSeconds {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody(fmt.Sprintf("tencent vod: 'seconds' must be an integer between %d and %d.", vodSfxMinSeconds, vodSfxMaxSeconds))}, nil
+	}
+	modelName, modelVersion, _ := strings.Cut(strings.TrimSpace(req.Model), " ")
+	if modelName == "" {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("tencent vod: model mapping is empty")}, nil
+	}
+
+	audioReq := map[string]any{
+		"ModelName":    modelName,
+		"SceneType":    "sfx",
+		"Prompt":       text,
+		"Duration":     req.Seconds,
+		"OutputConfig": map[string]any{"StorageMode": "Temporary", "OutputAudioFormat": "mp3"},
+	}
+	if modelVersion != "" {
+		audioReq["ModelVersion"] = modelVersion
+	}
+	if v, ok := vodView(ch); ok && v.subAppID != 0 {
+		audioReq["SubAppId"] = v.subAppID
+	}
+	body, err := json.Marshal(audioReq)
+	if err != nil {
+		return nil, err
+	}
+
+	upstream, err := a.vodCall(ctx, ch, "CreateAigcAudioTask", body)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	var env vodEnvelope
+	if err := json.Unmarshal(upstream.Body, &env); err != nil || env.Response.TaskId == "" {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("tencent vod CreateAigcAudioTask: 2xx 但无 TaskId")}, nil
+	}
+	return a.vodWaitSfxTask(ctx, ch, env.Response.TaskId)
+}
+
+// vodWaitSfxTask polls DescribeTaskDetail to a terminal state inside the sfx
+// budget, then converts the delivered Output URL into one {"audio":{"url"}}
+// body — the sync shape 61 号票定下(照 speech,handler 侧 parseSpeechAudioURL
+// 取 URL)。结构与 vodWaitTask 同款:暂态轮询失败容忍 vodPollTolerance 次、
+// 拿到合法处理中态清零、400/401 立即返回、超预算 504。
+func (a *vodAdaptor) vodWaitSfxTask(ctx context.Context, ch channel.Channel, taskID string) (*UpstreamResponse, error) {
+	deadline := time.Now().Add(a.sfxBudget)
+	transient := 0
+	for {
+		poll := map[string]any{"TaskId": taskID}
+		if v, ok := vodView(ch); ok && v.subAppID != 0 {
+			poll["SubAppId"] = v.subAppID
+		}
+		payload, err := json.Marshal(poll)
+		if err != nil {
+			return nil, err
+		}
+		upstream, err := a.vodCall(ctx, ch, "DescribeTaskDetail", payload)
+		switch {
+		case err != nil || upstream == nil:
+			// 网络层失败:可容忍的暂态。
+		case !upstream.OK && (upstream.Status >= 500 || upstream.Status == 429):
+			// 5xx/429(含 InternalError 的归一):可容忍的暂态。
+		case !upstream.OK:
+			// 400/401:参数坏了或签名这关都过不了,重试无意义。
+			return upstream, nil
+		default:
+			status, urls, failMsg := vodTaskResult(upstream.Body)
+			switch {
+			case status == "SUCCESS" || status == "FINISH" || status == "DONE":
+				if len(urls) == 0 {
+					return &UpstreamResponse{Status: http.StatusBadGateway,
+						Body: vodErrorBody("tencent vod sfx task succeeded but delivered no audio URLs")}, nil
+				}
+				body, _ := json.Marshal(map[string]any{
+					"audio": map[string]string{"url": urls[0]},
+				})
+				return &UpstreamResponse{Status: http.StatusOK, Body: body, OK: true}, nil
+			case status == "FAIL" || status == "FAILED" || status == "ERROR":
+				return &UpstreamResponse{Status: http.StatusBadGateway,
+					Body: vodErrorBody("tencent vod sfx task failed: " + failMsg)}, nil
+			default:
+				transient = 0 // 拿到合法的处理中状态,暂态计数清零
+			}
+		}
+
+		if transient++; transient > vodPollTolerance {
+			return &UpstreamResponse{Status: http.StatusBadGateway,
+				Body: vodErrorBody("tencent vod polling failed repeatedly (transient upstream errors)")}, nil
+		}
+		if time.Now().After(deadline) {
+			// 已知泄漏:腾讯侧任务可能仍在跑并计费;按临时失败收尾,预扣
+			// 由 relay 退还(与生图超时同款)。
+			return &UpstreamResponse{Status: http.StatusGatewayTimeout,
+				Body: vodErrorBody(fmt.Sprintf("tencent vod sfx task %s did not finish within %s", taskID, a.sfxBudget))}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(a.sfxPollInterval):
+		}
+	}
 }

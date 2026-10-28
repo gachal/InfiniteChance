@@ -147,3 +147,45 @@ func (h *Handlers) MusicModels(c *gin.Context) {
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
 }
+
+// SfxModels answers GET /v1/audio/sfx-models (61 号票):启用渠道中带 sfx
+// 能力的 model_map 并集,与按秒轨配价(unit=second)取交集 —— 目录只列
+// 「能被某条 sfx 渠道服务且已按秒配价」的音效模型,价格随行走
+// PriceSummary(38 号票;second 轨复用 cny_per_call 字段,语义 = 元/秒),
+// 画布的 /sfx-models 以服务级 key 代理本端点。不动 /v1/audio/models 的
+// character 过滤与 /v1/audio/music-models 的 call 过滤(三个下拉互不混)。
+func (h *Handlers) SfxModels(c *gin.Context) {
+	channels, err := h.listChannels(c.Request.Context())
+	if err != nil {
+		h.failInternal(c, err)
+		return
+	}
+	capable := map[string]bool{}
+	for _, ch := range channels {
+		if !ch.Enabled || !ch.HasCapability(channel.CapSfx) {
+			continue
+		}
+		for public := range ch.ModelMap {
+			capable[public] = true
+		}
+	}
+	prices, err := h.Prices.List(c.Request.Context())
+	if err != nil {
+		h.failInternal(c, err)
+		return
+	}
+	models := make([]string, 0, len(prices))
+	summaries := make(map[string]pricing.PriceSummary, len(prices))
+	for _, p := range prices {
+		if p.Unit != pricing.UnitSecond || p.Call == nil {
+			continue
+		}
+		if !capable[p.PublicModel] {
+			continue
+		}
+		models = append(models, p.PublicModel)
+		summaries[p.PublicModel] = p.Summary()
+	}
+	sort.Strings(models)
+	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
+}

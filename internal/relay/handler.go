@@ -68,13 +68,15 @@ const (
 // taken. raw is the client body verbatim (public model name) — each channel
 // attempt rewrites the model field to its own upstream name. call 非 nil
 // 标记生图请求(call 轨):请求事实与按渠道重建所需的原材料都在里面;
-// video 非 nil 标记视频任务(second 轨):请求事实供计费与快照使用。
+// video 非 nil 标记视频任务(second 轨):请求事实供计费与快照使用;
+// sfx 非 nil 标记音效请求(61 号票 second 轨):计费秒数供实结与 usage 回显。
 type prepared struct {
 	publicModel string
 	req         chatRequest // 聊天轨的已解析字段;生图/视频请求不填
 	raw         []byte
 	call        *imagesPrep
 	video       *videoPrep
+	sfx         *sfxPrep
 	key         apikey.Key
 	price       pricing.Price
 	reserved    int64
@@ -88,6 +90,12 @@ type prepared struct {
 // resolution size (factor key) and the billed seconds.
 type videoPrep struct {
 	size    string
+	seconds int64
+}
+
+// sfxPrep carries one sfx request's second-track billing fact (61 号票):
+// the billed seconds —— 实结 = 预扣定格,响应 usage.seconds 回显同一值。
+type sfxPrep struct {
 	seconds int64
 }
 

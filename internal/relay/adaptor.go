@@ -116,6 +116,14 @@ type Adaptor interface {
 	// succeeded…", "error": {"message": "…when failed…"}}; the relay merges
 	// task_status into the external five states (musictask.MergeStatus).
 	MusicQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error)
+	// SfxSynthesis forwards one synchronous sound-effect request (61 号票
+	// 音效生成). payload is the gateway body {model, text, seconds} with the
+	// upstream model name already set; a 2xx answer is normalized to
+	// {"audio":{"url": …}} with the vendor's temporary URL — the adaptor
+	// itself waits the async vendor task out inside an independent budget
+	// (超时 504 = 临时失败,relay 退款换道). synthesized 502 when the task
+	// finishes without delivering a URL.
+	SfxSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error)
 	// Normalize converts a 2xx upstream chat-completion body into the
 	// client-facing body (model rewritten to the public name) and extracts
 	// the usage.
@@ -463,6 +471,13 @@ func (a *openAIAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, pay
 
 func (a *openAIAdaptor) MusicQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
 	return nil, errors.New("relay: openai adaptor does not relay music tasks")
+}
+
+// 音效同步方法(61 号票)只归 vod adaptor:mps/ark/minimax/dashscope 嵌入
+// 本类型同款继承桩;OpenAI 兼容上游暂无音效端点,显式不支持 —— 调度已按
+// sfx 能力过滤,桩只作兜底(与配乐两桩同款)。
+func (a *openAIAdaptor) SfxSynthesis(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	return nil, errors.New("relay: openai adaptor does not relay sfx synthesis")
 }
 
 // ChatCompletionsStream opens the streaming variant of the same upstream

@@ -83,6 +83,8 @@ func fastVODAdaptor(baseURL string) *vodAdaptor {
 	a := newVODAdaptor()
 	a.pollInterval = time.Millisecond
 	a.budget = 2 * time.Second
+	a.sfxPollInterval = time.Millisecond
+	a.sfxBudget = 2 * time.Second
 	a.Client = &http.Client{}
 	return a
 }

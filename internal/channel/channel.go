@@ -76,10 +76,11 @@ const (
 	CapVideos Capability = "videos" // 异步视频任务(08 号票)
 	CapAudio  Capability = "audio"  // 音色定制与台词合成(56 号票)
 	CapMusic  Capability = "music"  // 配乐生成(60 号票,第五种能力:显式开启互不串道)
+	CapSfx    Capability = "sfx"    // 音效生成(61 号票,第六种能力:与 music 物种/计价/时长域不同,独立开启互不串道)
 )
 
 // SupportedCapabilities lists what a channel may declare.
-var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio, CapMusic}
+var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio, CapMusic, CapSfx}
 
 // SupportedTypes lists the channel types this build can relay and probe.
 var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope, TypeTencentMps}
