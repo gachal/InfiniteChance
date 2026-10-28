@@ -379,6 +379,14 @@ func (g *okGateway) ListMusicModels(context.Context) (canvastask.MusicModelCatal
 	return canvastask.MusicModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
 }
 
+func (g *okGateway) CreateSfx(_ context.Context, req canvastask.SfxRequest) (canvastask.SfxResult, error) {
+	return canvastask.SfxResult{AudioURL: g.url, Seconds: req.Seconds}, nil
+}
+
+func (g *okGateway) ListSfxModels(context.Context) (canvastask.SfxModelCatalog, error) {
+	return canvastask.SfxModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
+}
+
 func TestHandlerCreateTaskQueuesWork(t *testing.T) {
 	env := newHandlerEnv(&okGateway{url: "https://img.example/ok.png"})
 
@@ -545,6 +553,60 @@ func TestHandlerCreateMusicTaskSongGuards(t *testing.T) {
 	}{
 		{"纯音乐携带歌词", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"p","model":"bgm-m","instrumental":true,"lyrics":"多余的歌"}`},
 		{"歌词超长", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"p","model":"bgm-m","instrumental":false,"lyrics":"` + strings.Repeat("雨", 3501) + `"}`},
+	}
+	for _, tc := range cases {
+		if w := env.postTask(t, tc.body); w.Code != tc.code {
+			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
+		}
+	}
+}
+
+// 61 号票音效提交:kind=sfx 落 queued 任务(描述进 prompt 列、seconds 复用
+// video 的既有列,不加列);按秒轨预检 —— 未配价与轨道错位(call/character)
+// 的提交当场 400,不让注定失败的任务进队列。seconds 域 1–30 与网关同源。
+func TestHandlerCreateSfxTask(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+
+	w := env.postTask(t, `{"node_id":"audio-1","kind":"sfx","prompt":"雷声轰鸣,由远及近","model":"vid-m","seconds":5}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID      string `json:"id"`
+			Kind    string `json:"kind"`
+			Status  string `json:"status"`
+			Prompt  string `json:"prompt"`
+			Model   string `json:"model"`
+			Seconds int64  `json:"seconds"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	task := resp.Task
+	if !strings.HasPrefix(task.ID, "ct_") || task.Kind != "sfx" || task.Status != "queued" ||
+		task.Prompt != "雷声轰鸣,由远及近" || task.Model != "vid-m" || task.Seconds != 5 {
+		t.Fatalf("task = %+v, want a queued sfx task with the form facts", task)
+	}
+	stored, ok := env.tasks.tasks[task.ID]
+	if !ok || stored.Seconds != 5 || stored.Kind != canvastask.KindSfx {
+		t.Fatalf("stored = %+v ok=%v, want seconds preserved on the row", stored, ok)
+	}
+
+	cases := []struct {
+		name string
+		code int
+		body string
+	}{
+		{"未配价", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"p","model":"nope","seconds":5}`},
+		{"轨道错位(call)", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"p","model":"img-m","seconds":5}`},
+		{"轨道错位(token)", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"p","model":"sd-m","seconds":5}`},
+		{"空描述", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"   ","model":"vid-m","seconds":5}`},
+		{"超长描述", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"` + strings.Repeat("雷", 2001) + `","model":"vid-m","seconds":5}`},
+		{"seconds=0", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"p","model":"vid-m","seconds":0}`},
+		{"seconds=31", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"p","model":"vid-m","seconds":31}`},
+		{"缺 seconds", http.StatusBadRequest, `{"node_id":"n","kind":"sfx","prompt":"p","model":"vid-m"}`},
 	}
 	for _, tc := range cases {
 		if w := env.postTask(t, tc.body); w.Code != tc.code {

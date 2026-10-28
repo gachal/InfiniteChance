@@ -59,13 +59,15 @@ func Terminal(s Status) bool {
 // 到分钟级的短任务,无 canceled 态(不可撤销,取消语义只属于视频);
 // 60 号票追加 music(配乐)—— 走网关的异步两面(MPS 上游,分钟级),
 // 产物是 kind=audio 素材行,同样无取消面(网关不做取消端点,前端不出
-// 取消按钮)。
+// 取消按钮);61 号票追加 sfx(音效)—— 网关的同步单面(VOD Kling sfx,
+// adaptor 内等待,秒级到分钟级),产物同为 kind=audio 素材行,无取消面。
 const (
 	KindImage = "image"
 	KindVideo = "video"
 	KindVoice = "voice"
 	KindTts   = "tts"
 	KindMusic = "music"
+	KindSfx   = "sfx"
 )
 
 // 视频参考的角色集(24 号票,对齐即梦「全能参考」):首帧/尾帧/参考图是
@@ -199,7 +201,7 @@ type Task struct {
 	Size          string
 	Ratio         string     // video: 显式宽高比串(如 16:9);空 = 不传
 	Background    string     // image: "transparent" = 透明背景;空 = 不传
-	Seconds       int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);image 恒 0
+	Seconds       int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);sfx: 音效时长(1–30,61 号票复用 video 的列);image/music/tts 恒 0
 	Lyrics        string     // music: 歌词原文(62 号票歌曲);空 = 未携带(纯音乐或模型自动写词)
 	Instrumental  bool       // music: true = 纯音乐(缺省,60 号票);false = 人声歌曲(62 号票);其余 kind 不读
 	ImageRef      string     // video: 图生视频的单串参考图(12 号票旧形态)

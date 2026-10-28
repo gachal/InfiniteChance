@@ -18,9 +18,10 @@ import (
 // Gateway is the worker's view of the relay surface: the synchronous image
 // calls — text-to-image (10 号票) and image-to-image (21 号票) — the async
 // video contract's three faces — submit, poll, cancel (12 号票) — the
-// 音色闭环的四端点加合成模型目录 (57 号票,钉渠道不换道) and the 配乐异步
-// 两面加模型目录 (60 号票,常规调度换道、无取消面).
-// *Client satisfies it; tests substitute fakes.
+// 音色闭环的四端点加合成模型目录 (57 号票,钉渠道不换道), the 配乐异步
+// 两面加模型目录 (60 号票,常规调度换道、无取消面) and the 音效同步单面加
+// 模型目录 (61 号票,常规调度换道). *Client satisfies it; tests substitute
+// fakes.
 type Gateway interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error)
 	EditImage(ctx context.Context, req EditRequest) (ImageResult, error)
@@ -35,6 +36,8 @@ type Gateway interface {
 	SubmitMusic(ctx context.Context, req MusicRequest) (MusicSubmitResult, error)
 	PollMusic(ctx context.Context, taskID string) (MusicPoll, error)
 	ListMusicModels(ctx context.Context) (MusicModelCatalog, error)
+	CreateSfx(ctx context.Context, req SfxRequest) (SfxResult, error)
+	ListSfxModels(ctx context.Context) (SfxModelCatalog, error)
 }
 
 // ChannelLister is the slice of the channel store the worker needs to
@@ -89,7 +92,11 @@ type Worker struct {
 	// 排空轮询,驱动网关侧计费时限收尾退款(见 runMusic)。
 	musicPollInterval time.Duration
 	musicTaskTimeout  time.Duration
-	logger            *log.Logger
+	// 音效任务的时限旋钮(61 号票):网关侧在 adaptor 内同步等待,独立
+	// 预算 3min;worker 时限默认 10min —— 覆盖网关预算(3min × 含换道的
+	// 多渠道尝试)再留转存余量,超时按失败收尾(可重试)。
+	sfxTaskTimeout time.Duration
+	logger         *log.Logger
 }
 
 // Defaults for a bare NewWorker: two concurrent generations, a 1s queue
@@ -107,6 +114,7 @@ const (
 	defaultVoiceTaskTimeout = 2 * time.Minute
 	defaultMusicPoll        = 3 * time.Second
 	defaultMusicTaskTimeout = 15 * time.Minute
+	defaultSfxTaskTimeout   = 10 * time.Minute
 )
 
 // NewWorker wires a worker with production defaults; the With… options
@@ -124,6 +132,7 @@ func NewWorker(store Store, gateway Gateway, opts ...WorkerOption) *Worker {
 		voiceTaskTimeout:  defaultVoiceTaskTimeout,
 		musicPollInterval: defaultMusicPoll,
 		musicTaskTimeout:  defaultMusicTaskTimeout,
+		sfxTaskTimeout:    defaultSfxTaskTimeout,
 		logger:            log.Default(),
 	}
 	for _, opt := range opts {
@@ -186,6 +195,13 @@ func WithMusicPollInterval(d time.Duration) WorkerOption {
 // (60 号票:15min 上限;超时先失败收尾,再后台排空驱动网关退款)。
 func WithMusicTaskTimeout(d time.Duration) WorkerOption {
 	return func(w *Worker) { w.musicTaskTimeout = d }
+}
+
+// WithSfxTaskTimeout bounds one sfx task's synchronous gateway call plus the
+// artifact transfer (61 号票:默认 10min —— 网关侧同步预算 3min 之上留
+// 转存余量;超时按失败收尾,可重试)。
+func WithSfxTaskTimeout(d time.Duration) WorkerOption {
+	return func(w *Worker) { w.sfxTaskTimeout = d }
 }
 
 // WithChannels lets the worker auto-pin a channel for voice-creation tasks
@@ -317,6 +333,9 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 		return
 	case KindMusic:
 		w.runMusic(parent, t)
+		return
+	case KindSfx:
+		w.runSfx(parent, t)
 		return
 	}
 
@@ -1046,6 +1065,59 @@ func (w *Worker) finishMusic(ctx context.Context, t Task, poll MusicPoll) {
 	}
 	if !won {
 		w.logger.Printf("canvastask: finalize music success %s lost the race (status now %s)", t.ID, finalized.Status)
+		return
+	}
+	w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)
+}
+
+// runSfx carries one 音效 task through the gateway's synchronous contract
+// (61 号票):同步 CreateSfx → 产物转存 kind=audio 素材行 → 复用
+// FinalizeMusicSuccess 收尾(音效与配乐同构:事实都在任务行的
+// prompt/model/seconds 列,voice_spec 一列不动,前端按 source 判别回填)。
+// 恢复语义照 runTts 现状,不另发明:同步任务没有远端句柄可续,重启回队
+// (RequeueRunning)后按全新调用重跑 —— 双计费窗口 = 上一次网关调用已结清
+// (second 轨预扣即实结或失败退款)但进程在收尾前崩溃,重试是一次全新的
+// 预扣-结清。窗口有界:网关同步面在 adaptor 预算(3min,含换道候选)内
+// 必然给出终态,挂死的请求按 504 全额退款,不存在无限占用;这与 tts 的
+// 同款取舍(重跑优于丢产物),注释留痕不改变行为。
+func (w *Worker) runSfx(parent context.Context, t Task) {
+	ctx, cancel := context.WithTimeout(parent, w.sfxTaskTimeout)
+	defer cancel()
+	bookkeeping := context.WithoutCancel(parent)
+
+	if t.Prompt == "" {
+		w.fail(bookkeeping, t.ID, "任务行缺少音效描述")
+		return
+	}
+	if t.Seconds < sfxMinSeconds || t.Seconds > sfxMaxSeconds {
+		w.fail(bookkeeping, t.ID, fmt.Sprintf("任务行的秒数 %d 不在 %d–%d 域", t.Seconds, sfxMinSeconds, sfxMaxSeconds))
+		return
+	}
+
+	w.logger.Printf("canvastask: running %s (canvas %d, node %s, kind sfx, attempt %d)",
+		t.ID, t.CanvasID, t.NodeID, t.Attempts)
+	res, err := w.gateway.CreateSfx(ctx, SfxRequest{
+		Model:   t.Model,
+		Text:    t.Prompt,
+		Seconds: t.Seconds,
+		Source:  nodeTaskSource(t),
+	})
+	if err != nil {
+		w.fail(bookkeeping, t.ID, err.Error())
+		return
+	}
+	a, aerr := w.archiveAudio(bookkeeping, t, res.AudioURL, t.Prompt)
+	if aerr != nil {
+		w.fail(bookkeeping, t.ID, aerr.Error())
+		return
+	}
+	finalized, won, err := w.store.FinalizeMusicSuccess(bookkeeping, t.ID, *a)
+	if err != nil {
+		w.logger.Printf("canvastask: finalize sfx success %s: %v", t.ID, err)
+		return
+	}
+	if !won {
+		w.logger.Printf("canvastask: finalize sfx success %s lost the race (status now %s)", t.ID, finalized.Status)
 		return
 	}
 	w.logger.Printf("canvastask: task %s succeeded, asset %d", t.ID, finalized.AssetID)

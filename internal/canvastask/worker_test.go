@@ -50,6 +50,10 @@ type stubGateway struct {
 	musicPolls    int
 	musicSubmitFn func(context.Context, canvastask.MusicRequest) (canvastask.MusicSubmitResult, error)
 	musicPollFn   func(call int) (canvastask.MusicPoll, error)
+
+	// 音效面(61 号票):同步调用脚本化,请求全录。
+	sfxCalls []canvastask.SfxRequest
+	sfxFn    func(context.Context, canvastask.SfxRequest) (canvastask.SfxResult, error)
 }
 
 func (g *stubGateway) CreateVoice(ctx context.Context, req canvastask.VoiceCreateRequest) (canvastask.VoiceCreateResult, error) {
@@ -120,6 +124,21 @@ func (g *stubGateway) PollMusic(_ context.Context, _ string) (canvastask.MusicPo
 
 func (g *stubGateway) ListMusicModels(_ context.Context) (canvastask.MusicModelCatalog, error) {
 	return canvastask.MusicModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
+}
+
+func (g *stubGateway) CreateSfx(ctx context.Context, req canvastask.SfxRequest) (canvastask.SfxResult, error) {
+	g.mu.Lock()
+	g.sfxCalls = append(g.sfxCalls, req)
+	fn := g.sfxFn
+	g.mu.Unlock()
+	if fn == nil {
+		return canvastask.SfxResult{}, errors.New("stub gateway: no sfx script")
+	}
+	return fn(ctx, req)
+}
+
+func (g *stubGateway) ListSfxModels(_ context.Context) (canvastask.SfxModelCatalog, error) {
+	return canvastask.SfxModelCatalog{Models: []string{}, Prices: map[string]pricing.PriceSummary{}}, nil
 }
 
 func (g *stubGateway) GenerateImage(ctx context.Context, req canvastask.ImageRequest) (canvastask.ImageResult, error) {

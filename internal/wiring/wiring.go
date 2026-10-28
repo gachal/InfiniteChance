@@ -212,6 +212,10 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	// —— music 能力过滤维度在渠道表,归网关管)。
 	canvastask.RegisterMusicModelRoutes(r.Group("/music-models", auth.RequireAuth(issuer)),
 		&canvastask.Handlers{Gateway: gateway, Voices: s.Voices})
+	// /sfx-models 以服务级 key 代理网关 /v1/audio/sfx-models(61 号票
+	// —— sfx 能力过滤维度在渠道表,归网关管)。
+	canvastask.RegisterSfxModelRoutes(r.Group("/sfx-models", auth.RequireAuth(issuer)),
+		&canvastask.Handlers{Gateway: gateway, Voices: s.Voices})
 	promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
 		&promptgen.CatalogHandlers{Templates: s.Templates})
 	promptgen.RegisterModelRoutes(r.Group("/prompt-models", auth.RequireAuth(issuer)),
