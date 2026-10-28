@@ -1,7 +1,7 @@
 # 61 音效生成(SFX)——VOD AIGC 聚合渠道(2026-10-28 重开改写)
 
 Type: feat
-Status: drafted(2026-10-27 随 60 号票 Q1 拆出;物种定义已回写 CONTEXT.md「音效」词条;**2026-10-28 渠道前提重写**——原挂「新增海外渠道类型(ElevenLabs)」,因 VOD AIGC 聚合出现大陆可达的独立音效上游而触发本票自设的「渠道选择重开」验证点;62 号票(歌曲,同走 VOD)先行实现,本票紧随)
+Status: implemented(2026-10-28 完成于 `feat/61-vod-sfx`。实现注记:**seconds 列复用**——`canvas_tasks` 不加列,video 语义扩为 video/sfx 两用,61 号票 schema 迁移量归零;**目录端点**——网关 `GET /v1/audio/sfx-models`(CapSfx ∩ second 配价)+ canvas `/sfx-models` 代理 + `ListSfxModels` client + 前端下拉,集成方对票面「表单 = 模型 + 描述 + 秒数」的补全;**actual=reserved 定格**——second 轨恒等结清(video.go GetVideoTask succeeded 同款先例),计费不变量以恒等满足;**同步等待独立预算** `vodSfxPollInterval=5s` / `vodSfxTotalBudget=3min`(adaptor 字段化,测试可收紧),超时 504 按临时失败退款换道;**恢复语义照 runTts**——同步任务无远端句柄,重启回队按全新调用重跑,双计费窗口由网关同步面必然终态兜底(runSfx 注释留痕);worker 时限独立旋钮 `WithSfxTaskTimeout` 默认 10min。**部署欠账**:①VOD 控制台「权限管理」给 Kling 音效开模型白名单;②渠道勾 sfx 能力位 + model_map 加 `vod-kling-sfx`→`Kling sfx`;③估价配价走 **second 轨**(`unit=second`,`cny_per_call` = 元/秒,Kling 刊例未公开,核对后修正);④`make up --build` 重建网关与画布服务。EL sound_t2s_v2 后续 model_map 加行即可支持(秒数域 [1,30],域校验按模型映射,本票未加)。原 Status:drafted(2026-10-27 随 60 号票 Q1 拆出;物种定义已回写 CONTEXT.md「音效」词条;**2026-10-28 渠道前提重写**——原挂「新增海外渠道类型(ElevenLabs)」,因 VOD AIGC 聚合出现大陆可达的独立音效上游而触发本票自设的「渠道选择重开」验证点;62 号票(歌曲,同走 VOD)先行实现,本票紧随)
 
 ## Question
 

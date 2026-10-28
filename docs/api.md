@@ -349,6 +349,61 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   }'
 ```
 
+### 3.10 音效(同步单面;61 号票)
+
+```bash
+# 音效统一说明:契约照 /v1/audio/speech 的同步形状 —— 单端点直达音效 URL,
+# 无异步三面。渠道类型 tencent-vod(VOD AIGC 聚合的 CreateAigcAudioTask,
+# SceneType=sfx),须启用 + sfx 能力 + 模型映射(上游名 "ModelName
+# ModelVersion" 空格串,如 Kling sfx);上游虽是异步任务,但网关 adaptor
+# 内同步等待(独立预算 3min + 5s 轮询,超时 504 = 临时失败)。计费按秒
+# (unit=second):预扣 = 单价 × seconds,实结 = 预扣定格(second 轨恒等
+# 结清),失败全额退款;调度常规换道(照配乐,受理前的上游临时失败预扣
+# 原封带往下一渠道)。字段:text 1-2000 字符(trim 后计),seconds 整数
+# 1-30(网关统一域;模型域如 Kling [3,10] 由上游 4xx 裁);产物 URL 是
+# VOD 临时地址(约 7 天),转存由调用方负责。错误形状照 /v1 OpenAI
+# error object。
+
+# 生成音效(描述 + 秒数 → 直接回音频 URL)
+curl -X POST $GATEWAY/v1/audio/sfx \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"vod-kling-sfx","text":"雷声轰鸣,由远及近","seconds":5}'
+# → {"audio":{"url":"https://vod-temp.example/boom.mp3"},"usage":{"seconds":5}}
+
+# 400 用例:seconds 出 1-30 域 / text 空或超 2000 字符 / 模型未配价
+curl -X POST $GATEWAY/v1/audio/sfx \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"vod-kling-sfx","text":"boom","seconds":31}'
+# → 400 {"error":{"code":"invalid_request_error","message":"The 'seconds'
+#   parameter must be an integer between 1 and 30.",...}}
+curl -X POST $GATEWAY/v1/audio/sfx \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"sfx-unpriced","text":"boom","seconds":5}'
+# → 400 {"error":{"code":"model_not_priced",...}}
+
+# 404 用例:模型没有任何 sfx 能力渠道服务(只勾 music 的渠道不服务音效)
+curl -X POST $GATEWAY/v1/audio/sfx \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"sfx-no-channel","text":"boom","seconds":5}'
+# → 404 {"error":{"code":"model_not_found",...}}
+
+# 429 用例与聊天轨同款(额度不足);上游终态失败/同步等待超预算按
+# upstream_error(502/504)拒绝并已退款。
+
+# 音效模型目录:启用 + sfx 能力渠道的映射并集 ∩ 按秒轨配价(second 轨的
+# cny_per_call 字段语义 = 元/秒),价格随行 PriceSummary;画布服务的
+# /sfx-models(JWT)以服务级 key 代理本端点。
+curl $GATEWAY/v1/audio/sfx-models -H "Authorization: Bearer $GWKEY"
+# → {"models":["vod-kling-sfx"],"prices":{"vod-kling-sfx":{"unit":"second","cny_per_call":0.1}}}
+
+# 配价示例:音效按秒轨(Kling sfx 刊例未公开收录,按资源包折算估价录入;
+# 未配价一律 model_not_priced 拒绝)
+curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "public_model":"vod-kling-sfx","unit":"second","cny_per_call":0.1
+  }'
+```
+
 ## 四、管理面(/admin,JWT)
 
 ### 4.1 渠道管理
@@ -581,6 +636,16 @@ curl -X POST $CANVAS/canvases/1/tasks/ct_1a2b3c/cancel -H "Authorization: Bearer
 curl -X POST $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"node_id":"n_audio_1","kind":"music","prompt":"轻快的电子爵士","model":"minimax-music"}'
+
+# 音效(61 号票):kind=sfx,prompt 是音效描述(1-2000 字,trim 后计)、
+#   seconds 整数 1-30(复用 video 的 seconds 列)、model 取 /sfx-models 目录
+#   且须按秒配价(unit=second);无取消态(同步任务,网关在 adaptor 内
+#   等待到终态)。产物为 kind=audio 素材行,前端回填 prompt/model/seconds
+#   配对(来源判别 source='sfx')。
+curl -X POST $CANVAS/canvases/1/tasks -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"node_id":"n_audio_2","kind":"sfx","prompt":"雷声轰鸣,由远及近",
+       "model":"vod-kling-sfx","seconds":5}'
 ```
 
 ### 5.3 同步动作(不进任务队列)
@@ -647,6 +712,7 @@ curl $CANVAS/image-models     -H "Authorization: Bearer $TOKEN"   # 次轨(call)
 curl $CANVAS/video-models     -H "Authorization: Bearer $TOKEN"   # 秒轨(second)模型
 curl $CANVAS/audio-models     -H "Authorization: Bearer $TOKEN"   # 字符轨 TTS 模型(57 号票)
 curl $CANVAS/music-models     -H "Authorization: Bearer $TOKEN"   # 按次配乐模型(60 号票)
+curl $CANVAS/sfx-models       -H "Authorization: Bearer $TOKEN"   # 按秒音效模型(61 号票,代理网关 /v1/audio/sfx-models)
 curl $CANVAS/prompt-templates -H "Authorization: Bearer $TOKEN"   # 启用中的技能(带 description/target)
 curl $CANVAS/prompt-models    -H "Authorization: Bearer $TOKEN"   # token 轨聊天模型
 ```

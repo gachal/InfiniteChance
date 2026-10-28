@@ -17,6 +17,7 @@
 | 生视频(文生视频 / 图生视频) | 火山引擎方舟 · `seedance-2.0` | ≈ ¥1/秒,5 秒 1080p ≈ ¥5,仅成功计费 |
 | 配乐(纯音乐整曲,异步任务) | 腾讯云 MPS 媒资 AIGC(`tencent-mps` 渠道,60 号票)· `MiniMaxMusic 3.0` / `Mureka instrumental_9.5` | 单价未公开,按资源包折算估价录入;按次计费,仅成功计费 |
 | 歌曲(带歌词人声,异步任务) | 腾讯云点播 AIGC(`tencent-vod` 渠道勾 music 能力,62 号票)· `vod-minimax-music-3.0` / `vod-mureka-song-9` | VOD AIGC 音乐刊例未公开,估价录入;按次计费,仅成功计费 |
+| 音效(≤30 秒短音频,同步端点) | 腾讯云点播 AIGC(`tencent-vod` 渠道勾 sfx 能力,61 号票)· `vod-kling-sfx` | Kling sfx 刊例未公开,估价录入;按秒计费(单价 × 秒),失败退款 |
 
 参考价格为厂商牌价的近似;网关内的实际配价以管理台「模型价格」为准(curl 示例见 [docs/api.md](docs/api.md) 4.3),未配价模型一律 `model_not_priced` 拒绝,无静默兜底。
 
