@@ -43,12 +43,21 @@ import (
 // 就当它不会交付了(产物 URL 本就 24h 过期,迟到的交付也无人可取)。
 const musicBillingDeadline = 30 * time.Minute
 
-// musicRequest is the submit body's gateway slice — 两字段契约,没有尺寸
-// /秒数/参考维度(配乐没有可表达的参数面;参考翻唱是 MPS AudioInfos 的
-// cover 模式,60 号票显式 out of scope)。
+// maxMusicLyricsRunes 是歌词上限(62 号票:与模型 TokenHub 直连口径同值,
+// VOD 透传无额外限制,真 key 复核);网关提交面按同值预检,超限在拨号之前
+// 400。canvas 侧 canvastask/handler.go 有同源副本,改一边要同步另一边。
+const maxMusicLyricsRunes = 3500
+
+// musicRequest is the submit body's gateway slice —— 60 号票两字段,62 号票
+// 追加 instrumental(bool 指针,缺省 true —— 纯音乐,60 号票既有调用完全
+// 兼容)与 lyrics(可选字符串,人声歌曲的歌词;instrumental:false 且不带
+// lyrics = 模型自动写词)。没有尺寸/秒数/参考维度(配乐没有可表达的参数
+// 面;参考翻唱是上游 cover 模式,显式 out of scope)。
 type musicRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Instrumental *bool  `json:"instrumental"`
+	Lyrics       string `json:"lyrics"`
 }
 
 // musicTaskJSON is the external task object: submit answers it fresh from
@@ -176,6 +185,20 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 	} else if n > mpsMaxPromptRunes {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
 			"The 'prompt' parameter exceeds the "+strconv.Itoa(mpsMaxPromptRunes)+"-character limit.")
+		return nil
+	}
+	// 62 号票歌曲面:歌词上限与纯音乐互斥。显式 instrumental:true 携带
+	// 歌词是客户端错误 —— 显式 400 优于静默忽略(歌词会被上游丢弃);
+	// 纯空白歌词按未携带处理。打到 MPS 侧模型(非 vod- 前缀)时歌词会被
+	// 静默降级成纯音乐,是 62 号票文档写明的已知边界,不在网关裁。
+	if n := utf8.RuneCountInString(req.Lyrics); n > maxMusicLyricsRunes {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
+			"The 'lyrics' parameter exceeds the "+strconv.Itoa(maxMusicLyricsRunes)+"-character limit.")
+		return nil
+	}
+	if req.Instrumental != nil && *req.Instrumental && strings.TrimSpace(req.Lyrics) != "" {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
+			"'lyrics' cannot be combined with instrumental:true; omit 'lyrics' or set instrumental:false for a vocal song.")
 		return nil
 	}
 

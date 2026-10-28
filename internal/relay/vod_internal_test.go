@@ -53,6 +53,11 @@ func (s *vodStub) handler(w http.ResponseWriter, r *http.Request) {
 			s.submits <- body
 		}
 		fmt.Fprint(w, `{"Response":{"TaskId":"task-123"}}`)
+	case "CreateAigcAudioTask":
+		if s.submits != nil {
+			s.submits <- body
+		}
+		fmt.Fprint(w, `{"Response":{"TaskId":"task-music-1"}}`)
 	case "DescribeTaskDetail":
 		s.calls++
 		if len(s.polls) == 0 {
@@ -452,6 +457,232 @@ func TestVODAdaptorImageRefConstraints(t *testing.T) {
 	}
 	if !strings.Contains(string(upstream.Body), "at most 9") {
 		t.Fatalf("10 refs refusal = %s", upstream.Body)
+	}
+}
+
+// 37 号票:background=transparent 翻译为 ExtInfo 双层 JSON 编码串 + 强制
+// OutputFormat=png,generations 与 edits 两路共用同一段翻译;不带
+// background 的请求保持现状(提交体无 ExtInfo、OutputConfig 无
+// OutputFormat)。
+// 62 号票:MusicSubmit 把网关 {model,prompt,instrumental,lyrics} 翻译成
+// CreateAigcAudioTask —— SceneType/模型串空格拆分/OutputConfig(Temporary
+// + mp3,Duration 不填)/SubAppId/按模型族的 AdditionalParameters
+// (MiniMaxMusic 收 is_instrumental + lyrics,Mureka 只收 lyrics)。
+func TestVODAdaptorMusicSubmitBuildsAigcAudioTask(t *testing.T) {
+	stub, srv := newVODStub(t)
+	a := fastVODAdaptor(srv.URL)
+	upstream, err := a.MusicSubmit(context.Background(), vodTestChannel(srv.URL),
+		[]byte(`{"model":"MiniMaxMusic 3.0","prompt":"city night run","instrumental":false,"lyrics":"夜色慢慢降落"}`))
+	if err != nil {
+		t.Fatalf("MusicSubmit: %v", err)
+	}
+	if !upstream.OK || upstream.Status != http.StatusOK {
+		t.Fatalf("upstream = %d ok=%v body=%s", upstream.Status, upstream.OK, upstream.Body)
+	}
+	var submitted struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal(upstream.Body, &submitted); err != nil || submitted.TaskID != "task-music-1" {
+		t.Fatalf("normalized submit body = %s (%v), want {task_id}", upstream.Body, err)
+	}
+
+	var req struct {
+		SubAppID             int64          `json:"SubAppId"`
+		SceneType            string         `json:"SceneType"`
+		ModelName            string         `json:"ModelName"`
+		ModelVer             string         `json:"ModelVersion"`
+		Prompt               string         `json:"Prompt"`
+		OutputConfig         map[string]any `json:"OutputConfig"`
+		AdditionalParameters string         `json:"AdditionalParameters"`
+		Duration             any            `json:"Duration"`
+	}
+	select {
+	case raw := <-stub.submits:
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Fatalf("submit body: %v (%s)", err, raw)
+		}
+	default:
+		t.Fatal("no submit reached the stub")
+	}
+	if req.SceneType != "music" || req.ModelName != "MiniMaxMusic" || req.ModelVer != "3.0" {
+		t.Fatalf("scene/model = %q %q %q", req.SceneType, req.ModelName, req.ModelVer)
+	}
+	if req.Prompt != "city night run" {
+		t.Fatalf("prompt = %q", req.Prompt)
+	}
+	if req.SubAppID != 1500000000 {
+		t.Fatalf("SubAppId = %d", req.SubAppID)
+	}
+	if req.OutputConfig["StorageMode"] != "Temporary" || req.OutputConfig["OutputAudioFormat"] != "mp3" {
+		t.Fatalf("OutputConfig = %v", req.OutputConfig)
+	}
+	if _, ok := req.OutputConfig["Duration"]; ok || req.Duration != nil {
+		t.Error("Duration should be absent (音乐时长模型自定,62 号票定案)")
+	}
+	if req.AdditionalParameters != `{"is_instrumental":false,"lyrics":"夜色慢慢降落"}` {
+		t.Fatalf("AdditionalParameters = %q", req.AdditionalParameters)
+	}
+}
+
+// 模型族与缺省:instrumental 缺省 true(60 号票纯音乐调用零改动);Mureka
+// 只透传 lyrics(纯音乐参数表达未证);其余模型族不带 AdditionalParameters;
+// lyrics 空串不带。
+func TestVODAdaptorMusicSubmitFamiliesAndDefault(t *testing.T) {
+	stub, srv := newVODStub(t)
+	a := fastVODAdaptor(srv.URL)
+	ch := vodTestChannel(srv.URL)
+
+	readAdditional := func(who string) (string, bool) {
+		t.Helper()
+		var req struct {
+			AdditionalParameters *string `json:"AdditionalParameters"`
+		}
+		select {
+		case raw := <-stub.submits:
+			if err := json.Unmarshal(raw, &req); err != nil {
+				t.Fatalf("%s submit body: %v (%s)", who, err, raw)
+			}
+		default:
+			t.Fatalf("no %s submit reached the stub", who)
+		}
+		if req.AdditionalParameters == nil {
+			return "", false
+		}
+		return *req.AdditionalParameters, true
+	}
+
+	// instrumental 缺省 = true;lyrics 缺省不带。
+	if _, err := a.MusicSubmit(context.Background(), ch,
+		[]byte(`{"model":"MiniMaxMusic 3.0","prompt":"轻快的电子爵士"}`)); err != nil {
+		t.Fatalf("default submit: %v", err)
+	}
+	if extra, ok := readAdditional("default"); !ok || extra != `{"is_instrumental":true}` {
+		t.Fatalf("default AdditionalParameters = %q ok=%v, want is_instrumental true only", extra, ok)
+	}
+
+	// Mureka song_9:只透传 lyrics,不写 is_instrumental。
+	if _, err := a.MusicSubmit(context.Background(), ch,
+		[]byte(`{"model":"Mureka song_9","prompt":"pop ballad","instrumental":false,"lyrics":"la la la"}`)); err != nil {
+		t.Fatalf("mureka submit: %v", err)
+	}
+	if extra, ok := readAdditional("mureka"); !ok || extra != `{"lyrics":"la la la"}` {
+		t.Fatalf("mureka AdditionalParameters = %q ok=%v, want lyrics only", extra, ok)
+	}
+
+	// 其它模型族(GL/EL……):不带 AdditionalParameters。
+	if _, err := a.MusicSubmit(context.Background(), ch,
+		[]byte(`{"model":"EL compose_v2","prompt":"ambient","instrumental":false,"lyrics":"x"}`)); err != nil {
+		t.Fatalf("el submit: %v", err)
+	}
+	if _, ok := readAdditional("el"); ok {
+		t.Fatalf("el AdditionalParameters should be absent")
+	}
+
+	// 人声无词(自动写词):instrumental=false、lyrics 空 —— MiniMaxMusic 仍带
+	// is_instrumental,不带 lyrics。
+	if _, err := a.MusicSubmit(context.Background(), ch,
+		[]byte(`{"model":"MiniMaxMusic 3.0","prompt":"auto words","instrumental":false}`)); err != nil {
+		t.Fatalf("autowords submit: %v", err)
+	}
+	if extra, ok := readAdditional("autowords"); !ok || extra != `{"is_instrumental":false}` {
+		t.Fatalf("autowords AdditionalParameters = %q ok=%v", extra, ok)
+	}
+}
+
+// 62 号票:MusicQuery = DescribeTaskDetail → vodTaskResult 后,状态词必须
+// 翻译成 MPS 词表(WAIT/RUN/DONE/FAIL)再归一 —— musictask.MergeStatus 对
+// 未知态归 failed,直透 VOD 的 WAITING/FINISH 会把在途任务误杀。产物 URL
+// 从 AigcAudioTask 的 Output 子树提取,失败原因随 error.message。
+func TestVODAdaptorMusicQueryTranslatesStatus(t *testing.T) {
+	cases := []struct{ vendor, want string }{
+		{"WAITING", "WAIT"},
+		{"RUNNING", "RUN"},
+		{"SUCCESS", "DONE"},
+		{"FINISH", "DONE"},
+		{"DONE", "DONE"},
+		{"FAIL", "FAIL"},
+		{"FAILED", "FAIL"},
+		{"ERROR", "FAIL"},
+	}
+	for _, tc := range cases {
+		_, srv := newVODStub(t, `{"Response":{"AigcAudioTask":{"Status":"`+tc.vendor+`"}}}`)
+		a := fastVODAdaptor(srv.URL)
+		upstream, err := a.MusicQuery(context.Background(), vodTestChannel(srv.URL), "task-music-1")
+		if err != nil {
+			t.Fatalf("MusicQuery(%s): %v", tc.vendor, err)
+		}
+		if upstream == nil || !upstream.OK || upstream.Status != http.StatusOK {
+			t.Fatalf("MusicQuery(%s) = %+v, want a 2xx normalized body", tc.vendor, upstream)
+		}
+		var parsed struct {
+			TaskStatus string `json:"task_status"`
+		}
+		if err := json.Unmarshal(upstream.Body, &parsed); err != nil {
+			t.Fatalf("MusicQuery(%s) body: %v (%s)", tc.vendor, err, upstream.Body)
+		}
+		if parsed.TaskStatus != tc.want {
+			t.Errorf("status %q translated to %q, want %q", tc.vendor, parsed.TaskStatus, tc.want)
+		}
+	}
+}
+
+func TestVODAdaptorMusicQueryDeliversURLAndError(t *testing.T) {
+	_, srv := newVODStub(t,
+		`{"Response":{"AigcAudioTask":{"Status":"SUCCESS","Input":{"FileInfos":[{"FileUrl":"https://input-ref/must-ignore.mp3"}]},"Output":{"FileInfos":[{"FileUrl":"https://cdn/song.mp3"}]}}}}`)
+	a := fastVODAdaptor(srv.URL)
+	upstream, err := a.MusicQuery(context.Background(), vodTestChannel(srv.URL), "task-music-1")
+	if err != nil {
+		t.Fatalf("MusicQuery: %v", err)
+	}
+	if upstream == nil || !upstream.OK {
+		t.Fatalf("MusicQuery = %+v err:%v", upstream, err)
+	}
+	var parsed struct {
+		TaskStatus string `json:"task_status"`
+		AudioURL   string `json:"audio_url"`
+		Error      *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(upstream.Body, &parsed); err != nil {
+		t.Fatalf("body: %v (%s)", err, upstream.Body)
+	}
+	if parsed.TaskStatus != "DONE" || parsed.AudioURL != "https://cdn/song.mp3" || parsed.Error != nil {
+		t.Fatalf("parsed = %+v, want DONE with the Output URL and no error", parsed)
+	}
+
+	// 失败态:ErrCode+Message 组进 error.message。
+	_, srv = newVODStub(t, `{"Response":{"AigcAudioTask":{"Status":"FAIL","ErrCode":"ContentFilter","Message":"lyrics rejected"}}}`)
+	a = fastVODAdaptor(srv.URL)
+	upstream, err = a.MusicQuery(context.Background(), vodTestChannel(srv.URL), "task-music-1")
+	if err != nil {
+		t.Fatalf("failed MusicQuery: %v", err)
+	}
+	if upstream == nil || !upstream.OK {
+		t.Fatalf("failed MusicQuery = %+v", upstream)
+	}
+	if err := json.Unmarshal(upstream.Body, &parsed); err != nil {
+		t.Fatalf("failed body: %v (%s)", err, upstream.Body)
+	}
+	if parsed.TaskStatus != "FAIL" || parsed.Error == nil || parsed.Error.Message != "ContentFilter: lyrics rejected" {
+		t.Fatalf("failed parsed = %+v, want FAIL with the vendor reason", parsed)
+	}
+}
+
+// 2xx 但解不出 TaskId:与生图提交同判 —— 502,可换道。
+func TestVODAdaptorMusicSubmitWithoutTaskIdIs502(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"Response":{}}`)
+	}))
+	defer srv.Close()
+	a := fastVODAdaptor(srv.URL)
+	upstream, err := a.MusicSubmit(context.Background(), vodTestChannel(srv.URL),
+		[]byte(`{"model":"MiniMaxMusic 3.0","prompt":"x"}`))
+	if err != nil {
+		t.Fatalf("MusicSubmit: %v", err)
+	}
+	if upstream.OK || upstream.Status != http.StatusBadGateway {
+		t.Fatalf("empty TaskId = %d ok=%v, want 502", upstream.Status, upstream.OK)
 	}
 }
 

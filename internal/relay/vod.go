@@ -4,8 +4,11 @@
 // 把这些全部关在 adaptor 内:对外仍是 ImagesGenerations/ImagesEdits 两个
 // 同步方法,请求翻译(OpenAI images 参数 → VOD OutputConfig)、等待
 // (10 分钟预算 + 5 秒轮询)、响应转换(FileUrl → OpenAI data[].url)都在
-// 这里完成,relay 骨架(调度/熔断/换道/计费)零改动。聊天/视频方法返回
-// 不支持错误:该类型渠道只声明 images 能力,调度不会把别的请求落上来。
+// 这里完成,relay 骨架(调度/熔断/换道/计费)零改动。62 号票追加文生音乐
+// (CreateAigcAudioTask,SceneType=music):对外是 MusicSubmit/MusicQuery
+// 两个异步窄方法,形状与 mps adaptor 对齐(handler 零改动),状态词在
+// adaptor 内翻成 MPS 词表防误杀。聊天/视频方法返回不支持错误:调度不会
+// 把别的请求落上来(images/music 之外的能力不声明)。
 package relay
 
 import (
@@ -632,8 +635,8 @@ func readPartText(part *multipart.Part) string {
 	return string(data)
 }
 
-// 聊天/视频面不归这个 adaptor:该类型渠道只声明 images 能力,这些方法
-// 只作防御 —— 返回错误让 relay 按上游失败处理(调度过滤下到不了这里)。
+// 聊天/视频面不归这个 adaptor:该类型渠道只声明 images/music 能力,这些
+// 方法只作防御 —— 返回错误让 relay 按上游失败处理(调度过滤下到不了这里)。
 func (a *vodAdaptor) ChatCompletions(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
 	return nil, errors.New("relay: tencent-vod adaptor does not relay chat completions")
 }
@@ -652,4 +655,162 @@ func (a *vodAdaptor) VideosQuery(ctx context.Context, ch channel.Channel, upstre
 
 func (a *vodAdaptor) VideosCancel(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
 	return nil, errors.New("relay: tencent-vod adaptor does not relay video tasks")
+}
+
+// vodMusicRequest is the gateway music submit body's adaptor slice (62 号票):
+// model 已被 relay 换成上游 "ModelName ModelVersion" 串;instrumental 缺省
+// true(60 号票纯音乐调用零改动),lyrics 与 instrumental:false 同行即人声
+// 歌曲。MPS adaptor 的 musicSubmitBody 只解 model/prompt,这两个字段打到
+// tencent-mps 渠道会被静默忽略(instrumental 写死 true,62 号票文档边界)。
+type vodMusicRequest struct {
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Instrumental *bool  `json:"instrumental"`
+	Lyrics       string `json:"lyrics"`
+}
+
+// vodMusicAdditionalParameters renders the per-model extras for VOD 文生音乐
+// (62 号票):MiniMaxMusic 收 is_instrumental(按请求,缺省 true)+ lyrics
+// (非空才带);Mureka 只透传 lyrics(其纯音乐参数表达未证,is_instrumental
+// 不送,真 key 验证点);其余模型族(GL 的拼接式翻译、EL……)不在本票,不
+// 给。返回值是 JSON 序列化字符串(上游契约,与透明图 ExtInfo 同款双层形)。
+func vodMusicAdditionalParameters(modelName string, instrumental bool, lyrics string) (string, bool) {
+	isMiniMax := strings.EqualFold(modelName, "MiniMaxMusic")
+	isMureka := strings.EqualFold(modelName, "Mureka")
+	if !isMiniMax && !isMureka {
+		return "", false
+	}
+	extras := map[string]any{}
+	if isMiniMax {
+		extras["is_instrumental"] = instrumental
+	}
+	if strings.TrimSpace(lyrics) != "" {
+		extras["lyrics"] = lyrics
+	}
+	if len(extras) == 0 {
+		return "", false
+	}
+	b, err := json.Marshal(extras)
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// MusicSubmit translates one music body into a submitted VOD
+// CreateAigcAudioTask, returning the normalized {"task_id"} body — 形状与
+// mps.MusicSubmit 对齐,music handler 的 parseMusicSubmit 直接消费。上游名
+// 的空格前段是 ModelName、后段是 ModelVersion(缺版本时省略,与 MPS 同款);
+// OutputConfig 恒 Temporary + mp3(Duration 不填:音乐时长模型自定,62 号票
+// 定案),产物地址是 VOD 临时 URL(有效期 7 天),持久化交转存链。
+func (a *vodAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
+	var req vodMusicRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("tencent vod: request body is not a valid JSON object")}, nil
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("tencent vod: 'prompt' is required for music generation")}, nil
+	}
+	if n := len([]rune(prompt)); n > mpsMaxPromptRunes {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody(fmt.Sprintf("tencent vod: 'prompt' exceeds the %d-character limit", mpsMaxPromptRunes))}, nil
+	}
+	modelName, modelVersion, _ := strings.Cut(strings.TrimSpace(req.Model), " ")
+	if modelName == "" {
+		return &UpstreamResponse{Status: http.StatusBadRequest,
+			Body: vodErrorBody("tencent vod: model mapping is empty")}, nil
+	}
+	instrumental := true
+	if req.Instrumental != nil {
+		instrumental = *req.Instrumental
+	}
+
+	audioReq := map[string]any{
+		"ModelName":    modelName,
+		"SceneType":    "music",
+		"Prompt":       prompt,
+		"OutputConfig": map[string]any{"StorageMode": "Temporary", "OutputAudioFormat": "mp3"},
+	}
+	if modelVersion != "" {
+		audioReq["ModelVersion"] = modelVersion
+	}
+	if extra, ok := vodMusicAdditionalParameters(modelName, instrumental, req.Lyrics); ok {
+		audioReq["AdditionalParameters"] = extra
+	}
+	if v, ok := vodView(ch); ok && v.subAppID != 0 {
+		audioReq["SubAppId"] = v.subAppID
+	}
+	body, err := json.Marshal(audioReq)
+	if err != nil {
+		return nil, err
+	}
+
+	upstream, err := a.vodCall(ctx, ch, "CreateAigcAudioTask", body)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	var env vodEnvelope
+	if err := json.Unmarshal(upstream.Body, &env); err != nil || env.Response.TaskId == "" {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("tencent vod CreateAigcAudioTask: 2xx 但无 TaskId")}, nil
+	}
+	normalized, _ := json.Marshal(map[string]any{"task_id": env.Response.TaskId})
+	return &UpstreamResponse{Status: http.StatusOK, Body: normalized, OK: true}, nil
+}
+
+// vodMusicStatus translates one VOD merged status word onto the MPS 词表
+// (WAIT/RUN/DONE/FAIL)the music handler's merge table knows: VOD 的
+// WAITING/FINISH 不在 musictask.MergeStatus 的词表里,直透会被归并成
+// failed,把在途任务误杀成失败。未知词原样透出,由词表的 default 规则
+// 兜底(62 号票定案 3 的显式映射)。
+func vodMusicStatus(status string) string {
+	switch status {
+	case "WAITING":
+		return "WAIT"
+	case "RUNNING":
+		return "RUN"
+	case "SUCCESS", "FINISH", "DONE":
+		return "DONE"
+	case "FAIL", "FAILED", "ERROR":
+		return "FAIL"
+	default:
+		return status
+	}
+}
+
+// MusicQuery relays DescribeTaskDetail for one music task, normalizing the
+// answer to the gateway poll shape — 与 mps.MusicQuery 同形,music handler 的
+// parseMusicQuery 直接消费:task_status 是翻译成 MPS 词表后的状态串,
+// audio_url 是 Output 子树交付的第一个产物地址,error 是厂商失败摘要。
+// 任务详情解不出状态字段按暂态上游故障回 502,轮询稍后再试,不推进状态。
+func (a *vodAdaptor) MusicQuery(ctx context.Context, ch channel.Channel, upstreamTaskID string) (*UpstreamResponse, error) {
+	poll := map[string]any{"TaskId": upstreamTaskID}
+	if v, ok := vodView(ch); ok && v.subAppID != 0 {
+		poll["SubAppId"] = v.subAppID
+	}
+	payload, err := json.Marshal(poll)
+	if err != nil {
+		return nil, err
+	}
+	upstream, err := a.vodCall(ctx, ch, "DescribeTaskDetail", payload)
+	if err != nil || !upstream.OK {
+		return upstream, err
+	}
+	status, urls, failMsg := vodTaskResult(upstream.Body)
+	if status == "" {
+		return &UpstreamResponse{Status: http.StatusBadGateway,
+			Body: vodErrorBody("tencent vod DescribeTaskDetail: 任务详情缺少状态字段")}, nil
+	}
+	out := map[string]any{"task_status": vodMusicStatus(status)}
+	if len(urls) > 0 {
+		out["audio_url"] = urls[0]
+	}
+	if failMsg != "" {
+		out["error"] = map[string]any{"message": failMsg}
+	}
+	normalized, _ := json.Marshal(out)
+	return &UpstreamResponse{Status: http.StatusOK, Body: normalized, OK: true}, nil
 }
