@@ -231,7 +231,6 @@ func (s *SQLiteStore) ListCharacters(ctx context.Context, ipID int64) ([]Charact
 	defer rows.Close()
 
 	var out []Character
-	byID := map[int64]*Character{}
 	for rows.Next() {
 		c, err := scanSQLiteCharacterRow(rows)
 		if err != nil {
@@ -240,10 +239,16 @@ func (s *SQLiteStore) ListCharacters(ctx context.Context, ipID int64) ([]Charact
 		c.Variants = []Variant{}
 		c.CoverAssetID = 0
 		out = append(out, c)
-		byID[c.ID] = &out[len(out)-1]
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	// byID 必须在 out 收满后再建:边收边存 &out[len(out)-1] 会在后续
+	// append 扩容时指向旧底层数组,attachTree 经旧指针把变体/图挂进被
+	// 丢弃的数组,先收入的角色整棵树丢失(多角色列表必现)。
+	byID := make(map[int64]*Character, len(out))
+	for i := range out {
+		byID[out[i].ID] = &out[i]
 	}
 	if err := s.attachTree(ctx, ipID, byID); err != nil {
 		return nil, err

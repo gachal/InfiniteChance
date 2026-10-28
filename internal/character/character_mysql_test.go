@@ -3,6 +3,7 @@ package character_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -315,6 +316,47 @@ func TestMySQLMissingSentinels(t *testing.T) {
 	other := mustCreateMySQLCharacter(t, store, 1, "阿月")
 	if _, err := store.CreateImage(ctx, c.ID, character.ImageInput{VariantID: other.Variants[0].ID, AssetID: 1}); err != character.ErrVariantMismatch {
 		t.Fatalf("cross-character create = %v, want ErrVariantMismatch", err)
+	}
+}
+
+// 多角色列表的树完整性:12 个角色各带一张设定图,断言每个角色都拿到自己
+// 的变体与图(部署事故回归 —— byID 曾在 append 扩容后指向旧底层数组,
+// 先收入的角色整棵树丢失,单角色列表测不出来)。
+func TestMySQLListCharactersMultiRowTree(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+
+	const n = 12
+	want := map[int64]int64{} // character id → asset id
+	for i := 0; i < n; i++ {
+		c := mustCreateMySQLCharacter(t, store, 3, fmt.Sprintf("角色%02d", i))
+		asset := int64(100 + i)
+		if _, err := store.CreateImage(ctx, c.ID, character.ImageInput{
+			VariantID: c.Variants[0].ID, AssetID: asset, Label: "三视图",
+		}); err != nil {
+			t.Fatalf("seed image for %q: %v", c.Name, err)
+		}
+		want[c.ID] = asset
+	}
+
+	list, err := store.ListCharacters(ctx, 3)
+	if err != nil || len(list) != n {
+		t.Fatalf("list len = %d, %v, want %d", len(list), err, n)
+	}
+	for _, got := range list {
+		asset, ok := want[got.ID]
+		if !ok {
+			t.Fatalf("unexpected character id %d in list", got.ID)
+		}
+		if len(got.Variants) != 1 || len(got.Variants[0].Images) != 1 {
+			t.Fatalf("character %d tree = %+v, want 1 variant with 1 image(指针失效丢树)", got.ID, got.Variants)
+		}
+		if got.Variants[0].Images[0].AssetID != asset {
+			t.Fatalf("character %d image = %d, want %d", got.ID, got.Variants[0].Images[0].AssetID, asset)
+		}
+		if got.CoverAssetID != asset {
+			t.Fatalf("character %d cover = %d, want %d", got.ID, got.CoverAssetID, asset)
+		}
 	}
 }
 
