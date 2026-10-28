@@ -17,12 +17,17 @@ import (
 	"github.com/gachal/InfiniteChance/internal/pricing"
 )
 
-// MusicRequest is one 配乐 submit:Prompt 是风格描述(≤2000 字,网关与
-// MPS 的契约上限),Model 是公开模型名(调度换道由网关裁决,不钉渠道)。
+// MusicRequest is one 配乐/歌曲 submit:Prompt 是风格描述(≤2000 字,网关与
+// MPS 的契约上限),Model 是公开模型名(调度换道由网关裁决,不钉渠道);
+// Instrumental/Lyrics 是 62 号票的歌曲事实 —— Instrumental 为 nil 时网关按
+// 缺省 true(纯音乐,60 号票行为不变),false 即人声歌曲;Lyrics 非空才带
+// (网关互斥校验:instrumental=true 携带歌词 400)。
 type MusicRequest struct {
-	Model  string
-	Prompt string
-	Source string
+	Model        string
+	Prompt       string
+	Source       string
+	Lyrics       string
+	Instrumental *bool
 }
 
 // MusicSubmitResult carries the gateway's task handle (mt_…): the worker
@@ -55,9 +60,11 @@ type MusicModelCatalog struct {
 // rejected submit, so nothing is owed on this path.
 func (c *Client) SubmitMusic(ctx context.Context, req MusicRequest) (MusicSubmitResult, error) {
 	payload, err := json.Marshal(struct {
-		Model  string `json:"model"`
-		Prompt string `json:"prompt"`
-	}{Model: req.Model, Prompt: req.Prompt})
+		Model        string `json:"model"`
+		Prompt       string `json:"prompt"`
+		Lyrics       string `json:"lyrics,omitempty"`
+		Instrumental *bool  `json:"instrumental,omitempty"`
+	}{Model: req.Model, Prompt: req.Prompt, Lyrics: req.Lyrics, Instrumental: req.Instrumental})
 	if err != nil {
 		return MusicSubmitResult{}, err
 	}

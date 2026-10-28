@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	model          VARCHAR(200) NOT NULL,
 	size           VARCHAR(64)  NOT NULL DEFAULT '',
 	seconds        BIGINT       NOT NULL DEFAULT 0,
+	lyrics         MEDIUMTEXT   NULL,
+	instrumental   TINYINT      NOT NULL DEFAULT 1,
 	image_ref      MEDIUMTEXT   NULL,
 	image_refs     MEDIUMTEXT   NULL,
 	video_refs     MEDIUMTEXT   NULL,
@@ -53,6 +55,8 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 // migrations widens tables created by earlier tickets in place (12 号票的
 // 图生视频列):CREATE TABLE IF NOT EXISTS never widens an existing table,
 // an already-deployed canvas DB must upgrade without a rebuild. Idempotent.
+// 62 号票的歌词/纯音乐开关两列:instrumental 缺省 1(纯音乐)让 60 号票
+// 存量行零迁移即保语义。
 var migrations = []struct{ column, ddl string }{
 	{"seconds", "ALTER TABLE canvas_tasks ADD COLUMN seconds BIGINT NOT NULL DEFAULT 0"},
 	{"image_ref", "ALTER TABLE canvas_tasks ADD COLUMN image_ref MEDIUMTEXT NULL"},
@@ -63,6 +67,8 @@ var migrations = []struct{ column, ddl string }{
 	{"video_url", "ALTER TABLE canvas_tasks ADD COLUMN video_url MEDIUMTEXT NULL"},
 	{"remote_task_id", "ALTER TABLE canvas_tasks ADD COLUMN remote_task_id VARCHAR(64) NOT NULL DEFAULT ''"},
 	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec MEDIUMTEXT NULL"},
+	{"lyrics", "ALTER TABLE canvas_tasks ADD COLUMN lyrics MEDIUMTEXT NULL"},
+	{"instrumental", "ALTER TABLE canvas_tasks ADD COLUMN instrumental TINYINT NOT NULL DEFAULT 1"},
 }
 
 // EnsureSchema creates the canvas_tasks table when missing and widens an
@@ -92,7 +98,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 }
 
 const taskColumns = `id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds,
-	image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
+	lyrics, instrumental, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
 	remote_task_id, voice_spec, created_at, updated_at`
 
 func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
@@ -100,10 +106,10 @@ func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, image_ref, image_refs, video_refs, voice_spec, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		t.Seconds, t.Lyrics, t.Instrumental, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status)
 	if err != nil {
 		return Task{}, err
@@ -580,10 +586,10 @@ type rowScanner interface {
 
 func scanTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics sql.NullString
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}
@@ -595,5 +601,6 @@ func scanTask(row rowScanner) (Task, error) {
 	t.ImageRefs = decodeImageRefs(imageRefs.String)
 	t.VideoRefs = decodeVideoRefs(videoRefs.String)
 	t.VoiceSpec = decodeVoiceSpec(voiceSpec.String)
+	t.Lyrics = lyrics.String
 	return t, nil
 }

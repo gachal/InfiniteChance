@@ -47,6 +47,25 @@ func seedMusicTask(t *testing.T, store *canvastask.SQLiteStore, prompt, model, r
 	return task
 }
 
+// seedSongTask 落一首人声歌曲行(62 号票):instrumental=false 与歌词随行
+// —— 生产路径是 createMusicTask 的提交,这里直接建行等价。
+func seedSongTask(t *testing.T, store *canvastask.SQLiteStore, prompt, model, lyrics, remoteTaskID string) canvastask.Task {
+	t.Helper()
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.Create(context.Background(), canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "audio-song", Kind: canvastask.KindMusic,
+		Prompt: prompt, Model: model, Lyrics: lyrics, Instrumental: false,
+		RemoteTaskID: remoteTaskID,
+	})
+	if err != nil {
+		t.Fatalf("seed song task: %v", err)
+	}
+	return task
+}
+
 // 快乐路径:提交受理 → 句柄落行 → 轮询至 succeeded → kind=audio 素材行
 // (prompt 随行)与任务终态同事务;网关任务句柄在任务行上。
 func TestSQLiteWorkerMusicHappyPath(t *testing.T) {
@@ -148,6 +167,55 @@ func TestSQLiteWorkerMusicResumesRemoteHandle(t *testing.T) {
 	}
 	if final.RemoteTaskID != "mt_remote_old" {
 		t.Errorf("remote_task_id = %q, want the resumed handle kept", final.RemoteTaskID)
+	}
+}
+
+// 62 号票:人声歌曲的任务事实(lyrics / instrumental=false)落行,重提路径
+// 原样重提 —— 句柄已终态失败触发的全新提交必须带上歌词与人声开关,否则
+// 失败重试会把人声歌曲重提成纯音乐(instrumental 列补全的存在理由)。
+func TestSQLiteWorkerMusicResubmitKeepsSongFacts(t *testing.T) {
+	store, _, _ := newSQLiteVoiceWorld(t)
+	var resubmitted []canvastask.MusicRequest
+	gateway := &stubGateway{
+		musicSubmitFn: func(_ context.Context, req canvastask.MusicRequest) (canvastask.MusicSubmitResult, error) {
+			resubmitted = append(resubmitted, req)
+			return canvastask.MusicSubmitResult{TaskID: "mt_remote_song"}, nil
+		},
+		musicPollFn: func(call int) (canvastask.MusicPoll, error) {
+			// 第一拍:旧句柄终态失败 → 触发全新提交;此后新句柄直接成功。
+			if call == 1 {
+				return canvastask.MusicPoll{Status: "failed", Error: "旧句柄已失败"}, nil
+			}
+			return canvastask.MusicPoll{Status: "succeeded", AudioURL: "https://cos.example/song.mp3"}, nil
+		},
+	}
+
+	task := seedSongTask(t, store, "city night run", "vod-minimax-music-3.0", "夜色慢慢降落", "")
+	if _, err := store.Claim(context.Background()); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, ok, err := store.AttachRemote(context.Background(), task.ID, "mt_remote_old"); err != nil || !ok {
+		t.Fatalf("attach remote = ok %v err %v, want attached", ok, err)
+	}
+	if n, err := store.RequeueRunning(context.Background()); err != nil || n != 1 {
+		t.Fatalf("requeue = %d err %v, want the task back in queue", n, err)
+	}
+
+	runSQLiteWorker(t, newSQLiteMusicWorker(store, gateway))
+	final := awaitSQLiteTask(t, store, task.ID)
+
+	if final.Status != canvastask.StatusSucceeded || final.AssetID <= 0 {
+		t.Fatalf("task = %s (%q) asset %d, want succeeded with asset", final.Status, final.Error, final.AssetID)
+	}
+	if len(resubmitted) != 1 {
+		t.Fatalf("submits = %d, want 1 (stale handle terminal → fresh submit)", len(resubmitted))
+	}
+	req := resubmitted[0]
+	if req.Lyrics != "夜色慢慢降落" || req.Instrumental == nil || *req.Instrumental {
+		t.Fatalf("resubmit request = %+v, want the song facts (lyrics + instrumental=false)", req)
+	}
+	if final.RemoteTaskID != "mt_remote_song" {
+		t.Errorf("remote_task_id = %q, want the fresh handle", final.RemoteTaskID)
 	}
 }
 

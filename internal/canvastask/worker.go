@@ -929,10 +929,17 @@ func (w *Worker) runMusic(parent context.Context, t Task) {
 		}
 	}
 
+	// 歌曲事实(62 号票)随行重提:instrumental 与 lyrics 落任务列,恢复/
+	// 重试的全新提交原样携带 —— instrumental=false 不落库会把人声歌曲重提
+	// 成纯音乐。纯音乐行(60 号票缺省)显式带 instrumental=true,与网关
+	// 缺省同义。
+	instrumental := t.Instrumental
 	ref, err := w.gateway.SubmitMusic(ctx, MusicRequest{
-		Model:  t.Model,
-		Prompt: t.Prompt,
-		Source: source,
+		Model:        t.Model,
+		Prompt:       t.Prompt,
+		Source:       source,
+		Lyrics:       t.Lyrics,
+		Instrumental: &instrumental,
 	})
 	if err != nil {
 		w.fail(bookkeeping, t.ID, err.Error())

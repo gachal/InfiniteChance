@@ -496,6 +496,63 @@ func TestHandlerCreateMusicTask(t *testing.T) {
 	}
 }
 
+// 62 号票歌曲提交:kind=music 收 instrumental(缺省 true)与 lyrics
+// (≤3500);人声歌曲(instrumental=false)可携带歌词落任务行,纯音乐显式
+// 携带歌词 400(与网关 /v1/audio/music 同款互斥校验,不让注定被网关拒的
+// 任务进队列)。
+func TestHandlerCreateMusicTaskSongGuards(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+
+	// 人声歌曲:201,任务行带歌词与 instrumental:false。
+	w := env.postTask(t, `{"node_id":"audio-1","kind":"music","prompt":"city night run","model":"bgm-m","instrumental":false,"lyrics":"夜色慢慢降落"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("song status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID           string `json:"id"`
+			Lyrics       string `json:"lyrics"`
+			Instrumental bool   `json:"instrumental"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if resp.Task.Lyrics != "夜色慢慢降落" || resp.Task.Instrumental {
+		t.Fatalf("task = %+v, want lyrics recorded and instrumental=false", resp.Task)
+	}
+	stored, ok := env.tasks.tasks[resp.Task.ID]
+	if !ok || stored.Lyrics != "夜色慢慢降落" || stored.Instrumental {
+		t.Fatalf("stored = %+v ok=%v, want the song facts on the row", stored, ok)
+	}
+
+	// 纯音乐缺省:instrumental 不传 = true(60 号票行为不变)。
+	w = env.postTask(t, `{"node_id":"audio-2","kind":"music","prompt":"纯音乐","model":"bgm-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("default status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if !resp.Task.Instrumental || resp.Task.Lyrics != "" {
+		t.Fatalf("default task = %+v, want instrumental=true without lyrics", resp.Task)
+	}
+
+	cases := []struct {
+		name string
+		code int
+		body string
+	}{
+		{"纯音乐携带歌词", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"p","model":"bgm-m","instrumental":true,"lyrics":"多余的歌"}`},
+		{"歌词超长", http.StatusBadRequest, `{"node_id":"n","kind":"music","prompt":"p","model":"bgm-m","instrumental":false,"lyrics":"` + strings.Repeat("雨", 3501) + `"}`},
+	}
+	for _, tc := range cases {
+		if w := env.postTask(t, tc.body); w.Code != tc.code {
+			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
+		}
+	}
+}
+
 func TestHandlerCreateWithoutGatewayAnswers503(t *testing.T) {
 	env := newHandlerEnv(nil)
 	w := env.postTask(t, `{"node_id":"n","prompt":"p","model":"img-m"}`)

@@ -128,12 +128,17 @@ type taskJSON struct {
 	Ratio      string `json:"ratio"`
 	Background string `json:"background"`
 	Seconds    int64  `json:"seconds"`
-	Status     Status `json:"status"`
-	Attempts   int64  `json:"attempts"`
-	Error      string `json:"error"`
-	AssetID    int64  `json:"asset_id"`
-	ImageURL   string `json:"image_url"`
-	VideoURL   string `json:"video_url"`
+	// Lyrics/Instrumental 是 music 任务的物种事实(62 号票歌曲):歌词原文
+	// 与纯音乐开关,前端 composer 据此回填音频节点的 lyrics 与 source:'song';
+	// 其余 kind 恒为 空串/true(列缺省,无语义)。
+	Lyrics       string `json:"lyrics"`
+	Instrumental bool   `json:"instrumental"`
+	Status       Status `json:"status"`
+	Attempts     int64  `json:"attempts"`
+	Error        string `json:"error"`
+	AssetID      int64  `json:"asset_id"`
+	ImageURL     string `json:"image_url"`
+	VideoURL     string `json:"video_url"`
 	// Chars 是台词合成(kind=tts)的服务端计费字符数,其余 kind 恒 0
 	// (评审 F2:编辑器回填音频节点的元数据配对)。
 	Chars     int64     `json:"chars"`
@@ -146,6 +151,7 @@ func toTaskJSON(t Task) taskJSON {
 		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, Kind: t.Kind,
 		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio,
 		Background: t.Background, Seconds: t.Seconds,
+		Lyrics: t.Lyrics, Instrumental: t.Instrumental,
 		Status: t.Status, Attempts: t.Attempts, Error: t.Error, AssetID: t.AssetID,
 		ImageURL: t.ImageURL, VideoURL: t.VideoURL, Chars: t.VoiceSpec.Chars,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
@@ -153,19 +159,21 @@ func toTaskJSON(t Task) taskJSON {
 }
 
 type createInput struct {
-	NodeID     string       `json:"node_id"`
-	Kind       string       `json:"kind"`
-	Prompt     string       `json:"prompt"`
-	Model      string       `json:"model"`
-	Size       string       `json:"size"`
-	Ratio      string       `json:"ratio"`
-	Background string       `json:"background"`
-	Seconds    *int64       `json:"seconds"`
-	ImageURL   string       `json:"image_url"`
-	ImageURLs  []string     `json:"image_urls"`
-	VideoRefs  []videoRefIn `json:"video_refs"`
-	Voice      *voiceIn     `json:"voice"`
-	Tts        *ttsIn       `json:"tts"`
+	NodeID        string       `json:"node_id"`
+	Kind          string       `json:"kind"`
+	Prompt        string       `json:"prompt"`
+	Model         string       `json:"model"`
+	Size          string       `json:"size"`
+	Ratio         string       `json:"ratio"`
+	Background    string       `json:"background"`
+	Seconds       *int64       `json:"seconds"`
+	Lyrics        string       `json:"lyrics"`
+	Instrumental  *bool        `json:"instrumental"`
+	ImageURL      string       `json:"image_url"`
+	ImageURLs     []string     `json:"image_urls"`
+	VideoRefs     []videoRefIn `json:"video_refs"`
+	Voice         *voiceIn     `json:"voice"`
+	Tts           *ttsIn       `json:"tts"`
 }
 
 // voiceIn is the kind=voice 提交的专属入参 (57 号票):创建表单的内联事实
@@ -1139,11 +1147,18 @@ func (h *Handlers) ListAudioModels(c *gin.Context) {
 // 行之前就拒,不让注定失败的任务进队列。
 const maxMusicPromptRunes = 2000
 
-// createMusicTask lands one 配乐 task (60 号票):prompt 是风格描述(1–2000
-// 字,对齐 MPS Prompt 上限)、model 须按次配价(预检照 createVoiceTask
-// 先例 —— 注定失败的提交在落行前拒绝);music-models 目录命中由前端
+// maxMusicLyricsRunes 是歌词上限(62 号票,与 relay/music.go 的
+// maxMusicLyricsRunes 同源);改一边要同步另一边。
+const maxMusicLyricsRunes = 3500
+
+// createMusicTask lands one 配乐/歌曲 task (60/62 号票):prompt 是风格
+// 描述(1–2000 字,对齐 MPS Prompt 上限)、model 须按次配价(预检照
+// createVoiceTask 先例 —— 注定失败的提交在落行前拒绝);62 号票追加歌曲
+// 事实:instrumental(缺省 true)与 lyrics(≤3500),纯音乐显式携带歌词
+// 400(与网关 /v1/audio/music 同款互斥校验);music-models 目录命中由前端
 // 下拉与网关调度两端裁(canvas 不持有渠道维度,与 voice/tts 同款)。
-// 产物是 kind=audio 素材行,事实落任务行的 prompt/model 列。
+// 产物是 kind=audio 素材行,事实落任务行的 prompt/model/lyrics/
+// instrumental 列。
 func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string, in createInput) {
 	prompt := strings.TrimSpace(in.Prompt)
 	if n := utf8.RuneCountInString(prompt); n < 1 {
@@ -1151,6 +1166,18 @@ func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string
 		return
 	} else if n > maxMusicPromptRunes {
 		apierr.InvalidRequest(c, fmt.Sprintf("prompt 最多 %d 个字符", maxMusicPromptRunes))
+		return
+	}
+	instrumental := true
+	if in.Instrumental != nil {
+		instrumental = *in.Instrumental
+	}
+	if n := utf8.RuneCountInString(in.Lyrics); n > maxMusicLyricsRunes {
+		apierr.InvalidRequest(c, fmt.Sprintf("lyrics 最多 %d 个字符", maxMusicLyricsRunes))
+		return
+	}
+	if instrumental && strings.TrimSpace(in.Lyrics) != "" {
+		apierr.InvalidRequest(c, "纯音乐(instrumental=true)不能携带歌词;请关闭人声开关或清空歌词")
 		return
 	}
 	model := strings.TrimSpace(in.Model)
@@ -1183,6 +1210,7 @@ func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string
 
 	h.submitTask(c, canvasID, nodeID, Task{
 		Kind: KindMusic, Prompt: prompt, Model: model,
+		Lyrics: in.Lyrics, Instrumental: instrumental,
 	})
 }
 

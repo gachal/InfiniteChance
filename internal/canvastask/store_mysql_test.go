@@ -427,8 +427,52 @@ func TestMySQLCanvasTaskVideoFieldsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMySQLCanvasTaskAttachRemoteOnlyOnRunning(t *testing.T) {
-	store, _ := openTaskTestDB(t)
+// 62 号票歌曲事实的列保真:歌词原文与纯音乐开关经 Create/Get 往返;
+// 列缺省 1(纯音乐)让迁移前的存量行保持 60 号票语义(下方直插 SQL 验证)。
+func TestMySQLCanvasTaskSongFieldsRoundTrip(t *testing.T) {
+	store, db := openTaskTestDB(t)
+	ctx := context.Background()
+
+	songID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	song, err := store.Create(ctx, canvastask.Task{
+		ID: songID, CanvasID: 7, NodeID: "audio-song", Kind: canvastask.KindMusic,
+		Prompt: "city night run", Model: "vod-minimax-music-3.0",
+		Lyrics: "夜色慢慢降落", Instrumental: false, Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create song: %v", err)
+	}
+	got, err := store.Get(ctx, song.ID)
+	if err != nil {
+		t.Fatalf("Get song: %v", err)
+	}
+	if got.Lyrics != "夜色慢慢降落" || got.Instrumental {
+		t.Errorf("song = %+v, want lyrics preserved and instrumental=false", got)
+	}
+
+	// 存量行(迁移加列,DEFAULT 1)读回纯音乐语义。
+	legacyID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, status)
+		 VALUES (?, 7, 'audio-legacy', 'music', 'p', 'bgm-m', 'queued')`, legacyID); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	legacy, err := store.Get(ctx, legacyID)
+	if err != nil {
+		t.Fatalf("Get legacy: %v", err)
+	}
+	if !legacy.Instrumental || legacy.Lyrics != "" {
+		t.Errorf("legacy = %+v, want instrumental defaulting to true without lyrics", legacy)
+	}
+}
+
+func TestMySQLCanvasTaskAttachRemoteOnlyOnRunning(t *testing.T) {	store, _ := openTaskTestDB(t)
 	ctx := context.Background()
 	task := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
 	if _, err := store.Claim(ctx); err != nil {
