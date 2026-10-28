@@ -1,13 +1,15 @@
 <script setup lang="ts">
-// 音频节点(57 号票,第十一种节点类型;60 号票增补配乐创作态;62 号票增
-// 补人声歌曲开关)四种形态 ——
-// · 创作态(工具栏「配乐」落的空节点):内联表单(「人声歌曲」开关 +
-//   开关开才显示的歌词多行框 + 模型下拉 + 风格描述 + 按次预估价 + 提交),
-//   与音色节点同款范式,不进生成对话框;提交 = kind=music 的 canvas_task
-//   绑本节点,instrumental=false 即人声歌曲,表单事实随整图 JSON 持久化。
+// 音频节点(57 号票,第十一种节点类型;60 号票增配乐创作态;62 号票增
+// 人声歌曲开关;61 号票增音效创作态)四种形态 ——
+// · 创作态(工具栏「配乐」/「音效」落的空节点):内联表单(配乐 = 「人声
+//   歌曲」开关 + 开关开才显示的歌词多行框 + 模型下拉 + 风格描述 + 按次
+//   预估价 + 提交;音效 = 按 source==='sfx' 分叉的模型下拉(¥/秒)+ 描述 +
+//   秒数 1–30 + 按秒预估),与音色节点同款范式,不进生成对话框;提交 =
+//   kind=music / kind=sfx 的 canvas_task 绑本节点,表单事实随整图 JSON
+//   持久化。
 // · 在途/失败:状态徽章(排队/生成中)+ 失败原因 + 原地重试。
 // · 产物:内联 <audio controls> + 元数据区(27 号票产物-元数据配对,
-//   台词摘录或配乐/歌曲风格描述按 source 判别)。素材面板/生成记录插入行
+//   台词摘录或配乐/歌曲/音效描述按 source 判别)。素材面板/生成记录插入行
 //   (无任务)与台词合成产物走同款产物卡面。
 // 只渲染左把手(voice → audio 合成来源边;配乐不作任何边的源),无灯箱。
 import { computed, ref, watch } from 'vue'
@@ -18,6 +20,7 @@ import type { CanvasTask, ModelPriceSummary } from '@infinitechance/api'
 import type { AudioNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
 import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateMusicForm, type MusicFormInput } from '../../music'
+import { estimateSfxCNY, MAX_SFX_TEXT_RUNES, SFX_MAX_SECONDS, SFX_MIN_SECONDS, validateSfxForm, type SfxFormInput } from '../../sfx'
 import { assetContentURL } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
 import MediaPrompt from './MediaPrompt.vue'
@@ -31,11 +34,16 @@ const props = defineProps<{
   task?: CanvasTask | null
   /** 重试请求在途时禁用重试按钮。 */
   retrying: boolean
-  /** /music-models 目录:按次配乐模型与价格(创作态表单下拉 + 预估)。 */
+  /** /music-models 目录:按次配乐模型与价格(配乐创作态表单下拉 + 预估)。 */
   musicModels: string[]
   musicPrices: Record<string, ModelPriceSummary>
   /** 配乐提交请求在途(编辑器级,禁提交按钮)。 */
   musicSubmitting?: boolean
+  /** /sfx-models 目录:按秒音效模型与价格(音效创作态表单下拉 + 预估)。 */
+  sfxModels: string[]
+  sfxPrices: Record<string, ModelPriceSummary>
+  /** 音效提交请求在途(编辑器级,禁提交按钮)。 */
+  sfxSubmitting?: boolean
   /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
   connectState?: ConnectState
 }>()
@@ -51,14 +59,18 @@ const emit = defineEmits<{
 }>()
 
 const status = computed(() => props.task?.status)
-// 创作态 = 没有产物、没有任务,工具栏「配乐」落下的空节点。
+// 创作态 = 没有产物、没有任务,工具栏「配乐/音效」落下的空节点。
 const creating = computed(
   () => !(props.data.asset_id > 0) && !status.value,
 )
+// 音效创作态分叉(61 号票):工具栏「音效」入口落 source:'sfx'。
+const sfxMode = computed(() => props.data.source === 'sfx')
 
-/** 元数据摘录(卡面一行):配乐/歌曲显风格描述,台词显摘录,完整内容进
+/** 元数据摘录(卡面一行):配乐/歌曲/音效显描述,台词显摘录,完整内容进
  * MediaPrompt 配对区。 */
-const musicish = computed(() => props.data.source === 'music' || props.data.source === 'song')
+const musicish = computed(() =>
+  props.data.source === 'music' || props.data.source === 'song' || props.data.source === 'sfx',
+)
 const metaLine = computed(() => musicish.value ? (props.data.prompt ?? '') : (props.data.text ?? ''))
 const excerpt = computed(() => {
   const text = metaLine.value
@@ -119,10 +131,39 @@ const formInput = computed<MusicFormInput>(() => ({
   lyrics: songMode.value ? props.data.lyrics ?? '' : '',
 }))
 
-const canSubmit = computed(() => validateMusicForm(formInput.value) === null)
+const canSubmit = computed(() =>
+  sfxMode.value
+    ? validateSfxForm(sfxFormInput.value) === null
+    : validateMusicForm(formInput.value) === null,
+)
+
+// ---- 音效创作态(61 号票):描述 + 模型(¥/秒)+ 秒数 1–30 ----
+
+const selectedSfxPrice = computed(() => {
+  const m = props.data.model
+  return m ? props.sfxPrices[m] : undefined
+})
+
+const sfxSeconds = computed(() => props.data.seconds ?? 0)
+
+const sfxFormInput = computed<SfxFormInput>(() => ({
+  text: props.data.prompt ?? '',
+  model: props.data.model ?? '',
+  seconds: sfxSeconds.value,
+}))
+
+const sfxEstimate = computed(() => {
+  const cny = estimateSfxCNY(selectedSfxPrice.value, sfxSeconds.value)
+  if (cny !== null) {
+    return `约 ${fmtCNY(cny)}(${sfxSeconds.value} 秒)`
+  }
+  return '按秒计费,以管理端配价为准'
+})
 
 function submitForm(): void {
-  const invalid = validateMusicForm(formInput.value)
+  const invalid = sfxMode.value
+    ? validateSfxForm(sfxFormInput.value)
+    : validateMusicForm(formInput.value)
   if (invalid) {
     formError.value = invalid
     return
@@ -141,8 +182,83 @@ function submitForm(): void {
     <header>音频</header>
 
     <!-- 创作态内联表单(60 号票:配乐的唯一生成入口,工具栏「配乐」落下;
-         62 号票:「人声歌曲」开关 + 开关开才显示的歌词多行框)。 -->
-    <template v-if="creating">
+         62 号票:「人声歌曲」开关 + 开关开才显示的歌词多行框;61 号票:
+         source='sfx' 分叉音效表单 —— 模型(¥/秒)+ 描述 + 秒数 1–30)。 -->
+    <template v-if="creating && sfxMode">
+      <textarea
+        class="field"
+        rows="3"
+        :value="data.prompt"
+        :maxlength="MAX_SFX_TEXT_RUNES"
+        placeholder="音效描述:拟声对象、情绪、环境……(≤2000 字)"
+        aria-label="音效描述"
+        @input="emit('form-change', { prompt: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div class="rune-count">
+        {{ promptRunes }}/{{ MAX_SFX_TEXT_RUNES }}
+      </div>
+      <select
+        class="field"
+        :value="data.model ?? ''"
+        aria-label="音效模型"
+        @change="emit('form-change', { model: ($event.target as HTMLSelectElement).value })"
+      >
+        <option
+          value=""
+          disabled
+        >
+          选择音效模型
+        </option>
+        <option
+          v-for="m in sfxModels"
+          :key="m"
+          :value="m"
+        >
+          {{ m }}<template v-if="sfxPrices[m]?.cny_per_call != null">
+            · {{ fmtCNY(sfxPrices[m].cny_per_call!) }}/秒
+          </template>
+        </option>
+      </select>
+      <label class="seconds-row">
+        <span>时长(秒)</span>
+        <input
+          class="field seconds-input"
+          type="number"
+          :min="SFX_MIN_SECONDS"
+          :max="SFX_MAX_SECONDS"
+          step="1"
+          :value="data.seconds ?? ''"
+          aria-label="音效时长(秒)"
+          @input="emit('form-change', { seconds: Number(($event.target as HTMLInputElement).value) })"
+        >
+        <small>{{ SFX_MIN_SECONDS }}–{{ SFX_MAX_SECONDS }} 整数</small>
+      </label>
+      <p
+        v-if="formError"
+        class="form-error"
+        role="alert"
+      >
+        {{ formError }}
+      </p>
+      <div class="form-foot">
+        <span
+          class="estimate"
+          :title="selectedSfxPrice ? undefined : '模型目录未带价,以管理端配价为准'"
+        >
+          {{ sfxEstimate }}
+        </span>
+        <button
+          class="action primary"
+          type="button"
+          :disabled="!canSubmit || sfxSubmitting"
+          @click="submitForm"
+        >
+          {{ sfxSubmitting ? '提交中…' : '生成音效' }}
+        </button>
+      </div>
+    </template>
+
+    <template v-else-if="creating">
       <label class="song-toggle">
         <input
           type="checkbox"
@@ -351,6 +467,31 @@ select.field option {
 .rune-count {
   margin-top: -4px;
   text-align: right;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* 音效秒数行(61 号票):标签 + 数字输入 + 域提示一行排开。 */
+.seconds-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+}
+
+.seconds-row span {
+  font-weight: 600;
+  color: var(--violet);
+  white-space: nowrap;
+}
+
+.seconds-input {
+  width: 84px;
+  flex-shrink: 0;
+}
+
+.seconds-row small {
   color: var(--text-faint);
   font-size: var(--fs-micro);
 }

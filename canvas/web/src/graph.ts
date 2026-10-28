@@ -183,23 +183,26 @@ export interface VoiceNodeData {
   ledger_id?: number
 }
 
-/** 音频节点数据(57 号票,第十一种节点类型;60 号票增补来源判别;62 号票
- * 增补歌曲):台词合成产物、配乐/歌曲产物或素材面板/AssetPicker 插入的音
- * 频行。asset_id 是素材库引用(内容寻址路径由展示层按 id 拼装,素材被删落
- * 「素材不可用」占位)。source 是来源判别:tts = 台词合成、music = 配乐、
- * song = 歌曲(62 号票:提交时 instrumental=false 记,audioSyncPatch 不覆
- * 盖;创作态兼作「人声歌曲」开关的意图标记)、insert = 素材插入(缺省 =
- * 60 号票前的历史行,展示按 tts 同族处理)。随身元数据按来源配对(27 号票
- * 产物-元数据配对家族):台词合成记 text/chars,配乐与歌曲记 prompt/
- * model,歌曲另记 lyrics;model 在两种生成来源下都记(插入行没有)。 */
+/** 音频节点数据(57 号票,第十一种节点类型;60 号票增配乐来源;62 号票
+ * 增歌曲;61 号票增音效):台词合成产物、配乐/歌曲/音效产物或素材面板/
+ * AssetPicker 插入的音频行。asset_id 是素材库引用(内容寻址路径由展示层
+ * 按 id 拼装,素材被删落「素材不可用」占位)。source 是来源判别:tts =
+ * 台词合成、music = 配乐、song = 歌曲(62 号票:提交时 instrumental=false
+ * 记,audioSyncPatch 不覆盖)、sfx = 音效(61 号票:工具栏「音效」入口的
+ * 创作意图标记兼产物来源,audioSyncPatch 不覆盖)、insert = 素材插入
+ * (缺省 = 60 号票前的历史行,展示按 tts 同族处理)。随身元数据按来源配对
+ * (27 号票产物-元数据配对家族):台词合成记 text/chars,配乐与歌曲记
+ * prompt/model(歌曲另记 lyrics),音效记 prompt/model/seconds;model 在
+ * 生成来源下都记(插入行没有)。 */
 export interface AudioNodeData {
   asset_id: number
-  source?: 'tts' | 'music' | 'song' | 'insert'
+  source?: 'tts' | 'music' | 'song' | 'sfx' | 'insert'
   text?: string
   chars?: number
   prompt?: string
   model?: string
   lyrics?: string
+  seconds?: number
 }
 
 export type CanvasNodeData =

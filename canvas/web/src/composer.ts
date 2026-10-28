@@ -372,6 +372,7 @@ export interface TaskForNodeSync {
   video_url: string
   chars?: number
   lyrics?: string
+  seconds?: number
 }
 
 /** 任务产物地址:有素材引用一律走内容寻址路径(14 号票纪律,厂商临时
@@ -432,21 +433,23 @@ export function mediaSyncPatch(
 }
 
 /** 终态生成任务对音频节点数据的对账补丁(57 号票 tts;60 号票 music;62
- * 号票 song):asset_id 回填(展示层按 id 拼内容寻址路径,音频节点不落
- * url)、来源判别 source 按 kind 落(tts/music;song 是提交时的创作意图
- * 标记,已带不覆盖)、元数据按来源配对 —— 台词 text 与 chars(服务端计费
- * 字符数,任务行 voice_spec 带出)归 tts,风格描述 prompt 归 music,
- * 歌词 lyrics 从任务行回填(62 号票);model 两种生成来源都补写(27 号票
- * 产物-元数据配对)。节点已带的字段不覆盖;无可写内容返回 null(调用方
- * 据此不落盘)。 */
+ * 号票 song;61 号票 sfx):asset_id 回填(展示层按 id 拼内容寻址路径,音
+ * 频节点不落 url)、来源判别 source 按 kind 落(tts/music/sfx;song 与
+ * sfx 是提交时的创作意图标记,已带不覆盖)、元数据按来源配对 —— 台词
+ * text 与 chars(服务端计费字符数,任务行 voice_spec 带出)归 tts,风格
+ * 描述 prompt 归 music/song,歌词 lyrics 从任务行回填(62 号票),秒数
+ * seconds 归 sfx(61 号票,复用 video 的任务行秒数列);model 几种生成来
+ * 源都补写(27 号票产物-元数据配对)。节点已带的字段不覆盖;无可写内容
+ * 返回 null(调用方据此不落盘)。 */
 export interface AudioNodeSyncPatch {
   asset_id: number
-  source?: 'tts' | 'music'
+  source?: 'tts' | 'music' | 'sfx'
   text?: string
   model?: string
   chars?: number
   prompt?: string
   lyrics?: string
+  seconds?: number
 }
 
 export function audioSyncPatch(
@@ -457,6 +460,7 @@ export function audioSyncPatch(
     return null
   }
   const isMusic = task.kind === 'music'
+  const isSfx = task.kind === 'sfx'
   const patch: AudioNodeSyncPatch = {
     asset_id: task.asset_id,
   }
@@ -465,6 +469,12 @@ export function audioSyncPatch(
     // 意图标记(62 号票),已带的 'music'/'song' 都不覆盖。
     if ((data.source ?? '') === '') {
       patch.source = 'music'
+    }
+  } else if (isSfx) {
+    // sfx 同款(61 号票):'sfx' 是工具栏「音效」入口的创作意图标记,
+    // 已带的 'sfx' 不覆盖。
+    if ((data.source ?? '') === '') {
+      patch.source = 'sfx'
     }
   } else {
     patch.source = 'tts'
@@ -478,6 +488,13 @@ export function audioSyncPatch(
     }
     if ((data.lyrics ?? '') === '' && (task.lyrics ?? '') !== '') {
       patch.lyrics = task.lyrics
+    }
+  } else if (isSfx) {
+    if ((data.prompt ?? '') === '' && task.prompt !== '') {
+      patch.prompt = task.prompt
+    }
+    if ((data.seconds ?? 0) === 0 && (task.seconds ?? 0) > 0) {
+      patch.seconds = task.seconds
     }
   } else {
     if ((data.text ?? '') === '' && task.prompt !== '') {
@@ -494,7 +511,8 @@ export function audioSyncPatch(
     patch.text === undefined &&
     patch.prompt === undefined &&
     patch.lyrics === undefined &&
-    patch.chars === undefined
+    patch.chars === undefined &&
+    patch.seconds === undefined
   ) {
     return null
   }

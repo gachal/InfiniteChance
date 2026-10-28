@@ -385,6 +385,8 @@ export interface CanvasTask {
   size: string
   ratio: string
   background: string
+  /** kind=video:期望时长(0 = 自动);kind=sfx:音效时长(1–30,61 号票,
+   * composer 回填音频节点的 seconds 元数据);其余 kind 恒 0。 */
   seconds: number
   status: CanvasTaskStatus
   attempts: number
@@ -425,7 +427,7 @@ export interface CanvasVideoRef {
  * size 为分辨率档位串(480p/720p/1080p),ratio 为显式宽高比。 */
 export interface CreateCanvasTaskInput {
   node_id: string
-  kind: 'image' | 'video' | 'voice' | 'tts' | 'music'
+  kind: 'image' | 'video' | 'voice' | 'tts' | 'music' | 'sfx'
   prompt: string
   model: string
   size?: string
@@ -434,6 +436,8 @@ export interface CreateCanvasTaskInput {
   image_url?: string
   image_urls?: string[]
   video_refs?: CanvasVideoRef[]
+  /** kind=video:期望时长(缺省 = 自动,厂商缺省时长);kind=sfx:音效
+   * 时长(1–30 整数,61 号票;模型域如 Kling [3,10] 由上游裁)。 */
   seconds?: number
   /** kind=voice 的创建表单事实(57 号票):mode/name/target_model + 
    * design 的 voice_prompt 或 clone 的 sample_asset_id(素材行引用,
@@ -1193,6 +1197,16 @@ export class ApiClient {
   async listMusicModels(): Promise<ModelCatalog> {
     const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
       '/music-models',
+    )
+    return { models: body.models, prices: body.prices ?? {} }
+  }
+
+  /** 可用于音效生成的公开模型(61 号票):sfx 能力渠道可服务且按秒轨配价,
+   * 名字排序;价格摘要随行(second 轨的 cny_per_call,语义 = 元/秒),
+   * 供音效表单选型与发送前预估(单价 × 秒)。 */
+  async listSfxModels(): Promise<ModelCatalog> {
+    const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
+      '/sfx-models',
     )
     return { models: body.models, prices: body.prices ?? {} }
   }

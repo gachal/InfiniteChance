@@ -478,6 +478,31 @@ describe('audioSyncPatch(57 号票音频节点回填;60 号票 source 判别与�
     const task = makeTask({ kind: 'music', asset_id: 12, prompt: 'p', model: 'm', lyrics: 'L' })
     expect(audioSyncPatch(task, { asset_id: 12, source: 'song', prompt: 'p', model: 'm', lyrics: 'L' })).toBeNull()
   })
+
+  it('keeps source:sfx and backfills prompt/model/seconds on an sfx task (61 号票)', () => {
+    const task = makeTask({
+      kind: 'sfx', asset_id: 15, prompt: '雷声轰鸣,由远及近',
+      model: 'vod-kling-sfx', seconds: 5,
+    })
+    // 'sfx' 是工具栏「音效」入口的创作意图标记(61 号票),已带不覆盖;
+    // 秒数从任务行回填(节点表单已带时不覆盖),text/chars 对不进 sfx。
+    expect(audioSyncPatch(task, { asset_id: 0, source: 'sfx', prompt: '雷声轰鸣,由远及近' })).toEqual({
+      asset_id: 15,
+      model: 'vod-kling-sfx',
+      seconds: 5,
+    })
+    // 全新节点(无 source):sfx 来源按 kind 落。
+    expect(audioSyncPatch(task, { asset_id: 0, prompt: '雷声轰鸣,由远及近', seconds: 5 })).toEqual({
+      asset_id: 15,
+      source: 'sfx',
+      model: 'vod-kling-sfx',
+    })
+  })
+
+  it('returns null when the sfx node already matches', () => {
+    const task = makeTask({ kind: 'sfx', asset_id: 15, prompt: '雷', model: 'm', seconds: 3 })
+    expect(audioSyncPatch(task, { asset_id: 15, source: 'sfx', prompt: '雷', model: 'm', seconds: 3 })).toBeNull()
+  })
 })
 
 /** 轻量任务对象:mediaSyncPatch / taskUrlFor 只看这几个字段。 */

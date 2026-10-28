@@ -3,7 +3,7 @@
 // 提示,右侧添加按钮分「创作/规划」两组 + 素材库/生成记录/上传容器动作。
 // 全部动作上抛;上传文件选择器内聚在本组件,change 事件原样上抛。
 import { ref } from 'vue'
-import { NODE_TYPE_LABEL, type CanvasNodeType } from '../../graph'
+import { NODE_TYPE_LABEL, type AudioNodeData, type CanvasNodeType } from '../../graph'
 
 defineProps<{
   assetPanelOpen: boolean
@@ -12,7 +12,9 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  add: [type: CanvasNodeType]
+  /** 落一个新节点;dataPatch 允许入口携带初始创作意图(61 号票:音效入
+   * 口落 audio 节点并带 source:'sfx',编辑器按它浅合并 initialData)。 */
+  add: [type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>]
   toggleAsset: []
   toggleRecords: []
   uploadChange: [event: Event]
@@ -20,7 +22,9 @@ const emit = defineEmits<{
 
 // 53 号票:添加按钮分「创作/规划」两组(组间分隔线纯展示分组)。
 // 60 号票:audio 以「配乐」入创作组(唯一的工具栏锚点,落创作态空音频
-// 节点;台词合成产物与面板插入仍不在此列)。
+// 节点;台词合成产物与面板插入仍不在此列)。61 号票:「音效」是 audio
+// 节点的第二个创作入口 —— 同落 audio 节点,但初始 data 带 source:'sfx'
+// (创作意图标记,AudioNode 创作态按它分叉表单);配乐入口行为不变。
 const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character', 'voice', 'audio']
 const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level']
 
@@ -44,6 +48,14 @@ const uploadInput = ref<HTMLInputElement | null>(null)
         @click="emit('add', t)"
       >
         + {{ ADD_LABELS[t] ?? NODE_TYPE_LABEL[t] }}
+      </button>
+      <button
+        class="add-sfx"
+        type="button"
+        title="落一个音效创作节点(≤30 秒短音频,按秒计费)"
+        @click="emit('add', 'audio', { source: 'sfx' })"
+      >
+        + 音效
       </button>
       <span
         class="group-sep"
@@ -202,6 +214,13 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 /* 60 号票:配乐(audio 节点)入「创作」组,紫与节点描边同源。 */
 .add-audio {
   background: rgba(var(--violet-rgb), 0.14);
+  color: var(--violet);
+}
+
+/* 61 号票:音效同落 audio 节点,同紫色系(同为音频家族的创作入口),
+   底色稍提一档与「配乐」区分。 */
+.add-sfx {
+  background: rgba(var(--violet-rgb), 0.24);
   color: var(--violet);
 }
 

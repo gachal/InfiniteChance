@@ -273,11 +273,14 @@ const modelCatalogsLoaded = ref(false)
 // 创建表单的模型下拉与台词预估共用。enrollment(定制按次价)不在字符轨
 // 目录里,从 image-models 的按次轨投影取(voice-enrollment 配了价就在)。
 // 配乐目录(60 号票):按次配乐模型(/music-models),音频节点创作态表单
-// 下拉与预估共用。
+// 下拉与预估共用。音效目录(61 号票):按秒音效模型(/sfx-models),
+// source='sfx' 创作态表单下拉与预估共用。
 const audioModels = ref<string[]>([])
 const audioPrices = ref<Record<string, ModelPriceSummary>>({})
 const musicModels = ref<string[]>([])
 const musicPrices = ref<Record<string, ModelPriceSummary>>({})
+const sfxModels = ref<string[]>([])
+const sfxPrices = ref<Record<string, ModelPriceSummary>>({})
 const enrollmentPrice = computed(() => imagePrices.value['voice-enrollment'])
 
 /** 拉取生图/视频模型目录:成功写名单与价格摘要,失败置失败位(对话框
@@ -320,6 +323,15 @@ function refreshModelCatalogs(): void {
     .then((catalog) => {
       musicModels.value = catalog.models
       musicPrices.value = catalog.prices
+    })
+    .catch(() => {
+      /* 目录失败静默保持旧值:创作态下拉可能为空,重试随窗口聚焦 */
+    })
+  void client
+    .listSfxModels()
+    .then((catalog) => {
+      sfxModels.value = catalog.models
+      sfxPrices.value = catalog.prices
     })
     .catch(() => {
       /* 目录失败静默保持旧值:创作态下拉可能为空,重试随窗口聚焦 */
@@ -1165,8 +1177,8 @@ async function submitVoiceTask(nodeId: string): Promise<void> {
 // 翻产物态。
 const musicSubmitting = ref(false)
 
-/** 配乐/歌曲创作表单的事实变更(逐键上抛 → updateNodeData 浅合并落盘,
- * 自动保存免费获得;与音色表单同一纪律)。 */
+/** 配乐/歌曲/音效创作表单的事实变更(逐键上抛 → updateNodeData 浅合并
+ * 落盘,自动保存免费获得;与音色表单同一纪律)。 */
 function onMusicFormChange(nodeId: string, patch: Partial<AudioNodeData>): void {
   updateNodeData(nodeId, patch)
   markChanged()
@@ -1205,6 +1217,53 @@ async function submitMusicTask(nodeId: string): Promise<void> {
     showNotice(e instanceof ApiError ? e.message : '配乐任务提交失败,请稍后再试')
   } finally {
     musicSubmitting.value = false
+  }
+}
+
+// 音效节点创作态的提交路径(61 号票):kind=sfx 任务绑本节点,秒数与描述
+// 已随表单变更落节点(source:'sfx' 是工具栏「音效」入口的创作意图标记,
+// audioSyncPatch 对账时不覆盖);照配乐先例先 markChanged + flush 再提交,
+// 防抖窗口里的表单编辑必须先落图;产物由 audioSyncPatch 按 sfx 对账
+// (prompt/model/seconds 回填),节点从表单态翻产物态。
+const sfxSubmitting = ref(false)
+
+async function submitSfxTask(nodeId: string): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as AudioNodeData | undefined
+  if (!node || !data || sfxSubmitting.value) {
+    return
+  }
+  sfxSubmitting.value = true
+  try {
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'sfx',
+      prompt: data.prompt ?? '',
+      model: data.model ?? '',
+      seconds: data.seconds ?? 0,
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '音效任务提交失败,请稍后再试')
+  } finally {
+    sfxSubmitting.value = false
+  }
+}
+
+/** 音频节点创作态提交的分发(61 号票):source='sfx' 走音效链,其余(配
+ * 乐/歌曲)走配乐链 —— 节点侧表单已按 source 分叉,这里同款分流。 */
+function submitAudioTask(nodeId: string): void {
+  const data = findNode(nodeId)?.data as AudioNodeData | undefined
+  if (data?.source === 'sfx') {
+    void submitSfxTask(nodeId)
+  } else {
+    void submitMusicTask(nodeId)
   }
 }
 
@@ -2376,7 +2435,7 @@ function viewportCenterPosition(): { x: number; y: number } {
   return screenToFlowCoordinate(newNodeAnchor(rect, count))
 }
 
-function addNode(type: CanvasNodeType): void {
+function addNode(type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>): void {
   nodeSeq += 1
   const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([
@@ -2384,7 +2443,9 @@ function addNode(type: CanvasNodeType): void {
       id,
       type,
       position: viewportCenterPosition(),
-      data: initialData(type),
+      // 61 号票:入口可携带初始创作意图(音效入口带 source:'sfx'),
+      // 浅合并进 initialData —— 其余入口不传,行为不变。
+      data: { ...initialData(type), ...dataPatch } as CanvasNodeData,
     },
   ])
   // 新节点成为唯一选中:空图片/视频占位节点即从零生成的锚点(24 号票),
@@ -3024,10 +3085,13 @@ function backToList(): void {
             :music-models="musicModels"
             :music-prices="musicPrices"
             :music-submitting="musicSubmitting"
+            :sfx-models="sfxModels"
+            :sfx-prices="sfxPrices"
+            :sfx-submitting="sfxSubmitting"
             :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @form-change="onMusicFormChange(nodeProps.id, $event)"
-            @submit="submitMusicTask(nodeProps.id)"
+            @submit="submitAudioTask(nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
