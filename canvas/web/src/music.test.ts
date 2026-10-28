@@ -1,11 +1,12 @@
 /**
- * music.ts 的纯逻辑单测(60 号票):表单校验与按次预估价。
+ * music.ts 的纯逻辑单测(60 号票):表单校验与按次预估价;62 号票追加
+ * 歌曲开关(纯音乐互斥)与歌词上限。
  */
 import { describe, expect, it } from 'vitest'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
 
-import { estimateMusicCNY, fmtCNY, MAX_MUSIC_PROMPT_RUNES, validateMusicForm } from './music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateMusicForm } from './music'
 
 describe('validateMusicForm(60 号票配乐表单)', () => {
   it('rejects empty prompt/model and over-long prompt', () => {
@@ -18,6 +19,27 @@ describe('validateMusicForm(60 号票配乐表单)', () => {
 
   it('accepts a trimmed non-empty prompt with a model', () => {
     expect(validateMusicForm({ prompt: '  轻快的电子爵士  ', model: 'minimax-music' })).toBeNull()
+  })
+})
+
+describe('validateMusicForm(62 号票歌曲开关与歌词)', () => {
+  it('rejects lyrics carried on an instrumental (纯音乐) form', () => {
+    expect(
+      validateMusicForm({ prompt: 'p', model: 'm', instrumental: true, lyrics: '多余的歌' }),
+    ).toBe('纯音乐不能携带歌词;请关闭「人声歌曲」开关或清空歌词')
+  })
+
+  it('rejects over-long lyrics on a song form', () => {
+    expect(
+      validateMusicForm({ prompt: 'p', model: 'm', instrumental: false, lyrics: '雨'.repeat(MAX_LYRICS_CHARS + 1) }),
+    ).toBe(`歌词最多 ${MAX_LYRICS_CHARS} 个字符`)
+  })
+
+  it('accepts a song with or without lyrics (自动写词) and a plain 纯音乐 form', () => {
+    expect(validateMusicForm({ prompt: 'p', model: 'm', instrumental: false })).toBeNull()
+    expect(validateMusicForm({ prompt: 'p', model: 'm', instrumental: false, lyrics: '夜色慢慢降落' })).toBeNull()
+    // 60 号票既有形状(两字段)不受扰:instrumental 缺省 = 纯音乐。
+    expect(validateMusicForm({ prompt: 'p', model: 'm' })).toBeNull()
   })
 })
 

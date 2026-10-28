@@ -395,6 +395,11 @@ export interface CanvasTask {
   /** kind=tts 的服务端计费字符数(网关 usage.chars,57 号票评审 F2);
    * 其余 kind 恒 0。编辑器据此回填音频节点的 chars 元数据。 */
   chars: number
+  /** kind=music 的歌曲事实(62 号票):歌词原文与纯音乐开关(false = 人声
+   * 歌曲);其余 kind 恒 空串/true。编辑器据此回填音频节点的 lyrics 与
+   * source:'song'。 */
+  lyrics: string
+  instrumental: boolean
   created_at: string
   updated_at: string
 }
@@ -437,8 +442,12 @@ export interface CreateCanvasTaskInput {
   /** kind=tts 的合成入参:voice_ledger_id 指向 voices 台账行,text 是
    * 台词(≤600,原文计费),instruction 可选演绎指令(≤500)。 */
   tts?: CreateTtsTaskSpec
-  // kind=music(60 号票配乐)无专属表单:prompt 是风格描述(1–2000 字,
-  // 对齐 MPS 上限),model 是 /music-models 目录的公开模型名,按次计价。
+  /** kind=music 的歌曲事实(62 号票):instrumental 缺省 true(纯音乐,
+   * 60 号票行为不变),false = 人声歌曲;lyrics ≤3500 选填(留空由模型
+   * 自动写词),纯音乐携带歌词 400(与网关互斥校验同款)。
+   * prompt 仍是风格描述(1–2000 字)。 */
+  instrumental?: boolean
+  lyrics?: string
 }
 
 /** 音色创建任务的表单(57 号票)。 */

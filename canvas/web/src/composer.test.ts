@@ -448,6 +448,36 @@ describe('audioSyncPatch(57 号票音频节点回填;60 号票 source 判别与�
       prompt: '描述',
     })
   })
+
+  it('keeps source:song and backfills lyrics on a song task (62 号票)', () => {
+    const task = makeTask({
+      kind: 'music', asset_id: 12, prompt: 'city night run',
+      model: 'vod-minimax-music-3.0', lyrics: '夜色慢慢降落',
+    })
+    // 'song' 是提交时的创作意图标记(62 号票),已带不覆盖;歌词从任务行
+    // 回填,元数据配对家族同款。
+    expect(audioSyncPatch(task, { asset_id: 0, source: 'song', prompt: 'city night run' })).toEqual({
+      asset_id: 12,
+      model: 'vod-minimax-music-3.0',
+      lyrics: '夜色慢慢降落',
+    })
+  })
+
+  it('backfills lyrics from the task row onto a fresh music node', () => {
+    const task = makeTask({ kind: 'music', asset_id: 12, prompt: 'p', model: 'm', lyrics: 'L' })
+    expect(audioSyncPatch(task, { asset_id: 0 })).toEqual({
+      asset_id: 12,
+      source: 'music',
+      model: 'm',
+      prompt: 'p',
+      lyrics: 'L',
+    })
+  })
+
+  it('returns null when the song node already matches', () => {
+    const task = makeTask({ kind: 'music', asset_id: 12, prompt: 'p', model: 'm', lyrics: 'L' })
+    expect(audioSyncPatch(task, { asset_id: 12, source: 'song', prompt: 'p', model: 'm', lyrics: 'L' })).toBeNull()
+  })
 })
 
 /** 轻量任务对象:mediaSyncPatch / taskUrlFor 只看这几个字段。 */

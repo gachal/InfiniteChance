@@ -1156,13 +1156,16 @@ async function submitVoiceTask(nodeId: string): Promise<void> {
   }
 }
 
-// 配乐节点创作态的提交路径(60 号票):kind=music 任务绑本节点(表单即
-// 在节点上,数据已随整图 JSON 持久化);照音色先例先 markChanged + flush
-// 再提交,防抖窗口里的表单编辑必须先落图。产物由 audioSyncPatch 按配乐
-// 对(account)回填(prompt/model/source),节点从表单态翻产物态。
+// 配乐/歌曲节点创作态的提交路径(60 号票;62 号票增补歌曲):kind=music
+// 任务绑本节点(表单就在节点上,数据已随整图 JSON 持久化);照音色先例先
+// markChanged + flush 再提交,防抖窗口里的表单编辑必须先落图。人声歌曲
+// (instrumental=false)提交前先把 source:'song' 与歌词落节点 —— 'song'
+// 兼作创作意图标记,audioSyncPatch 对账时不覆盖;产物由 audioSyncPatch 按
+// 配乐/歌曲对(account)回填(prompt/model/lyrics/source),节点从表单态
+// 翻产物态。
 const musicSubmitting = ref(false)
 
-/** 配乐创作表单的事实变更(逐键上抛 → updateNodeData 浅合并落盘,
+/** 配乐/歌曲创作表单的事实变更(逐键上抛 → updateNodeData 浅合并落盘,
  * 自动保存免费获得;与音色表单同一纪律)。 */
 function onMusicFormChange(nodeId: string, patch: Partial<AudioNodeData>): void {
   updateNodeData(nodeId, patch)
@@ -1177,6 +1180,12 @@ async function submitMusicTask(nodeId: string): Promise<void> {
   }
   musicSubmitting.value = true
   try {
+    // 62 号票:source:'song' = 人声歌曲意图(instrumental=false),先落节
+    // 点再 flush;纯空白歌词按未携带处理(模型自动写词)。
+    const instrumental = data.source !== 'song'
+    if (!instrumental) {
+      updateNodeData(nodeId, { source: 'song', lyrics: data.lyrics ?? '' } satisfies Partial<AudioNodeData>)
+    }
     markChanged()
     const saved = await autosave.flush()
     if (!saved) {
@@ -1188,6 +1197,8 @@ async function submitMusicTask(nodeId: string): Promise<void> {
       kind: 'music',
       prompt: data.prompt ?? '',
       model: data.model ?? '',
+      instrumental,
+      ...(!instrumental && (data.lyrics ?? '').trim() !== '' ? { lyrics: data.lyrics ?? '' } : {}),
     })
     taskSync.track(task)
   } catch (e) {

@@ -25,6 +25,8 @@ function task(overrides: Partial<CanvasTask>): CanvasTask {
     image_url: '',
     video_url: '',
     chars: 0,
+    lyrics: '',
+    instrumental: true,
     created_at: '2026-09-03T12:00:00Z',
     updated_at: '2026-09-03T12:00:00Z',
     ...overrides,

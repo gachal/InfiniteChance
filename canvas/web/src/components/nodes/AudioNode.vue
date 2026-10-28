@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// 音频节点(57 号票,第十一种节点类型;60 号票增补配乐创作态):三种
-// 形态 ——
-// · 创作态(工具栏「配乐」落的空节点):内联表单(模型下拉 + 风格描述
-//   + 按次预估价 + 提交),与音色节点同款范式,不进生成对话框;提交 =
-//   kind=music 的 canvas_task 绑本节点,表单事实随整图 JSON 持久化。
+// 音频节点(57 号票,第十一种节点类型;60 号票增补配乐创作态;62 号票增
+// 补人声歌曲开关)四种形态 ——
+// · 创作态(工具栏「配乐」落的空节点):内联表单(「人声歌曲」开关 +
+//   开关开才显示的歌词多行框 + 模型下拉 + 风格描述 + 按次预估价 + 提交),
+//   与音色节点同款范式,不进生成对话框;提交 = kind=music 的 canvas_task
+//   绑本节点,instrumental=false 即人声歌曲,表单事实随整图 JSON 持久化。
 // · 在途/失败:状态徽章(排队/生成中)+ 失败原因 + 原地重试。
 // · 产物:内联 <audio controls> + 元数据区(27 号票产物-元数据配对,
-//   台词摘录或配乐风格描述按 source 判别)。素材面板/生成记录插入行
+//   台词摘录或配乐/歌曲风格描述按 source 判别)。素材面板/生成记录插入行
 //   (无任务)与台词合成产物走同款产物卡面。
 // 只渲染左把手(voice → audio 合成来源边;配乐不作任何边的源),无灯箱。
 import { computed, ref, watch } from 'vue'
@@ -16,7 +17,7 @@ import type { CanvasTask, ModelPriceSummary } from '@infinitechance/api'
 
 import type { AudioNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
-import { estimateMusicCNY, fmtCNY, MAX_MUSIC_PROMPT_RUNES, validateMusicForm } from '../../music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateMusicForm, type MusicFormInput } from '../../music'
 import { assetContentURL } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
 import MediaPrompt from './MediaPrompt.vue'
@@ -55,14 +56,15 @@ const creating = computed(
   () => !(props.data.asset_id > 0) && !status.value,
 )
 
-/** 元数据摘录(卡面一行):配乐显风格描述,台词显摘录,完整内容进
+/** 元数据摘录(卡面一行):配乐/歌曲显风格描述,台词显摘录,完整内容进
  * MediaPrompt 配对区。 */
-const metaLine = computed(() => props.data.source === 'music' ? (props.data.prompt ?? '') : (props.data.text ?? ''))
+const musicish = computed(() => props.data.source === 'music' || props.data.source === 'song')
+const metaLine = computed(() => musicish.value ? (props.data.prompt ?? '') : (props.data.text ?? ''))
 const excerpt = computed(() => {
   const text = metaLine.value
   return text.length > 42 ? `${text.slice(0, 42)}…` : text
 })
-const excerptTitle = computed(() => props.data.source === 'music' ? props.data.prompt : props.data.text)
+const excerptTitle = computed(() => musicish.value ? props.data.prompt : props.data.text)
 
 // 内容寻址地址按素材 id 拼装;asset_id 变化(重新生成/换插)即复位重试。
 const src = computed(() => (props.data.asset_id > 0 ? assetContentURL(props.data.asset_id) : ''))
@@ -83,6 +85,18 @@ function onAudioError(): void {
 const formError = ref('')
 const promptRunes = computed(() => [...(props.data.prompt ?? '').trim()].length)
 
+// 「人声歌曲」开关(62 号票):默认关 = 纯音乐(60 号票行为不变),开 =
+// 人声歌曲(instrumental=false,歌词选填)。source:'song' 兼作意图标记:
+// 提交失败重开时开关回到 on;关掉时清标记(JSON 序列化丢 undefined 键)。
+const songMode = ref(props.data.source === 'song' || (props.data.lyrics ?? '').trim() !== '')
+
+function onSongToggle(on: boolean): void {
+  songMode.value = on
+  emit('form-change', on ? { source: 'song' } : { source: undefined })
+}
+
+const lyricsRunes = computed(() => [...(props.data.lyrics ?? '')].length)
+
 const selectedModelPrice = computed(() => {
   const m = props.data.model
   return m ? props.musicPrices[m] : undefined
@@ -96,12 +110,19 @@ const createEstimate = computed(() => {
   return '按次计费,以管理端配价为准'
 })
 
-const canSubmit = computed(
-  () => validateMusicForm({ prompt: props.data.prompt ?? '', model: props.data.model ?? '' }) === null,
-)
+// 表单输入:开关关 = 纯音乐(instrumental=true,歌词不随表单,即便节点
+// 上留着旧歌词也不送 —— 互斥校验在两侧都成立)。
+const formInput = computed<MusicFormInput>(() => ({
+  prompt: props.data.prompt ?? '',
+  model: props.data.model ?? '',
+  instrumental: !songMode.value,
+  lyrics: songMode.value ? props.data.lyrics ?? '' : '',
+}))
+
+const canSubmit = computed(() => validateMusicForm(formInput.value) === null)
 
 function submitForm(): void {
-  const invalid = validateMusicForm({ prompt: props.data.prompt ?? '', model: props.data.model ?? '' })
+  const invalid = validateMusicForm(formInput.value)
   if (invalid) {
     formError.value = invalid
     return
@@ -119,8 +140,34 @@ function submitForm(): void {
   >
     <header>音频</header>
 
-    <!-- 创作态内联表单(60 号票:配乐的唯一生成入口,工具栏「配乐」落下)。 -->
+    <!-- 创作态内联表单(60 号票:配乐的唯一生成入口,工具栏「配乐」落下;
+         62 号票:「人声歌曲」开关 + 开关开才显示的歌词多行框)。 -->
     <template v-if="creating">
+      <label class="song-toggle">
+        <input
+          type="checkbox"
+          :checked="songMode"
+          @change="onSongToggle(($event.target as HTMLInputElement).checked)"
+        >
+        <span>人声歌曲</span>
+        <small>{{ songMode ? '带歌词人声;歌词选填,留空自动写词' : '纯音乐(默认)' }}</small>
+      </label>
+      <textarea
+        v-if="songMode"
+        class="field"
+        rows="4"
+        :value="data.lyrics"
+        :maxlength="MAX_LYRICS_CHARS"
+        placeholder="歌词(选填,≤3500 字;留空由模型自动写词)"
+        aria-label="歌曲歌词"
+        @input="emit('form-change', { lyrics: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div
+        v-if="songMode"
+        class="rune-count"
+      >
+        {{ lyricsRunes }}/{{ MAX_LYRICS_CHARS }}
+      </div>
       <textarea
         class="field"
         rows="3"
@@ -175,7 +222,7 @@ function submitForm(): void {
           :disabled="!canSubmit || musicSubmitting"
           @click="submitForm"
         >
-          {{ musicSubmitting ? '提交中…' : '生成配乐' }}
+          {{ musicSubmitting ? '提交中…' : (songMode ? '生成歌曲' : '生成配乐') }}
         </button>
       </div>
     </template>
@@ -220,7 +267,7 @@ function submitForm(): void {
       </p>
       <MediaPrompt
         v-if="data.model"
-        :prompt="data.source === 'music' ? data.prompt ?? '' : data.text ?? ''"
+        :prompt="musicish ? data.prompt ?? '' : data.text ?? ''"
         :model="data.model"
       />
     </template>
@@ -304,6 +351,31 @@ select.field option {
 .rune-count {
   margin-top: -4px;
   text-align: right;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* 「人声歌曲」开关(62 号票):一行开关 + 随行小注。 */
+.song-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.song-toggle input {
+  align-self: center;
+  accent-color: var(--violet);
+}
+
+.song-toggle span {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--violet);
+}
+
+.song-toggle small {
   color: var(--text-faint);
   font-size: var(--fs-micro);
 }

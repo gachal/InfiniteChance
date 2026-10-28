@@ -360,7 +360,8 @@ export function resolutionPresetsFor(model: string): PresetOption[] {
 
 /** taskUrlFor / mediaSyncPatch 收的任务形状:@infinitechance/api 的
  * CanvasTask 结构满足它;收窄到相关子集是为了让这里不依赖 api 包、测试
- * 可自造轻量对象。chars 只属于 kind=tts(评审 F2 的回填源)。 */
+ * 可自造轻量对象。chars 只属于 kind=tts(评审 F2 的回填源);lyrics 只属于
+ * kind=music 的歌曲行(62 号票)。 */
 export interface TaskForNodeSync {
   kind: string
   status: string
@@ -370,6 +371,7 @@ export interface TaskForNodeSync {
   image_url: string
   video_url: string
   chars?: number
+  lyrics?: string
 }
 
 /** 任务产物地址:有素材引用一律走内容寻址路径(14 号票纪律,厂商临时
@@ -429,12 +431,14 @@ export function mediaSyncPatch(
   return patch
 }
 
-/** 终态生成任务对音频节点数据的对账补丁(57 号票 tts;60 号票 music):
- * asset_id 回填(展示层按 id 拼内容寻址路径,音频节点不落 url)、来源
- * 判别 source 按 kind 落(tts/music)、元数据按来源配对 —— 台词 text 与
- * chars(服务端计费字符数,任务行 voice_spec 带出)归 tts,风格描述
- * prompt 归 music;model 两种生成来源都补写(27 号票产物-元数据配对)。
- * 节点已带的字段不覆盖;无可写内容返回 null(调用方据此不落盘)。 */
+/** 终态生成任务对音频节点数据的对账补丁(57 号票 tts;60 号票 music;62
+ * 号票 song):asset_id 回填(展示层按 id 拼内容寻址路径,音频节点不落
+ * url)、来源判别 source 按 kind 落(tts/music;song 是提交时的创作意图
+ * 标记,已带不覆盖)、元数据按来源配对 —— 台词 text 与 chars(服务端计费
+ * 字符数,任务行 voice_spec 带出)归 tts,风格描述 prompt 归 music,
+ * 歌词 lyrics 从任务行回填(62 号票);model 两种生成来源都补写(27 号票
+ * 产物-元数据配对)。节点已带的字段不覆盖;无可写内容返回 null(调用方
+ * 据此不落盘)。 */
 export interface AudioNodeSyncPatch {
   asset_id: number
   source?: 'tts' | 'music'
@@ -442,6 +446,7 @@ export interface AudioNodeSyncPatch {
   model?: string
   chars?: number
   prompt?: string
+  lyrics?: string
 }
 
 export function audioSyncPatch(
@@ -454,7 +459,15 @@ export function audioSyncPatch(
   const isMusic = task.kind === 'music'
   const patch: AudioNodeSyncPatch = {
     asset_id: task.asset_id,
-    source: isMusic ? 'music' : 'tts',
+  }
+  if (isMusic) {
+    // music 的 source 只补空缺(60 号票前的旧节点):'song' 是提交时的创作
+    // 意图标记(62 号票),已带的 'music'/'song' 都不覆盖。
+    if ((data.source ?? '') === '') {
+      patch.source = 'music'
+    }
+  } else {
+    patch.source = 'tts'
   }
   if ((data.model ?? '') === '' && task.model !== '') {
     patch.model = task.model
@@ -462,6 +475,9 @@ export function audioSyncPatch(
   if (isMusic) {
     if ((data.prompt ?? '') === '' && task.prompt !== '') {
       patch.prompt = task.prompt
+    }
+    if ((data.lyrics ?? '') === '' && (task.lyrics ?? '') !== '') {
+      patch.lyrics = task.lyrics
     }
   } else {
     if ((data.text ?? '') === '' && task.prompt !== '') {
@@ -473,11 +489,11 @@ export function audioSyncPatch(
   }
   if (
     data.asset_id === task.asset_id &&
-    patch.source !== undefined &&
-    (data.source ?? '') === patch.source &&
+    (patch.source === undefined || (data.source ?? '') === patch.source) &&
     patch.model === undefined &&
     patch.text === undefined &&
     patch.prompt === undefined &&
+    patch.lyrics === undefined &&
     patch.chars === undefined
   ) {
     return null
