@@ -2160,7 +2160,7 @@ function onStoryboardLayerUpload(cutIndex: number, file: File): void {
 /** cut→视频直通(67 号票,53 号票遗留收编):落空视频节点 + 絵コンテ→
  * 视频来源边(dropFrameNode 同款骨架:沿出边数级联偏移防叠卡),随后
  * 预填视频草稿并关闭编辑层让位对话框 —— cut 画面(非空)自动进首帧、
- * 提示词按 景别/运镜/台词 拼装(storyboard.buildCutVideoPrompt)、时长
+ * 提示词按 画面描述/景别/运镜/台词 拼装(storyboard.buildCutVideoPrompt)、时长
  * 预填 cut 秒数(未定为 0/空 = 留「自动」)。人工确认后才发送(花钱操作
  * 人工确认,总案 Q5):这里只落节点与预填,不发任务;无画面 cut 也可发起
  * (纯文生视频,预填不动会话已上传的参考条,对话框里可见可删)。 */

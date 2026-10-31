@@ -123,19 +123,32 @@ describe('setShotSize(67 号票)', () => {
 })
 
 describe('buildCutVideoPrompt(67 号票)', () => {
-  it('assembles shot, camera moves and lines into labeled sections', () => {
+  it('assembles note, shot, camera moves and lines into labeled sections', () => {
     // 画面/台词/运镜/景别 → 视频提示词预填(票面定案 4:具体模板实现定);
-    // 有值的段落按 景别 → 运镜 → 台词/音效 顺序拼装。
+    // 有值的段落按 画面描述 → 景别 → 运镜 → 台词/音效 顺序拼装,画面描述
+    // (note,66 号票 save_storyboard 产物同字段)信息密度最高排最前。
     const full = buildCutVideoPrompt(
-      cut({ shot: '中', camera_moves: ['推', '摇'], lines: '「你来了。」\n(雨声)' }),
+      cut({
+        note: '雨夜巷口,林小满回头',
+        shot: '中',
+        camera_moves: ['推', '摇'],
+        lines: '「你来了。」\n(雨声)',
+      }),
     )
-    expect(full).toBe('景别:中\n运镜:推、摇\n台词/音效:「你来了。」\n(雨声)')
+    expect(full).toBe(
+      '画面描述:雨夜巷口,林小满回头\n景别:中\n运镜:推、摇\n台词/音效:「你来了。」\n(雨声)',
+    )
   })
 
   it('skips empty sections', () => {
     expect(buildCutVideoPrompt(cut({ camera_moves: ['固定'] }))).toBe('运镜:固定')
     expect(buildCutVideoPrompt(cut({ shot: '特写' }))).toBe('景别:特写')
     expect(buildCutVideoPrompt(cut({ lines: '  雨夜巷口  ' }))).toBe('台词/音效:雨夜巷口')
+  })
+
+  it('emits the picture note alone as its own trimmed section', () => {
+    // 只有备注(画面内容描述)也成立:trim 后成节,工具产物与人工 cut 同规。
+    expect(buildCutVideoPrompt(cut({ note: '  转场空镜  ' }))).toBe('画面描述:转场空镜')
   })
 
   it('returns an empty string when the cut has no textual material', () => {

@@ -73,12 +73,18 @@ export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
   return { ...cut, shot }
 }
 
-/** cut → 视频提示词拼装(67 号票 cut→视频直通):景别/运镜/台词音效
- * 按序拼成带标签的小节,空段落跳过,全空返回空串(对话框提示词留白,
- * 占位文案引导)。纯函数便于单测;出场角色不进提示词(「出场角色→生成
- * 注入」二期,67 号票 Out of Scope)。 */
+/** cut → 视频提示词拼装(67 号票 cut→视频直通):画面描述/景别/运镜/
+ * 台词音效按序拼成带标签的小节,空段落跳过,全空返回空串(对话框提示词
+ * 留白,占位文案引导)。画面描述取 note(53 号票备注字段;66 号票
+ * save_storyboard 产物的 note 即画面内容描述,工具产物与人工 cut 同规);
+ * 它是对画面内容的自然语言描述、信息密度最高,排最前。纯函数便于单测;
+ * 出场角色不进提示词(「出场角色→生成注入」二期,67 号票 Out of Scope)。 */
 export function buildCutVideoPrompt(cut: StoryboardCut): string {
   const sections: string[] = []
+  const note = (cut.note ?? '').trim()
+  if (note !== '') {
+    sections.push(`画面描述:${note}`)
+  }
   if (cut.shot) {
     sections.push(`景别:${cut.shot}`)
   }
@@ -92,8 +98,9 @@ export function buildCutVideoPrompt(cut: StoryboardCut): string {
   return sections.join('\n')
 }
 
-/** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。 */
-const SECONDS_MAX = 3600
+/** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。
+ * 导出供 agentTools.ts 的草案定形复用(66 号票 save_storyboard 同口径)。 */
+export const SECONDS_MAX = 3600
 
 /** 时长输入的失焦夹紧:空串/非数字 → 未填(undefined,汇总时跳过);
  * 负数夹到 0、超上限夹到 3600、小数取整。 */

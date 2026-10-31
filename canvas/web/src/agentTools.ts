@@ -7,6 +7,7 @@
 // 报错,不静默。
 
 import type { StoryboardCut } from './graph'
+import { SECONDS_MAX } from './storyboard'
 import { MAX_SCRIPT_CHARS } from './script'
 
 /** 一次工具调用的过程展示条目(节点内时间线/chip 的数据形状,UI 态不入
@@ -167,10 +168,6 @@ export interface AgentStoryboardDraft {
   cuts: StoryboardCut[]
 }
 
-/** cut 的预估秒数夹紧上限(与 storyboard.ts 的 SECONDS_MAX 同值,那边是
- * 私有常量,这边复刻语义:一个分镜 cut 超过一小时没有意义)。 */
-const DRAFT_CUT_SECONDS_MAX = 3600
-
 /** 定形絵コンテ节点草案:画面恒空(asset_id = 0,「未配画面」占位),
  * 景别/运镜/出场角色按 67 号票扩字段透传;字段形状不对抛错。 */
 export function storyboardDraftFromPayload(payload: unknown): AgentStoryboardDraft {
@@ -209,7 +206,7 @@ export function storyboardDraftFromPayload(payload: unknown): AgentStoryboardDra
       if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
         throw new Error('seconds 必须是非负数字')
       }
-      draft.seconds = Math.min(Math.round(seconds), DRAFT_CUT_SECONDS_MAX)
+      draft.seconds = Math.min(Math.round(seconds), SECONDS_MAX)
     }
     const characterIds = optionalPositiveIntArray(cut, 'character_ids')
     if (characterIds.length > 0) {

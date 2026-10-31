@@ -388,6 +388,36 @@ func TestSaveStoryboardDraftsCutsWithEmptyFrames(t *testing.T) {
 	}
 }
 
+func TestSaveStoryboardSecondsRoundsAndClamps(t *testing.T) {
+	// seconds 口径与前端同规(63-67 号票评审对齐):小数四舍五入取整
+	// (Go math.Round = 前端 Math.round),超 3600 夹到上限不报错。
+	reg := agenttools.NewRegistry(agenttools.Deps{})
+	tool := lookup(t, reg, "save_storyboard")
+	_, payload, err := tool.Execute(context.Background(), mustArgs(t, map[string]any{
+		"cuts": []any{
+			map[string]any{"seconds": 8.6},
+			map[string]any{"seconds": 8.4},
+			map[string]any{"seconds": 99999},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	cuts, _ := payloadMap(t, payload)["cuts"].([]any)
+	if len(cuts) != 3 {
+		t.Fatalf("cuts = %v", payloadMap(t, payload)["cuts"])
+	}
+	if got := cuts[0].(map[string]any)["seconds"].(float64); got != 9 {
+		t.Errorf("seconds 8.6 = %v, want 9 (四舍五入)", got)
+	}
+	if got := cuts[1].(map[string]any)["seconds"].(float64); got != 8 {
+		t.Errorf("seconds 8.4 = %v, want 8 (四舍五入)", got)
+	}
+	if got := cuts[2].(map[string]any)["seconds"].(float64); got != 3600 {
+		t.Errorf("seconds 99999 = %v, want 3600 (夹到上限)", got)
+	}
+}
+
 func TestSaveStoryboardRejectsBadCuts(t *testing.T) {
 	reg := agenttools.NewRegistry(agenttools.Deps{})
 	tool := lookup(t, reg, "save_storyboard")

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/gachal/InfiniteChance/internal/promptgen"
@@ -17,6 +18,11 @@ import (
 // maxScriptRunes 与前端 script 节点的 30 万字上限同宽(64 号票口径;
 // 后端按 rune 计,略严于 UTF-16 code unit —— 对护栏语义足够)。
 const maxScriptRunes = 300_000
+
+// cutSecondsMax 是单个 cut 预估时长的夹紧上限(秒),与前端 storyboard.ts
+// 的 SECONDS_MAX 同值同语义:一个分镜 cut 超过一小时没有意义。超限夹到
+// 上限不报错(与前端草案定形的夹取一致,63-67 号票评审对齐)。
+const cutSecondsMax = 3600
 
 // ---- save_outline / save_script(同一载体,文案各异)----
 
@@ -187,9 +193,14 @@ func parseStoryboardCut(raw any) (storyboardCutDraft, error) {
 	if v, ok, err := numberArg(obj, "seconds"); err != nil {
 		return storyboardCutDraft{}, err
 	} else if ok {
-		seconds := int(v)
-		if seconds < 0 {
+		if v < 0 {
 			return storyboardCutDraft{}, fmt.Errorf("seconds 不能为负数")
+		}
+		// 四舍五入取整 + 超限夹到 3600(与前端 clampSecondsInput /
+		// 草案定形的 Math.round + Math.min 夹取同值同行为)。
+		seconds := int(math.Round(v))
+		if seconds > cutSecondsMax {
+			seconds = cutSecondsMax
 		}
 		cut.Seconds = &seconds
 	}

@@ -135,10 +135,6 @@ func runAgentLoop(
 // 会话——结果以错误回执(feed 的 JSON)喂回模型,模型可自行纠正;摘要
 // 面向人,如实描述发生了什么。返回 (summary, payload, 喂回模型的结果文本)。
 func executeToolCall(ctx context.Context, registry *AgentToolRegistry, tc ToolCall) (string, json.RawMessage, string) {
-	emitArgs := json.RawMessage(tc.Arguments)
-	if !json.Valid(emitArgs) {
-		emitArgs = nil // 残缺参数不上 SSE,args 缺省由前端按无参展示
-	}
 	if registry == nil {
 		return unknownToolSummary(tc.Name), nil, toolErrorFeedback("unknown tool: " + tc.Name)
 	}
