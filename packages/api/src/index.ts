@@ -332,6 +332,119 @@ export interface PatchCharacterImageInput {
   variant_id?: number
 }
 
+// ---- 场景库 / 道具库(canvas/server,65 号票,需 JWT 会话)----
+// 资产库三类实体的第二、三类:照角色库同构但无造型变体(日景/夜景、
+// 使用态等变体语义用 images 的 label 表达);label 前端白名单(场景:
+// 全景/日景/夜景/局部/其他;道具:多视图/细节/使用态/其他),后端存
+// 字符串不校验枚举。
+
+/** 一条场景/道具设定图:纯素材引用(asset_id 指向素材行)。素材行被删后
+ * 本行保留,展示面落「素材不可用」占位可手动移除。 */
+export interface SceneImageRecord {
+  id: number
+  scene_id: number
+  asset_id: number
+  label: string
+  sort: number
+}
+
+/** 一个 IP 级场景:跨镜复用的一致性源。images 是完整树(场景 → 图,目录
+ * 一次取全);cover_asset_id 是卡片首图投影(排序最前的「全景」图优先,
+ * 无则第一张,0 = 渐变+首字占位);无造型变体、无音色绑定。 */
+export interface SceneRecord {
+  id: number
+  ip_id: number
+  name: string
+  alias: string
+  description: string
+  detail: string
+  cover_asset_id: number
+  images: SceneImageRecord[]
+  created_at: string
+  updated_at: string
+}
+
+/** 一条道具设定图:纯素材引用,语义同场景图。 */
+export interface PropImageRecord {
+  id: number
+  prop_id: number
+  asset_id: number
+  label: string
+  sort: number
+}
+
+/** 一个 IP 级道具:跨镜复用的一致性源(cover 取「多视图」优先,语义同
+ * 场景封面)。 */
+export interface PropRecord {
+  id: number
+  ip_id: number
+  name: string
+  alias: string
+  description: string
+  detail: string
+  cover_asset_id: number
+  images: PropImageRecord[]
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateSceneInput {
+  name: string
+  alias?: string
+  description?: string
+  detail?: string
+}
+
+/** 场景部分更新:字段任选;空串 = 清空可选字段。 */
+export interface PatchSceneInput {
+  name?: string
+  alias?: string
+  description?: string
+  detail?: string
+}
+
+/** 锚一张场景设定图:双入口 —— 本机先经 /api/assets/upload?ip_id= 入素材库
+ * 再引用,或素材库/挑选器选已有图。 */
+export interface CreateSceneImageInput {
+  asset_id: number
+  label?: string
+  sort?: number
+}
+
+/** 场景设定图部分更新:label/sort。 */
+export interface PatchSceneImageInput {
+  label?: string
+  sort?: number
+}
+
+export interface CreatePropInput {
+  name: string
+  alias?: string
+  description?: string
+  detail?: string
+}
+
+/** 道具部分更新:字段任选;空串 = 清空可选字段。 */
+export interface PatchPropInput {
+  name?: string
+  alias?: string
+  description?: string
+  detail?: string
+}
+
+/** 锚一张道具设定图:语义同场景图。 */
+export interface CreatePropImageInput {
+  asset_id: number
+  label?: string
+  sort?: number
+}
+
+/** 道具设定图部分更新:label/sort。 */
+export interface PatchPropImageInput {
+  label?: string
+  sort?: number
+}
+
 /** 上游音色生命周期(56 号票契约,原样英文态字):DEPLOYING 部署中、
  * OK 可用、UNDEPLOYED 上游审核未通过。 */
 export type VoiceStatus = 'DEPLOYING' | 'OK' | 'UNDEPLOYED'
@@ -1264,6 +1377,96 @@ export class ApiClient {
   /** 删设定图(只删图行,素材行不动)。 */
   async deleteCharacterImage(imageId: number): Promise<void> {
     await this.request<void>(`/character-images/${imageId}`, { method: 'DELETE' })
+  }
+
+  // ---- 场景库(65 号票;目录挂 /ips/:id/scenes,CRUD 挂 /scenes 系)----
+
+  /** 该 IP 的场景目录,完整树一次取全(场景 → 图,updated_at 降序)。 */
+  async listIPScenes(ipId: number): Promise<SceneRecord[]> {
+    const body = await this.request<{ scenes: SceneRecord[] }>(`/ips/${ipId}/scenes`)
+    return body.scenes
+  }
+
+  createScene(ipId: number, input: CreateSceneInput): Promise<SceneRecord> {
+    return this.request<SceneRecord>(`/ips/${ipId}/scenes`, { method: 'POST', body: input })
+  }
+
+  getScene(sceneId: number): Promise<SceneRecord> {
+    return this.request<SceneRecord>(`/scenes/${sceneId}`)
+  }
+
+  patchScene(sceneId: number, input: PatchSceneInput): Promise<SceneRecord> {
+    return this.request<SceneRecord>(`/scenes/${sceneId}`, { method: 'PATCH', body: input })
+  }
+
+  async deleteScene(sceneId: number): Promise<void> {
+    await this.request<void>(`/scenes/${sceneId}`, { method: 'DELETE' })
+  }
+
+  /** 锚一张场景设定图(asset_id 引用素材行)。 */
+  createSceneImage(sceneId: number, input: CreateSceneImageInput): Promise<SceneImageRecord> {
+    return this.request<SceneImageRecord>(`/scenes/${sceneId}/images`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 场景设定图部分更新:label/sort。 */
+  patchSceneImage(imageId: number, input: PatchSceneImageInput): Promise<SceneImageRecord> {
+    return this.request<SceneImageRecord>(`/scene-images/${imageId}`, {
+      method: 'PATCH',
+      body: input,
+    })
+  }
+
+  /** 删场景设定图(只删图行,素材行不动)。 */
+  async deleteSceneImage(imageId: number): Promise<void> {
+    await this.request<void>(`/scene-images/${imageId}`, { method: 'DELETE' })
+  }
+
+  // ---- 道具库(65 号票;目录挂 /ips/:id/props,CRUD 挂 /props 系)----
+
+  /** 该 IP 的道具目录,完整树一次取全(道具 → 图,updated_at 降序)。 */
+  async listIPProps(ipId: number): Promise<PropRecord[]> {
+    const body = await this.request<{ props: PropRecord[] }>(`/ips/${ipId}/props`)
+    return body.props
+  }
+
+  createProp(ipId: number, input: CreatePropInput): Promise<PropRecord> {
+    return this.request<PropRecord>(`/ips/${ipId}/props`, { method: 'POST', body: input })
+  }
+
+  getProp(propId: number): Promise<PropRecord> {
+    return this.request<PropRecord>(`/props/${propId}`)
+  }
+
+  patchProp(propId: number, input: PatchPropInput): Promise<PropRecord> {
+    return this.request<PropRecord>(`/props/${propId}`, { method: 'PATCH', body: input })
+  }
+
+  async deleteProp(propId: number): Promise<void> {
+    await this.request<void>(`/props/${propId}`, { method: 'DELETE' })
+  }
+
+  /** 锚一张道具设定图(asset_id 引用素材行)。 */
+  createPropImage(propId: number, input: CreatePropImageInput): Promise<PropImageRecord> {
+    return this.request<PropImageRecord>(`/props/${propId}/images`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 道具设定图部分更新:label/sort。 */
+  patchPropImage(imageId: number, input: PatchPropImageInput): Promise<PropImageRecord> {
+    return this.request<PropImageRecord>(`/prop-images/${imageId}`, {
+      method: 'PATCH',
+      body: input,
+    })
+  }
+
+  /** 删道具设定图(只删图行,素材行不动)。 */
+  async deletePropImage(imageId: number): Promise<void> {
+    await this.request<void>(`/prop-images/${imageId}`, { method: 'DELETE' })
   }
 
   // ---- 音色台账(57 号票,需 JWT 会话;全局作用域,与 IP 无关)----

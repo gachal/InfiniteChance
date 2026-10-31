@@ -8,18 +8,29 @@
 // 「本 IP + 全局」(缺省)与「全部」间切换。51 号票加「角色」视图:
 // 角色 → 变体两级分组列设定图,点选进参考条/附件条与普通素材同款 chip 流
 // (合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址,服务端零改动;
-// chip 不带角色标注 —— MVP 它就是素材)。
+// chip 不带角色标注 —— MVP 它就是素材)。65 号票把资产视图扩成三类:
+// 角色 → 变体两级已有,场景/道具 → 图一级(无造型变体)。
 import { computed, onMounted, ref } from 'vue'
 
-import { ApiError, type AssetRecord, type CharacterRecord } from '@infinitechance/api'
+import {
+  ApiError,
+  type AssetRecord,
+  type CharacterRecord,
+  type PropRecord,
+  type SceneRecord,
+} from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
 import { useAssetListQuery } from '../composables/useAssetList'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
+import { isPrimaryLabel, orderedImages } from '../assetlib'
 
 /** 素材种类词表(与素材域 kind 同形)。 */
 export type PickerKind = 'image' | 'video' | 'audio'
+
+/** 资产视图类别:'asset' = 素材库平铺;其余三类 = 资产库分组(51/65 号票)。 */
+type PickerView = 'asset' | 'character' | 'scene' | 'prop'
 
 const props = defineProps<{
   /** 面板标题(Agent 用「选择参考素材」,对话框用「挑选参考素材」)。 */
@@ -30,8 +41,8 @@ const props = defineProps<{
   selectedAssetIds: number[]
   /** 面板说明行;空 = 不显示。 */
   hint?: string
-  /** 「本 IP」归属(50 号票);缺省 = 无 IP 维度,恒全库(也不出角色视图
-   * —— 角色是 IP 级实体,51 号票)。 */
+  /** 「本 IP」归属(50 号票);缺省 = 无 IP 维度,恒全库(也不出资产视图
+   * —— 角色/场景/道具都是 IP 级实体,51/65 号票)。 */
   ipId?: number
 }>()
 
@@ -47,14 +58,16 @@ const kind = ref<'' | PickerKind>('')
 const loading = ref(false)
 const error = ref('')
 
-// ---- 角色视图(51 号票):'asset' = 素材库平铺(缺省,行为不变),
-// 'character' = 角色 → 变体两级分组的设定图。 ----
-const view = ref<'asset' | 'character'>('asset')
+// ---- 资产视图(51/65 号票):'asset' = 素材库平铺(缺省,行为不变);
+// 角色 → 变体两级、场景/道具 → 图一级的设定图分组。 ----
+const view = ref<PickerView>('asset')
 const characters = ref<CharacterRecord[]>([])
-const charactersLoading = ref(false)
-const charactersError = ref('')
+const scenes = ref<SceneRecord[]>([])
+const propList = ref<PropRecord[]>([])
+const libraryLoading = ref(false)
+const libraryError = ref('')
 
-/** 角色视图只在带 IP 归属且白名单含图片时出现(设定图全是图片)。 */
+/** 资产视图只在带 IP 归属且白名单含图片时出现(设定图全是图片)。 */
 const showViewSwitch = computed(() => props.ipId !== undefined && props.kindWhitelist.includes('image'))
 
 // 归属视图、列表参数与分页窗口与 AssetPanel 同一套(评审修复提取至
@@ -81,9 +94,12 @@ const emptyText = computed(() =>
     : '素材库还没有可用的图片/视频。',
 )
 
+const VIEW_SWITCH: PickerView[] = ['asset', 'character', 'scene', 'prop']
+const VIEW_LABELS: Record<PickerView, string> = { asset: '素材', character: '角色', scene: '场景', prop: '道具' }
+
 async function refresh(): Promise<void> {
-  if (view.value === 'character') {
-    await refreshCharacters()
+  if (view.value !== 'asset') {
+    await refreshLibrary(view.value)
     return
   }
   loading.value = true
@@ -97,22 +113,28 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function refreshCharacters(): Promise<void> {
+async function refreshLibrary(target: Exclude<PickerView, 'asset'>): Promise<void> {
   if (props.ipId === undefined) {
     return
   }
-  charactersLoading.value = true
-  charactersError.value = ''
+  libraryLoading.value = true
+  libraryError.value = ''
   try {
-    characters.value = await client.listIPCharacters(props.ipId)
+    if (target === 'character') {
+      characters.value = await client.listIPCharacters(props.ipId)
+    } else if (target === 'scene') {
+      scenes.value = await client.listIPScenes(props.ipId)
+    } else {
+      propList.value = await client.listIPProps(props.ipId)
+    }
   } catch (e) {
-    charactersError.value = e instanceof ApiError ? e.message : '无法加载角色,请稍后再试'
+    libraryError.value = e instanceof ApiError ? e.message : '无法加载资产库,请稍后再试'
   } finally {
-    charactersLoading.value = false
+    libraryLoading.value = false
   }
 }
 
-function setView(v: 'asset' | 'character'): void {
+function setView(v: PickerView): void {
   view.value = v
   void refresh()
 }
@@ -160,10 +182,37 @@ function onPick(a: AssetRecord): void {
   emit('toggle', a)
 }
 
-/** 角色设定图 → 合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址
- * (51 号票,服务端零改动);chip 不带角色标注 —— 载荷与普通素材同形。
- * 角色视图只列图片,kind 恒 image。 */
-function characterAsset(assetId: number): AssetRecord {
+/** 场景/道具视图的实体投影:两族记录结构同形(无造型变体,实体 → 图一级),
+ * 分组只消费 id/name/alias 与图行的 id/asset_id/label。 */
+interface LibraryEntity {
+  id: number
+  name: string
+  alias: string
+  images: { id: number; asset_id: number; label: string }[]
+}
+
+const libraryEntities = computed<LibraryEntity[]>(() => {
+  if (view.value === 'scene') {
+    return scenes.value
+  }
+  if (view.value === 'prop') {
+    return propList.value
+  }
+  return []
+})
+
+/** 场景/道具视图对应的资产类别(主资产置前的展示序入参)。 */
+const libraryViewKind = computed<'scene' | 'prop'>(() => (view.value === 'scene' ? 'scene' : 'prop'))
+
+/** 主资产 label 高亮(场景「全景」、道具「多视图」)。 */
+const isPrimaryImg = (label: string): boolean => isPrimaryLabel(libraryViewKind.value, label)
+
+const libraryEmptyText = computed(() => `本 IP 还没有${VIEW_LABELS[view.value]} —— 先在 IP 详情页创建。`)
+
+/** 资产库设定图 → 合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址
+ * (51 号票,服务端零改动);chip 不带资产标注 —— 载荷与普通素材同形。
+ * 资产视图只列图片,kind 恒 image。 */
+function libraryAsset(assetId: number): AssetRecord {
   return {
     id: assetId,
     kind: 'image',
@@ -184,11 +233,11 @@ function characterAsset(assetId: number): AssetRecord {
   }
 }
 
-/** 角色视图的已选高亮按素材 id(同一素材锚进多个变体去重展示)。 */
-const isCharacterAssetSelected = (assetId: number): boolean => props.selectedAssetIds.includes(assetId)
+/** 资产视图的已选高亮按素材 id(同一素材锚进多个变体/实体去重展示)。 */
+const isLibraryAssetSelected = (assetId: number): boolean => props.selectedAssetIds.includes(assetId)
 
-function onPickCharacterAsset(assetId: number): void {
-  onPick(characterAsset(assetId))
+function onPickLibraryAsset(assetId: number): void {
+  onPick(libraryAsset(assetId))
 }
 
 /** 变体内展示序:视图类置前(51 号票主资产口径),组内保持 sort+id。 */
@@ -196,13 +245,13 @@ function orderedVariantImages(v: CharacterRecord['variants'][number]) {
   return [...v.images.filter((i) => isViewLabel(i.label)), ...v.images.filter((i) => !isViewLabel(i.label))]
 }
 
-/** 角色视图的缩略两阶段回落簿:缩略失败回原图,原图也失败落「素材不可用」
+/** 资产视图的缩略两阶段回落簿:缩略失败回原图,原图也失败落「素材不可用」
  * 占位(素材行被删的图行保留在树里,展示面按可达性降级)。 */
-const brokenCharacterAssets = ref(new Set<number>())
+const brokenLibraryAssets = ref(new Set<number>())
 
-function onCharacterThumbError(assetId: number): void {
+function onLibraryThumbError(assetId: number): void {
   if (!thumbs.onThumbError(characterImageContentURL(assetId))) {
-    brokenCharacterAssets.value = new Set([...brokenCharacterAssets.value, assetId])
+    brokenLibraryAssets.value = new Set([...brokenLibraryAssets.value, assetId])
   }
 }
 
@@ -233,25 +282,21 @@ onMounted(refresh)
       {{ hint }}
     </p>
 
-    <!-- 视图切换(51 号票):素材库平铺(缺省,47 号票行为不变)与
-         角色 → 变体两级分组的设定图;只带 IP 归属且白名单含图片时出现。 -->
+    <!-- 视图切换(51/65 号票):素材库平铺(缺省,47 号票行为不变)与
+         资产库三类分组 —— 角色 → 变体两级、场景/道具 → 图一级;只带
+         IP 归属且白名单含图片时出现。 -->
     <div
       v-if="showViewSwitch"
       class="view-switch"
     >
       <button
+        v-for="v in VIEW_SWITCH"
+        :key="v"
         type="button"
-        :class="{ active: view === 'asset' }"
-        @click="setView('asset')"
+        :class="{ active: view === v }"
+        @click="setView(v)"
       >
-        素材
-      </button>
-      <button
-        type="button"
-        :class="{ active: view === 'character' }"
-        @click="setView('character')"
-      >
-        角色
+        {{ VIEW_LABELS[v] }}
       </button>
     </div>
 
@@ -371,29 +416,30 @@ onMounted(refresh)
       </button>
     </template>
 
-    <!-- 角色视图(51 号票):角色 → 变体两级分组列设定图,点选与普通素材
-         同款 toggle(chip 不带角色标注,载荷 = asset_id + 内容寻址)。 -->
+    <!-- 资产视图(51/65 号票):角色 → 变体两级、场景/道具 → 图一级的
+         设定图分组,点选与普通素材同款 toggle(chip 不带资产标注,载荷 =
+         asset_id + 内容寻址)。 -->
     <template v-else>
       <p
-        v-if="charactersError"
+        v-if="libraryError"
         class="panel-error"
         role="alert"
       >
-        {{ charactersError }}
+        {{ libraryError }}
       </p>
       <p
-        v-else-if="charactersLoading"
+        v-else-if="libraryLoading"
         class="panel-empty"
       >
-        加载角色…
+        加载{{ VIEW_LABELS[view] }}…
       </p>
       <p
-        v-else-if="characters.length === 0"
+        v-else-if="view === 'character' ? characters.length === 0 : libraryEntities.length === 0"
         class="panel-empty"
       >
-        本 IP 还没有角色 —— 先在 IP 详情页创建。
+        {{ libraryEmptyText }}
       </p>
-      <template v-else>
+      <template v-else-if="view === 'character'">
         <section
           v-for="c in characters"
           :key="c.id"
@@ -426,12 +472,12 @@ onMounted(refresh)
                 v-for="img in orderedVariantImages(v)"
                 :key="img.id"
                 class="asset-card"
-                :class="{ selected: isCharacterAssetSelected(img.asset_id) }"
-                :title="isCharacterAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
-                @click="onPickCharacterAsset(img.asset_id)"
+                :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
+                :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
+                @click="onPickLibraryAsset(img.asset_id)"
               >
                 <span
-                  v-if="brokenCharacterAssets.has(img.asset_id)"
+                  v-if="brokenLibraryAssets.has(img.asset_id)"
                   class="character-unavailable"
                 >
                   素材不可用
@@ -442,7 +488,7 @@ onMounted(refresh)
                   class="thumb"
                   loading="lazy"
                   alt="设定图"
-                  @error="onCharacterThumbError(img.asset_id)"
+                  @error="onLibraryThumbError(img.asset_id)"
                 >
                 <div class="meta">
                   <span
@@ -451,7 +497,7 @@ onMounted(refresh)
                   >{{ img.label || '设定图' }}</span>
                 </div>
                 <span
-                  v-if="isCharacterAssetSelected(img.asset_id)"
+                  v-if="isLibraryAssetSelected(img.asset_id)"
                   class="picked"
                 >✓</span>
               </li>
@@ -463,6 +509,67 @@ onMounted(refresh)
               该变体还没有设定图
             </p>
           </div>
+        </section>
+      </template>
+      <!-- 场景/道具(65 号票):实体 → 图一级(无造型变体,变体语义用
+           label 表达),主资产置前的展示序。 -->
+      <template v-else>
+        <section
+          v-for="e in libraryEntities"
+          :key="e.id"
+          class="character-group"
+        >
+          <h4 class="character-name">
+            {{ e.name }}
+            <span
+              v-if="e.alias"
+              class="character-alias"
+            >{{ e.alias }}</span>
+          </h4>
+          <ul
+            v-if="e.images.length > 0"
+            class="asset-list"
+          >
+            <li
+              v-for="img in orderedImages(libraryViewKind, e.images)"
+              :key="img.id"
+              class="asset-card"
+              :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
+              :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
+              @click="onPickLibraryAsset(img.asset_id)"
+            >
+              <span
+                v-if="brokenLibraryAssets.has(img.asset_id)"
+                class="character-unavailable"
+              >
+                素材不可用
+              </span>
+              <img
+                v-else
+                :src="thumbs.displayURL(characterImageContentURL(img.asset_id), characterImageThumbURL(img.asset_id))"
+                class="thumb"
+                loading="lazy"
+                alt="设定图"
+                @error="onLibraryThumbError(img.asset_id)"
+              >
+              <div class="meta">
+                <span
+                  class="kind-tag"
+                  :class="{ 'view-label': isPrimaryImg(img.label) }"
+                >{{ img.label || '设定图' }}</span>
+              </div>
+              <span
+                v-if="isLibraryAssetSelected(img.asset_id)"
+                class="picked"
+              >✓</span>
+            </li>
+          </ul>
+          <p
+            v-else
+            class="variant-empty"
+          >
+            该{{ VIEW_LABELS[view] }}还没有设定图
+          </p>
         </section>
       </template>
     </template>

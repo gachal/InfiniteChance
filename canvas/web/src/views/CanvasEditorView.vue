@@ -41,6 +41,7 @@ import {
   type NameNodeData,
   type NamePage,
   type PrevizNodeData,
+  type ScriptNodeData,
   type StoryboardCut,
   type StoryboardNodeData,
   type VoiceNodeData,
@@ -83,7 +84,7 @@ import {
   type VideoRefRole,
 } from '../composer'
 import { characterImageContentURL } from '../characters'
-import { frameContentURL } from '../storyboard'
+import { buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
@@ -104,6 +105,7 @@ import MediaLightbox from '../components/MediaLightbox.vue'
 import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
 import StoryboardEditorLayer from '../components/StoryboardEditorLayer.vue'
 import NameEditorLayer from '../components/NameEditorLayer.vue'
+import ScriptEditorLayer from '../components/ScriptEditorLayer.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import CharacterNode from '../components/nodes/CharacterNode.vue'
@@ -111,6 +113,7 @@ import ImageNode from '../components/nodes/ImageNode.vue'
 import LevelCard from '../components/nodes/LevelCard.vue'
 import NameNode from '../components/nodes/NameNode.vue'
 import PrevizNode from '../components/nodes/PrevizNode.vue'
+import ScriptNode from '../components/nodes/ScriptNode.vue'
 import StoryboardNode from '../components/nodes/StoryboardNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 import AudioNode from '../components/nodes/AudioNode.vue'
@@ -2082,6 +2085,58 @@ function onStoryboardLayerUpload(cutIndex: number, file: File): void {
   }
 }
 
+/** cut→视频直通(67 号票,53 号票遗留收编):落空视频节点 + 絵コンテ→
+ * 视频来源边(dropFrameNode 同款骨架:沿出边数级联偏移防叠卡),随后
+ * 预填视频草稿并关闭编辑层让位对话框 —— cut 画面(非空)自动进首帧、
+ * 提示词按 景别/运镜/台词 拼装(storyboard.buildCutVideoPrompt)、时长
+ * 预填 cut 秒数(未定为 0/空 = 留「自动」)。人工确认后才发送(花钱操作
+ * 人工确认,总案 Q5):这里只落节点与预填,不发任务;无画面 cut 也可发起
+ * (纯文生视频,预填不动会话已上传的参考条,对话框里可见可删)。 */
+function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
+  const node = findNode(nodeId)
+  const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
+  if (!node || !cut) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `video-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'video',
+      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
+      data: { url: '', note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  // 预填 = 写视频草稿(composer 是「选中驱动 + 草稿 refs」模型,新节点无
+  // 产物、选中 chip 不产生):有画面把 cut 画面物化进参考条作首帧 —— 整条
+  // 替换,本动作的预填语义就是「这个 cut 的画面即首帧」,不带其他会话
+  // 残留;无画面清空参考条,纯文生视频。选中切换的 watch 会把拆下标记与
+  // 模式(锁视频)一并复位,这里只写草稿。
+  videoPrompt.value = buildCutVideoPrompt(cut)
+  videoDuration.value = cut.seconds ? String(cut.seconds) : ''
+  uploadedVideoRefs.value =
+    cut.asset_id > 0
+      ? [
+          {
+            url: frameContentURL(cut.asset_id),
+            kind: 'image' as const,
+            role: 'first_frame' as const,
+            asset_id: cut.asset_id,
+          },
+        ]
+      : []
+  // 收编辑层:生成对话框贴新视频节点正下方,全屏编辑层开着会挡住它。
+  storyboardEditorNodeId.value = ''
+}
+
 // ---- ネーム(54 号票)----
 
 // 54 号票:全屏ネーム编辑层绑定的节点('' = 关闭)。与絵コンテ编辑层
@@ -2159,6 +2214,25 @@ function onNameLayerDrop(pageIndex: number, panelIndex: number): void {
   if (editor) {
     onNameDrop(editor.id, pageIndex, panelIndex)
   }
+}
+
+// ---- 剧本(64 号票)----
+
+// 全屏剧本编辑层绑定的节点('' = 关闭)。与絵コンテ/ネーム编辑层同族:
+// 不卸载画布,标题/正文整包走 onScriptSceneChange 同一条落盘链;节点被删
+// 时 computed 就地关层。
+const scriptEditorNodeId = ref('')
+const scriptEditorNode = computed(() => {
+  const node = scriptEditorNodeId.value ? findNode(scriptEditorNodeId.value) : undefined
+  return node ? { id: node.id, data: node.data as ScriptNodeData } : null
+})
+
+/** 剧本标题/正文数据落盘:updateNodeData 浅合并(编辑层整包上抛),自动
+ * 保存免费获得(整图 JSON 随节点 data 先例;30 万字大文本 autosave 全量
+ * 提交是 64 号票已接受的代价,不做优化)。 */
+function onScriptSceneChange(nodeId: string, patch: { title: string; text: string }): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
 }
 
 // ---- 关卡卡(55 号票)----
@@ -2492,8 +2566,8 @@ function addNode(type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>): void
 }
 
 /** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫/
- * 预演台粉/角色青/絵コンテ橙/ネーム天蓝/关卡红),38 号票评审补的导航
- * 面沿用同一语义色系。 */
+ * 预演台粉/角色青/絵コンテ橙/ネーム天蓝/关卡红/剧本金),38 号票评审补
+ * 的导航面沿用同一语义色系。 */
 function miniMapNodeColor(node: { type?: string | null }): string {
   switch (normalizeNodeType(node.type ?? undefined)) {
     case 'agent':
@@ -2516,6 +2590,8 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#5eead4'
     case 'audio':
       return '#a78bfa'
+    case 'script':
+      return '#d3b571'
     default:
       return '#a78bfa'
   }
@@ -3083,6 +3159,16 @@ function backToList(): void {
             @open-picker="openLevelPicker(nodeProps.id)"
           />
         </template>
+        <!-- 64 号票:剧本卡,卡面只折叠摘要(标题/摘要行/字数),整卡
+             点击进全屏编辑层;不渲染把手,不作任何连线的源与目标。 -->
+        <template #node-script="nodeProps">
+          <ScriptNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            @edit="scriptEditorNodeId = nodeProps.id"
+          />
+        </template>
         <!-- 57 号票:音色节点(创建表单内联卡上,只渲染右把手连音频)与
              音频节点(台词合成产物/面板插入的载体,只渲染左把手)。 -->
         <template #node-voice="nodeProps">
@@ -3270,16 +3356,19 @@ function backToList(): void {
       />
       <!-- 53 号票:絵コンテ全屏编辑层(Teleport 到 body),cut/板名整包
            走同一条 scene-change 落盘链;画面三入口(素材库/上传/落图)在
-           层内,素材挑选面板挂层右缘。 -->
+           层内,素材挑选面板挂层右缘;67 号票增出场角色标注(本 IP 角色
+           目录)与「生成视频」直通(落节点+来源边+对话框预填)。 -->
       <StoryboardEditorLayer
         v-if="storyboardEditorNode"
         :key="`storyboard-${storyboardEditorNode.id}`"
         :data="storyboardEditorNode.data"
         :ip-id="canvasIPID || undefined"
         :uploading="storyboardUploading"
+        :characters="ipCharacters"
         @scene-change="onStoryboardSceneChange(storyboardEditorNode.id, $event)"
         @upload="onStoryboardLayerUpload"
         @drop="onStoryboardDrop(storyboardEditorNode.id, $event)"
+        @generate-video="onStoryboardGenerateVideo(storyboardEditorNode.id, $event)"
         @close="storyboardEditorNodeId = ''"
       />
       <!-- 54 号票:ネーム全屏编辑层(Teleport 到 body),页/格/板名整包
@@ -3295,6 +3384,15 @@ function backToList(): void {
         @upload="onNameLayerUpload"
         @drop="onNameLayerDrop"
         @close="nameEditorNodeId = ''"
+      />
+      <!-- 64 号票:剧本全屏编辑层(Teleport 到 body),标题/正文整包走
+           同一条 scene-change 落盘链;超 30 万字上限在层内提示分段粘贴。 -->
+      <ScriptEditorLayer
+        v-if="scriptEditorNode"
+        :key="`script-${scriptEditorNode.id}`"
+        :data="scriptEditorNode.data"
+        @scene-change="onScriptSceneChange(scriptEditorNode.id, $event)"
+        @close="scriptEditorNodeId = ''"
       />
       <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body);41 号票
            截帧事件在此入素材 + 落画布,失败文案走轻提示。参考条 chip 的预览
