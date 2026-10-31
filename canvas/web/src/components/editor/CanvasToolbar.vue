@@ -18,6 +18,8 @@ const emit = defineEmits<{
   toggleAsset: []
   toggleRecords: []
   uploadChange: [event: Event]
+  /** 开/关画布帮助浮层(68 号票);快捷键「?」同款开关。 */
+  toggleHelp: []
 }>()
 
 // 53 号票:添加按钮分「创作/规划」两组(组间分隔线纯展示分组)。
@@ -38,7 +40,7 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 
 <template>
   <footer class="toolbar">
-    <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送。</span>
+    <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送;? 画布帮助。</span>
     <span class="add-group">
       <span class="group-label">创作</span>
       <button
@@ -100,6 +102,14 @@ const uploadInput = ref<HTMLInputElement | null>(null)
         @click="uploadInput?.click()"
       >
         {{ uploading ? '上传中…' : '上传' }}
+      </button>
+      <button
+        class="add-help"
+        type="button"
+        title="画布帮助:节点与运行总览、剧本流水线全链(?)"
+        @click="emit('toggleHelp')"
+      >
+        ?
       </button>
       <input
         ref="uploadInput"
@@ -269,6 +279,13 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 .add-upload:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+/* 帮助按钮(68 号票):中性蓝灰与素材库同档(类型色留给节点,
+   容器类动作用中性色)。 */
+.add-help {
+  background: rgba(var(--estimate-ink-rgb), 0.14);
+  color: var(--estimate-ink);
 }
 
 .upload-input {

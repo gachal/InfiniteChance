@@ -138,7 +138,7 @@
   --shadow-overlay: 0 12px 40px rgba(0, 0, 0, 0.45);
   --shadow-overlay-strong: 0 12px 48px rgba(0, 0, 0, 0.55);
 
-  /* z-index 档位表(十档,语义唯一;新浮层先来这里领档,不许自造数值) */
+  /* z-index 档位表(十一档,语义唯一;新浮层先来这里领档,不许自造数值) */
   --z-previz-inner: 2;
   --z-connect-preview: 4;
   --z-canvas-loading: 5;
@@ -147,6 +147,9 @@
   --z-dialog-mask: 20;
   --z-drawer: 30;
   --z-editor-layer: 90;
+  /* 画布帮助浮层(68 号票):居中阅读模态,与灯箱同族但低一档 ——
+     两者不会同时在场(遮罩挡住画布点击),toast 仍在最上。 */
+  --z-help-modal: 95;
   --z-lightbox: 100;
   --z-toast: 120;
 }
