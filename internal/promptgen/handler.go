@@ -90,10 +90,12 @@ type ModelPricer interface {
 
 // Gateway is the slice of the gateway client the handlers need; tests
 // substitute fakes. StreamChat backs the 31 号票 streaming variant of the
-// prompt generation (same conversation, stream=true on the relay).
+// prompt generation (same conversation, stream=true on the relay);
+// StreamChatTurn backs the 63 号票 Agent tool loop (tool_calls delta 聚合).
 type Gateway interface {
 	GenerateChat(ctx context.Context, req ChatRequest) (ChatResult, error)
 	StreamChat(ctx context.Context, req ChatRequest, onDelta func(string)) error
+	StreamChatTurn(ctx context.Context, req ChatRequest, onDelta func(string)) (StreamTurn, error)
 }
 
 // Handlers serves the creator prompt-generation endpoints. canvas/server
@@ -109,6 +111,10 @@ type Handlers struct {
 	Characters CharacterSource
 	Models     ModelPricer
 	Gateway    Gateway
+	// AgentTools 是 Agent 工具循环可调用的领域工具(63 号票):nil 等价
+	// 空注册表——请求不带 tools 字段,端点退化为普通流式会话 + done 帧。
+	// 66 号票在此装配六个领域工具。
+	AgentTools *AgentToolRegistry
 	// PublicBaseURL answers the configured public base address of the
 	// object storage for LLM-reachable media resolution (18 号票解析顺序:
 	// 自有公网地址优先、厂商原址回落)。19 号票落地 settings 前没有配置
@@ -121,11 +127,13 @@ type Handlers struct {
 //
 //	POST /:id/generate-prompt        — {node_id?, template_id?, topic, model, history?} → text
 //	POST /:id/generate-prompt/stream — 同请求体,SSE 增量返回(31 号票)
+//	POST /:id/agent/stream           — 同请求体,Agent 工具循环 SSE(63 号票)
 //	POST /:id/reverse-prompt         — {node_id?, video_url, model} → text
 //	POST /:id/analyze                — {node_id?, media_url, media_kind, model} → text
 func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/:id/generate-prompt", h.Generate)
 	group.POST("/:id/generate-prompt/stream", h.GenerateStream)
+	group.POST("/:id/agent/stream", h.AgentStream)
 	group.POST("/:id/reverse-prompt", h.Reverse)
 	group.POST("/:id/analyze", h.Analyze)
 }

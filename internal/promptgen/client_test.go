@@ -485,3 +485,172 @@ func TestGenerateChatRejectsUnparseableSuccessBody(t *testing.T) {
 		t.Errorf("err = %v, want unparseable-body reason", err)
 	}
 }
+
+// ---- 63 号票:Agent 工具循环的客户端扩容 ----
+
+// toolCallSSE 拼一帧带 tool_calls delta 的流式块:调用方给原始 JSON 片段。
+func toolCallSSE(deltaJSON string) string {
+	return sseBody(`{"choices":[{"delta":{"tool_calls":[` + deltaJSON + `]}}]}`)
+}
+
+// TestStreamChatTurnAggregatesToolCallDeltas 验证 63 号票下行聚合:tool_calls
+// delta 按 index 键控,id/function.name/function.arguments 分片拼接,文本
+// delta 照旧逐帧回调,finish_reason 取流中最后一次非空值。
+func TestStreamChatTurnAggregatesToolCallDeltas(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, nil)
+	gateway.respondRaw(http.StatusOK,
+		sseBody(`{"choices":[{"delta":{"role":"assistant","content":"让我先建角色。"}}]}`)+
+			toolCallSSE(`{"index":0,"id":"call_1","type":"function","function":{"name":"create_character","arguments":"{\"na"}}`)+
+			toolCallSSE(`{"index":0,"function":{"arguments":"me\":\"\u5f20\u4e09\"}"}}`)+
+			toolCallSSE(`{"index":1,"id":"call_2","type":"function","function":{"name":"list_assets","arguments":"{}"}}`)+
+			sseBody(`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`)+
+			"data: [DONE]\n\n")
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	var got []string
+	turn, err := client.StreamChatTurn(context.Background(), promptgen.ChatRequest{
+		Model: "chat-m", Content: "建一个角色",
+	}, func(delta string) { got = append(got, delta) })
+	if err != nil {
+		t.Fatalf("StreamChatTurn: %v", err)
+	}
+	if len(got) != 1 || got[0] != "让我先建角色。" {
+		t.Errorf("deltas = %q, want the content delta delivered as it arrived", got)
+	}
+	if turn.Content != "让我先建角色。" {
+		t.Errorf("content = %q, want the accumulated text", turn.Content)
+	}
+	if turn.FinishReason != "tool_calls" {
+		t.Errorf("finish_reason = %q, want tool_calls", turn.FinishReason)
+	}
+	want := []promptgen.ToolCall{
+		{ID: "call_1", Name: "create_character", Arguments: `{"name":"张三"}`},
+		{ID: "call_2", Name: "list_assets", Arguments: `{}`},
+	}
+	if len(turn.ToolCalls) != len(want) {
+		t.Fatalf("tool_calls = %v, want %d calls", turn.ToolCalls, len(want))
+	}
+	for i, tc := range turn.ToolCalls {
+		if tc != want[i] {
+			t.Errorf("tool_calls[%d] = %+v, want %+v", i, tc, want[i])
+		}
+	}
+}
+
+// TestStreamChatTurnPassesToolsThrough 验证 63 号票上行透传:Tools/ToolChoice
+// 进请求体;不带工具的请求保持不带这两个字段。
+func TestStreamChatTurnPassesToolsThrough(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, nil)
+	gateway.respondRaw(http.StatusOK,
+		sseBody(`{"choices":[{"delta":{"content":"好"}}]}`)+"data: [DONE]\n\n")
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	definitions := []json.RawMessage{
+		json.RawMessage(`{"type":"function","function":{"name":"create_character","description":"建角色","parameters":{"type":"object"}}}`),
+	}
+	if _, err := client.StreamChatTurn(context.Background(), promptgen.ChatRequest{
+		Model:      "chat-m",
+		Content:    "建一个角色",
+		Tools:      definitions,
+		ToolChoice: "auto",
+	}, func(string) {}); err != nil {
+		t.Fatalf("StreamChatTurn: %v", err)
+	}
+
+	tools, ok := gateway.last.Body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %v, want the definition riding through untouched", gateway.last.Body["tools"])
+	}
+	tool, _ := tools[0].(map[string]any)
+	if tool["type"] != "function" {
+		t.Errorf("tools[0].type = %v, want function", tool["type"])
+	}
+	if gateway.last.Body["tool_choice"] != "auto" {
+		t.Errorf("tool_choice = %v, want auto", gateway.last.Body["tool_choice"])
+	}
+
+	// 对照:不带工具的请求不带 tools/tool_choice 字段(与升级前逐字节一致)。
+	gateway.respondRaw(http.StatusOK,
+		sseBody(`{"choices":[{"delta":{"content":"好"}}]}`)+"data: [DONE]\n\n")
+	if _, err := client.StreamChatTurn(context.Background(), promptgen.ChatRequest{
+		Model: "chat-m", Content: "问题",
+	}, func(string) {}); err != nil {
+		t.Fatalf("StreamChatTurn plain: %v", err)
+	}
+	if _, has := gateway.last.Body["tools"]; has {
+		t.Errorf("tools = %v, want the field absent", gateway.last.Body["tools"])
+	}
+	if _, has := gateway.last.Body["tool_choice"]; has {
+		t.Errorf("tool_choice = %v, want the field absent", gateway.last.Body["tool_choice"])
+	}
+}
+
+// TestStreamChatTurnPureToolCallStreamIsValid 验证纯工具轮(无文本 delta)
+// 不是空消息:聚合出 tool_calls 即合法收尾。
+func TestStreamChatTurnPureToolCallStreamIsValid(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, nil)
+	gateway.respondRaw(http.StatusOK,
+		toolCallSSE(`{"index":0,"id":"call_1","type":"function","function":{"name":"t","arguments":"{}"}}`)+
+			sseBody(`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`)+
+			"data: [DONE]\n\n")
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	turn, err := client.StreamChatTurn(context.Background(), promptgen.ChatRequest{
+		Model: "chat-m", Content: "问题",
+	}, func(string) {})
+	if err != nil {
+		t.Fatalf("StreamChatTurn: %v", err)
+	}
+	if len(turn.ToolCalls) != 1 || turn.ToolCalls[0].Name != "t" {
+		t.Errorf("tool_calls = %v, want the single call", turn.ToolCalls)
+	}
+}
+
+// TestGenerateChatSerializesAgentToolTurns 验证循环中间帧的上行序列化:
+// assistant 轮的 tool_calls 与 role=tool 轮的 tool_call_id 按形状进 messages。
+func TestGenerateChatSerializesAgentToolTurns(t *testing.T) {
+	gateway := newFakeGateway(http.StatusOK, chatCompletion("完成了"))
+	server := newGatewayServer(t, gateway)
+	client := promptgen.NewClient(server.URL, "sk-service-key")
+
+	if _, err := client.GenerateChat(context.Background(), promptgen.ChatRequest{
+		Model: "chat-m",
+		Conversation: []promptgen.ChatMessage{
+			{Role: "user", Content: "建角色"},
+			{Role: "assistant", Content: "让我先建角色。", ToolCalls: []promptgen.ToolCall{
+				{ID: "call_1", Name: "create_character", Arguments: `{"name":"张三"}`},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: `{"summary":"已创建 张三"}`},
+		},
+	}); err != nil {
+		t.Fatalf("GenerateChat: %v", err)
+	}
+
+	messages, _ := gateway.last.Body["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %v, want three turns", gateway.last.Body["messages"])
+	}
+	assistant, _ := messages[1].(map[string]any)
+	calls, ok := assistant["tool_calls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Fatalf("assistant tool_calls = %v, want one call", assistant["tool_calls"])
+	}
+	call, _ := calls[0].(map[string]any)
+	if call["id"] != "call_1" || call["type"] != "function" {
+		t.Errorf("tool_call = %v, want id/type shape", call)
+	}
+	fn, _ := call["function"].(map[string]any)
+	if fn["name"] != "create_character" || fn["arguments"] != `{"name":"张三"}` {
+		t.Errorf("tool_call.function = %v, want name/arguments verbatim", fn)
+	}
+	toolTurn, _ := messages[2].(map[string]any)
+	if toolTurn["role"] != "tool" || toolTurn["tool_call_id"] != "call_1" {
+		t.Errorf("tool turn = %v, want role/tool_call_id shape", toolTurn)
+	}
+	if toolTurn["content"] != `{"summary":"已创建 张三"}` {
+		t.Errorf("tool turn content = %v, want the result JSON", toolTurn["content"])
+	}
+}

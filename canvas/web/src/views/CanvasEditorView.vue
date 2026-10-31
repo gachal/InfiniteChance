@@ -52,6 +52,11 @@ import {
   hasAgentMediaSlot,
   nextAgentMediaId,
 } from '../agentMedia'
+import {
+  type AgentToolStep,
+  applyAgentToolResult,
+  upsertAgentToolStep,
+} from '../agentTools'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import {
   appendComposerRef,
@@ -1414,15 +1419,17 @@ async function onDeleteVoice(nodeId: string): Promise<void> {
   }
 }
 
-/** Agent 会话的一轮(29 号票;31 号票起走流式;32 号票带媒体):输入作
- * 本轮主题/修改意见,media 为本轮附件引用,服务端把技能渲染文本作首条
- * 指令、拼历史与本轮输入经网关聊天流式生成。增量实时写节点文本区(不标
- * 脏,autosave 防抖不被高频打扰);收尾一次性落盘 —— 成功追加对话历史
- * (20 轮上限截断最旧,媒体随轮进历史)、持久固化设定段(52 号票历史
- * 固化:本轮响应带回的「【角色设定】」段落进节点 data,后续轮次经
- * agentCharacterInjection 原样回传 —— 会话中途角色后改不影响已发生对话)、
- * 清空待发附件并沿连线自动投递,失败保留已流出文本与待发附件(不回滚、
- * 不追加历史不投递)。技能刚被删/停用时立刻刷新目录,悬空 chip 当场收回。 */
+/** Agent 会话的一轮(29 号票;31 号票起走流式;32 号票带媒体;63 号票起
+ * 走 Agent 工具循环端点):输入作本轮主题/修改意见,media 为本轮附件引用,
+ * 服务端把技能渲染文本作首条指令、拼历史与本轮输入,带工具定义经网关
+ * 流式循环生成。delta 实时写节点文本区(不标脏,autosave 防抖不被高频
+ * 打扰);tool_call/tool_result 落过程时间线(UI 态),写图类 tool_result
+ * 由前端经 applyAgentToolResult 落图(ADR 0006 单一写者),应用失败显式
+ * 报错不静默;收尾一次性落盘 —— 成功追加对话历史(20 轮上限截断最旧,
+ * 媒体随轮进历史;assistant 轮 = 最终回答全文 + 工具摘要行,循环中间帧
+ * 不入持久历史)、持久固化设定段(52 号票历史固化)、清空待发附件并沿
+ * 连线自动投递,失败保留已流出文本与待发附件(不回滚、不追加历史不投递)。
+ * 技能刚被删/停用时立刻刷新目录,悬空 chip 当场收回。 */
 async function onGeneratePrompt(
   nodeId: string,
   payload: {
@@ -1444,11 +1451,13 @@ async function onGeneratePrompt(
   }
   promptGenerating.value = true
   generateError.value = ''
-  // 流中途失败时已到手的增量(text)用于保留部分文本;成功路径以返回的
-  // 累计全文为准。
+  agentActiveNodeId.value = nodeId
+  agentToolSteps.value = []
+  // 流中途失败时已到手的增量(text)用于保留部分文本;成功路径以 done
+  // 事件的累计全文为准。
   let text = ''
   try {
-    const full = await client.generatePromptStream(
+    const full = await client.agentStream(
       canvasId,
       {
         node_id: nodeId,
@@ -1461,12 +1470,30 @@ async function onGeneratePrompt(
         // character_ids 取最新数据渲染。
         ...agentCharacterInjection(payload.character_ids, payload.character_section),
       },
-      (delta) => {
-        text += delta
-        updateNodeData(nodeId, { text })
+      {
+        onDelta: (delta) => {
+          text += delta
+          updateNodeData(nodeId, { text })
+        },
+        onToolCall: (ev) => {
+          agentToolSteps.value = upsertAgentToolStep(agentToolSteps.value, ev)
+        },
+        onToolResult: (ev) => {
+          agentToolSteps.value = upsertAgentToolStep(agentToolSteps.value, ev)
+          // 写图类结果由前端落图(ADR 0006):未注册应用器而有 payload 的
+          // 结果显式报错,不静默丢弃。
+          const applyError = applyAgentToolResult(ev.name, ev.payload)
+          if (applyError) {
+            generateError.value = applyError
+          }
+        },
       },
     )
-    const messages = appendAgentTurn(payload.history, payload.topic, full.text, payload.media)
+    // 持久纪律(63 号票):assistant 轮 = 最终回答全文 + 工具调用摘要行;
+    // 摘要行只进历史(会话面板可见做了什么),文本区保持纯回答 —— 投递
+    // 到下游的是干净产物。
+    const assistant = full.summary ? `${full.text}\n\n${full.summary}` : full.text
+    const messages = appendAgentTurn(payload.history, payload.topic, assistant, payload.media)
     updateNodeData(nodeId, {
       text: full.text,
       messages,
@@ -1491,6 +1518,11 @@ async function onGeneratePrompt(
     promptGenerating.value = false
   }
 }
+
+// Agent 会话在途的工具过程(63 号票,UI 态不入节点 data):只绑定发起
+// 发送的那个节点,时间线在会话结束(含失败)后保留到下次发送。
+const agentActiveNodeId = ref('')
+const agentToolSteps = ref<AgentToolStep[]>([])
 
 /** 技能变更(选中/移除/悬空收回)= 开新会话:写 skill_id 并清空对话
  * 历史与未发送附件,连带清角色 chip 与固化段(52 号票:换技能清历史
@@ -2997,6 +3029,7 @@ function backToList(): void {
             :prompt-generating="promptGenerating"
             :has-downstream="downstreamHasMedia.has(nodeProps.id)"
             :attachments="agentAttachments[nodeProps.id] ?? []"
+            :tool-activity="agentActiveNodeId === nodeProps.id ? agentToolSteps : undefined"
             :history-open="historyNodeId === nodeProps.id"
             :picker-open="pickerNodeId === nodeProps.id"
             :connect-state="connection.stateOf(nodeProps.id)"

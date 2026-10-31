@@ -665,6 +665,161 @@ export interface GeneratePromptResult {
   character_section?: string
 }
 
+// ---- Agent 工具循环(63 号票;SSE 事件协议 = ADR 0006 前后端契约)----
+
+/** Agent 流的文本增量事件。 */
+export interface AgentDeltaEvent {
+  type: 'delta'
+  text: string
+}
+
+/** Agent 流的工具调用开始事件:id/name 来自上游,args 是调用参数的 JSON
+ * 值(服务端解析失败时缺省 —— 前端按无参展示)。 */
+export interface AgentToolCallEvent {
+  type: 'tool_call'
+  id: string
+  name: string
+  args?: unknown
+}
+
+/** Agent 流的工具结果事件:summary 人读文本(过程展示与持久摘要行的
+ * 原料),payload 结构化 —— 写图类 = 前端应用的图改动草案(ADR 0006
+ * 单一写者:后端不改库内图),库表类 = 后端已直写的证据;缺省 = 无前端
+ * 可应用物。 */
+export interface AgentToolResultEvent {
+  type: 'tool_result'
+  id: string
+  name: string
+  summary?: string
+  payload?: unknown
+}
+
+/** Agent 流的收尾事件:text 是最终回答全文(整个循环各轮文本按序拼接,
+ * 与已流出的 delta 连续不跳变),summary 是工具调用摘要行(持久纪律:
+ * assistant 轮 = 全文 + 摘要行;无工具轮缺省)。 */
+export interface AgentDoneEvent {
+  type: 'done'
+  text: string
+  summary?: string
+}
+
+/** Agent 流的中途失败事件:与网关 OpenAI error object 同族。 */
+export interface AgentErrorEvent {
+  type: 'error'
+  error: { code?: string; message?: string }
+}
+
+export type AgentStreamEvent =
+  | AgentDeltaEvent
+  | AgentToolCallEvent
+  | AgentToolResultEvent
+  | AgentDoneEvent
+  | AgentErrorEvent
+
+/** 解析一帧 Agent SSE data 载荷(63 号票五形状):[DONE] 收尾标记、未知
+ * 形状与不可解析的帧都返回 null —— 调用方跳过不打断。 */
+export function parseAgentEvent(payload: string): AgentStreamEvent | null {
+  if (payload === '[DONE]') {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null
+  }
+  const ev = parsed as Record<string, unknown>
+  switch (ev.type) {
+    case 'delta':
+      return typeof ev.text === 'string' ? { type: 'delta', text: ev.text } : null
+    case 'tool_call': {
+      if (typeof ev.id !== 'string' || typeof ev.name !== 'string') {
+        return null
+      }
+      const out: AgentToolCallEvent = { type: 'tool_call', id: ev.id, name: ev.name }
+      if (ev.args !== undefined) {
+        out.args = ev.args
+      }
+      return out
+    }
+    case 'tool_result': {
+      if (typeof ev.id !== 'string' || typeof ev.name !== 'string') {
+        return null
+      }
+      const out: AgentToolResultEvent = { type: 'tool_result', id: ev.id, name: ev.name }
+      if (typeof ev.summary === 'string' && ev.summary !== '') {
+        out.summary = ev.summary
+      }
+      if (ev.payload !== undefined) {
+        out.payload = ev.payload
+      }
+      return out
+    }
+    case 'done': {
+      if (typeof ev.text !== 'string') {
+        return null
+      }
+      const out: AgentDoneEvent = { type: 'done', text: ev.text }
+      if (typeof ev.summary === 'string' && ev.summary !== '') {
+        out.summary = ev.summary
+      }
+      return out
+    }
+    case 'error': {
+      const err = ev.error
+      if (typeof err !== 'object' || err === null) {
+        return { type: 'error', error: {} }
+      }
+      const shape = err as { code?: unknown; message?: unknown }
+      return {
+        type: 'error',
+        error: {
+          ...(typeof shape.code === 'string' ? { code: shape.code } : {}),
+          ...(typeof shape.message === 'string' ? { message: shape.message } : {}),
+        },
+      }
+    }
+    default:
+      return null
+  }
+}
+
+/** 解析流首的「【角色设定】」固化段帧(52 号票形状,63 号票 Agent 流沿用
+ * 同一帧形):非该形状的载荷返回 undefined。 */
+export function parseCharacterSection(payload: string): string | undefined {
+  try {
+    const parsed = JSON.parse(payload) as unknown
+    if (typeof parsed === 'object' && parsed !== null) {
+      const section = (parsed as { character_section?: unknown }).character_section
+      if (typeof section === 'string') {
+        return section
+      }
+    }
+  } catch {
+    // 不可解析:按无固化段处理
+  }
+  return undefined
+}
+
+/** Agent 流的返回:text 以 done 事件为准的最终回答全文;summary 是持久
+ * 摘要行;character_section 是本轮固化设定段(仅流首帧出现时带回)。 */
+export interface AgentStreamResult {
+  text: string
+  summary?: string
+  character_section?: string
+}
+
+/** Agent 流的过程回调:delta 走实时渲染,tool_call/tool_result 走过程展示
+ * 与前端落图(ADR 0006:写图类 payload 由前端应用)。 */
+export interface AgentStreamHandlers {
+  onDelta?: (delta: string) => void
+  onToolCall?: (event: AgentToolCallEvent) => void
+  onToolResult?: (event: AgentToolResultEvent) => void
+}
+
 /** 视频反推提示词的请求体(13 号票):video_url 是视频节点持有的地址
  * (厂商 http(s) 地址,或素材内容寻址路径 /api/assets/{id}/content),
  * model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
@@ -1528,6 +1683,120 @@ export class ApiClient {
     }
     // 流断在半途(无 DONE):已交增量不作成功,由调用方决定去留。
     throw new ApiError(502, 'upstream_error', '生成流中断,未收到完成标记')
+  }
+
+  /** Agent 工具循环的流式消费(63 号票):POST /canvases/:id/agent/stream,
+   * 请求体与 generatePromptStream 相同。事件协议五形状(ADR 0006):delta
+   * 逐帧交 onDelta,tool_call/tool_result 交对应回调,done 收尾时返回
+   * { text: 最终回答全文, summary?: 工具摘要行, character_section? };error
+   * 帧抛 ApiError(502)。流前校验失败仍是普通 JSON 错误(非 2xx →
+   * ApiError);流断在半途(无 done)同样抛错,已回调的增量由调用方决定
+   * 去留。 */
+  async agentStream(
+    canvasId: number,
+    input: GeneratePromptInput,
+    handlers: AgentStreamHandlers = {},
+  ): Promise<AgentStreamResult> {
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    const token = this.getToken?.()
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+    const res = await this.fetchImpl(`${this.base}/canvases/${canvasId}/agent/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(input),
+    })
+    if (res.status < 200 || res.status > 299) {
+      // 校验失败发生在流打开之前:与 request() 同款错误形状。
+      const payload: unknown = await res.json().catch(() => null)
+      const { code, message } = errorInfo(payload, res.status)
+      if (res.status === 401) {
+        throw new UnauthorizedError(code, message)
+      }
+      throw new ApiError(res.status, code, message)
+    }
+    if (!res.body) {
+      throw new ApiError(res.status, 'error', '响应没有内容流')
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let text: string | undefined
+    let summary: string | undefined
+    let characterSection: string | undefined
+    let finished = false
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const event = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        boundary = buffer.indexOf('\n\n')
+
+        const dataLine = event.split('\n').find((line) => line.startsWith('data:'))
+        if (dataLine === undefined) {
+          continue
+        }
+        const payload = dataLine.slice(5).replace(/^ /, '')
+        if (payload === '[DONE]') {
+          finished = true
+          break
+        }
+        // 流首固化段帧(52 号票):与五形状并存的服务端帧,先于增量。
+        const section = parseCharacterSection(payload)
+        if (section !== undefined) {
+          characterSection = section
+          continue
+        }
+        const parsed = parseAgentEvent(payload)
+        if (parsed === null) {
+          // 不可解析的帧:后端只发合法 JSON,出现即跳过不打断。
+          continue
+        }
+        switch (parsed.type) {
+          case 'delta':
+            handlers.onDelta?.(parsed.text)
+            break
+          case 'tool_call':
+            handlers.onToolCall?.(parsed)
+            break
+          case 'tool_result':
+            handlers.onToolResult?.(parsed)
+            break
+          case 'done':
+            text = parsed.text
+            summary = parsed.summary
+            break
+          case 'error':
+            throw new ApiError(
+              502,
+              parsed.error.code ?? 'upstream_error',
+              parsed.error.message ?? 'Agent 会话失败',
+            )
+        }
+      }
+      if (finished) {
+        break
+      }
+    }
+    if (text === undefined) {
+      // 流断在半途(无 done 事件):已交增量不作成功,由调用方决定去留。
+      throw new ApiError(502, 'upstream_error', 'Agent 流中断,未收到完成标记')
+    }
+    const result: AgentStreamResult = { text }
+    if (summary !== undefined) {
+      result.summary = summary
+    }
+    if (characterSection !== undefined) {
+      result.character_section = characterSection
+    }
+    return result
   }
 
   /** 视频反推提示词(13 号票):canvas/server 经网关多模态聊天接口分析
