@@ -27,6 +27,7 @@ import {
   type AgentNodeData,
   agentRoundCount,
 } from '../../graph'
+import { AGENT_TOOL_LABELS, type AgentToolStep, agentToolLabel } from '../../agentTools'
 import { toggleCharacterChip } from '../../characters'
 import {
   type PendingAgentMedia,
@@ -60,6 +61,10 @@ const props = defineProps<{
   hasDownstream: boolean
   /** 待发媒体附件(编辑器持有的 UI 态:上传中/失败 chip 留在输入区)。 */
   attachments: PendingAgentMedia[]
+  /** 本节点在途 Agent 会话的工具过程(63 号票,编辑器持有的 UI 态,不入
+   * 节点 data):tool_call/tool_result 事件逐步落列,会话结束保留到下次
+   * 发送;非在途节点为 undefined。 */
+  toolActivity?: AgentToolStep[]
   /** 会话历史面板是否正绑定本节点(「历史」按钮高亮)。 */
   historyOpen: boolean
   /** 素材选择面板是否正绑定本节点(「素材库」按钮高亮)。 */
@@ -433,6 +438,19 @@ const hasConversation = computed(
   () => history.value.length > 0 || attachments.value.length > 0 || (props.data.character_ids?.length ?? 0) > 0,
 )
 
+// 工具过程条目的文案(63 号票):running 拼即梦式「正在…」(标签已映射
+// 的工具给动词句,未映射的退回通用文案),done/failed 用结果摘要收口。
+function toolStepHint(step: AgentToolStep): string {
+  if (step.state === 'running') {
+    const label = AGENT_TOOL_LABELS[step.name]
+    return label ? `正在${label}…` : '正在调用工具…'
+  }
+  if (step.state === 'failed') {
+    return step.summary || '执行失败'
+  }
+  return step.summary || '完成'
+}
+
 // 附件图片 chip 的缩略显示(49 号票):m.ref 是发送载荷,只换 <img> 的
 // 显示地址,onerror 回落原图。
 const thumbs = useThumbFallback()
@@ -589,6 +607,25 @@ function onDeliver(): void {
             ×
           </button>
         </span>
+      </div>
+
+      <!-- 63 号票:工具调用过程时间线(即梦式「正在创建角色…」)。编辑器
+           持有的 UI 态,不入节点 data;会话结束保留到下次发送,重开会布
+           不回放。 -->
+      <div
+        v-if="toolActivity && toolActivity.length > 0"
+        class="tool-timeline"
+      >
+        <div
+          v-for="step in toolActivity"
+          :key="step.id"
+          class="tool-step"
+          :data-state="step.state"
+        >
+          <span class="tool-step-dot" />
+          <span class="tool-step-name">{{ agentToolLabel(step.name) }}</span>
+          <span class="tool-step-hint">{{ toolStepHint(step) }}</span>
+        </div>
       </div>
 
       <div class="input-row">
@@ -966,6 +1003,63 @@ textarea:focus {
 .media-chips {
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 63 号票:工具调用过程时间线 —— running 点闪琥珀,done 青色收口,failed
+ * 危险色;摘要一行截断,完整文案看 title。 */
+.tool-timeline {
+  display: grid;
+  gap: 2px;
+}
+
+.tool-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.tool-step-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.tool-step[data-state='running'] .tool-step-dot {
+  animation: agent-tool-pulse 1.2s ease-in-out infinite;
+}
+
+.tool-step[data-state='done'] .tool-step-dot {
+  background: var(--teal-light);
+}
+
+.tool-step[data-state='failed'] .tool-step-dot {
+  background: var(--danger);
+}
+
+@keyframes agent-tool-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tool-step-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--indigo-soft);
+}
+
+.tool-step-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .media-chip {
