@@ -1,7 +1,7 @@
 # 63 Agent 工具循环运行时(canvas/server tool loop)(2026-10-31 grilling 定案)
 
 Type: feat
-Status: drafted(2026-10-31 grilling 定案,「小说→剧本→分镜」全链五票(63–67)的底座;实现顺序建议 63 → 64/65 并行 → 66(67 可先行);架构决策记录见 [ADR 0006](../../../docs/adr/0006-canvas-agent-tool-loop-frontend-graph-apply.md);平台参照:Vidu Agent「对话+故事板」、剪映 Hub「无限画布+对话框」、即梦对话改稿)
+Status: implemented(2026-10-31 实现;feat/script-pipeline,五票与评审修复均已并入)。**口径注记**:①执行器与 SSE 端点落 `internal/promptgen`(agentloop/agentstream/agenttool,复用 prepareGenerate 校验前置),领域工具在 `internal/agenttools` 实现 `promptgen.AgentTool`、经 wiring 注册(服务器与桌面同路);②`done` 事件较票面多 `summary` 字段(持久摘要行所需最小增补,前后端契约已对齐),`done.text` 为循环各轮文本按序拼接;③真渠道 tools 透传实测留部署后点验(httptest 全链与网关透传复核已做);④`docs/api.md` 新端点 curl 用例待补。定案背景:2026-10-31 grilling 定案,「小说→剧本→分镜」全链五票(63–67)的底座;实现顺序建议 63 → 64/65 并行 → 66(67 可先行);架构决策记录见 [ADR 0006](../../../docs/adr/0006-canvas-agent-tool-loop-frontend-graph-apply.md);平台参照:Vidu Agent「对话+故事板」、剪映 Hub「无限画布+对话框」、即梦对话改稿)
 
 ## Question
 

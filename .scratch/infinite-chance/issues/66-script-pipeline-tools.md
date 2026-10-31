@@ -1,7 +1,7 @@
 # 66 剧本流水线工具集与角色对表(2026-10-31 grilling 定案)
 
 Type: feat
-Status: drafted(2026-10-31 grilling 定案;依赖 63(运行时)+ 64(script 载体)+ 65(资产实体);本票是「小说→剧本→分镜」业务语义的落点;平台参照:即梦 DreamScript/Anycook/DreamShot 三段管线、Mootion Character-First、Vidu Agent @角色语法)
+Status: implemented(2026-10-31 实现;feat/script-pipeline)。**口径注记**:①票面「六工具」实枚举 8 个工具名,全部实现(注册序 create×3→list_assets→save×3→read_source);②`read_source` 省略 node_id 时先返回剧本节点目录(id/标题/字数)——模型无法凭空得知 vue-flow 节点 id,目录是其拿到可读 id 的唯一路径,「按节点 id + rune 区间」语义不变;③`list_assets` 按票面返回全量 detail(单实体上限 2 万字),大资产库会放大每轮上下文,后续票留意;④「剧本导演」提示词落 `internal/promptgen/agentdirector`,与 29 号票技能注入正交叠加(仅内置提示词在场时替换首条指令,有技能时不顶掉);⑤真渠道全链演(5000 字小说→方案→大纲→逐集)留部署后点验。定案背景:2026-10-31 grilling 定案;依赖 63(运行时)+ 64(script 载体)+ 65(资产实体);本票是「小说→剧本→分镜」业务语义的落点;平台参照:即梦 DreamScript/Anycook/DreamShot 三段管线、Mootion Character-First、Vidu Agent @角色语法)
 
 ## Question
 

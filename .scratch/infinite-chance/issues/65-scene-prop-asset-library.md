@@ -1,7 +1,7 @@
 # 65 场景/道具资产库(IP 资产库三类实体)(2026-10-31 grilling 定案)
 
 Type: feat
-Status: drafted(2026-10-31 grilling 定案;与 64 号票可并行;行业依据:LTX Studio Elements(Characters/Objects/Locations 三类资产建一次全项目复用)与即梦短剧工作室「人物/道具/场景」资产库,调研报告 2026-10-31)
+Status: implemented(2026-10-31 实现;feat/script-pipeline)。**口径注记**:①领域模型落 `internal/scene` 与 `internal/prop` 两包(照 characters 族同构、测试自含);②增补「主资产」封面投影(场景全景/道具多视图优先,角色库视图类优先规则同哲学降一维;票面未定封面语义,评审接受为合理增补);③实体删除 API 已在、UI 无入口(与角色库现状一致)。定案背景:2026-10-31 grilling 定案;与 64 号票可并行;行业依据:LTX Studio Elements(Characters/Objects/Locations 三类资产建一次全项目复用)与即梦短剧工作室「人物/道具/场景」资产库,调研报告 2026-10-31)
 
 ## Question
 

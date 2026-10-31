@@ -1,7 +1,7 @@
 # 64 剧本节点(script)与原文承载(2026-10-31 grilling 定案)
 
 Type: feat
-Status: drafted(2026-10-31 grilling 定案;与 65 号票可并行;「剧本」三种用途的载体票,分段读工具在 66;平台参照:剪映 Hub「剧本节点拆分镜组」、LTX Studio 脚本入口)
+Status: implemented(2026-10-31 实现;feat/script-pipeline)。**口径注记**:①packages/api 零改动——`CanvasGraph` 刻意宽松(`nodes: unknown[]`),script data 不跨 API 边界;②30 万字超限取「层内横幅警示不阻断输入」而非硬截断,护 IME 与粘贴流。定案背景:2026-10-31 grilling 定案;与 65 号票可并行;「剧本」三种用途的载体票,分段读工具在 66;平台参照:剪映 Hub「剧本节点拆分镜组」、LTX Studio 脚本入口)
 
 ## Question
 
