@@ -90,6 +90,7 @@ import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
+import { isHelpToggleKey, isTypingTargetEl } from '../canvasHelp'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
 import { newNodeAnchor } from '../placement'
@@ -105,6 +106,7 @@ import AssetPicker from '../components/AssetPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import MediaLightbox from '../components/MediaLightbox.vue'
+import CanvasHelpModal from '../components/CanvasHelpModal.vue'
 import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
 import StoryboardEditorLayer from '../components/StoryboardEditorLayer.vue'
 import NameEditorLayer from '../components/NameEditorLayer.vue'
@@ -2548,23 +2550,21 @@ function onCanvasMouseMove(e: MouseEvent): void {
 }
 
 /** 窗口级快捷键(38 号票评审扩展):Esc 逐层退出(灯箱开着时让位给它
- * 自己的 Esc,33 号票);F 适配视图;Cmd/Ctrl+Z 撤销、Shift+Z 或 Y 重做。
- * 输入控件内(输入框/文本域/下拉/可编辑区)让位给浏览器原生行为 ——
- * 文本编辑的撤销归输入框自己。 */
+ * 自己的 Esc,33 号票);F 适配视图;Cmd/Ctrl+Z 撤销、Shift+Z 或 Y 重做;
+ * 「?」开帮助浮层(68 号票)。输入控件内(输入框/文本域/下拉/可编辑区)
+ * 让位给浏览器原生行为 —— 文本编辑的撤销归输入框自己。 */
 function isTypingTarget(e: KeyboardEvent): boolean {
-  const el = e.target as HTMLElement | null
-  if (!el) {
-    return false
-  }
-  return (
-    el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
-  )
+  return isTypingTargetEl(e.target as HTMLElement | null)
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     if (lightbox.value) {
       return // 灯箱自己处理 Esc(33 号票),这里不叠加动作。
+    }
+    if (helpOpen.value) {
+      helpOpen.value = false // 帮助浮层是栈顶浮层,先收(68 号票)。
+      return
     }
     if (assetPanelOpen.value) {
       assetPanelOpen.value = false
@@ -2622,6 +2622,13 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     }
     e.preventDefault()
     redoGraph()
+    return
+  }
+  if (isHelpToggleKey(e)) {
+    if (isTypingTarget(e)) {
+      return
+    }
+    helpOpen.value = true
     return
   }
   if (isTypingTarget(e) || mod || e.altKey) {
@@ -2814,6 +2821,10 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
 
 const assetPanelOpen = ref(false)
 const recordsPanelOpen = ref(false)
+
+// 帮助浮层(68 号票):工具栏「?」按钮 / 快捷键「?」开,Esc 栈顶先收;
+// 开关不进右缘面板互斥组(它是居中模态,遮罩本身挡住画布交互)。
+const helpOpen = ref(false)
 
 // 面板同占画布右缘,互斥打开(32 号票起含 Agent 的历史/素材选择面板与
 // 47 号票的对话框素材挑选面板)。
@@ -3561,6 +3572,12 @@ function backToList(): void {
       />
       <!-- 38 号票评审:轻提示(删除可撤销 / 非法连线反馈),自动消退。 -->
       <EditorToast :text="notice" />
+      <!-- 68 号票:画布帮助浮层,编辑器级单实例(Teleport 到 body);
+           Esc 由上方全局栈收(栈顶先收),组件自身只管遮罩/✕/焦点。 -->
+      <CanvasHelpModal
+        v-if="helpOpen"
+        @close="helpOpen = false"
+      />
     </div>
 
     <CanvasToolbar
@@ -3571,6 +3588,7 @@ function backToList(): void {
       @toggle-asset="toggleAssetPanel"
       @toggle-records="toggleRecordsPanel"
       @upload-change="onUploadChange"
+      @toggle-help="helpOpen = !helpOpen"
     />
   </div>
 </template>
