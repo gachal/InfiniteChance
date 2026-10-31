@@ -5,16 +5,74 @@ import {
   type AgentToolStep,
   agentToolLabel,
   applyAgentToolResult,
+  scriptDraftFromPayload,
   setAgentToolApplier,
+  storyboardDraftFromPayload,
   upsertAgentToolStep,
 } from './agentTools'
 
 describe('agentToolLabel', () => {
   it('maps known tools to Chinese labels and falls back to the raw name', () => {
-    // 注册表标签随 66 号票领域工具落位,此处钉住「映射命中优先、未命中
-    // 原样回退」的语义。
+    // 66 号票八工具的中文标签落位;未命中仍原样回退。
+    expect(agentToolLabel('create_character')).toBe('创建角色')
+    expect(agentToolLabel('create_scene')).toBe('创建场景')
+    expect(agentToolLabel('create_prop')).toBe('创建道具')
+    expect(agentToolLabel('list_assets')).toBe('读取资产库')
+    expect(agentToolLabel('save_outline')).toBe('保存大纲')
+    expect(agentToolLabel('save_script')).toBe('保存剧本')
+    expect(agentToolLabel('save_storyboard')).toBe('保存分镜板')
+    expect(agentToolLabel('read_source')).toBe('读取原文')
     expect(agentToolLabel('no_such_tool')).toBe('no_such_tool')
-    expect(typeof AGENT_TOOL_LABELS).toBe('object')
+    expect(Object.keys(AGENT_TOOL_LABELS)).toHaveLength(8)
+  })
+})
+
+describe('scriptDraftFromPayload(save_outline / save_script 的草案)', () => {
+  it('parses title + text and trims both', () => {
+    expect(scriptDraftFromPayload({ title: '  第3集  ', text: ' 正文 ' })).toEqual({
+      title: '第3集',
+      text: '正文',
+    })
+    expect(scriptDraftFromPayload({ text: '只有正文' })).toEqual({ title: '', text: '只有正文' })
+  })
+
+  it('rejects non-objects, empty text and overlength text explicitly', () => {
+    expect(() => scriptDraftFromPayload('一段文字')).toThrow('不是合法对象')
+    expect(() => scriptDraftFromPayload({ text: '   ' })).toThrow('正文为空')
+    expect(() => scriptDraftFromPayload({ text: 42 })).toThrow('text 必须是字符串')
+    expect(() => scriptDraftFromPayload({ text: '字'.repeat(300_001) })).toThrow('上限')
+  })
+})
+
+describe('storyboardDraftFromPayload(save_storyboard 的草案)', () => {
+  it('maps cuts to StoryboardCut with empty frames', () => {
+    const draft = storyboardDraftFromPayload({
+      title: 'EP01 分镜',
+      cuts: [
+        { shot: '远', lines: '城市空镜', camera_moves: ['推', '手持'], seconds: 8, character_ids: [1, 2] },
+        { note: '转场空镜' },
+      ],
+    })
+    expect(draft.title).toBe('EP01 分镜')
+    // camera_moves 恒在(emptyStoryboardCut 基形);shot/note/character_ids
+    // 只在非空时携带,画面 asset_id 恒 0。
+    expect(draft.cuts).toEqual([
+      { asset_id: 0, lines: '城市空镜', camera_moves: ['推', '手持'], seconds: 8, shot: '远', character_ids: [1, 2] },
+      { asset_id: 0, lines: '', camera_moves: [], note: '转场空镜' },
+    ])
+    expect('character_ids' in draft.cuts[1]).toBe(false)
+    expect('shot' in draft.cuts[1]).toBe(false)
+    expect('seconds' in draft.cuts[1]).toBe(false)
+  })
+
+  it('rejects missing/empty cuts and malformed cut fields explicitly', () => {
+    expect(() => storyboardDraftFromPayload({ title: 'x' })).toThrow('cuts')
+    expect(() => storyboardDraftFromPayload({ cuts: [] })).toThrow('至少')
+    expect(() => storyboardDraftFromPayload({ cuts: ['一镜'] })).toThrow('必须是对象')
+    expect(() => storyboardDraftFromPayload({ cuts: [{ camera_moves: '推' }] })).toThrow('camera_moves')
+    expect(() => storyboardDraftFromPayload({ cuts: [{ character_ids: [0] }] })).toThrow('character_ids')
+    expect(() => storyboardDraftFromPayload({ cuts: [{ seconds: -1 }] })).toThrow('seconds')
+    expect(() => storyboardDraftFromPayload({ cuts: [{ shot: 7 }] })).toThrow('shot')
   })
 })
 

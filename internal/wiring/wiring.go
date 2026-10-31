@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/gachal/InfiniteChance/internal/agenttools"
 	"github.com/gachal/InfiniteChance/internal/apikey"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
@@ -208,6 +209,15 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	if gateway != nil {
 		chatGateway = promptgen.NewClient(cfg.GatewayBaseURL, cfg.CanvasServiceKey)
 	}
+	// Agent 工具注册表(66 号票):八工具(建角色/场景/道具、读库对表、
+	// 落大纲/剧本/分镜板草案、分段读原文)吃 CanvasStores 里的完整 Store,
+	// 画布作用域由端点按请求注入(promptgen.AgentScope)。
+	agentTools := agenttools.NewRegistry(agenttools.Deps{
+		Characters: s.Characters,
+		Scenes:     s.Scenes,
+		Props:      s.Props,
+		Canvases:   s.Canvases,
+	})
 	promptgen.RegisterRoutes(group, &promptgen.Handlers{
 		Templates:     s.Templates,
 		Canvases:      s.Canvases,
@@ -215,6 +225,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Characters:    s.Characters,
 		Models:        s.Prices,
 		Gateway:       chatGateway,
+		AgentTools:    agentTools,
 		PublicBaseURL: publicBase,
 	})
 

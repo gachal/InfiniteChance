@@ -316,9 +316,16 @@ func conversationMessages(instructionText string, characterSection string, histo
 // generatePrep 是 Generate 与 GenerateStream 共用的前置产物(31 号票):
 // 流式与同步的校验完全同套 —— 校验不过回答 JSON 错误,流不能开始。
 type generatePrep struct {
-	canvasID        int64
-	nodeID          string
+	canvasID int64
+	// ipID 是画布归属的 IP(50 号票,画布必归属):Agent 工具循环以它
+	// 给工具划作用域(66 号票,库表类工具严格限本 IP)。
+	ipID   int64
+	nodeID string
 	instructionText string
+	// usedBuiltin 记录首条指令是否为内置缺省(未选技能):Agent 循环据此
+	// 换用 agent 专用缺省指令(66 号票,导演人设已由 system 提示词承载,
+	// 不再借用「提示词工程师」人设);技能注入不受影响。
+	usedBuiltin bool
 	// characterSection 是本轮注入的「【角色设定】」段(52 号票):已过
 	// 存在性与 IP 归属校验,空 = 未注入。
 	characterSection string
@@ -452,8 +459,10 @@ func (h *Handlers) prepareGenerate(c *gin.Context) (generatePrep, bool) {
 	}
 	return generatePrep{
 		canvasID:         canvasID,
+		ipID:             cv.IPID,
 		nodeID:           nodeID,
 		instructionText:  instructionText,
+		usedBuiltin:      in.TemplateID == 0,
 		characterSection: characterSection,
 		history:          history,
 		currentMedia:     currentMedia,
