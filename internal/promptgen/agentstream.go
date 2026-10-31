@@ -63,10 +63,31 @@ func (h *Handlers) AgentStream(c *gin.Context) {
 		}
 	}
 
-	err := runAgentLoop(c.Request.Context(), h.Gateway, h.AgentTools, ChatRequest{
+	// 「剧本导演」system 提示词(66 号票定案 3):带工具的会话以它开场,
+	// 与技能渲染文本(首条 user 指令)正交叠加、不顶掉;仅当未选技能时
+	// 首条指令才换 agent 专用缺省(导演人设已在 system,不再借用「提示词
+	// 工程师」)。注册表为空时无工具可调:不注入、不换指令,请求与升级前
+	// 的普通流式会话一致。工具经请求 context 拿到画布作用域(66 号票,
+	// 库表类工具严格限本 IP)。
+	instruction := prep.instructionText
+	var tools []json.RawMessage
+	if h.AgentTools != nil {
+		tools = h.AgentTools.Definitions()
+	}
+	if len(tools) > 0 && prep.usedBuiltin {
+		instruction = builtinAgentInstruction
+	}
+	messages := conversationMessages(instruction, prep.characterSection, prep.history, prep.topic, prep.currentMedia)
+	ctx := c.Request.Context()
+	if len(tools) > 0 {
+		messages = append([]ChatMessage{{Role: "system", Content: agentDirectorSystemPrompt}}, messages...)
+		ctx = WithAgentScope(ctx, AgentScope{CanvasID: prep.canvasID, IPID: prep.ipID})
+	}
+
+	err := runAgentLoop(ctx, h.Gateway, h.AgentTools, ChatRequest{
 		Model:  prep.model,
 		Source: canvasSource(prep.canvasID, prep.nodeID, "agent"),
-	}, conversationMessages(prep.instructionText, prep.characterSection, prep.history, prep.topic, prep.currentMedia), func(ev AgentEvent) {
+	}, messages, func(ev AgentEvent) {
 		if body, mErr := json.Marshal(ev); mErr == nil {
 			writeEvent(body)
 		}

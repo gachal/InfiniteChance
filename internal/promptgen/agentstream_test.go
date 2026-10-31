@@ -286,15 +286,20 @@ func TestAgentStreamRunsToolLoopAndEmitsEvents(t *testing.T) {
 		t.Errorf("round-2 tools = %v, want definitions still present", secondReq.Body["tools"])
 	}
 	msgs, _ := secondReq.Body["messages"].([]any)
-	if len(msgs) != 3 {
-		t.Fatalf("round-2 messages = %v, want user + assistant + tool", secondReq.Body["messages"])
+	// 66 号票起带工具的会话以「剧本导演」system 提示词开场:system + user +
+	// assistant + tool。
+	if len(msgs) != 4 {
+		t.Fatalf("round-2 messages = %v, want system + user + assistant + tool", secondReq.Body["messages"])
 	}
-	assistant, _ := msgs[1].(map[string]any)
+	if msgs[0].(map[string]any)["role"] != "system" {
+		t.Errorf("messages[0] = %v, want the director system message first", msgs[0])
+	}
+	assistant, _ := msgs[2].(map[string]any)
 	calls, _ := assistant["tool_calls"].([]any)
 	if len(calls) != 1 {
 		t.Fatalf("assistant frame = %v, want one tool_call", assistant)
 	}
-	toolTurn, _ := msgs[2].(map[string]any)
+	toolTurn, _ := msgs[3].(map[string]any)
 	if toolTurn["role"] != "tool" || toolTurn["tool_call_id"] != "call_1" {
 		t.Errorf("tool frame = %v, want the result bound to call_1", toolTurn)
 	}
