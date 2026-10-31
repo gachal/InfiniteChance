@@ -41,6 +41,7 @@ import {
   type NameNodeData,
   type NamePage,
   type PrevizNodeData,
+  type ScriptNodeData,
   type StoryboardCut,
   type StoryboardNodeData,
   type VoiceNodeData,
@@ -99,6 +100,7 @@ import MediaLightbox from '../components/MediaLightbox.vue'
 import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
 import StoryboardEditorLayer from '../components/StoryboardEditorLayer.vue'
 import NameEditorLayer from '../components/NameEditorLayer.vue'
+import ScriptEditorLayer from '../components/ScriptEditorLayer.vue'
 import AgentNode from '../components/nodes/AgentNode.vue'
 import AnalysisNode from '../components/nodes/AnalysisNode.vue'
 import CharacterNode from '../components/nodes/CharacterNode.vue'
@@ -106,6 +108,7 @@ import ImageNode from '../components/nodes/ImageNode.vue'
 import LevelCard from '../components/nodes/LevelCard.vue'
 import NameNode from '../components/nodes/NameNode.vue'
 import PrevizNode from '../components/nodes/PrevizNode.vue'
+import ScriptNode from '../components/nodes/ScriptNode.vue'
 import StoryboardNode from '../components/nodes/StoryboardNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 import AudioNode from '../components/nodes/AudioNode.vue'
@@ -2181,6 +2184,25 @@ function onNameLayerDrop(pageIndex: number, panelIndex: number): void {
   }
 }
 
+// ---- 剧本(64 号票)----
+
+// 全屏剧本编辑层绑定的节点('' = 关闭)。与絵コンテ/ネーム编辑层同族:
+// 不卸载画布,标题/正文整包走 onScriptSceneChange 同一条落盘链;节点被删
+// 时 computed 就地关层。
+const scriptEditorNodeId = ref('')
+const scriptEditorNode = computed(() => {
+  const node = scriptEditorNodeId.value ? findNode(scriptEditorNodeId.value) : undefined
+  return node ? { id: node.id, data: node.data as ScriptNodeData } : null
+})
+
+/** 剧本标题/正文数据落盘:updateNodeData 浅合并(编辑层整包上抛),自动
+ * 保存免费获得(整图 JSON 随节点 data 先例;30 万字大文本 autosave 全量
+ * 提交是 64 号票已接受的代价,不做优化)。 */
+function onScriptSceneChange(nodeId: string, patch: { title: string; text: string }): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
 // ---- 关卡卡(55 号票)----
 
 // 55 号票:关卡卡**卡内直接编辑不开编辑层**(53 号票定案),字段补丁由
@@ -2512,8 +2534,8 @@ function addNode(type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>): void
 }
 
 /** 小地图节点配色:与节点描边色同源(Agent 蓝/图片绿/视频黄/分析紫/
- * 预演台粉/角色青/絵コンテ橙/ネーム天蓝/关卡红),38 号票评审补的导航
- * 面沿用同一语义色系。 */
+ * 预演台粉/角色青/絵コンテ橙/ネーム天蓝/关卡红/剧本金),38 号票评审补
+ * 的导航面沿用同一语义色系。 */
 function miniMapNodeColor(node: { type?: string | null }): string {
   switch (normalizeNodeType(node.type ?? undefined)) {
     case 'agent':
@@ -2536,6 +2558,8 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#5eead4'
     case 'audio':
       return '#a78bfa'
+    case 'script':
+      return '#d3b571'
     default:
       return '#a78bfa'
   }
@@ -3102,6 +3126,16 @@ function backToList(): void {
             @open-picker="openLevelPicker(nodeProps.id)"
           />
         </template>
+        <!-- 64 号票:剧本卡,卡面只折叠摘要(标题/摘要行/字数),整卡
+             点击进全屏编辑层;不渲染把手,不作任何连线的源与目标。 -->
+        <template #node-script="nodeProps">
+          <ScriptNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            @edit="scriptEditorNodeId = nodeProps.id"
+          />
+        </template>
         <!-- 57 号票:音色节点(创建表单内联卡上,只渲染右把手连音频)与
              音频节点(台词合成产物/面板插入的载体,只渲染左把手)。 -->
         <template #node-voice="nodeProps">
@@ -3317,6 +3351,15 @@ function backToList(): void {
         @upload="onNameLayerUpload"
         @drop="onNameLayerDrop"
         @close="nameEditorNodeId = ''"
+      />
+      <!-- 64 号票:剧本全屏编辑层(Teleport 到 body),标题/正文整包走
+           同一条 scene-change 落盘链;超 30 万字上限在层内提示分段粘贴。 -->
+      <ScriptEditorLayer
+        v-if="scriptEditorNode"
+        :key="`script-${scriptEditorNode.id}`"
+        :data="scriptEditorNode.data"
+        @scene-change="onScriptSceneChange(scriptEditorNode.id, $event)"
+        @close="scriptEditorNodeId = ''"
       />
       <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body);41 号票
            截帧事件在此入素材 + 落画布,失败文案走轻提示。参考条 chip 的预览

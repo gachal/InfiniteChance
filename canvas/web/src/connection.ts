@@ -24,8 +24,10 @@ import type { CanvasNodeType } from './graph'
  * 把手 —— 设定图进生成链走「落图节点」的素材插入语义,不走连线);level
  * 也不作任何连线的源与目标(55 号票:关卡卡是文档卡,卡内直接编辑,无
  * 来源/投递语义,与 character 的「不连线」同族,组件不渲染把手);audio
- * 不作为任何连线的源(57 号票:音频是合成产物,不派生新链);其余
- * 组合(agent→agent、voice→image 等)拒连。
+ * 不作为任何连线的源(57 号票:音频是合成产物,不派生新链);script 也不
+ * 作任何连线的源与目标(64 号票:剧本是文本载体卡,内容经 Agent 工具读写
+ * 不靠边,66 号票 read_source 分段消费,与 level 的「不连线」同族,组件
+ * 不渲染把手);其余组合(agent→agent、voice→image 等)拒连。
  */
 export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   agent: ['image', 'video'],
@@ -39,6 +41,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   level: [],
   voice: ['audio'],
   audio: [],
+  script: [],
 }
 
 /** source 类型到 target 类型能否建立新连线;未知/缺失类型一律拒绝。 */
