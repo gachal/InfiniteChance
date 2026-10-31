@@ -25,8 +25,9 @@ const emit = defineEmits<{
 // 节点;台词合成产物与面板插入仍不在此列)。61 号票:「音效」是 audio
 // 节点的第二个创作入口 —— 同落 audio 节点,但初始 data 带 source:'sfx'
 // (创作意图标记,AudioNode 创作态按它分叉表单);配乐入口行为不变。
+// 64 号票:script(剧本)入「规划」组(絵コンテ/ネーム/关卡同组)。
 const CREATE_NODE_TYPES: CanvasNodeType[] = ['agent', 'image', 'video', 'previz', 'character', 'voice', 'audio']
-const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level']
+const PLAN_NODE_TYPES: CanvasNodeType[] = ['storyboard', 'name', 'level', 'script']
 
 /** 添加按钮的文案:audio 的工具栏语义是「配乐」(NODE_TYPE_LABEL 的
  * 「音频」是节点卡头的中性称谓,两者不混用)。 */
@@ -240,6 +241,12 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 .add-level {
   background: rgba(var(--red-signal-rgb), 0.16);
   color: var(--red-signal);
+}
+
+/* 64 号票:剧本入「规划」组,寂静金与节点描边/小地图同源。 */
+.add-script {
+  background: rgba(var(--gold-rgb), 0.16);
+  color: var(--gold);
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是

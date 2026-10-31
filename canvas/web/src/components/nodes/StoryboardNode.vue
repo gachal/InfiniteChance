@@ -89,7 +89,9 @@ function markBroken(assetId: number): void {
       {{ data.cuts.length }} cut · 合计 {{ formatDuration(totalSeconds(data.cuts)) }}
     </div>
 
-    <!-- cut 画面缩略横条:空画面显序号(显示时生成 1..N,不持久)。 -->
+    <!-- cut 画面缩略横条:空画面显「未配画面」占位(67 号票,「素材不可
+         用」占位契约家族 —— 工具产物 cuts 无 asset_id 的常态),序号见
+         title 与编辑层(显示时生成 1..N,不持久)。 -->
     <div
       v-if="data.cuts.length > 0"
       class="strip"
@@ -102,7 +104,7 @@ function markBroken(assetId: number): void {
           missing: c.asset_id > 0 && brokenIds.has(c.asset_id),
           filled: c.asset_id > 0 && !brokenIds.has(c.asset_id),
         }"
-        :title="c.asset_id > 0 ? (brokenIds.has(c.asset_id) ? '素材不可用' : `cut ${i + 1} 画面`) : `cut ${i + 1}(空画面)`"
+        :title="c.asset_id > 0 ? (brokenIds.has(c.asset_id) ? '素材不可用' : `cut ${i + 1} 画面`) : `cut ${i + 1}(未配画面)`"
       >
         <img
           v-if="c.asset_id > 0 && !brokenIds.has(c.asset_id)"
@@ -118,7 +120,7 @@ function markBroken(assetId: number): void {
         <span
           v-else
           class="thumb-text"
-        >{{ i + 1 }}</span>
+        >未配画面</span>
       </span>
     </div>
     <div

@@ -15,6 +15,7 @@ import { defaultPrevizScene } from './previz'
 import { defaultName } from './name'
 import { defaultStoryboard } from './storyboard'
 import { defaultLevel } from './level'
+import { defaultScript } from './script'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
@@ -102,13 +103,19 @@ export interface CharacterNodeData {
 /** 絵コンテ单个 cut(53 号票):画面持素材引用(0 = 空画面;内容寻址
  * 路径由展示层按 id 拼装,素材被删落「素材不可用」占位);时长秒可空
  * (「还没定」,汇总时跳过);lines 是台词/音效多行文本;camera_moves
- * 是运镜白名单多选(前端持有,后端存串不校验);note 一行备注。序号
- * 不持久 —— 显示时生成 1..N,删插自动重排。 */
+ * 是运镜白名单多选(前端持有,后端存串不校验);note 一行备注。67 号票
+ * 扩:shot 是景别单选白名单串(远/全/中/近/特写,存串不校验,与运镜
+ * 多选区分 —— 一个镜头一个景别);character_ids 是出场角色引用(本 IP
+ * 角色库角色 id 按选择序,只存引用不存快照,角色改名/换封面随目录刷新
+ * 即变 —— 角色引用节点同哲学;标注字段,生成注入二期)。序号不持久
+ * —— 显示时生成 1..N,删插自动重排。 */
 export interface StoryboardCut {
   asset_id: number
   seconds?: number
   lines: string
   camera_moves: string[]
+  shot?: string
+  character_ids?: number[]
   note?: string
 }
 
@@ -205,6 +212,21 @@ export interface AudioNodeData {
   seconds?: number
 }
 
+/** 剧本节点数据(64 号票,第十二种节点类型「规划」组):title + text
+ * 纯文本随节点 data 存整图 JSON(「数据随身」先例)。一个类型三种用途
+ * —— 分集大纲(大纲画布)/ 每集剧本(每集画布)/ 原文(长篇小说节点),
+ * title 区分(「分集大纲」「第3集剧本」「原文:书名」),不另设类型;
+ * 正文上限 30 万字(前端校验,超出提示分段粘贴,机制在 script.ts)。场次
+ * 用 markdown 场头约定(如「【第N场|内|日|地点】」),不做结构化场次
+ * 编辑 UI(LLM 读纯文本无损失);编辑承载 = 编辑层浮层(40 号票范式
+ * 家族),整卡点击进层全文编辑,不开卡内直接编辑(一集数千字,卡范式
+ * 装不下);不作任何连线的源与目标(内容经 Agent 工具读写不靠边,66 号
+ * 票 read_source 按 rune 区间分段消费,本票只落载体)。 */
+export interface ScriptNodeData {
+  title?: string
+  text: string
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
@@ -216,6 +238,7 @@ export type CanvasNodeData =
   | LevelNodeData
   | VoiceNodeData
   | AudioNodeData
+  | ScriptNodeData
 
 export type CanvasNodeType =
   | 'agent'
@@ -229,6 +252,7 @@ export type CanvasNodeType =
   | 'level'
   | 'voice'
   | 'audio'
+  | 'script'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -242,7 +266,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'name' ||
     value === 'level' ||
     value === 'voice' ||
-    value === 'audio'
+    value === 'audio' ||
+    value === 'script'
   )
 }
 
@@ -288,6 +313,9 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'audio') {
     return { asset_id: 0 }
   }
+  if (type === 'script') {
+    return defaultScript()
+  }
   return { url: '', note: '' }
 }
 
@@ -303,6 +331,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   level: '关卡',
   voice: '音色',
   audio: '音频',
+  script: '剧本',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出
