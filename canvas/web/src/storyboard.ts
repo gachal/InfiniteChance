@@ -98,6 +98,22 @@ export function buildCutVideoPrompt(cut: StoryboardCut): string {
   return sections.join('\n')
 }
 
+/** cut → 图片提示词拼装(分镜画面直通生成):画面描述排最前、景别作构图
+ * 指引随后;空段落跳过,全空返回空串(对话框提示词留白,占位文案引导)。
+ * 不拼运镜/台词——那是视频语汇,图片画面只吃内容与构图;出场角色不进
+ * 提示词(「出场角色→生成注入」二期)。纯函数便于单测。 */
+export function buildCutFramePrompt(cut: StoryboardCut): string {
+  const sections: string[] = []
+  const note = (cut.note ?? '').trim()
+  if (note !== '') {
+    sections.push(`画面描述:${note}`)
+  }
+  if (cut.shot) {
+    sections.push(`景别:${cut.shot}`)
+  }
+  return sections.join('\n')
+}
+
 /** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。
  * 导出供 agentTools.ts 的草案定形复用(66 号票 save_storyboard 同口径)。 */
 export const SECONDS_MAX = 3600

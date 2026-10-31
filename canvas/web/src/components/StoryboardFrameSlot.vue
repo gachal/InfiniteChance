@@ -1,11 +1,11 @@
 <script setup lang="ts">
 // 画面槽(53 号票,絵コンテ cut 的画面位;54 号票ネーム复用同一组件):
-// 三个入口 —— 素材库挑选(AssetPicker 由调用方挂,本组件只发 pick)、
+// 四个入口 —— 素材库挑选(AssetPicker 由调用方挂,本组件只发 pick)、
 // 本机上传(经 /api/assets/upload,归属由编辑器统一挂画布 IP)、落图节点
-// (cut → 图片节点,发 drop 由编辑器落)。无专用「设为分镜画面」动作:
-// 挑选即设置(再点取消),「草图 → 生成 → 回填」闭环经素材库最近使用排序
-// 完成。画面持素材引用,素材行被删时按既有契约落「素材不可用」占位
-// (两阶段回落:缩略 → 原图 → 占位)。
+// (cut → 图片节点,发 drop 由编辑器落)、直通生成(发 generate,编辑器
+// 落空图片节点并预填对话框,产物成功后自动回填本槽)。无专用「设为分镜
+// 画面」动作:挑选即设置(再点取消)。画面持素材引用,素材行被删时按既有
+// 契约落「素材不可用」占位(两阶段回落:缩略 → 原图 → 占位)。
 import { computed, ref, watch } from 'vue'
 
 import { useThumbFallback } from '../thumbnail'
@@ -25,6 +25,9 @@ const emit = defineEmits<{
   upload: [file: File]
   /** 落图节点:把本画面落为图片节点并连线(编辑器处理)。 */
   drop: []
+  /** 直通生成:编辑器落空图片节点并打开生成对话框预填(画面描述/景别),
+   * 人工确认发送、任务成功后产物素材自动回填本槽。 */
+  generate: []
 }>()
 
 const hasPicture = computed(() => props.assetId > 0)
@@ -85,7 +88,7 @@ function onFileChange(e: Event): void {
       class="frame-box empty"
     >
       <span>空画面</span>
-      <small>素材库挑选,或本机上传</small>
+      <small>素材库挑选、本机上传或直通生成</small>
     </div>
 
     <div class="frame-actions">
@@ -111,6 +114,13 @@ function onFileChange(e: Event): void {
         @click="emit('drop')"
       >
         落图
+      </button>
+      <button
+        type="button"
+        title="直通生成:落图片节点并打开生成对话框预填(画面描述/景别),人工确认后发送,成功产物自动回填本槽"
+        @click="emit('generate')"
+      >
+        生成
       </button>
       <input
         ref="fileInput"

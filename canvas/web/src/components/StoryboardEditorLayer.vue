@@ -3,7 +3,7 @@
 // 实例浮层(Teleport 到 body,ADR 0002 同族),全屏遮挡时画布不卸载,
 // cut 改动整包走 scene-change → updateNodeData → autosave 落盘链。
 // 垂直 cut 列表:序号(显示时生成 1..N,不持久)+ 画面槽(共享组件
-// StoryboardFrameSlot:素材库/上传/落图三入口)+ 时长输入(失焦夹紧)+
+// StoryboardFrameSlot:素材库/上传/落图/生成四入口)+ 时长输入(失焦夹紧)+
 // 台词/音效多行 + 景别 chip 组(67 号票,白名单单选)+ 运镜 chip 组
 // (前端白名单多选)+ 出场角色标注(67 号票,本 IP 角色目录多选浮层,
 // AgentNode 角色 chip 同范式;只存引用不存快照,目录刷新即变)+ 一行
@@ -50,6 +50,10 @@ const emit = defineEmits<{
   upload: [cutIndex: number, file: File]
   /** 落图节点:cut 画面落为图片节点并连线(编辑器处理)。 */
   drop: [cutIndex: number]
+  /** 分镜画面直通生成:编辑器落空图片节点 + 来源边,打开生成对话框预填
+   * (画面描述/景别;人工确认后才发送),任务成功后产物素材自动回填本
+   * cut —— 生成即配画,不必再经素材库挑一遍。 */
+  'generate-frame': [cutIndex: number]
   /** cut→视频直通(67 号票):编辑器落空视频节点 + 来源边,打开生成
    * 对话框预填(人工确认后才发送),本层随之关闭让位对话框。 */
   'generate-video': [cutIndex: number]
@@ -288,6 +292,7 @@ onBeforeUnmount(() => {
                   @pick="openPicker(i)"
                   @upload="emit('upload', i, $event)"
                   @drop="emit('drop', i)"
+                  @generate="emit('generate-frame', i)"
                 />
               </div>
 

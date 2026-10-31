@@ -5,6 +5,7 @@ import {
   CAMERA_MOVE_OPTIONS,
   SHOT_SIZE_OPTIONS,
   appendCut,
+  buildCutFramePrompt,
   buildCutVideoPrompt,
   clampSecondsInput,
   defaultStoryboard,
@@ -154,6 +155,26 @@ describe('buildCutVideoPrompt(67 号票)', () => {
   it('returns an empty string when the cut has no textual material', () => {
     // 全空的 cut 拼出空串:对话框提示词留白,占位文案引导(纯文生视频)。
     expect(buildCutVideoPrompt(emptyStoryboardCut())).toBe('')
+  })
+})
+
+describe('buildCutFramePrompt(分镜画面直通生成)', () => {
+  it('assembles note and shot for the image composer', () => {
+    // 画面描述(信息密度最高)排最前,景别作构图指引随后;图片提示词不拼
+    // 运镜/台词(那是视频语汇)。cut→画面直通与 cut→视频直通同族。
+    expect(
+      buildCutFramePrompt(cut({ note: '雨夜巷口,林小满回头', shot: '中' })),
+    ).toBe('画面描述:雨夜巷口,林小满回头\n景别:中')
+  })
+
+  it('skips empty sections and trims the note', () => {
+    expect(buildCutFramePrompt(cut({ shot: '特写' }))).toBe('景别:特写')
+    expect(buildCutFramePrompt(cut({ note: '  转场空镜  ' }))).toBe('画面描述:转场空镜')
+  })
+
+  it('returns an empty string when the cut has no textual material', () => {
+    // 全空 → 空串:对话框提示词留白,占位文案引导用户手写。
+    expect(buildCutFramePrompt(emptyStoryboardCut())).toBe('')
   })
 })
 

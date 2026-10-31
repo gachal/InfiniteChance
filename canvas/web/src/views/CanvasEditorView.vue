@@ -87,7 +87,7 @@ import {
   type VideoRefRole,
 } from '../composer'
 import { characterImageContentURL } from '../characters'
-import { buildCutVideoPrompt, frameContentURL } from '../storyboard'
+import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
@@ -359,6 +359,8 @@ function refreshModelCatalogs(): void {
 function syncTaskToCanvas(task: CanvasTask): void {
   const node = findNode(task.node_id)
   if (!node) {
+    // 结果节点被删:直通生成的回填预约随之作废,不残留。
+    cutFramePending.delete(task.node_id)
     return
   }
   if (node.type === 'audio') {
@@ -378,6 +380,25 @@ function syncTaskToCanvas(task: CanvasTask): void {
   if (patch) {
     updateNodeData(task.node_id, patch)
     markChanged()
+  }
+  // 分镜画面直通生成的回填:该图片节点是画面槽「生成」落的结果节点,
+  // 任务成功且产物带素材行时,把素材 id 回填来源分镜板的对应 cut —— 生成
+  // 即配画,不必再经素材库挑一遍。cut 下标越界(生成期间删过 cut)静默
+  // 放弃,不误配到别的镜。
+  const frameTarget = cutFramePending.get(task.node_id)
+  if (frameTarget && task.kind === 'image' && task.status === 'succeeded') {
+    cutFramePending.delete(task.node_id)
+    const assetId = (findNode(task.node_id)?.data as MediaNodeData | undefined)?.asset_id ?? 0
+    const board = findNode(frameTarget.storyboardId)
+    const boardData = board?.data as StoryboardNodeData | undefined
+    if (assetId > 0 && boardData && frameTarget.cutIndex < boardData.cuts.length) {
+      updateNodeData(frameTarget.storyboardId, {
+        cuts: boardData.cuts.map((c, i) =>
+          i === frameTarget.cutIndex ? { ...c, asset_id: assetId } : c,
+        ),
+      })
+      markChanged()
+    }
   }
   if (task.kind === 'voice' && task.status === 'succeeded') {
     // 音色部署完成:台账行已由 worker 落库,目录刷新点亮节点卡面。
@@ -2228,6 +2249,45 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   storyboardEditorNodeId.value = ''
 }
 
+// ---- 分镜画面直通生成 ----
+
+// 结果图片节点 → 来源 cut 的回填预约(仅本次会话内存态):任务成功在
+// syncTaskToCanvas 里兑现,节点被删即作废。
+const cutFramePending = new Map<string, { storyboardId: string; cutIndex: number }>()
+
+/** cut→画面直通(用户反馈补 53 号票缺口):画面槽「生成」= 落空图片节点
+ * + 分镜→图片来源边(EDGE_MATRIX 既有),选中驱动对话框进图片模式,提示
+ * 词预填 buildCutFramePrompt(画面描述/景别);人工确认后才发送(花钱操作
+ * 总案 Q5),任务成功后产物素材自动回填本 cut。收编辑层让位对话框,与
+ * cut→视频直通同手势。 */
+function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
+  const node = findNode(nodeId)
+  const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
+  if (!node || !cut) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `image-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'image',
+      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
+      data: { url: '', note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
+  composerPrompt.value = buildCutFramePrompt(cut)
+  storyboardEditorNodeId.value = ''
+}
+
 // ---- ネーム(54 号票)----
 
 // 54 号票:全屏ネーム编辑层绑定的节点('' = 关闭)。与絵コンテ编辑层
@@ -3460,6 +3520,7 @@ function backToList(): void {
         @upload="onStoryboardLayerUpload"
         @drop="onStoryboardDrop(storyboardEditorNode.id, $event)"
         @generate-video="onStoryboardGenerateVideo(storyboardEditorNode.id, $event)"
+        @generate-frame="onStoryboardGenerateFrame(storyboardEditorNode.id, $event)"
         @close="storyboardEditorNodeId = ''"
       />
       <!-- 54 号票:ネーム全屏编辑层(Teleport 到 body),页/格/板名整包
