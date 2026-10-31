@@ -1456,7 +1456,7 @@ async function onGeneratePrompt(
   generateError.value = ''
   agentActiveNodeId.value = nodeId
   agentToolSteps.value = []
-  agentApplySeq = 0
+  agentLayout = null
   // 流中途失败时已到手的增量(text)用于保留部分文本;成功路径以 done
   // 事件的累计全文为准。
   let text = ''
@@ -1530,19 +1530,39 @@ const agentToolSteps = ref<AgentToolStep[]>([])
 
 // ===== Agent 工具落图应用器(66 号票,ADR 0006 单一写者) =====
 
-/** 同一轮会话里多个产物的级联偏移(发送开始归零):沿对角线错开,防叠卡。 */
-let agentApplySeq = 0
+/** 同一轮会话里多个产物的集中布局状态(发送开始归零):锚点只在首个产物
+ * 时取一次,后续产物都从同一锚点按网格密集铺开 —— 列内自上而下、满
+ * AGENT_LAYOUT_ROWS 行换列。原「上一新节点右侧 + 对角线级联」会随产物
+ * 连选把锚点带走,一串产物沿对角线甩散(用户反馈,66 号票口径修正)。 */
+let agentLayout: { base: { x: number; y: number }; x: number; y: number; rows: number } | null = null
 
-/** Agent 产物的落位锚:优先当前选中节点右侧(产物与工作对象相邻,与
- * dropFrameNode 的落图习惯一致),无选中落视口中心(与工具栏 addNode
- * 同规);级联偏移按会话内已落数叠加。 */
+/** 网格步进常量:剧本卡与分镜卡同为 340 宽、高约 130-170(缩略条
+ * overflow-x 不换行),列宽/行高留一道缝即可;4 行换列。 */
+const AGENT_LAYOUT_COL_WIDTH = 380
+const AGENT_LAYOUT_ROW_HEIGHT = 210
+const AGENT_LAYOUT_ROWS = 4
+
+/** Agent 产物的落位锚:首个产物取当前选中节点右侧(产物与工作对象相邻,
+ * 与 dropFrameNode 的落图习惯一致),无选中落视口中心(与工具栏 addNode
+ * 同规);此后本次发送内的产物不再跟随选中,统一从该锚点网格步进。 */
 function agentProducedPosition(): { x: number; y: number } {
-  const selected = getSelectedNodes.value
-  const base =
-    selected.length > 0
-      ? { x: selected[selected.length - 1].position.x + 380, y: selected[selected.length - 1].position.y }
-      : viewportCenterPosition()
-  return { x: base.x + agentApplySeq * 48, y: base.y + agentApplySeq * 48 }
+  if (agentLayout == null) {
+    const selected = getSelectedNodes.value
+    const base =
+      selected.length > 0
+        ? { x: selected[selected.length - 1].position.x + 380, y: selected[selected.length - 1].position.y }
+        : viewportCenterPosition()
+    agentLayout = { base, x: base.x, y: base.y, rows: 0 }
+  }
+  const pos = { x: agentLayout.x, y: agentLayout.y }
+  agentLayout.y += AGENT_LAYOUT_ROW_HEIGHT
+  agentLayout.rows += 1
+  if (agentLayout.rows >= AGENT_LAYOUT_ROWS) {
+    agentLayout.x += AGENT_LAYOUT_COL_WIDTH
+    agentLayout.y = agentLayout.base.y
+    agentLayout.rows = 0
+  }
+  return pos
 }
 
 /** Agent 产物节点落图(addNode 的工具版):整节点草案原子落进本地图状态,
@@ -1551,7 +1571,6 @@ function agentProducedPosition(): { x: number; y: number } {
  * 絵コンテ落点也没有来源语义。 */
 function addAgentProducedNode(type: CanvasNodeType, data: CanvasNodeData): void {
   nodeSeq += 1
-  agentApplySeq += 1
   const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([{ id, type, position: agentProducedPosition(), data }])
   removeSelectedNodes(getSelectedNodes.value)
