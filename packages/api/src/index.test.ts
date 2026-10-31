@@ -4,6 +4,8 @@ import {
   ApiClient,
   ApiError,
   UnauthorizedError,
+  parseAgentEvent,
+  parseCharacterSection,
   type AnalyzeInput,
   type CanvasDetail,
   type CanvasGraph,
@@ -646,6 +648,137 @@ describe('ApiClient prompt generation (canvas)', () => {
     const err = await client
       .generatePromptStream(7, { topic: '任意', model: 'img-m' }, () => {})
       .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(400)
+    expect((err as ApiError).code).toBe('model_not_priced')
+  })
+
+  // ---- agentStream(63 号票:Agent 工具循环 SSE)----
+
+  it('parseAgentEvent decodes the five event shapes and skips the rest', () => {
+    expect(parseAgentEvent('[DONE]')).toBeNull()
+    expect(parseAgentEvent('not json')).toBeNull()
+    expect(parseAgentEvent('{"type":"unknown_shape"}')).toBeNull()
+    expect(parseAgentEvent('{"delta":"legacy"}')).toBeNull()
+
+    expect(parseAgentEvent('{"type":"delta","text":"你好"}')).toEqual({ type: 'delta', text: '你好' })
+    expect(parseAgentEvent('{"type":"delta"}')).toBeNull()
+
+    expect(parseAgentEvent('{"type":"tool_call","id":"c1","name":"create_character","args":{"name":"张三"}}')).toEqual({
+      type: 'tool_call',
+      id: 'c1',
+      name: 'create_character',
+      args: { name: '张三' },
+    })
+    expect(parseAgentEvent('{"type":"tool_call","id":"c1","name":"create_character"}')).toEqual({
+      type: 'tool_call',
+      id: 'c1',
+      name: 'create_character',
+    })
+    expect(parseAgentEvent('{"type":"tool_call","name":"缺 id"}')).toBeNull()
+
+    expect(
+      parseAgentEvent('{"type":"tool_result","id":"c1","name":"create_character","summary":"已创建","payload":{"draft":1}}'),
+    ).toEqual({ type: 'tool_result', id: 'c1', name: 'create_character', summary: '已创建', payload: { draft: 1 } })
+    // payload 显式 null 是合法载荷(无前端可应用物)。
+    expect(parseAgentEvent('{"type":"tool_result","id":"c1","name":"t","payload":null}')).toEqual({
+      type: 'tool_result',
+      id: 'c1',
+      name: 't',
+      payload: null,
+    })
+    expect(parseAgentEvent('{"type":"tool_result","id":"c1","name":"t"}')).toEqual({
+      type: 'tool_result',
+      id: 'c1',
+      name: 't',
+    })
+
+    expect(parseAgentEvent('{"type":"done","text":"完成","summary":"本轮工具调用:t(s)"}')).toEqual({
+      type: 'done',
+      text: '完成',
+      summary: '本轮工具调用:t(s)',
+    })
+    expect(parseAgentEvent('{"type":"done","text":"完成"}')).toEqual({ type: 'done', text: '完成' })
+    expect(parseAgentEvent('{"type":"done"}')).toBeNull()
+
+    expect(parseAgentEvent('{"type":"error","error":{"code":"upstream_error","message":"断了"}}')).toEqual({
+      type: 'error',
+      error: { code: 'upstream_error', message: '断了' },
+    })
+    expect(parseAgentEvent('{"type":"error"}')).toEqual({ type: 'error', error: {} })
+  })
+
+  it('parseCharacterSection picks the head frame only', () => {
+    expect(parseCharacterSection('{"character_section":"【角色设定】\\n名字:林小满"}')).toBe(
+      '【角色设定】\n名字:林小满',
+    )
+    expect(parseCharacterSection('{"type":"delta","text":"你好"}')).toBeUndefined()
+    expect(parseCharacterSection('garbage')).toBeUndefined()
+  })
+
+  it('agentStream relays deltas and tool events, resolves with done text and summary', async () => {
+    const raw =
+      'data: {"character_section":"【角色设定】\\n名字:林小满"}\n\n' +
+      'data: {"type":"delta","text":"好的。"}\n\n' +
+      'data: {"type":"tool_call","id":"c1","name":"create_character","args":{"name":"张三"}}\n\n' +
+      'data: {"type":"tool_result","id":"c1","name":"create_character","summary":"已创建 张三","payload":{"draft":1}}\n\n' +
+      'data: {"type":"delta","text":"完成了。"}\n\n' +
+      'data: {"type":"done","text":"好的。\\n\\n完成了。","summary":"本轮工具调用:create_character(已创建 张三)"}\n\n' +
+      'data: [DONE]\n\n'
+    const fetchImpl = sseFetch(raw)
+    const client = clientWithBase(fetchImpl)
+
+    const deltas: string[] = []
+    const calls: unknown[] = []
+    const results: unknown[] = []
+    await expect(
+      client.agentStream(7, { topic: '建角色', model: 'chat-m' }, {
+        onDelta: (d) => deltas.push(d),
+        onToolCall: (ev) => calls.push(ev),
+        onToolResult: (ev) => results.push(ev),
+      }),
+    ).resolves.toEqual({
+      text: '好的。\n\n完成了。',
+      summary: '本轮工具调用:create_character(已创建 张三)',
+      character_section: '【角色设定】\n名字:林小满',
+    })
+    expect(deltas).toEqual(['好的。', '完成了。'])
+    expect(calls).toHaveLength(1)
+    expect(results).toHaveLength(1)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/agent/stream')
+    expect((init as RequestInit).method).toBe('POST')
+  })
+
+  it('agentStream throws ApiError on a mid-stream error frame', async () => {
+    const raw =
+      'data: {"type":"delta","text":"部分"}\n\n' +
+      'data: {"type":"error","error":{"code":"upstream_error","message":"余额不足"}}\n\n'
+    const client = clientWithBase(sseFetch(raw))
+
+    const deltas: string[] = []
+    const err = await client
+      .agentStream(7, { topic: '建角色', model: 'chat-m' }, { onDelta: (d) => deltas.push(d) })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(502)
+    expect((err as ApiError).code).toBe('upstream_error')
+    expect((err as ApiError).message).toBe('余额不足')
+    expect(deltas).toEqual(['部分'])
+  })
+
+  it('agentStream throws when the stream ends without a done event', async () => {
+    const client = clientWithBase(sseFetch('data: {"type":"delta","text":"半句"}\n\n'))
+    const err = await client.agentStream(7, { topic: 'x', model: 'chat-m' }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).code).toBe('upstream_error')
+  })
+
+  it('agentStream surfaces pre-stream validation errors as ApiError', async () => {
+    const fetchImpl = stubFetch(400, { error: { code: 'model_not_priced', message: '未配置 token 计价' } })
+    const client = clientWithBase(fetchImpl)
+
+    const err = await client.agentStream(7, { topic: 'x', model: 'img-m' }).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(400)
     expect((err as ApiError).code).toBe('model_not_priced')
