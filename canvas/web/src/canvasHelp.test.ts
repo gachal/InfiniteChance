@@ -5,19 +5,18 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  boundarySection,
   BOUNDARY_HEADING,
   CANVAS_HELP_DOC,
   isHelpToggleKey,
-  isTypingTargetEl,
+  keysSection,
+  KEYS_HEADING,
   type HelpBlock,
   type HelpChapter,
 } from './canvasHelp'
 
 const keyEvent = (over: Partial<KeyboardEvent> = {}): KeyboardEvent =>
   ({ key: 'a', ctrlKey: false, metaKey: false, altKey: false, ...over }) as KeyboardEvent
-
-const el = (tagName: string, isContentEditable = false): { tagName: string; isContentEditable: boolean } =>
-  ({ tagName, isContentEditable })
 
 /** 章内最后一个 heading 之后是否紧跟「边界与后续」段。 */
 function boundaryBlocks(chapter: HelpChapter): HelpBlock[] {
@@ -66,6 +65,25 @@ describe('CANVAS_HELP_DOC 结构规范', () => {
       }
     }
   })
+
+  it('章尾公共段组装不漂移:每章尾部逐块等于 keysSection + boundarySection(消复制后仍单源)', () => {
+    const tail = [...keysSection(), ...boundarySection()]
+    expect(tail.length).toBeGreaterThan(2)
+    for (const ch of CANVAS_HELP_DOC.chapters) {
+      expect(ch.blocks.slice(-tail.length), `章「${ch.title}」章尾组装漂移`).toEqual(tail)
+    }
+  })
+
+  it('keysSection/boundarySection 形状:标题块在前,键位表与注记非空', () => {
+    expect(keysSection()[0]).toEqual({ kind: 'heading', text: KEYS_HEADING })
+    expect(boundarySection()[0]).toEqual({ kind: 'heading', text: BOUNDARY_HEADING })
+    const keys = keysSection().filter((b): b is Extract<HelpBlock, { kind: 'keys' }> => b.kind === 'keys')
+    expect(keys.length).toBe(1)
+    expect(keys[0]?.entries.length).toBeGreaterThan(0)
+    const notes = boundarySection().filter((b): b is Extract<HelpBlock, { kind: 'note' }> => b.kind === 'note')
+    expect(notes.length).toBeGreaterThan(0)
+    expect(notes.length).toBe(boundarySection().length - 1)
+  })
 })
 
 describe('isHelpToggleKey', () => {
@@ -83,21 +101,5 @@ describe('isHelpToggleKey', () => {
     expect(isHelpToggleKey(keyEvent({ key: '/' }))).toBe(false)
     expect(isHelpToggleKey(keyEvent({ key: 'f' }))).toBe(false)
     expect(isHelpToggleKey(keyEvent({ key: 'Escape' }))).toBe(false)
-  })
-})
-
-describe('isTypingTargetEl', () => {
-  it('输入框/文本域/下拉/可编辑区都算输入中', () => {
-    expect(isTypingTargetEl(el('INPUT'))).toBe(true)
-    expect(isTypingTargetEl(el('TEXTAREA'))).toBe(true)
-    expect(isTypingTargetEl(el('SELECT'))).toBe(true)
-    expect(isTypingTargetEl(el('DIV', true))).toBe(true)
-  })
-
-  it('普通元素与空目标不算输入中', () => {
-    expect(isTypingTargetEl(el('DIV'))).toBe(false)
-    expect(isTypingTargetEl(el('BUTTON'))).toBe(false)
-    expect(isTypingTargetEl(null)).toBe(false)
-    expect(isTypingTargetEl(undefined)).toBe(false)
   })
 })

@@ -36,6 +36,9 @@ export interface HelpChapter {
 /** 章末固定小节的标题(内容文件内部复用;测试按它守住收尾纪律)。 */
 export const BOUNDARY_HEADING = '边界与后续'
 
+/** 「画布级键位」小节的标题(章尾公共段第一块,测试按它守组装纪律)。 */
+export const KEYS_HEADING = '画布级键位'
+
 /** 边界注记共用一行开头的口径:帮助是现状备忘,不是承诺清单。 */
 const BOUNDARY_PREAMBLE = '流程未定型,以下为当前实现边界(防预期差):'
 
@@ -49,12 +52,28 @@ const BOUNDARY_NOTES: string[] = [
 /** 键位速查(与 CanvasEditorView/工具栏提示行同一口径,38 号票纪律)。 */
 const GLOBAL_KEYS: HelpKeyEntry[] = [
   { keys: '?', label: '打开/关闭本帮助' },
-  { keys: 'Esc', label: '逐层退出(栈顶浮层先收:帮助 → 灯箱 → 面板 → 编辑层)' },
+  { keys: 'Esc', label: '逐层退出(栈顶先收:灯箱 → 帮助 → 面板 → 编辑层)' },
   { keys: 'Enter', label: '生成对话框内直接发送' },
   { keys: 'Shift+Enter', label: '对话框内换行' },
   { keys: 'F', label: '画布回全景' },
   { keys: '⌘Z', label: '撤销(Shift+Z 或 ⌘Y 重做)' },
 ]
+
+/** 章尾公共段之一:画布级键位小节(纯函数,加章零复制,68 号票评审)。 */
+export function keysSection(): HelpBlock[] {
+  return [
+    { kind: 'heading', text: KEYS_HEADING },
+    { kind: 'keys', entries: GLOBAL_KEYS },
+  ]
+}
+
+/** 章尾公共段之二:「边界与后续」注记小节(定案 5 四条,纯函数,加章零复制)。 */
+export function boundarySection(): HelpBlock[] {
+  return [
+    { kind: 'heading', text: BOUNDARY_HEADING },
+    ...BOUNDARY_NOTES.map((text): HelpBlock => ({ kind: 'note', text })),
+  ]
+}
 
 export const CANVAS_HELP_DOC = {
   title: '画布帮助',
@@ -114,12 +133,8 @@ export const CANVAS_HELP_DOC = {
             '直通生成:落空图片节点并打开生成对话框预填(画面描述/景别),人工确认发送;任务成功后产物素材自动回填本槽 —— 生成即配画。',
           ],
         },
-        { kind: 'heading', text: '画布级键位' },
-        { kind: 'keys', entries: GLOBAL_KEYS },
-        { kind: 'heading', text: BOUNDARY_HEADING },
-        { kind: 'note', text: BOUNDARY_NOTES[0] },
-        { kind: 'note', text: BOUNDARY_NOTES[1] },
-        { kind: 'note', text: BOUNDARY_NOTES[2] },
+        ...keysSection(),
+        ...boundarySection(),
       ],
     },
     {
@@ -169,38 +184,19 @@ export const CANVAS_HELP_DOC = {
             'save_outline 保存大纲 / save_script 保存剧本 / save_storyboard 保存分镜板',
           ],
         },
-        { kind: 'heading', text: '画布级键位' },
-        { kind: 'keys', entries: GLOBAL_KEYS },
-        { kind: 'heading', text: BOUNDARY_HEADING },
-        { kind: 'note', text: BOUNDARY_NOTES[0] },
-        { kind: 'note', text: BOUNDARY_NOTES[1] },
-        { kind: 'note', text: BOUNDARY_NOTES[2] },
+        ...keysSection(),
+        ...boundarySection(),
       ],
     },
   ],
 } satisfies { title: string; chapters: HelpChapter[] }
 
 /** 「?」(Shift+/)开关帮助的键判定:带 ctrl/meta/alt 不触发
- * (38 号票:修饰键组合不劫持,MediaLightbox 截帧 S 同款纪律)。 */
+ * (38 号票:修饰键组合不劫持,MediaLightbox 截帧 S 同款纪律)。
+ * 行为是开关式 toggle:帮助未开且灯箱/全屏编辑层不在场才开,开着即收
+ * (开路径守卫与栈序见 CanvasEditorView.onGlobalKeydown,68 号票评审)。 */
 export function isHelpToggleKey(
   e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'>,
 ): boolean {
   return e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey
-}
-
-/** 输入聚焦守卫(38 号票键盘纪律):输入框/文本域/下拉/可编辑区内
- * 不触发画布级快捷键。CanvasEditorView.isTypingTarget 的同形状纯函数,
- * 供视图委托 —— 判定口径改动只动这里一处。 */
-export function isTypingTargetEl(
-  el: { tagName: string; isContentEditable: boolean } | null | undefined,
-): boolean {
-  if (!el) {
-    return false
-  }
-  return (
-    el.tagName === 'INPUT' ||
-    el.tagName === 'TEXTAREA' ||
-    el.tagName === 'SELECT' ||
-    el.isContentEditable
-  )
 }

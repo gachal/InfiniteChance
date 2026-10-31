@@ -90,7 +90,8 @@ import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
-import { isHelpToggleKey, isTypingTargetEl } from '../canvasHelp'
+import { isHelpToggleKey } from '../canvasHelp'
+import { isTypingTargetEl } from '../keyboardGuard'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
 import { newNodeAnchor } from '../placement'
@@ -2628,7 +2629,21 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     if (isTypingTarget(e)) {
       return
     }
-    helpOpen.value = true
+    // 「?」= 开关式 toggle(68 号票评审):开着即收(与 Esc 等价);
+    // 开路径加守卫 —— 灯箱(z100)与四个全屏编辑层(z90)在场时不叠开,
+    // 帮助 z95 在灯箱之下、编辑层之上,压层且 Esc 让位会一次双收(这些层
+    // 开着时遮罩挡指针,帮助本就开不到它们前面;关路径无需守卫)。
+    if (
+      !helpOpen.value &&
+      (lightbox.value ||
+        previzEditorNode.value ||
+        storyboardEditorNode.value ||
+        nameEditorNode.value ||
+        scriptEditorNode.value)
+    ) {
+      return
+    }
+    helpOpen.value = !helpOpen.value
     return
   }
   if (isTypingTarget(e) || mod || e.altKey) {
