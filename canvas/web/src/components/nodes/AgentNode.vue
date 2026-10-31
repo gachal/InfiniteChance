@@ -888,7 +888,7 @@ function onDeliver(): void {
 
 <style scoped>
 .node {
-  width: 260px;
+  width: 380px;
   background: rgba(var(--surface-card-rgb), 0.92);
   border: 1px solid rgba(var(--accent-rgb), 0.45);
   border-radius: var(--r-xl);
@@ -1006,7 +1006,8 @@ textarea:focus {
 }
 
 /* 63 号票:工具调用过程时间线 —— running 点闪琥珀,done 青色收口,failed
- * 危险色;摘要一行截断,完整文案看 title。 */
+ * 危险色;摘要换行铺开(超长单行会顶破卡面,用户反馈改换行),完整文案
+ * 看 title。 */
 .tool-timeline {
   display: grid;
   gap: 2px;
@@ -1014,7 +1015,7 @@ textarea:focus {
 
 .tool-step {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
   font-size: var(--fs-micro);
   color: var(--text-muted);
@@ -1024,6 +1025,7 @@ textarea:focus {
   flex-shrink: 0;
   width: 6px;
   height: 6px;
+  margin-top: 4px;
   border-radius: 50%;
   background: var(--amber);
 }
@@ -1057,9 +1059,10 @@ textarea:focus {
 }
 
 .tool-step-hint {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* flex 项缺 min-width:0 时最小尺寸=整行宽,nowrap 摘要会顶破卡面;
+   * 改自然换行,长 token(script-<时间戳>-N 之类)也按字符断开。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .media-chip {

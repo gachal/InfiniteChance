@@ -1564,14 +1564,15 @@ const AGENT_LAYOUT_ROW_HEIGHT = 210
 const AGENT_LAYOUT_ROWS = 4
 
 /** Agent 产物的落位锚:首个产物取当前选中节点右侧(产物与工作对象相邻,
- * 与 dropFrameNode 的落图习惯一致),无选中落视口中心(与工具栏 addNode
- * 同规);此后本次发送内的产物不再跟随选中,统一从该锚点网格步进。 */
+ * 与 dropFrameNode 的落图习惯一致;偏移 420 ≥ Agent 卡加宽后的 380,选中
+ * Agent 节点发起生成也不叠卡),无选中落视口中心(与工具栏 addNode 同规);
+ * 此后本次发送内的产物不再跟随选中,统一从该锚点网格步进。 */
 function agentProducedPosition(): { x: number; y: number } {
   if (agentLayout == null) {
     const selected = getSelectedNodes.value
     const base =
       selected.length > 0
-        ? { x: selected[selected.length - 1].position.x + 380, y: selected[selected.length - 1].position.y }
+        ? { x: selected[selected.length - 1].position.x + 420, y: selected[selected.length - 1].position.y }
         : viewportCenterPosition()
     agentLayout = { base, x: base.x, y: base.y, rows: 0 }
   }
