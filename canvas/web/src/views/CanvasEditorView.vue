@@ -55,6 +55,9 @@ import {
 import {
   type AgentToolStep,
   applyAgentToolResult,
+  scriptDraftFromPayload,
+  setAgentToolApplier,
+  storyboardDraftFromPayload,
   upsertAgentToolStep,
 } from '../agentTools'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
@@ -1453,6 +1456,7 @@ async function onGeneratePrompt(
   generateError.value = ''
   agentActiveNodeId.value = nodeId
   agentToolSteps.value = []
+  agentApplySeq = 0
   // 流中途失败时已到手的增量(text)用于保留部分文本;成功路径以 done
   // 事件的累计全文为准。
   let text = ''
@@ -1523,6 +1527,74 @@ async function onGeneratePrompt(
 // 发送的那个节点,时间线在会话结束(含失败)后保留到下次发送。
 const agentActiveNodeId = ref('')
 const agentToolSteps = ref<AgentToolStep[]>([])
+
+// ===== Agent 工具落图应用器(66 号票,ADR 0006 单一写者) =====
+
+/** 同一轮会话里多个产物的级联偏移(发送开始归零):沿对角线错开,防叠卡。 */
+let agentApplySeq = 0
+
+/** Agent 产物的落位锚:优先当前选中节点右侧(产物与工作对象相邻,与
+ * dropFrameNode 的落图习惯一致),无选中落视口中心(与工具栏 addNode
+ * 同规);级联偏移按会话内已落数叠加。 */
+function agentProducedPosition(): { x: number; y: number } {
+  const selected = getSelectedNodes.value
+  const base =
+    selected.length > 0
+      ? { x: selected[selected.length - 1].position.x + 380, y: selected[selected.length - 1].position.y }
+      : viewportCenterPosition()
+  return { x: base.x + agentApplySeq * 48, y: base.y + agentApplySeq * 48 }
+}
+
+/** Agent 产物节点落图(addNode 的工具版):整节点草案原子落进本地图状态,
+ * 新节点即选中(与 addNode 同);addNodes 触发 'add' 变更事件已 markDirty,
+ * autosave 链接管落库。不连边 —— script 不作任何连线端点(64 号票),
+ * 絵コンテ落点也没有来源语义。 */
+function addAgentProducedNode(type: CanvasNodeType, data: CanvasNodeData): void {
+  nodeSeq += 1
+  agentApplySeq += 1
+  const id = `${type}-${Date.now()}-${nodeSeq}`
+  addNodes([{ id, type, position: agentProducedPosition(), data }])
+  removeSelectedNodes(getSelectedNodes.value)
+  const added = findNode(id)
+  if (added) {
+    addSelectedNodes([added])
+  }
+}
+
+/** save_outline / save_script:script 节点草案(64 号票载体,payload =
+ * title+text);校验不过抛错,由 applyAgentToolResult 显式上报。 */
+function applyAgentScriptDraft(payload: unknown): void {
+  const draft = scriptDraftFromPayload(payload)
+  const data: ScriptNodeData = { title: draft.title, text: draft.text }
+  addAgentProducedNode('script', data)
+}
+
+/** save_storyboard:絵コンテ节点草案(cuts 为 53 号票结构 + 67 号票
+ * shot/character_ids,画面 asset_id 恒空 → 卡面「未配画面」占位)。 */
+function applyAgentStoryboardDraft(payload: unknown): void {
+  const draft = storyboardDraftFromPayload(payload)
+  const data: StoryboardNodeData = { title: draft.title, cuts: draft.cuts }
+  addAgentProducedNode('storyboard', data)
+}
+
+// 库表/只读类工具(create_*/list_assets/read_source):后端已直写或只读,
+// 前端无可落图之物 —— 注册空应用器。这令 63 号票「有 payload 却无应用器
+// = 显式报错」的契约只对真正的版本偏差(客户端缺工具)触发,而不是误伤
+// 带回执 payload 的库表类结果。
+const AGENT_NOOP_APPLY_TOOLS = ['create_character', 'create_scene', 'create_prop', 'list_assets', 'read_source']
+for (const name of AGENT_NOOP_APPLY_TOOLS) {
+  setAgentToolApplier(name, () => {})
+}
+setAgentToolApplier('save_outline', applyAgentScriptDraft)
+setAgentToolApplier('save_script', applyAgentScriptDraft)
+setAgentToolApplier('save_storyboard', applyAgentStoryboardDraft)
+onBeforeUnmount(() => {
+  // 编辑器实例卸载即注销应用器:闭包持着旧图状态,残留会写进重挂后的
+  // 新编辑器(63 号票 setAgentToolApplier(name, null) 的注销语义)。
+  for (const name of [...AGENT_NOOP_APPLY_TOOLS, 'save_outline', 'save_script', 'save_storyboard']) {
+    setAgentToolApplier(name, null)
+  }
+})
 
 /** 技能变更(选中/移除/悬空收回)= 开新会话:写 skill_id 并清空对话
  * 历史与未发送附件,连带清角色 chip 与固化段(52 号票:换技能清历史
