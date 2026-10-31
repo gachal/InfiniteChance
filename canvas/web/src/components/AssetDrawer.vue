@@ -152,6 +152,16 @@ const variantLacksViews = computed(() => {
   return images.length > 0 && !images.some((i) => isViewLabel(i.label))
 })
 
+/** 场景/道具的「缺主资产」弱提示:有图但全无全景/多视图(空画廊走空态
+ * 文案,不与提示并出)。 */
+const lacksPrimary = computed(() => {
+  if (props.kind === 'character') {
+    return false
+  }
+  const images = props.kind === 'scene' ? (scene.value?.images ?? []) : (prop.value?.images ?? [])
+  return images.length > 0 && !images.some((i) => isPrimaryLabel(props.kind, i.label))
+})
+
 /** 已锚进当前挂点的素材 id(从库选的已选高亮与幂等去重)。 */
 const anchoredAssetIds = computed(() => galleryImages.value.map((i) => i.asset_id))
 
@@ -772,7 +782,7 @@ const galleryTitle = computed(() => {
           该造型还没有三视图/多视图 —— 视图类是主资产,建议补齐。
         </p>
         <p
-          v-else-if="kind !== 'character' && galleryImages.length === 0"
+          v-else-if="lacksPrimary"
           class="feedback hint"
         >
           还没有{{ kind === 'scene' ? '全景' : '多视图' }}设定图 —— 主资产,建议优先补齐。
