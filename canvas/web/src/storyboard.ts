@@ -62,12 +62,13 @@ export const SHOT_SIZE_OPTIONS = ['远', '全', '中', '近', '特写'] as const
 
 export type ShotSize = (typeof SHOT_SIZE_OPTIONS)[number]
 
-/** 景别 chip 单选切换(67 号票):点已选 = 清除(可回到未定),点别档 =
- * 替换;换新对象不改入参(与 toggleCameraMove 同款纯函数纪律)。 */
+/** 景别 chip 单选切换(67 号票):点已选 = 清除(可回到未定,键不落),
+ * 点别档 = 替换;换新对象不改入参(与 toggleCameraMove 同款纯函数纪律)。 */
 export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
   if (cut.shot === shot) {
-    const { shot: _dropped, ...rest } = cut
-    return rest
+    const next = { ...cut }
+    delete next.shot
+    return next
   }
   return { ...cut, shot }
 }
