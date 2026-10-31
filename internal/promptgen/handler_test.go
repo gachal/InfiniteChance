@@ -120,6 +120,19 @@ func (f *stubGateway) StreamChat(_ context.Context, req promptgen.ChatRequest, o
 	return f.err
 }
 
+// StreamChatTurn 回放配置好的轮次(63 号票 Agent 工具循环的桩面):增量
+// 逐个回调,返回配置的文本作聚合轮次。
+func (f *stubGateway) StreamChatTurn(_ context.Context, req promptgen.ChatRequest, onDelta func(string)) (promptgen.StreamTurn, error) {
+	f.requests = append(f.requests, req)
+	for _, d := range f.deltas {
+		onDelta(d)
+	}
+	if f.err != nil {
+		return promptgen.StreamTurn{}, f.err
+	}
+	return promptgen.StreamTurn{Content: f.content, FinishReason: "stop"}, nil
+}
+
 type fakeAssets struct {
 	byID map[int64]asset.Asset
 	// touched 记录 TouchLastUsed 的调用序(47 号票「解引用即算」断言面)。
@@ -155,6 +168,7 @@ type envParams struct {
 	assets        *fakeAssets
 	characters    fakeCharacters
 	gateway       promptgen.Gateway
+	agentTools    *promptgen.AgentToolRegistry
 	publicBaseURL func(ctx context.Context) string
 }
 
@@ -199,6 +213,7 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			"img-m":  {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
 		}},
 		Gateway:       params.gateway,
+		AgentTools:    params.agentTools,
 		PublicBaseURL: params.publicBaseURL,
 	})
 	promptgen.RegisterCatalogRoutes(engine.Group("/prompt-templates"),

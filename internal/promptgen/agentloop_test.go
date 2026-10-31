@@ -75,13 +75,15 @@ func (t *stubTool) args() []string {
 	return append([]string(nil), t.gotArgs...)
 }
 
-// textTurn / toolTurn 构造轮次结果。
+// textTurn / toolTurn 构造轮次结果(toolTurn 的 content 是该轮解说文本,
+// 真 Client 会把它聚合进 StreamTurn.Content)。
 func textTurn(text string) StreamTurn {
 	return StreamTurn{Content: text, FinishReason: "stop"}
 }
 
-func toolTurn(id, name, args string) StreamTurn {
+func toolTurn(content, id, name, args string) StreamTurn {
 	return StreamTurn{
+		Content:      content,
 		ToolCalls:    []ToolCall{{ID: id, Name: name, Arguments: args}},
 		FinishReason: "tool_calls",
 	}
@@ -153,7 +155,7 @@ func TestAgentLoopRunsToolThenFinalAnswer(t *testing.T) {
 		switch n {
 		case 0:
 			onDelta("让我先建角色。")
-			return toolTurn("call_1", "echo_tool", `{"name":"张三"}`), nil
+			return toolTurn("让我先建角色。", "call_1", "echo_tool", `{"name":"张三"}`), nil
 		case 1:
 			onDelta("完成了。")
 			return textTurn("完成了。"), nil
@@ -192,8 +194,8 @@ func TestAgentLoopRunsToolThenFinalAnswer(t *testing.T) {
 	if toolResult == nil || toolResult.Summary != "已创建 张三" || string(toolResult.Payload) != `{"draft":{"x":1}}` {
 		t.Fatalf("tool_result event = %+v, want summary and payload surfaced", toolResult)
 	}
-	if done == nil || done.Text != "完成了。" {
-		t.Fatalf("done event = %+v, want the final answer", done)
+	if done == nil || done.Text != "让我先建角色。\n\n完成了。" {
+		t.Fatalf("done event = %+v, want all rounds' text joined", done)
 	}
 	if done.Summary != "本轮工具调用:echo_tool(已创建 张三)" {
 		t.Errorf("done.summary = %q, want the composed tool line", done.Summary)
@@ -235,7 +237,7 @@ func TestAgentLoopGuardrailWrapUpAt15ToolRounds(t *testing.T) {
 
 	turner := &scriptTurner{rounds: func(n int, _ ChatRequest, onDelta func(string)) (StreamTurn, error) {
 		if n < agentMaxToolRounds {
-			return toolTurn(fmt.Sprintf("call_%d", n), "echo_tool", "{}"), nil
+			return toolTurn("", fmt.Sprintf("call_%d", n), "echo_tool", "{}"), nil
 		}
 		onDelta("已完成 15 步,请继续。")
 		return textTurn("已完成 15 步,请继续。"), nil
@@ -290,7 +292,7 @@ func TestAgentLoopUnknownToolInformsModelAndContinues(t *testing.T) {
 	turner := &scriptTurner{rounds: func(n int, _ ChatRequest, onDelta func(string)) (StreamTurn, error) {
 		switch n {
 		case 0:
-			return toolTurn("call_x", "no_such_tool", `{"a":1}`), nil
+			return toolTurn("", "call_x", "no_such_tool", `{"a":1}`), nil
 		case 1:
 			return textTurn("那我直接回答。"), nil
 		default:
@@ -326,7 +328,7 @@ func TestAgentLoopToolFailureFeedsErrorBackAndContinues(t *testing.T) {
 	turner := &scriptTurner{rounds: func(n int, _ ChatRequest, onDelta func(string)) (StreamTurn, error) {
 		switch n {
 		case 0:
-			return toolTurn("call_1", "echo_tool", "{}"), nil
+			return toolTurn("", "call_1", "echo_tool", "{}"), nil
 		case 1:
 			return textTurn("库存不足,换一个吧。"), nil
 		default:
@@ -394,7 +396,7 @@ func TestAgentLoopAbortsWhenContextCanceled(t *testing.T) {
 	registry.Register(tool)
 
 	turner := &scriptTurner{rounds: func(n int, _ ChatRequest, _ func(string)) (StreamTurn, error) {
-		return toolTurn("call_1", "block_tool", "{}"), nil
+		return toolTurn("", "call_1", "block_tool", "{}"), nil
 	}}
 	emit, events := collectEvents()
 
