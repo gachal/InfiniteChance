@@ -22,9 +22,11 @@ import (
 	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/prop"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
 	"github.com/gachal/InfiniteChance/internal/relay"
+	"github.com/gachal/InfiniteChance/internal/scene"
 	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/usage"
 	"github.com/gachal/InfiniteChance/internal/videotask"
@@ -114,11 +116,16 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 // /api/characters 系 CRUD,与 IPs 同用 IP 存在性裁决。
 // Voices 承载音色台账(57 号票):/api/voices 目录面(全局作用域,无
 // ip_id),nil 时目录 500 暴露装配缺口(生产装配恒非 nil)。
+// Scenes/Props 承载 IP 级场景库/道具库(65 号票):/api/ips/:id/scenes、
+// /api/ips/:id/props 目录与 /scenes、/props 系 CRUD,与 Characters 同用
+// IP 存在性裁决 —— 资产库三类实体的第二、三类。
 type CanvasStores struct {
 	Auth       auth.Store
 	Canvases   canvas.Store
 	IPs        canvas.IPStore
 	Characters character.Store
+	Scenes     scene.Store
+	Props      prop.Store
 	Voices     voice.Store
 	Assets     asset.Store
 	Prices     pricing.Store
@@ -178,6 +185,18 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	character.RegisterRoutes(r.Group("/characters", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterVariantRoutes(r.Group("/character-variants", auth.RequireAuth(issuer)), characterHandlers)
 	character.RegisterImageRoutes(r.Group("/character-images", auth.RequireAuth(issuer)), characterHandlers)
+	// 场景库/道具库(65 号票):资产库三类实体的第二、三类,同一 JWT 会话
+	// 面,照角色库四组路由平移简化(无造型变体;目录挂 /ips/:id/scenes、
+	// /ips/:id/props,IP 存在性由 handler 经 IPs 裁决;实体系 CRUD 与图面
+	// 挂 /scenes、/props 系)。
+	sceneHandlers := &scene.Handlers{Store: s.Scenes, IPs: s.IPs}
+	scene.RegisterIPRoutes(r.Group("/ips/:id/scenes", auth.RequireAuth(issuer)), sceneHandlers)
+	scene.RegisterRoutes(r.Group("/scenes", auth.RequireAuth(issuer)), sceneHandlers)
+	scene.RegisterImageRoutes(r.Group("/scene-images", auth.RequireAuth(issuer)), sceneHandlers)
+	propHandlers := &prop.Handlers{Store: s.Props, IPs: s.IPs}
+	prop.RegisterIPRoutes(r.Group("/ips/:id/props", auth.RequireAuth(issuer)), propHandlers)
+	prop.RegisterRoutes(r.Group("/props", auth.RequireAuth(issuer)), propHandlers)
+	prop.RegisterImageRoutes(r.Group("/prop-images", auth.RequireAuth(issuer)), propHandlers)
 	// 音色台账(57 号票):/voices 目录面(全量/改名/删除)。删除先经网关
 	// delete_voice —— gateway(client)为 nil 时 handler 以
 	// gateway_unconfigured 拒绝,列表与改名不受影响。
