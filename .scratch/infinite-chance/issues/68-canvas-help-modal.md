@@ -1,7 +1,7 @@
 # 68 画布帮助浮层(运行总览与生成流程可查)(2026-10-31 grilling 定案)
 
 Type: feat
-Status: drafted(2026-10-31 grilling 定案,五问全按推荐;起因:63-67 全链落地后两处预期差——剧本节点没有「下一步」、画面槽没有「生成」,运行模型无处可查;**流程本身未完全定型,后续还要优化,内容必须好改**——用户特别要求)
+Status: implemented(2026-10-31 实现;feat/68-canvas-help-modal)。**口径注记**:①内容模块 `canvas/web/src/canvasHelp.ts`(章节数组→块五型:heading/p/list/keys/note,每章末「边界与后续」),渲染组件 `CanvasHelpModal.vue` 只 import 类型与常量、不含任何帮助文案字面量——改文案/加章零组件 diff(结构规范由 canvasHelp.test.ts 守住);②z 档领 `--z-help-modal: 95`(editor-layer 90 与 lightbox 100 之间,style.css 档位表登记);③Esc 在全局栈插在灯箱让位判断之后、其余层之前先收,帮助组件自身不挂 window 监听;④画面槽文案按 FrameSlot 四入口口径(CONTEXT.md「规划节点」条的入口句是 53 号票三入口旧表述,以本帮助与组件头注释为准)。定案背景:2026-10-31 grilling 定案,五问全按推荐;起因:63-67 全链落地后两处预期差——剧本节点没有「下一步」、画面槽没有「生成」,运行模型无处可查;**流程本身未完全定型,后续还要优化,内容必须好改**——用户特别要求
 
 ## Question
 
