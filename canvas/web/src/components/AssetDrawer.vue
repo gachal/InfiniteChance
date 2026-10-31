@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// 角色详情抽屉(51 号票):字段编辑(name/alias/description/detail 纯文本
-// pre-wrap,不解析 markdown)+ 变体条(名称/服装描述/增删改名/排序)+
-// 选中变体的设定图画廊(缩略复用 thumb 302、label 六类白名单、上传/从库
-// 选/删除/排序,视图类置前)。变体缺视图类图时弱提示,不做硬约束;素材
-// 行被删的图行落「素材不可用」占位可手动移除。数据自取自管(getCharacter
-// 拉全树),每次变更 emit('changed') 让父级卡墙同步刷新。
+// 资产库抽屉(51 号票角色详情抽屉的 65 号票泛化):三类实体(角色/场景/
+// 道具)共用一块详情抽屉 —— 字段编辑(name/alias/description/detail 纯文本
+// pre-wrap,不解析 markdown)+ 设定图画廊(缩略复用 thumb 302、label 按
+// 类别白名单、上传/从库选/删除/排序,主资产置前)。角色分支保留音色绑定
+// (57 号票)与造型变体条;场景/道具无造型变体,画廊直接挂实体(变体语义
+// 用 label 表达)。素材行被删的图行落「素材不可用」占位可手动移除。数据
+// 自取自管(get* 拉全树),每次变更 emit('changed', kind, record) 让父级
+// 卡墙同步刷新。
 import { computed, onMounted, ref } from 'vue'
 
 import {
@@ -13,29 +15,50 @@ import {
   type CharacterImageRecord,
   type CharacterRecord,
   type CharacterVariantRecord,
+  type PropRecord,
+  type SceneRecord,
   type VoiceRecord,
 } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback, assetContentURL } from '../thumbnail'
-import { CHARACTER_IMAGE_LABELS, characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
+import type { AssetKind } from '../assetlib'
+import { imageLabelsForKind, isPrimaryLabel, orderedImages } from '../assetlib'
+import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
 import { voiceStatusBadge } from '../voice'
 import AssetPicker from './AssetPicker.vue'
 
+/** 画廊图行的最小视图形状:角色/场景/道具三族的图行记录都满足。 */
+interface GalleryImage {
+  id: number
+  asset_id: number
+  label: string
+  sort: number
+}
+
 const props = defineProps<{
-  characterId: number
+  /** 实体类别:决定加载端点、label 白名单与画廊层级。 */
+  kind: AssetKind
+  /** 实体 id(角色/场景/道具共用一个槽位)。 */
+  assetId: number
   /** 上传与「从库选」的 IP 归属(设定图入库挂该 IP)。 */
   ipId: number
 }>()
 
 const emit = defineEmits<{
-  changed: [character: CharacterRecord]
+  changed: [kind: AssetKind, record: CharacterRecord | SceneRecord | PropRecord]
   close: []
 }>()
 
 const { client, clearSession } = useAuth()
 
+const entityName = computed(() =>
+  props.kind === 'character' ? '角色' : props.kind === 'scene' ? '场景' : '道具',
+)
+
 const character = ref<CharacterRecord | null>(null)
+const scene = ref<SceneRecord | null>(null)
+const prop = ref<PropRecord | null>(null)
 const loading = ref(true)
 const loadError = ref('')
 const actionError = ref('')
@@ -47,7 +70,7 @@ const descriptionDraft = ref('')
 const detailDraft = ref('')
 const savingFields = ref(false)
 
-// 变体条状态:选中变体、行内改名/描述草稿(仅一行处于编辑态)。
+// 变体条状态(仅角色):选中变体、行内改名/描述草稿(仅一行处于编辑态)。
 const activeVariantId = ref<number>(0)
 const editingVariantId = ref<number>(0)
 const variantNameDraft = ref('')
@@ -64,7 +87,7 @@ const uploading = ref(false)
 const thumbs = useThumbFallback()
 const brokenAssetIds = ref(new Set<number>())
 
-// 音色绑定(57 号票,角色级):voices 全量 picker(状态徽章 + 试听)+
+// 音色绑定(57 号票,仅角色):voices 全量 picker(状态徽章 + 试听)+
 // 解除;选中即 patchCharacter 提交(0 = 解除)。voices 全局作用域(可跨
 // IP 复用),目录自取自管(角色数据同款纪律)。
 const voices = ref<VoiceRecord[]>([])
@@ -108,47 +131,87 @@ const activeVariant = computed<CharacterVariantRecord | null>(() => {
   return c.variants.find((v) => v.id === activeVariantId.value) ?? c.variants[0] ?? null
 })
 
-/** 画廊展示序:视图类置前,两组内保持 sort+id(51 号票主资产口径)。 */
-const galleryImages = computed<CharacterImageRecord[]>(() => {
-  const images = activeVariant.value?.images ?? []
-  return [...images.filter((i) => isViewLabel(i.label)), ...images.filter((i) => !isViewLabel(i.label))]
+/** 画廊展示序:主资产置前(角色 = 视图类三视图/多视图;场景 = 全景;
+ * 道具 = 多视图),两组内保持 sort+id。 */
+const galleryImages = computed<GalleryImage[]>(() => {
+  if (props.kind === 'character') {
+    const images: CharacterImageRecord[] = activeVariant.value?.images ?? []
+    return [...images.filter((i) => isViewLabel(i.label)), ...images.filter((i) => !isViewLabel(i.label))]
+  }
+  if (props.kind === 'scene') {
+    return orderedImages('scene', scene.value?.images ?? [])
+  }
+  return orderedImages('prop', prop.value?.images ?? [])
 })
 
 const variantLacksViews = computed(() => {
+  if (props.kind !== 'character') {
+    return false
+  }
   const images = activeVariant.value?.images ?? []
   return images.length > 0 && !images.some((i) => isViewLabel(i.label))
 })
 
-/** 已锚进当前变体的素材 id(从库选的已选高亮与幂等去重)。 */
-const anchoredAssetIds = computed(() => (activeVariant.value?.images ?? []).map((i) => i.asset_id))
+/** 场景/道具的「缺主资产」弱提示:有图但全无全景/多视图(空画廊走空态
+ * 文案,不与提示并出)。 */
+const lacksPrimary = computed(() => {
+  if (props.kind === 'character') {
+    return false
+  }
+  const images = props.kind === 'scene' ? (scene.value?.images ?? []) : (prop.value?.images ?? [])
+  return images.length > 0 && !images.some((i) => isPrimaryLabel(props.kind, i.label))
+})
+
+/** 已锚进当前挂点的素材 id(从库选的已选高亮与幂等去重)。 */
+const anchoredAssetIds = computed(() => galleryImages.value.map((i) => i.asset_id))
 
 async function refresh(): Promise<void> {
   loadError.value = ''
   try {
-    const fresh = await client.getCharacter(props.characterId)
-    character.value = fresh
-    nameDraft.value = fresh.name
-    aliasDraft.value = fresh.alias
-    descriptionDraft.value = fresh.description
-    detailDraft.value = fresh.detail
-    if (!fresh.variants.some((v) => v.id === activeVariantId.value)) {
-      activeVariantId.value = fresh.variants[0]?.id ?? 0
+    if (props.kind === 'character') {
+      const fresh = await client.getCharacter(props.assetId)
+      character.value = fresh
+      if (!fresh.variants.some((v) => v.id === activeVariantId.value)) {
+        activeVariantId.value = fresh.variants[0]?.id ?? 0
+      }
+      emit('changed', props.kind, fresh)
+    } else if (props.kind === 'scene') {
+      const fresh = await client.getScene(props.assetId)
+      scene.value = fresh
+      emit('changed', props.kind, fresh)
+    } else {
+      const fresh = await client.getProp(props.assetId)
+      prop.value = fresh
+      emit('changed', props.kind, fresh)
     }
-    emit('changed', fresh)
+    loadDrafts()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       clearSession()
       return
     }
-    loadError.value = e instanceof ApiError ? e.message : '无法加载角色,请稍后再试'
+    loadError.value = e instanceof ApiError ? e.message : `无法加载${entityName.value},请稍后再试`
   } finally {
     loading.value = false
   }
 }
 
+function loadDrafts(): void {
+  const fresh = character.value ?? scene.value ?? prop.value
+  if (!fresh) {
+    return
+  }
+  nameDraft.value = fresh.name
+  aliasDraft.value = fresh.alias
+  descriptionDraft.value = fresh.description
+  detailDraft.value = fresh.detail
+}
+
 onMounted(() => {
   void refresh()
-  void refreshVoices()
+  if (props.kind === 'character') {
+    void refreshVoices()
+  }
 })
 
 function fail(e: unknown, fallback: string): void {
@@ -156,23 +219,31 @@ function fail(e: unknown, fallback: string): void {
 }
 
 async function saveFields(): Promise<void> {
-  if (!character.value || savingFields.value) {
+  const current = character.value ?? scene.value ?? prop.value
+  if (!current || savingFields.value) {
     return
   }
   const name = nameDraft.value.trim()
   if (!name) {
-    actionError.value = '角色名不能为空'
+    actionError.value = `${entityName.value}名不能为空`
     return
   }
   savingFields.value = true
   actionError.value = ''
+  const body = {
+    name,
+    alias: aliasDraft.value.trim(),
+    description: descriptionDraft.value.trim(),
+    detail: detailDraft.value,
+  }
   try {
-    await client.patchCharacter(character.value.id, {
-      name,
-      alias: aliasDraft.value.trim(),
-      description: descriptionDraft.value.trim(),
-      detail: detailDraft.value,
-    })
+    if (props.kind === 'character') {
+      await client.patchCharacter(current.id, body)
+    } else if (props.kind === 'scene') {
+      await client.patchScene(current.id, body)
+    } else {
+      await client.patchProp(current.id, body)
+    }
     await refresh()
   } catch (e) {
     fail(e, '保存失败,请稍后再试')
@@ -181,7 +252,7 @@ async function saveFields(): Promise<void> {
   }
 }
 
-// ---- 变体条 ----
+// ---- 变体条(仅角色)----
 
 async function addVariant(): Promise<void> {
   const name = newVariantName.value.trim()
@@ -274,31 +345,31 @@ async function moveVariant(v: CharacterVariantRecord, delta: -1 | 1): Promise<vo
   }
 }
 
-// ---- 设定图画廊 ----
+// ---- 设定图画廊(角色 = 选中变体;场景/道具 = 实体)----
 
-async function setLabel(img: CharacterImageRecord, label: string): Promise<void> {
+async function setLabel(img: GalleryImage, label: string): Promise<void> {
   actionError.value = ''
   try {
-    await client.patchCharacterImage(img.id, { label })
+    await patchImageByKind(img.id, { label })
     await refresh()
   } catch (e) {
     fail(e, '设置标签失败,请稍后再试')
   }
 }
 
-async function removeImage(img: CharacterImageRecord): Promise<void> {
+async function removeImage(img: GalleryImage): Promise<void> {
   actionError.value = ''
   try {
-    await client.deleteCharacterImage(img.id)
+    await deleteImageByKind(img.id)
     await refresh()
   } catch (e) {
     fail(e, '删除失败,请稍后再试')
   }
 }
 
-/** 上下移:同画廊序交换,受影响的图按下标重写 sort(视图类置前只是展示
+/** 上下移:同画廊序交换,受影响的图按下标重写 sort(主资产置前只是展示
  * 序,sort 按画廊位次落库,刷新后顺序稳定)。 */
-async function moveImage(img: CharacterImageRecord, delta: -1 | 1): Promise<void> {
+async function moveImage(img: GalleryImage, delta: -1 | 1): Promise<void> {
   const ordered = galleryImages.value
   const index = ordered.findIndex((x) => x.id === img.id)
   const target = index + delta
@@ -311,12 +382,34 @@ async function moveImage(img: CharacterImageRecord, delta: -1 | 1): Promise<void
   try {
     for (let i = 0; i < reordered.length; i++) {
       if (reordered[i].sort !== i) {
-        await client.patchCharacterImage(reordered[i].id, { sort: i })
+        await patchImageByKind(reordered[i].id, { sort: i })
       }
     }
     await refresh()
   } catch (e) {
     fail(e, '排序失败,请稍后再试')
+  }
+}
+
+/** 图行 PATCH 按类别分发(三族端点形状一致,只是路由不同)。 */
+async function patchImageByKind(imageId: number, body: { label?: string; sort?: number }): Promise<void> {
+  if (props.kind === 'character') {
+    await client.patchCharacterImage(imageId, body)
+  } else if (props.kind === 'scene') {
+    await client.patchSceneImage(imageId, body)
+  } else {
+    await client.patchPropImage(imageId, body)
+  }
+}
+
+/** 图行删除按类别分发(只删图行,素材行不动)。 */
+async function deleteImageByKind(imageId: number): Promise<void> {
+  if (props.kind === 'character') {
+    await client.deleteCharacterImage(imageId)
+  } else if (props.kind === 'scene') {
+    await client.deleteSceneImage(imageId)
+  } else {
+    await client.deletePropImage(imageId)
   }
 }
 
@@ -328,18 +421,38 @@ function onImageError(assetId: number): void {
   }
 }
 
+/** 锚一张上传/选中的素材:角色挂进当前变体,场景/道具直接挂实体。 */
+async function anchorAsset(assetId: number): Promise<void> {
+  if (props.kind === 'character') {
+    if (!character.value || !activeVariant.value) {
+      return
+    }
+    await client.createCharacterImage(character.value.id, {
+      variant_id: activeVariant.value.id,
+      asset_id: assetId,
+    })
+  } else if (props.kind === 'scene') {
+    if (!scene.value) {
+      return
+    }
+    await client.createSceneImage(scene.value.id, { asset_id: assetId })
+  } else {
+    if (!prop.value) {
+      return
+    }
+    await client.createPropImage(prop.value.id, { asset_id: assetId })
+  }
+}
+
 async function onUploadPicked(file: File): Promise<void> {
-  if (!character.value || !activeVariant.value || uploading.value) {
+  if (uploading.value) {
     return
   }
   uploading.value = true
   actionError.value = ''
   try {
     const asset = await client.uploadAsset(file, 'image', props.ipId)
-    await client.createCharacterImage(character.value.id, {
-      variant_id: activeVariant.value.id,
-      asset_id: asset.id,
-    })
+    await anchorAsset(asset.id)
     await refresh()
   } catch (e) {
     fail(e, '上传失败,请稍后再试')
@@ -359,21 +472,15 @@ function onFileChange(event: Event): void {
   }
 }
 
-/** 从库选:点选即锚进当前变体(已在库里的幂等跳过),面板保持打开可连选;
+/** 从库选:点选即锚进当前挂点(已在库里的幂等跳过),面板保持打开可连选;
  * chip 流不涉及 —— 这里是设定图锚,不是参考条。 */
 async function onPickAsset(asset: AssetRecord): Promise<void> {
-  if (!character.value || !activeVariant.value || asset.kind !== 'image') {
-    return
-  }
-  if (anchoredAssetIds.value.includes(asset.id)) {
+  if (asset.kind !== 'image' || anchoredAssetIds.value.includes(asset.id)) {
     return
   }
   actionError.value = ''
   try {
-    await client.createCharacterImage(character.value.id, {
-      variant_id: activeVariant.value.id,
-      asset_id: asset.id,
-    })
+    await anchorAsset(asset.id)
     await refresh()
   } catch (e) {
     fail(e, '添加设定图失败,请稍后再试')
@@ -384,15 +491,27 @@ function variantLabel(v: CharacterVariantRecord): string {
   const n = v.images.length
   return n > 0 ? `${v.name}(${n} 图)` : v.name
 }
+
+function imageAltLabel(kind: AssetKind): string {
+  return kind === 'character' ? '设定图' : kind === 'scene' ? '场景设定图' : '道具设定图'
+}
+
+/** 画廊标题:角色 = 选中变体的设定图;场景/道具 = 实体级设定图。 */
+const galleryTitle = computed(() => {
+  if (props.kind === 'character') {
+    return activeVariant.value ? `「${activeVariant.value.name}」的设定图` : '设定图'
+  }
+  return props.kind === 'scene' ? '场景设定图' : '道具设定图'
+})
 </script>
 
 <template>
   <aside
     class="character-drawer"
-    aria-label="角色详情"
+    :aria-label="`${entityName}详情`"
   >
     <header class="drawer-head">
-      <h3>{{ character?.name ?? '角色' }}</h3>
+      <h3>{{ (character ?? scene ?? prop)?.name ?? entityName }}</h3>
       <button
         class="close"
         type="button"
@@ -416,7 +535,7 @@ function variantLabel(v: CharacterVariantRecord): string {
       加载中…
     </p>
 
-    <template v-if="character">
+    <template v-if="character ?? scene ?? prop">
       <!-- 字段编辑:detail 纯文本 pre-wrap,不解析 markdown(51 号票口径)。 -->
       <section class="fields">
         <label class="field">
@@ -466,9 +585,11 @@ function variantLabel(v: CharacterVariantRecord): string {
         </div>
       </section>
 
-      <!-- 音色(57 号票,角色级绑定:声音跟人不跟衣服,变体级显式不做)。
-           picker 列全量台账(状态徽章 + 试听),选中即提交,解除选占位。 -->
-      <section class="voices">
+      <!-- 音色(57 号票,仅角色;场景/道具无音色 —— 65 号票定案 6)。 -->
+      <section
+        v-if="character"
+        class="voices"
+      >
         <h4>音色</h4>
         <p
           v-if="voicesLoaded && voices.length === 0"
@@ -527,9 +648,12 @@ function variantLabel(v: CharacterVariantRecord): string {
         {{ actionError }}
       </p>
 
-      <!-- 变体条:名称/服装描述/增删改名/排序;最后一个不可删(服务端
-           409 variant_last_one,文案就地给出)。 -->
-      <section class="variants">
+      <!-- 变体条(仅角色):名称/服装描述/增删改名/排序;最后一个不可删
+           (服务端 409 variant_last_one,文案就地给出)。场景/道具无变体。 -->
+      <section
+        v-if="character"
+        class="variants"
+      >
         <h4>造型变体</h4>
         <ul class="variant-list">
           <li
@@ -644,21 +768,24 @@ function variantLabel(v: CharacterVariantRecord): string {
         </form>
       </section>
 
-      <!-- 选中变体的设定图画廊:视图类置前;缩略走 thumb 302;素材行被删
-           的图行落「素材不可用」占位可移除。 -->
-      <section
-        v-if="activeVariant"
-        class="gallery"
-      >
+      <!-- 设定图画廊:角色 = 选中变体,场景/道具 = 实体级;主资产置前;
+           缩略走 thumb 302;素材行被删的图行落「素材不可用」占位可移除。 -->
+      <section class="gallery">
         <h4>
-          「{{ activeVariant.name }}」的设定图
-          <span class="count">{{ activeVariant.images.length }}</span>
+          {{ galleryTitle }}
+          <span class="count">{{ galleryImages.length }}</span>
         </h4>
         <p
           v-if="variantLacksViews"
           class="feedback hint"
         >
           该造型还没有三视图/多视图 —— 视图类是主资产,建议补齐。
+        </p>
+        <p
+          v-else-if="lacksPrimary"
+          class="feedback hint"
+        >
+          还没有{{ kind === 'scene' ? '全景' : '多视图' }}设定图 —— 主资产,建议优先补齐。
         </p>
         <div class="gallery-actions">
           <button
@@ -688,7 +815,7 @@ function variantLabel(v: CharacterVariantRecord): string {
           v-if="galleryImages.length === 0"
           class="feedback"
         >
-          该变体还没有设定图。
+          {{ character && activeVariant ? '该变体还没有设定图。' : '还没有设定图。' }}
         </p>
         <ul class="gallery-grid">
           <li
@@ -714,13 +841,13 @@ function variantLabel(v: CharacterVariantRecord): string {
                 :src="thumbs.displayURL(characterImageContentURL(img.asset_id), characterImageThumbURL(img.asset_id))"
                 class="gallery-thumb"
                 loading="lazy"
-                alt="设定图"
+                :alt="imageAltLabel(kind)"
                 @error="onImageError(img.asset_id)"
               >
               <span
                 v-if="img.label"
                 class="label-badge"
-                :class="{ view: isViewLabel(img.label) }"
+                :class="{ view: isPrimaryLabel(kind, img.label) }"
               >{{ img.label }}</span>
             </template>
             <div class="gallery-meta">
@@ -734,7 +861,7 @@ function variantLabel(v: CharacterVariantRecord): string {
                   无标签
                 </option>
                 <option
-                  v-for="l in CHARACTER_IMAGE_LABELS"
+                  v-for="l in imageLabelsForKind(kind)"
                   :key="l"
                   :value="l"
                 >
@@ -779,7 +906,7 @@ function variantLabel(v: CharacterVariantRecord): string {
         v-if="pickingOpen"
         title="选择设定图素材"
         :kind-whitelist="['image']"
-        hint="点选锚进当前变体,可连选;素材入库后仍归素材库管理。"
+        hint="点选锚进当前挂点,可连选;素材入库后仍归素材库管理。"
         :selected-asset-ids="anchoredAssetIds"
         :ip-id="ipId"
         @toggle="onPickAsset"

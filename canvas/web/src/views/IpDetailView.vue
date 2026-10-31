@@ -5,9 +5,10 @@
 // 提交后直进编辑器;画布区平铺展示(接口本就按 updated_at 新到旧),
 // 行内操作:打开/重命名/移动到其他 IP/删除(移动只改归属,历史素材不回填
 // —— 票面口径,这里只发起请求);素材区复用素材面板(scope=ip,上传带
-// 该 IP)。角色区(51 号票)插在画布区与素材区之间:角色卡墙(首图投影
-// cover_asset_id + 名称/别名/变体与图计数)+ 新建角色对话框 + 详情抽屉
-// (CharacterDrawer 自管数据,卡墙经 changed 事件同步)。
+// 该 IP)。资产库区(51 号票角色区 + 65 号票扩三 tab:角色/场景/道具)
+// 插在画布区与素材区之间:每 tab 一面卡墙(封面投影 cover_asset_id +
+// 名称/别名/计数)+ 新建对话框 + 详情抽屉(AssetDrawer 自管数据,卡墙经
+// changed 事件同步;切 tab 惰性拉目录,目录一次取全)。
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -17,14 +18,16 @@ import {
   type CanvasSummary,
   type CharacterRecord,
   type IPRecord,
+  type PropRecord,
+  type SceneRecord,
 } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
-import { useThumbFallback } from '../thumbnail'
-import { characterImageContentURL, characterImageThumbURL } from '../characters'
+import { useThumbFallback, assetContentURL } from '../thumbnail'
+import type { AssetKind } from '../assetlib'
 import AssetPanel from '../components/AssetPanel.vue'
 import AssetPicker from '../components/AssetPicker.vue'
-import CharacterDrawer from '../components/CharacterDrawer.vue'
+import AssetDrawer from '../components/AssetDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -101,7 +104,7 @@ onMounted(() => {
   }
   void refresh()
   void loadOtherIPs()
-  void loadCharacters()
+  void loadLibrary('character')
 })
 
 function openCreate(): void {
@@ -297,88 +300,151 @@ async function removeIP(): Promise<void> {
 /** 其他 IP 名单(移动画布的下拉;不含画布当前所属)。 */
 const otherIPs = ref<IPRecord[]>([])
 
-// ---- 角色区(51 号票):卡墙 + 新建对话框 + 详情抽屉 ----
+// ---- 资产库区(51 号票角色区 + 65 号票三 tab):卡墙 + 新建对话框 +
+// 详情抽屉。角色/场景/道具三类实体同构(场景/道具无造型变体),共用一
+// 套 tab、卡墙与创建表单;切 tab 惰性拉目录(目录一次取全)。 ----
 
+const KIND_LABELS: Record<AssetKind, string> = { character: '角色', scene: '场景', prop: '道具' }
+const kindLabel = (k: AssetKind): string => KIND_LABELS[k]
+
+const activeTab = ref<AssetKind>('character')
 const characters = ref<CharacterRecord[]>([])
-const charactersLoading = ref(false)
-const charactersError = ref('')
+const scenes = ref<SceneRecord[]>([])
+const propList = ref<PropRecord[]>([])
+const libraryLoading = ref(false)
+const libraryError = ref('')
+const loadedTabs = ref(new Set<AssetKind>())
 
-// 新建角色:名称必填 + 别名/简介/详细设定。
-const createCharacterOpen = ref(false)
-const characterName = ref('')
-const characterAlias = ref('')
-const characterDescription = ref('')
-const characterDetail = ref('')
-const creatingCharacter = ref(false)
+/** 当前 tab 的卡墙列表(三类记录都带 id/name/alias/cover_asset_id)。 */
+const activeList = computed<(CharacterRecord | SceneRecord | PropRecord)[]>(() => {
+  if (activeTab.value === 'character') {
+    return characters.value
+  }
+  if (activeTab.value === 'scene') {
+    return scenes.value
+  }
+  return propList.value
+})
 
-// 详情抽屉:按角色 id 换 key 重挂(CharacterDrawer 自取数据)。
-const drawerCharacterId = ref<number | null>(null)
+function setTab(k: AssetKind): void {
+  activeTab.value = k
+  void ensureLibrary(k)
+}
 
-/** 角色卡的图计数(全部变体的设定图总数)。 */
-const imageCount = (c: CharacterRecord): number =>
-  c.variants.reduce((sum, v) => sum + v.images.length, 0)
-
-async function loadCharacters(): Promise<void> {
-  charactersLoading.value = true
-  charactersError.value = ''
+async function loadLibrary(kind: AssetKind): Promise<void> {
+  libraryLoading.value = true
+  libraryError.value = ''
   try {
-    characters.value = await client.listIPCharacters(ipId.value)
+    if (kind === 'character') {
+      characters.value = await client.listIPCharacters(ipId.value)
+    } else if (kind === 'scene') {
+      scenes.value = await client.listIPScenes(ipId.value)
+    } else {
+      propList.value = await client.listIPProps(ipId.value)
+    }
+    loadedTabs.value = new Set([...loadedTabs.value, kind])
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       clearSession()
       await router.replace({ name: 'login' })
       return
     }
-    charactersError.value = e instanceof ApiError ? e.message : '无法加载角色,请稍后再试'
+    libraryError.value = e instanceof ApiError ? e.message : `无法加载${kindLabel(kind)}库,请稍后再试`
   } finally {
-    charactersLoading.value = false
+    libraryLoading.value = false
   }
 }
 
-function openCreateCharacter(): void {
-  characterName.value = ''
-  characterAlias.value = ''
-  characterDescription.value = ''
-  characterDetail.value = ''
-  actionError.value = ''
-  createCharacterOpen.value = true
+function ensureLibrary(kind: AssetKind): Promise<void> {
+  if (loadedTabs.value.has(kind)) {
+    return Promise.resolve()
+  }
+  return loadLibrary(kind)
 }
 
-async function submitCreateCharacter(): Promise<void> {
-  const name = characterName.value.trim()
-  if (!name || creatingCharacter.value) {
+/** 新建资产:名称必填 + 别名/简介/详细设定(三类实体同构表单)。 */
+const createKind = ref<AssetKind | null>(null)
+const assetName = ref('')
+const assetAlias = ref('')
+const assetDescription = ref('')
+const assetDetail = ref('')
+const creatingAsset = ref(false)
+
+// 详情抽屉:按(类别, id)换 key 重挂(AssetDrawer 自取数据)。
+const drawer = ref<{ kind: AssetKind; id: number } | null>(null)
+
+/** 卡片 meta 行:角色 = 造型与图计数,场景/道具 = 图计数。 */
+function assetMeta(a: CharacterRecord | SceneRecord | PropRecord): string {
+  if ('variants' in a) {
+    const images = a.variants.reduce((sum, v) => sum + v.images.length, 0)
+    return `${a.variants.length} 造型 · ${images} 图`
+  }
+  return `${a.images.length} 图`
+}
+
+function emptyHint(k: AssetKind): string {
+  if (k === 'character') {
+    return '还没有角色 —— 新建一个,从三视图开始立人设。'
+  }
+  if (k === 'scene') {
+    return '还没有场景 —— 新建一个,把主场景立起来跨镜复用。'
+  }
+  return '还没有道具 —— 新建一个,把关键道具立起来跨镜复用。'
+}
+
+function openCreateAsset(k: AssetKind): void {
+  assetName.value = ''
+  assetAlias.value = ''
+  assetDescription.value = ''
+  assetDetail.value = ''
+  actionError.value = ''
+  createKind.value = k
+}
+
+async function submitCreateAsset(): Promise<void> {
+  const k = createKind.value
+  const name = assetName.value.trim()
+  if (!k || !name || creatingAsset.value) {
     return
   }
-  creatingCharacter.value = true
+  creatingAsset.value = true
   actionError.value = ''
+  const body = {
+    name,
+    alias: assetAlias.value.trim(),
+    description: assetDescription.value.trim(),
+    detail: assetDetail.value,
+  }
   try {
-    const created = await client.createCharacter(ipId.value, {
-      name,
-      alias: characterAlias.value.trim(),
-      description: characterDescription.value.trim(),
-      detail: characterDetail.value,
-    })
-    createCharacterOpen.value = false
-    await loadCharacters()
-    drawerCharacterId.value = created.id
+    let createdId = 0
+    if (k === 'character') {
+      createdId = (await client.createCharacter(ipId.value, body)).id
+    } else if (k === 'scene') {
+      createdId = (await client.createScene(ipId.value, body)).id
+    } else {
+      createdId = (await client.createProp(ipId.value, body)).id
+    }
+    createKind.value = null
+    await loadLibrary(k)
+    drawer.value = { kind: k, id: createdId }
   } catch (e) {
-    actionError.value = e instanceof ApiError ? e.message : '创建角色失败,请稍后再试'
+    actionError.value = e instanceof ApiError ? e.message : `创建${kindLabel(k)}失败,请稍后再试`
   } finally {
-    creatingCharacter.value = false
+    creatingAsset.value = false
   }
 }
 
-/** 角色封面缩略的两阶段回落(缩略失败回原图,原图再失败落占位)。 */
-function onCharacterCoverError(c: CharacterRecord): void {
-  thumbs.onThumbError(characterImageContentURL(c.cover_asset_id))
+/** 卡片封面缩略的两阶段回落(缩略失败回原图,原图再失败落占位)。 */
+function coverContent(assetId: number): string {
+  return assetContentURL(assetId)
 }
 
-function characterCoverThumb(c: CharacterRecord): string {
-  return characterImageThumbURL(c.cover_asset_id)
+function coverThumb(assetId: number): string {
+  return `/api/assets/${assetId}/thumb`
 }
 
-function characterCoverContent(c: CharacterRecord): string {
-  return characterImageContentURL(c.cover_asset_id)
+function onCoverError(assetId: number): void {
+  thumbs.onThumbError(assetContentURL(assetId))
 }
 
 async function loadOtherIPs(): Promise<void> {
@@ -389,14 +455,25 @@ async function loadOtherIPs(): Promise<void> {
   }
 }
 
-/** 抽屉内的任何变更(CharacterDrawer 自取后回抛的最新角色)同步进卡墙:
- * 排序键 updated_at 在服务端随动作推进,直接按 id 替换。 */
-function onDrawerChanged(fresh: CharacterRecord): void {
-  const index = characters.value.findIndex((c) => c.id === fresh.id)
-  if (index >= 0) {
-    characters.value.splice(index, 1, fresh)
+/** 抽屉内的任何变更(AssetDrawer 自取后回抛的最新记录)同步进对应 tab 的
+ * 卡墙:排序键 updated_at 在服务端随动作推进,直接按 id 替换。emit 契约
+ * 保证 kind 与记录同族,这里按 kind 收窄后各走各的列表。 */
+function onDrawerChanged(kind: AssetKind, fresh: CharacterRecord | SceneRecord | PropRecord): void {
+  if (kind === 'character') {
+    upsert(characters.value, fresh as CharacterRecord)
+  } else if (kind === 'scene') {
+    upsert(scenes.value, fresh as SceneRecord)
   } else {
-    characters.value.unshift(fresh)
+    upsert(propList.value, fresh as PropRecord)
+  }
+}
+
+function upsert<T extends { id: number }>(list: T[], row: T): void {
+  const index = list.findIndex((x) => x.id === row.id)
+  if (index >= 0) {
+    list.splice(index, 1, row)
+  } else {
+    list.unshift(row)
   }
 }
 
@@ -633,80 +710,97 @@ function back(): void {
         </ul>
       </section>
 
-      <!-- 角色区(51 号票):IP 级角色实体,插在画布区与素材区之间。
-           卡墙 = 首图投影 cover_asset_id + 名称/别名/变体与图计数。 -->
+      <!-- 资产库区(51 号票角色区 + 65 号票三 tab):角色/场景/道具三类
+           IP 级实体,插在画布区与素材区之间。每 tab 一面卡墙(封面投影
+           cover_asset_id + 名称/别名/计数),切 tab 惰性拉目录。 -->
       <section class="character-section">
         <div class="section-head">
-          <h2>角色</h2>
-          <span class="section-count">{{ characters.length }}</span>
+          <div
+            class="library-tabs"
+            role="tablist"
+            aria-label="资产库类别"
+          >
+            <button
+              v-for="k in (['character', 'scene', 'prop'] as const)"
+              :key="k"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === k"
+              :class="{ active: activeTab === k }"
+              @click="setTab(k)"
+            >
+              {{ kindLabel(k) }}
+            </button>
+          </div>
+          <span class="section-count">{{ activeList.length }}</span>
           <button
             type="button"
             class="ghost"
-            @click="openCreateCharacter"
+            @click="openCreateAsset(activeTab)"
           >
-            + 新建角色
+            + 新建{{ kindLabel(activeTab) }}
           </button>
         </div>
         <p
-          v-if="charactersError"
+          v-if="libraryError"
           class="feedback error"
           role="alert"
         >
-          {{ charactersError }}
+          {{ libraryError }}
           <button
             class="ghost"
             type="button"
-            @click="loadCharacters"
+            @click="loadLibrary(activeTab)"
           >
             重试
           </button>
         </p>
         <p
-          v-else-if="charactersLoading"
+          v-else-if="libraryLoading"
           class="feedback"
         >
-          加载角色…
+          加载{{ kindLabel(activeTab) }}…
         </p>
         <p
-          v-else-if="characters.length === 0"
+          v-else-if="activeList.length === 0"
           class="feedback"
         >
-          还没有角色 —— 新建一个,从三视图开始立人设。
+          {{ emptyHint(activeTab) }}
         </p>
         <ul
           v-else
           class="character-wall"
         >
           <li
-            v-for="c in characters"
-            :key="c.id"
+            v-for="a in activeList"
+            :key="a.id"
           >
             <button
               type="button"
               class="character-card"
-              @click="drawerCharacterId = c.id"
+              @click="drawer = { kind: activeTab, id: a.id }"
             >
               <span class="character-cover">
                 <img
-                  v-if="c.cover_asset_id > 0"
-                  :src="thumbs.displayURL(characterCoverContent(c), characterCoverThumb(c))"
-                  alt="角色首图"
+                  v-if="a.cover_asset_id > 0"
+                  :src="thumbs.displayURL(coverContent(a.cover_asset_id), coverThumb(a.cover_asset_id))"
+                  :alt="`${kindLabel(activeTab)}首图`"
                   loading="lazy"
-                  @error="onCharacterCoverError(c)"
+                  @error="onCoverError(a.cover_asset_id)"
                 >
                 <span
                   v-else
                   class="cover-fallback small"
-                >{{ c.name.slice(0, 1) }}</span>
+                >{{ a.name.slice(0, 1) }}</span>
               </span>
               <span class="character-name">
-                {{ c.name }}
+                {{ a.name }}
                 <em
-                  v-if="c.alias"
+                  v-if="a.alias"
                   class="character-alias"
-                >{{ c.alias }}</em>
+                >{{ a.alias }}</em>
               </span>
-              <span class="character-meta">{{ c.variants.length }} 造型 · {{ imageCount(c) }} 图</span>
+              <span class="character-meta">{{ assetMeta(a) }}</span>
             </button>
           </li>
         </ul>
@@ -891,33 +985,34 @@ function back(): void {
         />
       </div>
     </div>
-    <!-- 新建角色对话框(51 号票):名称必填 + 别名/简介/详细设定;
-         建角色自动带「默认」变体,成功后直接打开详情抽屉。 -->
+    <!-- 新建资产对话框(51 号票角色 + 65 号票三类同构):名称必填 +
+         别名/简介/详细设定;成功后直接打开详情抽屉。角色建后自动带
+         「默认」变体,场景/道具无变体。 -->
     <div
-      v-if="createCharacterOpen"
+      v-if="createKind !== null"
       class="dialog-mask"
-      @click.self="createCharacterOpen = false"
+      @click.self="createKind = null"
     >
       <div class="dialog">
-        <h3>新建角色</h3>
+        <h3>新建{{ kindLabel(createKind) }}</h3>
         <form
           class="create-form"
-          @submit.prevent="submitCreateCharacter"
+          @submit.prevent="submitCreateAsset"
         >
           <label class="field">
             名称
             <input
-              v-model="characterName"
+              v-model="assetName"
               type="text"
               maxlength="255"
-              placeholder="角色名(同 IP 内可重名)"
+              :placeholder="`${kindLabel(createKind)}名(同 IP 内可重名)`"
               autofocus
             >
           </label>
           <label class="field">
             别名
             <input
-              v-model="characterAlias"
+              v-model="assetAlias"
               type="text"
               maxlength="255"
               placeholder="可选"
@@ -926,7 +1021,7 @@ function back(): void {
           <label class="field">
             简介(一句话)
             <input
-              v-model="characterDescription"
+              v-model="assetDescription"
               type="text"
               maxlength="1024"
               placeholder="可选"
@@ -935,10 +1030,14 @@ function back(): void {
           <label class="field">
             详细设定(纯文本)
             <textarea
-              v-model="characterDetail"
+              v-model="assetDetail"
               rows="4"
               maxlength="20000"
-              placeholder="可选:性格、背景、发型发色…"
+              :placeholder="createKind === 'character'
+                ? '可选:性格、背景、发型发色…'
+                : createKind === 'scene'
+                  ? '可选:布局、光照、年代质感…'
+                  : '可选:材质、来源、使用方式…'"
             />
           </label>
           <p
@@ -952,14 +1051,14 @@ function back(): void {
             <button
               type="submit"
               class="primary"
-              :disabled="creatingCharacter || !characterName.trim()"
+              :disabled="creatingAsset || !assetName.trim()"
             >
-              {{ creatingCharacter ? '创建中…' : '创建' }}
+              {{ creatingAsset ? '创建中…' : '创建' }}
             </button>
             <button
               type="button"
               class="ghost"
-              @click="createCharacterOpen = false"
+              @click="createKind = null"
             >
               取消
             </button>
@@ -968,15 +1067,17 @@ function back(): void {
       </div>
     </div>
 
-    <!-- 角色详情抽屉(51 号票):字段编辑 + 变体条 + 设定图画廊;按角色
-         id 换 key 重挂,组件自管数据,changed 事件同步卡墙。 -->
-    <CharacterDrawer
-      v-if="drawerCharacterId !== null"
-      :key="drawerCharacterId"
-      :character-id="drawerCharacterId"
+    <!-- 资产库抽屉(51 号票角色详情抽屉的 65 号票泛化):字段编辑 + 音色
+         与变体条(仅角色)+ 设定图画廊;按(类别, id)换 key 重挂,组件
+         自管数据,changed 事件同步卡墙。 -->
+    <AssetDrawer
+      v-if="drawer !== null"
+      :key="`${drawer.kind}-${drawer.id}`"
+      :kind="drawer.kind"
+      :asset-id="drawer.id"
       :ip-id="ipId"
       @changed="onDrawerChanged"
-      @close="drawerCharacterId = null"
+      @close="drawer = null"
     />
   </main>
 </template>
@@ -1243,7 +1344,7 @@ function back(): void {
   margin-top: 26px;
 }
 
-/* 角色区(51 号票):卡墙插在画布区与素材区之间。 */
+/* 资产库区(51 号票角色区 + 65 号票三 tab):卡墙插在画布区与素材区之间。 */
 .character-section {
   margin-top: 26px;
 }
@@ -1253,6 +1354,32 @@ function back(): void {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+/* 资产库三 tab(65 号票):类别切换,选中态与 AssetPicker 视图切换同款。 */
+.library-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.library-tabs button {
+  border: 1px solid var(--line-control);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
+  padding: 5px 14px;
+  font-size: var(--fs-body);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.library-tabs button.active {
+  background: rgba(var(--accent-rgb), 0.25);
+  color: inherit;
+  border-color: rgba(var(--accent-rgb), 0.6);
 }
 
 .section-head h2 {

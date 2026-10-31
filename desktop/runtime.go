@@ -28,6 +28,8 @@ import (
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/prop"
+	"github.com/gachal/InfiniteChance/internal/scene"
 	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/sqlitedb"
 	"github.com/gachal/InfiniteChance/internal/usage"
@@ -102,6 +104,10 @@ func NewDesktop() (*Desktop, error) {
 	ipStore := canvas.NewSQLiteIPStore(db)
 	// 角色库(51 号票):三表空起步无迁移,表自含无同序依赖。
 	characters := character.NewSQLiteStore(db)
+	// 场景库/道具库(65 号票):资产库三类实体的第二、三类,各自两表空
+	// 起步无迁移,表自含无同序依赖,随 characters 之后。
+	scenes := scene.NewSQLiteStore(db)
+	props := prop.NewSQLiteStore(db)
 	// 音色台账(57 号票):空起步单表;characters 的 voice_id 加列迁移
 	// 在各自 EnsureSchema 里幂等跑。
 	voices := voice.NewSQLiteStore(db)
@@ -109,7 +115,7 @@ func NewDesktop() (*Desktop, error) {
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, musicTasks, templates, settingsStore, canvases, assets, ipStore, characters, voices, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, musicTasks, templates, settingsStore, canvases, assets, ipStore, characters, scenes, props, voices, tasks,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -201,6 +207,8 @@ func NewDesktop() (*Desktop, error) {
 			Canvases:   canvases,
 			IPs:        ipStore,
 			Characters: characters,
+			Scenes:     scenes,
+			Props:      props,
 			Voices:     voices,
 			Assets:     assets,
 			Prices:     prices,

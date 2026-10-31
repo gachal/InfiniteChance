@@ -17,7 +17,9 @@ import (
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
 	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/prop"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/scene"
 	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/voice"
 	"github.com/gachal/InfiniteChance/internal/wiring"
@@ -52,6 +54,16 @@ func main() {
 		characters := character.NewMySQLStore(d.DB)
 		if err := characters.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure character schema: %v", err)
+		}
+		// 场景库/道具库(65 号票):资产库三类实体的第二、三类,各自两表
+		// 空起步无迁移,表自含无同序依赖,随 characters 之后。
+		scenes := scene.NewMySQLStore(d.DB)
+		if err := scenes.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure scene schema: %v", err)
+		}
+		props := prop.NewMySQLStore(d.DB)
+		if err := props.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure prop schema: %v", err)
 		}
 		// 音色台账(57 号票):空起步单表,随 characters 之后;characters
 		// 的 voice_id 加列迁移也在这里一并跑(两表同库)。
@@ -103,6 +115,8 @@ func main() {
 			Canvases:   canvases,
 			IPs:        ips,
 			Characters: characters,
+			Scenes:     scenes,
+			Props:      props,
 			Voices:     voices,
 			Assets:     assets,
 			Prices:     prices,
