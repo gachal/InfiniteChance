@@ -3,13 +3,16 @@ import { describe, expect, it } from 'vitest'
 import type { StoryboardCut } from './graph'
 import {
   CAMERA_MOVE_OPTIONS,
+  SHOT_SIZE_OPTIONS,
   appendCut,
+  buildCutVideoPrompt,
   clampSecondsInput,
   defaultStoryboard,
   emptyStoryboardCut,
   formatDuration,
   moveCut,
   removeCut,
+  setShotSize,
   toggleCameraMove,
   totalSeconds,
 } from './storyboard'
@@ -83,6 +86,61 @@ describe('toggleCameraMove', () => {
     const next = toggleCameraMove(seed, '推')
     expect(next.camera_moves).toEqual(['手持'])
     expect(seed.camera_moves).toEqual(['推', '手持'])
+  })
+})
+
+describe('SHOT_SIZE_OPTIONS(67 号票)', () => {
+  it('holds the whitelist of five shot sizes', () => {
+    // 景别白名单前端持有(67 号票):远/全/中/近/特写,后端存串不校验。
+    expect([...SHOT_SIZE_OPTIONS]).toEqual(['远', '全', '中', '近', '特写'])
+  })
+})
+
+describe('setShotSize(67 号票)', () => {
+  it('sets the shot on an empty cut (single select)', () => {
+    // 景别单选:一个镜头一个景别,与运镜多选区分(67 号票定案 2)。
+    const next = setShotSize(emptyStoryboardCut(), '中')
+    expect(next.shot).toBe('中')
+  })
+
+  it('replaces the previous shot when picking another size', () => {
+    const seed = cut({ shot: '远' })
+    const next = setShotSize(seed, '特写')
+    expect(next.shot).toBe('特写')
+  })
+
+  it('clears the shot when clicking the selected size again', () => {
+    const seed = cut({ shot: '近' })
+    const next = setShotSize(seed, '近')
+    expect(next.shot).toBeUndefined()
+  })
+
+  it('does not mutate the input cut', () => {
+    const seed = cut({ shot: '全' })
+    setShotSize(seed, '远')
+    expect(seed.shot).toBe('全')
+  })
+})
+
+describe('buildCutVideoPrompt(67 号票)', () => {
+  it('assembles shot, camera moves and lines into labeled sections', () => {
+    // 画面/台词/运镜/景别 → 视频提示词预填(票面定案 4:具体模板实现定);
+    // 有值的段落按 景别 → 运镜 → 台词/音效 顺序拼装。
+    const full = buildCutVideoPrompt(
+      cut({ shot: '中', camera_moves: ['推', '摇'], lines: '「你来了。」\n(雨声)' }),
+    )
+    expect(full).toBe('景别:中\n运镜:推、摇\n台词/音效:「你来了。」\n(雨声)')
+  })
+
+  it('skips empty sections', () => {
+    expect(buildCutVideoPrompt(cut({ camera_moves: ['固定'] }))).toBe('运镜:固定')
+    expect(buildCutVideoPrompt(cut({ shot: '特写' }))).toBe('景别:特写')
+    expect(buildCutVideoPrompt(cut({ lines: '  雨夜巷口  ' }))).toBe('台词/音效:雨夜巷口')
+  })
+
+  it('returns an empty string when the cut has no textual material', () => {
+    // 全空的 cut 拼出空串:对话框提示词留白,占位文案引导(纯文生视频)。
+    expect(buildCutVideoPrompt(emptyStoryboardCut())).toBe('')
   })
 })
 

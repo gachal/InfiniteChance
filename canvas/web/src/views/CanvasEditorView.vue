@@ -79,7 +79,7 @@ import {
   type VideoRefRole,
 } from '../composer'
 import { characterImageContentURL } from '../characters'
-import { frameContentURL } from '../storyboard'
+import { buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { useConnection } from '../composables/useConnection'
@@ -2053,6 +2053,58 @@ function onStoryboardLayerUpload(cutIndex: number, file: File): void {
   }
 }
 
+/** cut→视频直通(67 号票,53 号票遗留收编):落空视频节点 + 絵コンテ→
+ * 视频来源边(dropFrameNode 同款骨架:沿出边数级联偏移防叠卡),随后
+ * 预填视频草稿并关闭编辑层让位对话框 —— cut 画面(非空)自动进首帧、
+ * 提示词按 景别/运镜/台词 拼装(storyboard.buildCutVideoPrompt)、时长
+ * 预填 cut 秒数(未定为 0/空 = 留「自动」)。人工确认后才发送(花钱操作
+ * 人工确认,总案 Q5):这里只落节点与预填,不发任务;无画面 cut 也可发起
+ * (纯文生视频,预填不动会话已上传的参考条,对话框里可见可删)。 */
+function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
+  const node = findNode(nodeId)
+  const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
+  if (!node || !cut) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `video-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'video',
+      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
+      data: { url: '', note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  // 预填 = 写视频草稿(composer 是「选中驱动 + 草稿 refs」模型,新节点无
+  // 产物、选中 chip 不产生):有画面把 cut 画面物化进参考条作首帧 —— 整条
+  // 替换,本动作的预填语义就是「这个 cut 的画面即首帧」,不带其他会话
+  // 残留;无画面清空参考条,纯文生视频。选中切换的 watch 会把拆下标记与
+  // 模式(锁视频)一并复位,这里只写草稿。
+  videoPrompt.value = buildCutVideoPrompt(cut)
+  videoDuration.value = cut.seconds ? String(cut.seconds) : ''
+  uploadedVideoRefs.value =
+    cut.asset_id > 0
+      ? [
+          {
+            url: frameContentURL(cut.asset_id),
+            kind: 'image' as const,
+            role: 'first_frame' as const,
+            asset_id: cut.asset_id,
+          },
+        ]
+      : []
+  // 收编辑层:生成对话框贴新视频节点正下方,全屏编辑层开着会挡住它。
+  storyboardEditorNodeId.value = ''
+}
+
 // ---- ネーム(54 号票)----
 
 // 54 号票:全屏ネーム编辑层绑定的节点('' = 关闭)。与絵コンテ编辑层
@@ -3271,16 +3323,19 @@ function backToList(): void {
       />
       <!-- 53 号票:絵コンテ全屏编辑层(Teleport 到 body),cut/板名整包
            走同一条 scene-change 落盘链;画面三入口(素材库/上传/落图)在
-           层内,素材挑选面板挂层右缘。 -->
+           层内,素材挑选面板挂层右缘;67 号票增出场角色标注(本 IP 角色
+           目录)与「生成视频」直通(落节点+来源边+对话框预填)。 -->
       <StoryboardEditorLayer
         v-if="storyboardEditorNode"
         :key="`storyboard-${storyboardEditorNode.id}`"
         :data="storyboardEditorNode.data"
         :ip-id="canvasIPID || undefined"
         :uploading="storyboardUploading"
+        :characters="ipCharacters"
         @scene-change="onStoryboardSceneChange(storyboardEditorNode.id, $event)"
         @upload="onStoryboardLayerUpload"
         @drop="onStoryboardDrop(storyboardEditorNode.id, $event)"
+        @generate-video="onStoryboardGenerateVideo(storyboardEditorNode.id, $event)"
         @close="storyboardEditorNodeId = ''"
       />
       <!-- 54 号票:ネーム全屏编辑层(Teleport 到 body),页/格/板名整包

@@ -14,6 +14,8 @@ import type { CanvasNodeType } from './graph'
  * - image/video → image/video  迭代来源(21 号票)
  * - previz → image             渲染帧落点(39 号票,落画布成图片节点)
  * - storyboard → image         分镜画面落点(53 号票,落图节点成图片节点)
+ * - storyboard → video         cut→视频直通来源边(67 号票:落空视频节点
+ *                              + 来源边,对话框预填后人工确认发送)
  * - name → image               格画面落点(54 号票,storyboard 同族来源语义)
  * - voice → audio              合成来源(57 号票:台词合成的产出边,絵コンテ→图片同族)
  * analysis 不作为任何连线的源;previz/storyboard/name 不作为任何连线的目标
@@ -34,7 +36,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   analysis: [],
   previz: ['image'],
   character: [],
-  storyboard: ['image'],
+  storyboard: ['image', 'video'],
   name: ['image'],
   level: [],
   voice: ['audio'],

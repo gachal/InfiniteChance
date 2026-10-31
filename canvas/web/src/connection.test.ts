@@ -68,12 +68,13 @@ describe('canConnect', () => {
     }
   })
 
-  it('lets storyboard feed image nodes only, and never receive an edge (53 号票)', () => {
+  it('lets storyboard feed image and video nodes, and never receive an edge (53/67 号票)', () => {
     // 絵コンテ落图 = 来源语义(预演台 → 图片同族):cut 画面落成图片节点
-    // 并连线;作任何连线的目标都非法 —— 画面槽的回填走素材引用,不走边。
-    expect(EDGE_MATRIX.storyboard).toEqual(['image'])
+    // 并连线;67 号票增补 cut→视频直通来源边(storyboard → video)。作任何
+    // 连线的目标都非法 —— 画面槽的回填走素材引用,不走边。
+    expect(EDGE_MATRIX.storyboard).toEqual(['image', 'video'])
     expect(canConnect('storyboard', 'image')).toBe(true)
-    expect(canConnect('storyboard', 'video')).toBe(false)
+    expect(canConnect('storyboard', 'video')).toBe(true)
     expect(canConnect('storyboard', 'analysis')).toBe(false)
     expect(canConnect('storyboard', 'agent')).toBe(false)
     expect(canConnect('storyboard', 'storyboard')).toBe(false)
