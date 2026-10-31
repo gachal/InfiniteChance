@@ -102,13 +102,19 @@ export interface CharacterNodeData {
 /** 絵コンテ单个 cut(53 号票):画面持素材引用(0 = 空画面;内容寻址
  * 路径由展示层按 id 拼装,素材被删落「素材不可用」占位);时长秒可空
  * (「还没定」,汇总时跳过);lines 是台词/音效多行文本;camera_moves
- * 是运镜白名单多选(前端持有,后端存串不校验);note 一行备注。序号
- * 不持久 —— 显示时生成 1..N,删插自动重排。 */
+ * 是运镜白名单多选(前端持有,后端存串不校验);note 一行备注。67 号票
+ * 扩:shot 是景别单选白名单串(远/全/中/近/特写,存串不校验,与运镜
+ * 多选区分 —— 一个镜头一个景别);character_ids 是出场角色引用(本 IP
+ * 角色库角色 id 按选择序,只存引用不存快照,角色改名/换封面随目录刷新
+ * 即变 —— 角色引用节点同哲学;标注字段,生成注入二期)。序号不持久
+ * —— 显示时生成 1..N,删插自动重排。 */
 export interface StoryboardCut {
   asset_id: number
   seconds?: number
   lines: string
   camera_moves: string[]
+  shot?: string
+  character_ids?: number[]
   note?: string
 }
 

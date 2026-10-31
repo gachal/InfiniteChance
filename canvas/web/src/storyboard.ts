@@ -56,6 +56,41 @@ export function toggleCameraMove(cut: StoryboardCut, move: string): StoryboardCu
   }
 }
 
+/** 景别白名单(67 号票):前端持有,后端存串不校验(运镜同哲学);
+ * 单选 —— 一个镜头一个景别,与运镜多选区分(票面定案 2)。 */
+export const SHOT_SIZE_OPTIONS = ['远', '全', '中', '近', '特写'] as const
+
+export type ShotSize = (typeof SHOT_SIZE_OPTIONS)[number]
+
+/** 景别 chip 单选切换(67 号票):点已选 = 清除(可回到未定),点别档 =
+ * 替换;换新对象不改入参(与 toggleCameraMove 同款纯函数纪律)。 */
+export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
+  if (cut.shot === shot) {
+    const { shot: _dropped, ...rest } = cut
+    return rest
+  }
+  return { ...cut, shot }
+}
+
+/** cut → 视频提示词拼装(67 号票 cut→视频直通):景别/运镜/台词音效
+ * 按序拼成带标签的小节,空段落跳过,全空返回空串(对话框提示词留白,
+ * 占位文案引导)。纯函数便于单测;出场角色不进提示词(「出场角色→生成
+ * 注入」二期,67 号票 Out of Scope)。 */
+export function buildCutVideoPrompt(cut: StoryboardCut): string {
+  const sections: string[] = []
+  if (cut.shot) {
+    sections.push(`景别:${cut.shot}`)
+  }
+  if (cut.camera_moves.length > 0) {
+    sections.push(`运镜:${cut.camera_moves.join('、')}`)
+  }
+  const lines = cut.lines.trim()
+  if (lines !== '') {
+    sections.push(`台词/音效:${lines}`)
+  }
+  return sections.join('\n')
+}
+
 /** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。 */
 const SECONDS_MAX = 3600
 
