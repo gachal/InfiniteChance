@@ -197,3 +197,15 @@ describe('voice / audio 节点类型(57 号票)', () => {
     expect(initialData('audio')).toEqual({ asset_id: 0 })
   })
 })
+
+describe('script 节点类型(64 号票)', () => {
+  it('registers the twelfth type with label and initial data', () => {
+    // 第十二种节点类型「规划」组:一个类型三种用途(分集大纲/每集剧本/
+    // 原文),不另设「大纲节点」「原文节点」。
+    expect(isCanvasNodeType('script')).toBe(true)
+    expect(normalizeNodeType('script')).toBe('script')
+    expect(NODE_TYPE_LABEL.script).toBe('剧本')
+    // 新节点是空文本载体:title 空(展示层回落)、text 空(编辑层全文编辑)。
+    expect(initialData('script')).toEqual({ title: '', text: '' })
+  })
+})

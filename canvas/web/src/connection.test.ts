@@ -127,10 +127,28 @@ describe('voice → audio(57 号票)', () => {
     expect(canConnect('voice', 'character')).toBe(false)
   })
 
-  it('keeps the matrix total over the eleven node types', () => {
-    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):11 种节点各有条目。
+  it('keeps the matrix total over the twelve node types', () => {
+    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):12 种节点各有条目
+    // (64 号票起 script 入册)。
     expect(Object.keys(EDGE_MATRIX).sort()).toEqual(
-      ['agent', 'analysis', 'audio', 'character', 'image', 'level', 'name', 'previz', 'storyboard', 'video', 'voice'].sort(),
+      ['agent', 'analysis', 'audio', 'character', 'image', 'level', 'name', 'previz', 'script', 'storyboard', 'video', 'voice'].sort(),
     )
+  })
+})
+
+describe('script 节点连线(64 号票)', () => {
+  it('keeps the script node out of the edge matrix entirely', () => {
+    // 剧本 = 文本载体卡:不作任何连线的源与目标(照角色卡/关卡卡先例),
+    // 内容经 Agent 工具读写不靠边(66 号票 read_source 分段消费);组件
+    // 也不渲染把手。Record 全键类型缺键即编译失败,此处钉运行时形状。
+    expect(EDGE_MATRIX.script).toEqual([])
+    expect(canConnect('script', 'image')).toBe(false)
+    expect(canConnect('script', 'agent')).toBe(false)
+    expect(canConnect('script', 'script')).toBe(false)
+    expect(canConnect('agent', 'script')).toBe(false)
+    expect(canConnect('image', 'script')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('script')
+    }
   })
 })
