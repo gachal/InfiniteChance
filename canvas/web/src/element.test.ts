@@ -9,13 +9,22 @@ import {
   type VideoComposerRef,
 } from './composer'
 import {
+  buildElementLine,
+  countCharacterElements,
+  CHARACTER_ELEMENT_HINT_LIMIT,
   elementEntityKey,
+  ELEMENT_LINE_PREFIX,
+  ELEMENT_REF_INDEX_LABEL,
+  ELEMENT_TYPE_LABELS,
+  insertElementLine,
   mergeImageElementPick,
   mergeVideoElementPick,
   resolveElementNames,
   type ElementCatalog,
   type ElementPick,
 } from './element'
+import { STYLE_SEGMENT_MARK } from './ipStyle'
+import { composerRefMentions, videoRefMentions } from './refmention'
 
 // ---- 轻量目录夹具:type-only import,运行时不依赖 api 包(composer.test.ts
 // 同款纪律);字段满足完整 Record 形状,经得起 vue-tsc。 ----
@@ -71,14 +80,15 @@ const prop = (id: number, name: string): PropRecord => ({
   updated_at: '',
 })
 
+// 目录只含「还在库里」的实体;id 12 / 21 / 31 特意不在目录里,充当
+// 「实体已删」的解析输入(退化无名断言用)。
 const catalog: ElementCatalog = {
   characters: [
     character(10, '小蓝', [variant(100, '默认', 10), variant(101, '战斗服', 10)]),
     character(11, '阿红', [variant(110, '默认', 11)]),
-    character(12, '已删角色', [variant(120, '默认', 12)]),
   ],
-  scenes: [scene(20, '天台'), scene(21, '已删场景')],
-  props: [prop(30, '长剑'), prop(31, '已删道具')],
+  scenes: [scene(20, '天台')],
+  props: [prop(30, '长剑')],
 }
 
 const charEl = (entityId: number, variantId?: number) => ({ type: 'character' as const, entityId, ...(variantId !== undefined ? { variantId } : {}) })
@@ -277,5 +287,140 @@ describe('mergeVideoElementPick(视频模式)', () => {
     const list: VideoComposerRef[] = [{ url: '/api/assets/1/content', kind: 'image', role: 'reference_image' }]
     expect(mergeVideoElementPick(list, pick('/api/assets/1/content', charEl(10, 100))).action).toBe('rejected')
     expect(mergeVideoElementPick([], pick('data:image/png;base64,AA', charEl(10, 100))).action).toBe('rejected')
+  })
+})
+
+// ---- 绑定行构建(71 号票 B5)----
+
+describe('buildElementLine', () => {
+  it('图片模式:编号按参考条全部条目序(与 composerRefMentions 同口径),无名图不进', () => {
+    const refs: ComposerRef[] = [
+      { url: 'u1', element: charEl(10, 100) },
+      { url: 'u2' },
+      { url: 'u3', element: charEl(11, 110) },
+      { url: 'u4', element: sceneEl(20) },
+    ]
+    const names = resolveElementNames(refs, catalog)
+    expect(names).toEqual(['小蓝', null, '阿红', '天台'])
+    expect(buildElementLine(refs, names, 'image')).toBe(
+      '出场元素:小蓝@图1(角色)、阿红@图3(角色)、天台@图4(场景)',
+    )
+  })
+
+  it('视频模式:只数 reference_image(与 videoRefMentions 同口径),首帧/尾帧/视频不占号', () => {
+    const refs: VideoComposerRef[] = [
+      { url: 'f', kind: 'image', role: 'first_frame' },
+      { url: 'r1', kind: 'image', role: 'reference_image', element: charEl(10, 100) },
+      { url: 'l', kind: 'image', role: 'last_frame' },
+      { url: 'clip', kind: 'video', role: 'reference_video' },
+      { url: 'r2', kind: 'image', role: 'reference_image', element: sceneEl(20) },
+      { url: 'r3', kind: 'image', role: 'reference_image', element: propEl(30) },
+    ]
+    const names = resolveElementNames(refs, catalog)
+    expect(buildElementLine(refs, names, 'video')).toBe(
+      '出场元素:小蓝@图1(角色)、天台@图2(场景)、长剑@图3(道具)',
+    )
+  })
+
+  it('实体已删退化的 chip 不进绑定行,但仍占编号位', () => {
+    const refs: ComposerRef[] = [
+      { url: 'u1', element: charEl(12, 120) },
+      { url: 'u2', element: charEl(10, 100) },
+      { url: 'u3', element: sceneEl(21) },
+    ]
+    const names = resolveElementNames(refs, catalog)
+    expect(names).toEqual([null, '小蓝', null])
+    expect(buildElementLine(refs, names, 'image')).toBe('出场元素:小蓝@图2(角色)')
+  })
+
+  it('无元素 / 全部退化无名 = 空串(行为逐字节不变)', () => {
+    expect(buildElementLine([{ url: 'u1' }, { url: 'u2' }], [null, null], 'image')).toBe('')
+    expect(buildElementLine([], [], 'image')).toBe('')
+    const degraded: VideoComposerRef[] = [
+      { url: 'u1', kind: 'image', role: 'reference_image', element: charEl(12, 120) },
+    ]
+    expect(buildElementLine(degraded, resolveElementNames(degraded, catalog), 'video')).toBe('')
+  })
+
+  it('多变体补名直接取调用方解析结果,不再二次加工(resolve+build 串联)', () => {
+    const refs: ComposerRef[] = [
+      { url: 'u1' },
+      { url: 'u2', element: charEl(10, 101) },
+      { url: 'u3', element: charEl(10, 100) },
+    ]
+    const names = resolveElementNames(refs, catalog)
+    expect(names).toEqual([null, '小蓝·战斗服', '小蓝·默认'])
+    expect(buildElementLine(refs, names, 'image')).toBe(
+      '出场元素:小蓝·战斗服@图2(角色)、小蓝·默认@图3(角色)',
+    )
+  })
+
+  it('编号与 @浮层 token 同一字面(漂移钉:refmention 或本常量改任一侧测试即破)', () => {
+    expect(ELEMENT_REF_INDEX_LABEL).toBe('图')
+    const imgStrip: ComposerRef[] = [{ url: 'a' }, { url: 'b' }]
+    expect(composerRefMentions(imgStrip).map((c) => c.token)).toEqual(['@图1', '@图2'])
+    const vstrip: VideoComposerRef[] = [
+      { url: 'f', kind: 'image', role: 'first_frame' },
+      { url: 'r1', kind: 'image', role: 'reference_image' },
+      { url: 'r2', kind: 'image', role: 'reference_image' },
+    ]
+    expect(videoRefMentions(vstrip).map((c) => c.token)).toEqual(['@图1', '@图2'])
+  })
+
+  it('行前缀与类型标签字面钉住(不用【】)', () => {
+    expect(ELEMENT_LINE_PREFIX).toBe('出场元素:')
+    expect(ELEMENT_TYPE_LABELS).toEqual({ character: '角色', scene: '场景', prop: '道具' })
+    expect(ELEMENT_LINE_PREFIX.includes('【')).toBe(false)
+    expect(Object.values(ELEMENT_TYPE_LABELS).some((l) => l.includes('【'))).toBe(false)
+  })
+})
+
+// ---- 发送拼装插入(71 号票 B5)----
+
+describe('insertElementLine', () => {
+  const line = '出场元素:小蓝@图1(角色)'
+
+  it('prompt 以风格段开头 → 插在风格段那一行之后', () => {
+    const styled = `${STYLE_SEGMENT_MARK}赛博霓虹,高对比\n一只猫在跳舞`
+    expect(insertElementLine(styled, line)).toBe(
+      `${STYLE_SEGMENT_MARK}赛博霓虹,高对比\n${line}\n一只猫在跳舞`,
+    )
+  })
+
+  it('无风格段 → 置于最前', () => {
+    expect(insertElementLine('一只猫在跳舞', line)).toBe(`${line}\n一只猫在跳舞`)
+  })
+
+  it('已含同一绑定行 → 原样返回不叠加(69 号票 prependStyleSegment 同款纪律)', () => {
+    const already = `${line}\n一只猫在跳舞`
+    expect(insertElementLine(already, line)).toBe(already)
+    const styledAlready = `${STYLE_SEGMENT_MARK}风\n${line}\n一只猫在跳舞`
+    expect(insertElementLine(styledAlready, line)).toBe(styledAlready)
+  })
+
+  it('绑定行空串 → 原样返回(无元素零改动)', () => {
+    expect(insertElementLine('一只猫在跳舞', '')).toBe('一只猫在跳舞')
+  })
+
+  it('prompt 空 → 只回绑定行;prompt 只有风格段一行 → 追加其后', () => {
+    expect(insertElementLine('', line)).toBe(line)
+    expect(insertElementLine('   ', line)).toBe(line)
+    expect(insertElementLine(STYLE_SEGMENT_MARK + '风', line)).toBe(`${STYLE_SEGMENT_MARK}风\n${line}`)
+  })
+})
+
+// ---- 超 4 角色检测(71 号票 B7)----
+
+describe('countCharacterElements', () => {
+  it('只数角色元素(变体各算一个),场景/道具/无名图不算;阈值常量钉 4', () => {
+    expect(CHARACTER_ELEMENT_HINT_LIMIT).toBe(4)
+    const refs: (ComposerRef | VideoComposerRef)[] = [
+      { url: 'a', element: charEl(10, 100) },
+      { url: 'b', element: charEl(10, 101) },
+      { url: 'c', element: sceneEl(20) },
+      { url: 'd', element: propEl(30) },
+      { url: 'e' },
+    ]
+    expect(countCharacterElements(refs)).toBe(2)
   })
 })

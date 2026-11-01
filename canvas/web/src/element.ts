@@ -16,6 +16,8 @@ import {
   type ComposerRef,
   type VideoComposerRef,
 } from './composer'
+import { STYLE_SEGMENT_MARK } from './ipStyle'
+import { composerRefMentions, videoRefMentions } from './refmention'
 
 /** IP 目录三类的最小视图:直接用 @infinitechance/api 的目录记录(type-only
  * import,测试可自造轻量对象,运行时零依赖)。 */
@@ -174,4 +176,92 @@ export function mergeVideoElementPick(
     }),
     appendVideoRef,
   )
+}
+
+// ---- 绑定行(71 号票 B5)----
+
+/** 绑定行「图N」编号字面:与 chip 角标、@浮层 token(59/71 号票)同一套。
+ * Seedance 官方文档写作「图片N」,真 key 验证发现差异时改这里 —— 测试钉
+ * 住了与 refmention token 的一致性,两侧不会被静默改漂。 */
+export const ELEMENT_REF_INDEX_LABEL = '图'
+
+/** 绑定行行前缀(不用【】,避开厂商字幕渲染风险)。 */
+export const ELEMENT_LINE_PREFIX = '出场元素:'
+
+/** 元素类型 → 行内小标(chip 角标同款)。 */
+export const ELEMENT_TYPE_LABELS: Record<ComposerElement['type'], string> = {
+  character: '角色',
+  scene: '场景',
+  prop: '道具',
+}
+
+/** 绑定行构建:`出场元素:小蓝@图1(角色)、阿红@图2(角色)、天台@图3(场景)`。
+ * 只有元素 chip 进行,显示名取调用方解析结果(null/空 = 退化无名,不进);
+ * 无元素返回空串(无元素时发送行为逐字节不变)。编号 = 参考序,直接复用
+ * @ 浮层的口径函数:图片模式按参考条全部条目序,视频模式只数
+ * reference_image —— 与 chip 角标、@图N 永远同一套,不会各数各的。 */
+export function buildElementLine(
+  refs: (ComposerRef | VideoComposerRef)[],
+  names: readonly (string | null)[],
+  mode: 'image' | 'video',
+): string {
+  // 视频分支由 mode 保证传入的是视频条;ComposerRef 形状的条目会被
+  // videoRefMentions 按 role 缺失自然跳过。
+  const mentions =
+    mode === 'image' ? composerRefMentions(refs) : videoRefMentions(refs as VideoComposerRef[])
+  const numberOf = new Map<string, number>()
+  for (const m of mentions) {
+    const n = Number(m.token.replace(/\D+/g, ''))
+    if (!Number.isNaN(n)) {
+      numberOf.set(m.url, n)
+    }
+  }
+  const parts: string[] = []
+  refs.forEach((r, i) => {
+    const el = r.element
+    const name = names[i]
+    const n = numberOf.get(r.url)
+    if (!el || name == null || name === '' || n === undefined) {
+      return
+    }
+    parts.push(`${name}@${ELEMENT_REF_INDEX_LABEL}${n}(${ELEMENT_TYPE_LABELS[el.type]})`)
+  })
+  return parts.length === 0 ? '' : `${ELEMENT_LINE_PREFIX}${parts.join('、')}`
+}
+
+/** 发送拼装(71 号票 B5,图片/视频两路 onComposerSend 共用):绑定行插进
+ * styledSendPrompt 之后的全稿 —— 提示词以风格段开头(风格段恒在首行)则
+ * 插在风格段那一行之后,否则置于最前;已含同一绑定行不叠加(69 号票
+ * prependStyleSegment 同款纪律);提示词为空只回绑定行。绑定行空串 =
+ * 无元素,原样返回(行为逐字节不变)。 */
+export function insertElementLine(prompt: string, line: string): string {
+  if (line === '') {
+    return prompt
+  }
+  if (prompt.includes(line)) {
+    return prompt
+  }
+  if (prompt.trim() === '') {
+    return line
+  }
+  if (prompt.startsWith(STYLE_SEGMENT_MARK)) {
+    const nl = prompt.indexOf('\n')
+    if (nl === -1) {
+      return `${prompt}\n${line}`
+    }
+    return `${prompt.slice(0, nl)}\n${line}${prompt.slice(nl)}`
+  }
+  return `${line}\n${prompt}`
+}
+
+// ---- 数量提示(71 号票 B7)----
+
+/** 角色元素提示阈值(Seedance 官方口径:超过 4 人稳定性下降;只出提示行
+ * 不拦发送,上游裁决原则不变)。 */
+export const CHARACTER_ELEMENT_HINT_LIMIT = 4
+
+/** 出场角色元素数(同一角色的不同变体各算一个 chip;退化无名仍算 —— 它
+ * 还在条上占参考额度)。阈值判断与提示文案归调用方。 */
+export function countCharacterElements(refs: readonly (ComposerRef | VideoComposerRef)[]): number {
+  return refs.filter((r) => r.element?.type === 'character').length
 }
