@@ -257,6 +257,16 @@ func (w *Worker) canvasIPID(ctx context.Context, t Task) int64 {
 	return c.IPID
 }
 
+// assetIPID resolves the asset row's owning IP for one task (70 号票):
+// 无画布任务(canvas_id=0)直接读任务行 ip_id —— 不查画布;画布任务照旧
+// 经 canvasIPID 查画布(存量行为不变,存量行 ip_id=0 不回填)。
+func (w *Worker) assetIPID(ctx context.Context, t Task) int64 {
+	if t.CanvasID == 0 {
+		return t.IPID
+	}
+	return w.canvasIPID(ctx, t)
+}
+
 // WithLogger routes worker logging (nil keeps the default logger).
 func WithLogger(l *log.Logger) WorkerOption {
 	return func(w *Worker) {
@@ -348,7 +358,13 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 	// 文生图同一 generations 调用;产物/记账/失败路径两种形态完全同构。
 	// Background(37 号票)两种形态同语义:非空即上送(行上只可能是
 	// "transparent",createInput 已校验),空串不落线。
+	// 来源标记(70 号票):无画布任务落 ip=<id> task=<ct> gen=asset,
+	// 画布任务形状 canvas=<id> task=<ct> node=<id> 不动 —— admin 用量审计
+	// 的 asset 档按它过滤。
 	source := fmt.Sprintf("canvas=%d task=%s node=%s", t.CanvasID, t.ID, t.NodeID)
+	if t.CanvasID == 0 {
+		source = fmt.Sprintf("ip=%d task=%s gen=asset", t.IPID, t.ID)
+	}
 	var result ImageResult
 	var err error
 	if len(t.ImageRefs) > 0 {
@@ -396,6 +412,8 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 // 事实(旧行为);否则把字节落进对象存储并带上 object_key 三件套。转存
 // 失败以 error 上抛,由调用方按任务失败收尾 —— 原因留在任务行上,可重
 // 试,不悄悄留下只有临时厂商地址(约 24h 过期)的素材。
+// 70 号票:无画布任务(canvas_id=0)落 ips/ 前缀(ADR 0007 四分归档),
+// 素材行 ip_id 读任务行;画布任务照旧 canvases/ + 查画布。
 func (w *Worker) archive(ctx context.Context, t Task, url string) (asset.Asset, error) {
 	a := asset.Asset{
 		Kind:     t.Kind,
@@ -404,12 +422,18 @@ func (w *Worker) archive(ctx context.Context, t Task, url string) (asset.Asset, 
 		Model:    t.Model,
 		Prompt:   t.Prompt,
 		URL:      url,
-		IPID:     w.canvasIPID(ctx, t), // 50 号票:归属随画布;画布已删落 0
+		IPID:     w.assetIPID(ctx, t),
 	}
 	if w.storage == nil {
 		return a, nil
 	}
-	stored, err := asset.Transfer(ctx, w.storage, nil, t.CanvasID, t.ID, t.Kind, url)
+	var stored asset.Stored
+	var err error
+	if t.CanvasID == 0 {
+		stored, err = asset.TransferIP(ctx, w.storage, nil, t.IPID, t.ID, t.Kind, url)
+	} else {
+		stored, err = asset.Transfer(ctx, w.storage, nil, t.CanvasID, t.ID, t.Kind, url)
+	}
 	if err != nil {
 		return asset.Asset{}, err
 	}
@@ -887,7 +911,7 @@ func (w *Worker) archiveAudio(ctx context.Context, t Task, url, prompt string) (
 		Model:    t.Model,
 		Prompt:   prompt,
 		URL:      url,
-		IPID:     w.canvasIPID(ctx, t), // 50 号票:归属随画布;画布已删落 0
+		IPID:     w.assetIPID(ctx, t),
 	}
 	if w.storage == nil {
 		return a, nil

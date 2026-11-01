@@ -75,6 +75,43 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload)), ContentHash: contentHash}, nil
 }
 
+// TransferIP archives one IP-level generated artifact (70 号票 ADR 0007
+// 四分归档):无画布任务的产物按 ip/{id}/任务 归档 —— 与 Transfer 同一
+// 字节纪律(data: URI 就地解、http(s) 下载、写前算哈希、只落列不复用),
+// 只是目录形状落到 ips/ 档。
+func TransferIP(ctx context.Context, st objectstore.Store, hc *http.Client,
+	ipID int64, taskID, kind, url string,
+) (Stored, error) {
+	if st == nil {
+		return Stored{}, errors.New("asset: object storage not configured")
+	}
+	if hc == nil {
+		hc = transferClient // handler.go 的共享下载 client,复用连接池
+	}
+
+	var payload []byte
+	var contentType string
+	if data, ct, ok := splitDataURI(url); ok {
+		payload, contentType = data, ct
+	} else {
+		body, ct, err := fetchArtifact(ctx, hc, url)
+		if err != nil {
+			return Stored{}, err
+		}
+		payload, contentType = body, ct
+	}
+
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = defaultContentType(kind)
+	}
+	contentHash := hashBytes(payload) // 写前算:同 Transfer
+	key := IPObjectKey(ipID, taskID, kind, contentType)
+	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
+		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
+	}
+	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload)), ContentHash: contentHash}, nil
+}
+
 // TransferRelay archives one relay-delivered artifact (23 号票 relay_persist)
 // —— 直连 /v1/images 的产物按天归档,与画布产物(canvases/…)和用户上传
 // (uploads/…)三分归档语义。kind 恒为 image(视频直连任务转存另立票),
@@ -139,6 +176,15 @@ func relayKey(now time.Time, contentType string) string {
 func ObjectKey(canvasID int64, taskID, kind, contentType string) string {
 	ext := extensionOf(contentType)
 	return fmt.Sprintf("canvases/%d/%s/%s%s", canvasID, taskID, kind, ext)
+}
+
+// IPObjectKey builds the archival key for one IP-level generated artifact
+// (70 号票,四分归档):ips/{ipID}/{taskID}/{kind}.{ext} — 新前缀语义 =
+// IP 级库生成产物;48 号票跨前缀复用与按 object_key 计数删除防护语义不变
+// (ips/ 写入照 canvases/ 先例只落哈希不复用)。
+func IPObjectKey(ipID int64, taskID, kind, contentType string) string {
+	ext := extensionOf(contentType)
+	return fmt.Sprintf("ips/%d/%s/%s%s", ipID, taskID, kind, ext)
 }
 
 // mediatype strips parameters, keeping "image/png" from
