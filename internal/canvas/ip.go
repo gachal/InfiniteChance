@@ -23,11 +23,15 @@ const DefaultIPName = "默认 IP"
 // 前端回落「渐变+首字」占位,后端无对象回收问题(节点-素材引用同哲学)。
 // CanvasCount 与 LatestAt 是 List 的展示投影:名下画布数、IP 自身与名下
 // 画布最近更新时间的较大者(卡片墙的「最近更新」与排序键同源)。
+// Style 是 IP 的画面风格(69 号票):企划级一句话风格定位,大纲画布/每集
+// 画布/角色设定图同 IP 共吃一份;空串 = 未定(无风格注入,存量行为不变)。
+// 库内是可空列,NULL 与空串同读为空串。
 type IP struct {
 	ID           int64
 	Name         string
 	Description  string
 	CoverAssetID int64
+	Style        string
 	CanvasCount  int64
 	LatestAt     time.Time
 	CreatedAt    time.Time
@@ -35,11 +39,13 @@ type IP struct {
 }
 
 // IPUpdate carries UpdateIP's partial fields: nil = 不动该字段。
-// CoverAssetID 显式给 0 = 清除封面。
+// CoverAssetID 显式给 0 = 清除封面;Style 显式给空串 = 清除风格(落库
+// NULL,回到无风格注入)。
 type IPUpdate struct {
 	Name         *string
 	Description  *string
 	CoverAssetID *int64
+	Style        *string
 }
 
 // IPStore persists IP 企划. DeleteIP is the guarded seam: 名下有画布或

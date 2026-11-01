@@ -20,11 +20,12 @@ func NewMySQLIPStore(db *sql.DB) *MySQLIPStore { return &MySQLIPStore{DB: db} }
 var _ IPStore = (*MySQLIPStore)(nil)
 
 // EnsureSchema creates the ips table when missing (canvases store 的
-// EnsureSchema 也建同一张表,双保险幂等) and runs the self-heal adoption.
+// EnsureSchema 也建同一张表,双保险幂等), widens it in place (69 号票的
+// style 列) and runs the self-heal adoption.
 // 依赖 canvases.ip_id 列已就位——canvas/server main.go 装配顺序
 // canvases → assets → ips。
 func (s *MySQLIPStore) EnsureSchema(ctx context.Context) error {
-	if _, err := s.DB.ExecContext(ctx, ipsSchema); err != nil {
+	if err := ensureMySQLIPsTable(ctx, s.DB); err != nil {
 		return err
 	}
 	return s.selfHeal(ctx)
@@ -65,7 +66,7 @@ func (s *MySQLIPStore) selfHeal(ctx context.Context) error {
 
 // mysqlIPListSelect 的排序键 = ips.updated_at 与名下画布 max(updated_at)
 // 取大者(GREATEST 不接受 NULL 参与,画布空时 COALESCE 回自身)。
-const mysqlIPListSelect = `SELECT i.id, i.name, i.description, i.cover_asset_id,
+const mysqlIPListSelect = `SELECT i.id, i.name, i.description, i.cover_asset_id, i.style,
 	(SELECT COUNT(*) FROM canvases c WHERE c.ip_id = i.id) AS canvas_count,
 	i.created_at, i.updated_at,
 	GREATEST(i.updated_at, COALESCE((SELECT MAX(c2.updated_at) FROM canvases c2 WHERE c2.ip_id = i.id), i.updated_at)) AS sort_key
@@ -82,10 +83,12 @@ func (s *MySQLIPStore) ListIPs(ctx context.Context) ([]IP, error) {
 	var out []IP
 	for rows.Next() {
 		var ip IP
-		if err := rows.Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID,
+		var style sql.NullString
+		if err := rows.Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID, &style,
 			&ip.CanvasCount, &ip.CreatedAt, &ip.UpdatedAt, &ip.LatestAt); err != nil {
 			return nil, err
 		}
+		ip.Style = style.String
 		out = append(out, ip)
 	}
 	return out, rows.Err()
@@ -93,16 +96,18 @@ func (s *MySQLIPStore) ListIPs(ctx context.Context) ([]IP, error) {
 
 func (s *MySQLIPStore) GetIP(ctx context.Context, id int64) (IP, error) {
 	var ip IP
-	err := s.DB.QueryRowContext(ctx, `SELECT i.id, i.name, i.description, i.cover_asset_id,
+	var style sql.NullString
+	err := s.DB.QueryRowContext(ctx, `SELECT i.id, i.name, i.description, i.cover_asset_id, i.style,
 		(SELECT COUNT(*) FROM canvases c WHERE c.ip_id = i.id), i.created_at, i.updated_at
 		FROM ips i WHERE i.id = ?`, id).
-		Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID, &ip.CanvasCount, &ip.CreatedAt, &ip.UpdatedAt)
+		Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID, &style, &ip.CanvasCount, &ip.CreatedAt, &ip.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return IP{}, ErrIPNotFound
 	}
 	if err != nil {
 		return IP{}, err
 	}
+	ip.Style = style.String
 	ip.LatestAt = ip.UpdatedAt
 	return ip, nil
 }
@@ -140,6 +145,15 @@ func (s *MySQLIPStore) UpdateIP(ctx context.Context, id int64, u *IPUpdate) (IP,
 	if u.CoverAssetID != nil {
 		sets = append(sets, "cover_asset_id = ?")
 		args = append(args, *u.CoverAssetID)
+	}
+	if u.Style != nil {
+		// 空串 = 清除:落 NULL,与存量未定行同形(voice_id 清绑同款)。
+		if *u.Style == "" {
+			sets = append(sets, "style = NULL")
+		} else {
+			sets = append(sets, "style = ?")
+			args = append(args, *u.Style)
+		}
 	}
 	if len(sets) == 0 {
 		return s.GetIP(ctx, id)

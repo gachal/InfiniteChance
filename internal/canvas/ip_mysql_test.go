@@ -240,6 +240,103 @@ func TestMySQLIPCRUDAndGuards(t *testing.T) {
 	}
 }
 
+// ---- 画面风格列(69 号票,MySQL 同构)----
+
+// 存量库自愈加列:69 号票之前的 ips 表(无 style 列)启动时幂等补列,存量
+// 行 style 读回空串(无风格注入,行为不变),补列后即可写。
+func TestMySQLEnsureSchemaWidensLegacyIPsWithStyle(t *testing.T) {
+	ips, canvases, db := openTestIPStore(t)
+	ctx := context.Background()
+
+	// 换成 69 号票之前的 ips 表形状 + 一行存量 IP。
+	if _, err := db.ExecContext(ctx, "DROP TABLE ips"); err != nil {
+		t.Fatalf("drop ips: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE ips (
+		id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		name            VARCHAR(255) NOT NULL,
+		description     VARCHAR(1024) NOT NULL DEFAULT '',
+		cover_asset_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,
+		created_at      TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		updated_at      TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+	) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`); err != nil {
+		t.Fatalf("seed legacy ips table: %v", err)
+	}
+	res, err := db.ExecContext(ctx, `INSERT INTO ips (name, description) VALUES ('存量 IP', 'logline')`)
+	if err != nil {
+		t.Fatalf("seed legacy ip row: %v", err)
+	}
+	legacyID, _ := res.LastInsertId()
+
+	// 装配顺序 canvases → ips,两遍验幂等。
+	for i := 0; i < 2; i++ {
+		if err := canvases.EnsureSchema(ctx); err != nil {
+			t.Fatalf("canvas EnsureSchema #%d: %v", i+1, err)
+		}
+		if err := ips.EnsureSchema(ctx); err != nil {
+			t.Fatalf("ip EnsureSchema #%d: %v", i+1, err)
+		}
+	}
+
+	got, err := ips.GetIP(ctx, legacyID)
+	if err != nil {
+		t.Fatalf("GetIP legacy: %v", err)
+	}
+	if got.Style != "" || got.Name != "存量 IP" || got.Description != "logline" {
+		t.Fatalf("legacy ip = %+v, want empty style and untouched fields", got)
+	}
+	style := "日系赛璐璐动画,明亮高饱和"
+	updated, err := ips.UpdateIP(ctx, legacyID, &canvas.IPUpdate{Style: &style})
+	if err != nil {
+		t.Fatalf("UpdateIP style on widened table: %v", err)
+	}
+	if updated.Style != style {
+		t.Fatalf("style after widen = %q, want %q", updated.Style, style)
+	}
+}
+
+// 风格读写:新建为空;写入后 Get/List 带回;只改别的字段时保持;空串清除。
+// 同值重写(set_style 幂等)不能被 MySQL 的「0 affected」误判为缺失。
+func TestMySQLIPStyleRoundTrip(t *testing.T) {
+	ips, _, _ := openTestIPStore(t)
+	ctx := context.Background()
+
+	created, err := ips.CreateIP(ctx, "星穹之愿", "", 0)
+	if err != nil {
+		t.Fatalf("CreateIP: %v", err)
+	}
+	if created.Style != "" {
+		t.Fatalf("new ip style = %q, want empty", created.Style)
+	}
+
+	style := "赛博朋克霓虹,高对比冷暖撞色"
+	for i := 0; i < 2; i++ {
+		if _, err := ips.UpdateIP(ctx, created.ID, &canvas.IPUpdate{Style: &style}); err != nil {
+			t.Fatalf("set style #%d: %v", i+1, err)
+		}
+	}
+	got, err := ips.GetIP(ctx, created.ID)
+	if err != nil || got.Style != style {
+		t.Fatalf("GetIP style = %q, %v; want %q", got.Style, err, style)
+	}
+	list, err := ips.ListIPs(ctx)
+	if err != nil || len(list) != 1 || list[0].Style != style {
+		t.Fatalf("ListIPs = %+v, %v; want the style on the row", list, err)
+	}
+
+	name := "只改名字"
+	renamed, err := ips.UpdateIP(ctx, created.ID, &canvas.IPUpdate{Name: &name})
+	if err != nil || renamed.Style != style {
+		t.Fatalf("partial update = %+v, %v; want style kept", renamed, err)
+	}
+
+	empty := ""
+	cleared, err := ips.UpdateIP(ctx, created.ID, &canvas.IPUpdate{Style: &empty})
+	if err != nil || cleared.Style != "" {
+		t.Fatalf("clear style = %+v, %v; want empty", cleared, err)
+	}
+}
+
 // 排序:排序键 = ips.updated_at 与名下画布 max(updated_at) 取大者(GREATEST)。
 func TestMySQLIPListOrdersByLatestActivity(t *testing.T) {
 	ips, canvases, _ := openTestIPStore(t)
