@@ -12,8 +12,10 @@ import {
   SHEET_TYPES,
   SHEET_TYPE_TEMPLATES,
   buildSheetPrompt,
+  defaultCharacterVariant,
   latestVariantImage,
   pickCutCharacterRefs,
+  pickVariantAssetId,
 } from './sheet'
 
 describe('五类型模板字面量钉子(与服务端同字面量)', () => {
@@ -178,5 +180,86 @@ describe('pickCutCharacterRefs(cut 出场角色注入)', () => {
     const { picks, dropped } = pickCutCharacterRefs([], [404], 9)
     expect(picks).toEqual([])
     expect(dropped).toBe(0)
+  })
+})
+
+// ---- 71 号票 D1:按变体取图共享函数(cut 注入与角色卡登场直通两处共用)----
+
+describe('defaultCharacterVariant(cut 注入的「默认变体」规则)', () => {
+  it('优先名为「默认」的变体,无则回落首个;无变体返回 undefined', () => {
+    const d = variant(21, [])
+    const w = { ...variant(22, []), name: '冬装' }
+    expect(defaultCharacterVariant(character(1, [w, d]))).toBe(d)
+    expect(defaultCharacterVariant(character(1, [w]))).toBe(w)
+    expect(defaultCharacterVariant(character(1, []))).toBeUndefined()
+  })
+})
+
+describe('pickVariantAssetId(按变体取图:视图类最近一张 > 变体任意图 > 封面投影)', () => {
+  it('视图类(label ∈ 五类型)优先取最近一张,即便非视图类的图更新', () => {
+    const v = variant(21, [
+      { id: 9, asset_id: 109, label: '其他' }, // 最新但非视图类
+      { id: 7, asset_id: 107, label: '三视图' },
+      { id: 5, asset_id: 105, label: '色板' },
+    ])
+    expect(pickVariantAssetId(character(1, [v], 999), v)).toBe(107)
+  })
+
+  it('变体无视图类图时取变体内任意最近一张', () => {
+    const v = variant(22, [
+      { id: 3, asset_id: 203, label: '其他' },
+      { id: 8, asset_id: 208, label: '其他' },
+    ])
+    expect(pickVariantAssetId(character(2, [v], 999), v)).toBe(208)
+  })
+
+  it('变体空图回落角色封面投影(cover_asset_id)', () => {
+    const v = variant(23, [])
+    expect(pickVariantAssetId(character(3, [v], 303), v)).toBe(303)
+  })
+
+  it('变体缺省(角色无任何变体)只走封面投影', () => {
+    expect(pickVariantAssetId(character(4, [], 404), undefined)).toBe(404)
+  })
+
+  it('变体与封面全无图返回 0(调用方静默跳过)', () => {
+    const v = variant(25, [])
+    expect(pickVariantAssetId(character(5, [v], 0), v)).toBe(0)
+    expect(pickVariantAssetId(character(6, [], 0), undefined)).toBe(0)
+  })
+
+  it('一致性:pickCutCharacterRefs 逐角色取图 = 共享函数按默认变体取图', () => {
+    const chars = [
+      // 视图类最近(7→107)而非最新(9→109「其他」)
+      character(1, [variant(21, [
+        { id: 9, asset_id: 109, label: '其他' },
+        { id: 7, asset_id: 107, label: '三视图' },
+      ])]),
+      // 非视图类任意图
+      character(2, [variant(22, [{ id: 3, asset_id: 203, label: '其他' }])]),
+      // 变体空图 → 封面投影
+      character(3, [variant(23, [])], 303),
+      // 无变体:走封面投影
+      character(4, [], 404),
+      // 全无图 → 跳过
+      character(5, [variant(25, [])]),
+      // 变体名非「默认」回落首个
+      character(6, [{ ...variant(26, [{ id: 1, asset_id: 601, label: '姿态' }]), name: '夏装' }]),
+    ]
+    const ids = [1, 2, 3, 4, 5, 6]
+    const { picks } = pickCutCharacterRefs(chars, ids, 9)
+    // 独立已知值:直通路径(角色卡登场)按同一规则应得同一组图。
+    expect(picks).toEqual([
+      { characterId: 1, assetId: 107 },
+      { characterId: 2, assetId: 203 },
+      { characterId: 3, assetId: 303 },
+      { characterId: 4, assetId: 404 },
+      { characterId: 6, assetId: 601 },
+    ])
+    const viaShared = ids
+      .map((id) => chars.find((c) => c.id === id)!)
+      .map((c) => ({ characterId: c.id, assetId: pickVariantAssetId(c, defaultCharacterVariant(c)) }))
+      .filter((p) => p.assetId !== 0)
+    expect(viaShared).toEqual(picks)
   })
 })

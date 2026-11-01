@@ -95,10 +95,43 @@ export interface SheetRefPick {
   assetId: number
 }
 
+/** cut 注入取「默认变体」的规则(71 号票 D1 从 pickCutCharacterRefs 抽出):
+ * 名为「默认」的变体,改名后回落首个;角色无任何变体返回 undefined。 */
+export function defaultCharacterVariant(
+  c: Pick<CharacterRecord, 'variants'>,
+): CharacterVariantRecord | undefined {
+  return c.variants.find((v) => v.name === '默认') ?? c.variants[0]
+}
+
+/** 按变体取图(71 号票 D1 共享函数:cut 出场角色注入与角色卡「生成登场
+ * 视频」直通两处共用,保证同一角色同一变体两路取到同一张图)。优先级 =
+ * 该变体最近一张视图类(label ∈ 五类型)> 该变体任意设定图 > 角色任意图
+ * (cover_asset_id 封面投影);变体缺省(角色无任何变体)只走封面投影;
+ * 全无图返回 0,调用方静默跳过(不报错不阻塞)。 */
+export function pickVariantAssetId(
+  c: Pick<CharacterRecord, 'cover_asset_id'>,
+  variant?: Pick<CharacterVariantRecord, 'images'>,
+): number {
+  let assetId = 0
+  if (variant) {
+    // 视图类优先(label ∈ 五类型),取其中最近一张;再回落任意一张。
+    const viewImages = variant.images.filter((im) =>
+      (SHEET_TYPES as readonly string[]).includes(im.label),
+    )
+    const latestView = latestVariantImage({ images: viewImages }) ?? latestVariantImage(variant)
+    if (latestView) {
+      assetId = latestView.asset_id
+    }
+  }
+  if (assetId === 0) {
+    assetId = c.cover_asset_id // 封面投影(无图角色为 0 → 调用方静默跳过)
+  }
+  return assetId
+}
+
 /** cut 出场角色参考挑选(70 号票 C):按 character_ids 序逐角色取「默认
- * 变体」(名为「默认」的变体,改名后回落首个)的设定图 —— 优先级 = 该
- * 变体最新一张视图类(label ∈ 五类型)> 该变体任意设定图 > 角色任意图
- * (封面投影);角色无任何图静默跳过(不报错不阻塞,画面描述兜底)。
+ * 变体」(defaultCharacterVariant)的设定图,取图走 pickVariantAssetId
+ * (71 号票 D1 共享);角色无任何图静默跳过(不报错不阻塞,画面描述兜底)。
  * cap 是与既有参考合并后的总上限:超出按序截断,dropped = 未带上数量
  * (toast 文案用)。 */
 export function pickCutCharacterRefs(
@@ -113,21 +146,7 @@ export function pickCutCharacterRefs(
     if (!c) {
       continue
     }
-    const variant = c.variants.find((v) => v.name === '默认') ?? c.variants[0]
-    let assetId = 0
-    if (variant) {
-      // 视图类优先(label ∈ 五类型),取其中最近一张;再回落任意一张。
-      const viewImages = variant.images.filter((im) =>
-        (SHEET_TYPES as readonly string[]).includes(im.label),
-      )
-      const latestView = latestVariantImage({ images: viewImages }) ?? latestVariantImage(variant)
-      if (latestView) {
-        assetId = latestView.asset_id
-      }
-    }
-    if (assetId === 0) {
-      assetId = c.cover_asset_id // 封面投影(无图角色为 0 → 静默跳过)
-    }
+    const assetId = pickVariantAssetId(c, defaultCharacterVariant(c))
     if (assetId === 0) {
       continue
     }
