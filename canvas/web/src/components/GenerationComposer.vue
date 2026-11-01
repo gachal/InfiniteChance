@@ -31,7 +31,7 @@ import {
   countCharacterElements,
   ELEMENT_TYPE_LABELS,
 } from '../element'
-import { mentionInsertText } from '../composerElements'
+import { hasFrameReferenceConflict, mentionInsertText } from '../composerElements'
 import {
   composerRefMentions,
   insertMentionToken,
@@ -385,6 +385,10 @@ const uploadAccept = computed(() => (isVideo.value ? 'image/*,video/*,audio/*' :
  * 因,故在参考条上就地提醒留空「自动」。 */
 const hasVideoRef = computed(() => props.videoRefs.some((r) => r.kind === 'video'))
 
+/** 首帧/尾帧与参考互斥提示(71 号票 A3):三家视频渠道把「首帧/首尾帧」与
+ * 「全模态参考」当互斥场景,混用必拒;只提示不拦发送(上游裁决原则不变)。 */
+const frameReferenceConflict = computed(() => isVideo.value && hasFrameReferenceConflict(props.videoRefs))
+
 /** 绑定行预览(71 号票 B5):发送时会插进提示词的那一行(编号与 chip 角标
  * 同口径),输入框下方只读展示、不改写输入框;无元素为空串,不显示。 */
 const elementLine = computed(() =>
@@ -627,6 +631,13 @@ function onFileChange(e: Event): void {
     >
       含参考视频:任务可能被识别为「视频编辑」,输出比例与时长将跟随输入视频(需
       4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
+    </p>
+    <!-- 首帧/参考互斥提示(71 号票 A3):同款安静小字,不拦发送。 -->
+    <p
+      v-if="frameReferenceConflict"
+      class="vref-hint"
+    >
+      首帧/尾帧与参考图/视频/音频不能混用(Seedance、MiniMax H3 会拒);要首帧效果可只传参考图,并在提示词里写明哪张作首帧
     </p>
     <!-- 出场角色数提示(71 号票 B7):角色元素超阈值时出,不拦发送。 -->
     <p

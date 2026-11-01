@@ -107,6 +107,8 @@ import {
   elementPickNotice,
   elementPickRejectNotice,
 } from '../composerElements'
+import { buildCutVideoPrefill } from '../cutVideo'
+import { cutPrefillNotice, cutPrefillVideoRefs } from '../videoPrefill'
 import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
 import type { SheetCharacterFacts } from '../sheet'
 import { useAutosave } from '../composables/useAutosave'
@@ -2421,11 +2423,13 @@ function onStoryboardLayerUpload(cutIndex: number, file: File): void {
 
 /** cut→视频直通(67 号票,53 号票遗留收编):落空视频节点 + 絵コンテ→
  * 视频来源边(dropFrameNode 同款骨架:沿出边数级联偏移防叠卡),随后
- * 预填视频草稿并关闭编辑层让位对话框 —— cut 画面(非空)自动进首帧、
- * 提示词按 画面描述/景别/运镜/台词 拼装(storyboard.buildCutVideoPrompt)、时长
- * 预填 cut 秒数(未定为 0/空 = 留「自动」)。人工确认后才发送(花钱操作
- * 人工确认,总案 Q5):这里只落节点与预填,不发任务;无画面 cut 也可发起
- * (纯文生视频,预填不动会话已上传的参考条,对话框里可见可删)。 */
+ * 预填视频草稿并关闭编辑层让位对话框 —— 提示词按 画面描述/景别/运镜/台词
+ * 拼装(storyboard.buildCutVideoPrompt)、时长预填 cut 秒数(未定为 0/空 =
+ * 留「自动」);参考条按 71 号票修正预填(cutVideo.buildCutVideoPrefill):
+ * cut 有画面 = 画面作真首帧、出场角色设定图不注入(首帧与全模态参考互斥,
+ * Seedance / MiniMax H3 三家必拒混用);无画面 = 设定图以元素 chip 注入
+ * (恒参考图、默认变体)。人工确认后才发送(花钱操作人工确认,总案 Q5):
+ * 这里只落节点与预填,不发任务。 */
 function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   const node = findNode(nodeId)
   const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
@@ -2450,41 +2454,19 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   }
   connectNodes(nodeId, newId)
   // 预填 = 写视频草稿(composer 是「选中驱动 + 草稿 refs」模型,新节点无
-  // 产物、选中 chip 不产生):有画面把 cut 画面物化进参考条作首帧 —— 整条
-  // 替换,本动作的预填语义就是「这个 cut 的画面即首帧」,不带其他会话
-  // 残留;无画面清空参考条,纯文生视频。选中切换的 watch 会把拆下标记与
-  // 模式(锁视频)一并复位,这里只写草稿。
+  // 产物、选中 chip 不产生):参考条整条替换,本动作的预填语义就是「这个
+  // cut 的首帧/出场角色」,不带其他会话残留;选中切换的 watch 会把拆下标记
+  // 与模式(锁视频)一并复位,这里只写草稿。
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   videoPrompt.value = buildCutVideoPrompt(cut, ipStyle.value)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
-  // 出场角色注入(70 号票 C):按 character_ids 序取默认变体设定图作
-  // 参考图(角色 reference_image,不进 prompt);无图角色静默跳过,
-  // 与首帧合计超 9 按序截断 + toast 计数。
-  const { picks, dropped } = pickCutCharacterRefs(
-    ipCharacters.value,
-    cut.character_ids ?? [],
-    VIDEO_REFS_TOTAL_CAP,
-  )
-  uploadedVideoRefs.value = [
-    ...(cut.asset_id > 0
-      ? [
-          {
-            url: frameContentURL(cut.asset_id),
-            kind: 'image' as const,
-            role: 'first_frame' as const,
-            asset_id: cut.asset_id,
-          },
-        ]
-      : []),
-    ...picks.map((p) => ({
-      url: characterImageContentURL(p.assetId),
-      kind: 'image' as const,
-      role: 'reference_image' as const,
-      asset_id: p.assetId,
-    })),
-  ]
-  if (dropped > 0) {
-    showNotice(`${dropped} 个角色设定图未带上(参考上限 9)`)
+  // 71 号票 A2(修 70 号票 C 节):首帧与参考互斥判定在纯函数层;角色无图
+  // 静默跳过,超上限按序截断,有画面而标了出场角色时说明未注入原因。
+  const prefill = buildCutVideoPrefill(cut, ipCharacters.value, VIDEO_REFS_TOTAL_CAP)
+  uploadedVideoRefs.value = cutPrefillVideoRefs(prefill)
+  const notice = cutPrefillNotice(prefill)
+  if (notice !== '') {
+    showNotice(notice)
   }
   // 收编辑层:生成对话框贴新视频节点正下方,全屏编辑层开着会挡住它。
   storyboardEditorNodeId.value = ''
