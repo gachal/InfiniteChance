@@ -6,10 +6,13 @@
 // 点选、可多选 —— 点选挂到调用方(ready 引用,上限由调用方按同款纪律
 // 拒收),再点一次取消。50 号票加 IP 归属过滤:ipId 提供时 scope 在
 // 「本 IP + 全局」(缺省)与「全部」间切换。51 号票加「角色」视图:
-// 角色 → 变体两级分组列设定图,点选进参考条/附件条与普通素材同款 chip 流
-// (合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址,服务端零改动;
-// chip 不带角色标注 —— MVP 它就是素材)。65 号票把资产视图扩成三类:
-// 角色 → 变体两级已有,场景/道具 → 图一级(无造型变体)。
+// 角色 → 变体两级分组列设定图,点选进参考条/附件条(合成 AssetRecord:设定
+// 图引用 = 既有 asset_id + 内容寻址,服务端零改动)。65 号票把资产视图扩成
+// 三类:角色 → 变体两级已有,场景/道具 → 图一级(无造型变体)。71 号票推翻
+// 52 号票「chip 不带角色标注」:资产视图点选时 toggle 第二参数带元素标注
+// (角色 = entityId + 所在变体 variantId,场景/道具 = entityId),生成对话框
+// 据此出名称与类型小标、进绑定行;平铺素材视图不带(散图仍是无名参考图)。
+// 名称不随载荷走 —— 渲染与发送时按 entityId 从 IP 目录实时取。
 import { computed, onMounted, ref } from 'vue'
 
 import {
@@ -21,6 +24,7 @@ import {
 } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
+import type { ComposerElement } from '../composer'
 import { useThumbFallback } from '../thumbnail'
 import { useAssetListQuery } from '../composables/useAssetList'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
@@ -47,7 +51,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  toggle: [asset: AssetRecord]
+  /** 点选/取消一条素材。element 只在资产视图(角色/场景/道具分组)点选时
+   * 携带(71 号票元素);平铺素材视图缺省。不关心元素的调用方(Agent 附件、
+   * 关卡画面、音色样本)只取第一参数。 */
+  toggle: [asset: AssetRecord, element?: ComposerElement]
   close: []
 }>()
 
@@ -175,11 +182,11 @@ const thumbs = useThumbFallback()
 
 const isSelected = (a: AssetRecord): boolean => props.selectedAssetIds.includes(a.id)
 
-function onPick(a: AssetRecord): void {
+function onPick(a: AssetRecord, element?: ComposerElement): void {
   if (!props.kindWhitelist.includes(a.kind)) {
     return
   }
-  emit('toggle', a)
+  emit('toggle', a, element)
 }
 
 /** 场景/道具视图的实体投影:两族记录结构同形(无造型变体,实体 → 图一级),
@@ -210,8 +217,9 @@ const isPrimaryImg = (label: string): boolean => isPrimaryLabel(libraryViewKind.
 const libraryEmptyText = computed(() => `本 IP 还没有${VIEW_LABELS[view.value]} —— 先在 IP 详情页创建。`)
 
 /** 资产库设定图 → 合成 AssetRecord:设定图引用 = 既有 asset_id + 内容寻址
- * (51 号票,服务端零改动);chip 不带资产标注 —— 载荷与普通素材同形。
- * 资产视图只列图片,kind 恒 image。 */
+ * (51 号票,服务端零改动);合成记录本身与普通素材同形 —— 元素语义(71 号
+ * 票,推翻 52 号票「chip 不带资产标注」)不塞进记录,另由 toggle 第二参数
+ * 携带。资产视图只列图片,kind 恒 image。 */
 function libraryAsset(assetId: number): AssetRecord {
   return {
     id: assetId,
@@ -236,8 +244,19 @@ function libraryAsset(assetId: number): AssetRecord {
 /** 资产视图的已选高亮按素材 id(同一素材锚进多个变体/实体去重展示)。 */
 const isLibraryAssetSelected = (assetId: number): boolean => props.selectedAssetIds.includes(assetId)
 
-function onPickLibraryAsset(assetId: number): void {
-  onPick(libraryAsset(assetId))
+function onPickLibraryAsset(assetId: number, element: ComposerElement): void {
+  onPick(libraryAsset(assetId), element)
+}
+
+/** 角色视图点选的元素标注(71 号票 B3):角色 + 卡片所在变体(同一角色
+ * 的不同造型是不同元素)。 */
+function characterElement(c: CharacterRecord, v: CharacterRecord['variants'][number]): ComposerElement {
+  return { type: 'character', entityId: c.id, variantId: v.id }
+}
+
+/** 场景/道具视图点选的元素标注:按实体(无造型变体)。 */
+function libraryElement(e: LibraryEntity): ComposerElement {
+  return { type: libraryViewKind.value, entityId: e.id }
 }
 
 /** 变体内展示序:视图类置前(51 号票主资产口径),组内保持 sort+id。 */
@@ -417,8 +436,8 @@ onMounted(refresh)
     </template>
 
     <!-- 资产视图(51/65 号票):角色 → 变体两级、场景/道具 → 图一级的
-         设定图分组,点选与普通素材同款 toggle(chip 不带资产标注,载荷 =
-         asset_id + 内容寻址)。 -->
+         设定图分组,点选与普通素材同款 toggle(载荷 = asset_id + 内容寻址),
+         71 号票起额外携带元素标注(角色带所在变体)。 -->
     <template v-else>
       <p
         v-if="libraryError"
@@ -474,7 +493,7 @@ onMounted(refresh)
                 class="asset-card"
                 :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
                 :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
-                @click="onPickLibraryAsset(img.asset_id)"
+                @click="onPickLibraryAsset(img.asset_id, characterElement(c, v))"
               >
                 <span
                   v-if="brokenLibraryAssets.has(img.asset_id)"
@@ -536,7 +555,7 @@ onMounted(refresh)
               class="asset-card"
               :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
               :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
-              @click="onPickLibraryAsset(img.asset_id)"
+              @click="onPickLibraryAsset(img.asset_id, libraryElement(e))"
             >
               <span
                 v-if="brokenLibraryAssets.has(img.asset_id)"
