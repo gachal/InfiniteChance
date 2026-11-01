@@ -1,4 +1,4 @@
-// 元素装配层(71 号票 Wave-2)纯函数测试:编辑器把 element.ts 的合并判定
+// 元素装配层(71 号票)纯函数测试:编辑器把 element.ts 的合并判定
 // 接进「选中产物 chip(计算值)+ 上传草稿」双源参考条时的折算,以及对话框
 // 的提示判定与发送拼装。合并结果一律经真实的 mergeImage/VideoElementPick
 // 产出,测试的是装配缝而非自造结果形状。
@@ -37,7 +37,7 @@ const charPick = (url: string, entityId: number, variantId: number): ElementPick
   element: { type: 'character', entityId, variantId },
 })
 
-describe('applyElementPickToDraft(合并结果落回上传草稿,71 号票 B3 / 坑 4)', () => {
+describe('applyElementPickToDraft(合并结果落回上传草稿,71 号票 B3:命中条按实体键+地址在草稿定位)', () => {
   it('added:新元素追加进草稿末尾(视频模式恒参考图)', () => {
     const draft = [vref('/api/assets/1/content', 'reference_image')]
     const selection = vref('/api/assets/9/content', 'first_frame')

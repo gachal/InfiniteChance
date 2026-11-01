@@ -977,7 +977,8 @@ function onComposerPickToggle(a: AssetRecord, element?: ComposerElement): void {
 }
 
 /** 资产视图点选 = 元素 chip(71 号票 B3):合并对「生效参考条」算 —— 上限
- * 与去重要算上选中产物 chip(坑 4),结果经 applyElementPickToDraft 落回上传
+ * 与去重要算上选中产物 chip(它是生效条的一部分,漏算会放行超限与重复图),
+ * 结果经 applyElementPickToDraft 落回上传
  * 草稿(产物 chip 是计算值,不写进草稿、detached 标记不动)。视频模式恒参考
  * 图;同实体换图出 toast 报实时显示名;拒收沿用参考条满员的横幅出口。 */
 function pickComposerElement(a: AssetRecord, element: ComposerElement): void {
