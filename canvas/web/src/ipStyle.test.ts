@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { STYLE_SEGMENT_MARK, prependStyleSegment, styleSegment } from './ipStyle'
+import { STYLE_SEGMENT_MARK, prependStyleSegment, styleSegment, styledSendPrompt } from './ipStyle'
 
 describe('styleSegment(69 号票)', () => {
   it('renders the fixed-marker segment from the trimmed IP style', () => {
@@ -41,5 +41,23 @@ describe('prependStyleSegment(69 号票注入面统一出口)', () => {
     const prefilled = '【画面风格】水彩手绘\n画面描述:雨夜巷口'
     expect(prependStyleSegment(prefilled, '水彩手绘')).toBe(prefilled)
     expect(prependStyleSegment(prefilled, '  水彩手绘 ')).toBe(prefilled)
+  })
+})
+
+describe('styledSendPrompt(composer「带 IP 风格」开关,69 号票)', () => {
+  it('sends the hand-written prompt untouched while the switch is off', () => {
+    // 默认关:手写 prompt 不被偷改,即便 IP 已定风格。
+    expect(styledSendPrompt('城市夜景', false, '水彩手绘')).toBe('城市夜景')
+  })
+
+  it('prepends the style segment when the switch is on', () => {
+    // 任务行 prompt 带风格段(生成记录面板可查)。
+    expect(styledSendPrompt('城市夜景', true, '水彩手绘')).toBe('【画面风格】水彩手绘\n城市夜景')
+  })
+
+  it('is a no-op when the IP has no style or the prompt already carries it', () => {
+    expect(styledSendPrompt('城市夜景', true, '')).toBe('城市夜景')
+    const prefilled = '【画面风格】水彩手绘\n城市夜景'
+    expect(styledSendPrompt(prefilled, true, '水彩手绘')).toBe(prefilled)
   })
 })

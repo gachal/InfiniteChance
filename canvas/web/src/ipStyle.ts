@@ -37,3 +37,11 @@ export function prependStyleSegment(prompt: string, style: string | null | undef
   }
   return `${segment}\n${prompt}`
 }
+
+/** composer「带 IP 风格」开关的发送拼装:开关关 = 手写 prompt 原样发送
+ * (默认关,不偷改);开 = 经 prependStyleSegment 拼风格段(无风格/已含同段
+ * 时同样原样)。开关状态由编辑器按图片/视频模式各存一份草稿(37 号票透明
+ * 背景开关范式)。 */
+export function styledSendPrompt(prompt: string, withStyle: boolean, style: string | null | undefined): string {
+  return withStyle ? prependStyleSegment(prompt, style) : prompt
+}

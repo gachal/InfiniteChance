@@ -89,6 +89,7 @@ import {
 } from '../composer'
 import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
+import { styledSendPrompt } from '../ipStyle'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { isHelpToggleKey } from '../canvasHelp'
@@ -528,6 +529,9 @@ const composerModel = ref('')
 const composerRatio = ref('')
 const composerResolution = ref('')
 const composerTransparent = ref(false)
+// 「带 IP 风格」开关(69 号票):与透明背景同款独立草稿、默认关,图片与视频
+// 两模式各存一份;发送时经 styledSendPrompt 把风格段拼在提示词前部。
+const composerWithStyle = ref(false)
 // 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
 const uploadedRefs = ref<ComposerRef[]>([])
 // 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
@@ -541,6 +545,7 @@ const videoModel = ref('')
 const videoDuration = ref('')
 const videoRatio = ref('')
 const videoResolution = ref('')
+const videoWithStyle = ref(false)
 const uploadedVideoRefs = ref<VideoComposerRef[]>([])
 const detachedVideoFromSelection = ref(false)
 
@@ -913,6 +918,15 @@ function onDraftUpdate(
   }
 }
 
+/** 「带 IP 风格」开关的模式分发(69 号票):写当前模式那一份草稿。 */
+function onWithStyleUpdate(value: boolean): void {
+  if (composerMode.value === 'video') {
+    videoWithStyle.value = value
+  } else {
+    composerWithStyle.value = value
+  }
+}
+
 /** 对话框发送:按模式分流。图片模式 —— 选中图片节点产物即参考图(可拆
  * 下),有参考走图生图、无参考走文生图(空占位锚点直接填入),比例×分
  * 辨率组合成 size。视频模式 —— 参考组合交给 submitVideoTask(空参考 =
@@ -938,7 +952,7 @@ async function onComposerSend(): Promise<void> {
     }
     const refs = composerVideoRefs(videoComposerRefs.value)
     await submitVideoTask({
-      prompt,
+      prompt: styledSendPrompt(prompt, videoWithStyle.value, ipStyle.value),
       model: videoModel.value,
       seconds: parsed === '' ? undefined : parsed,
       size: videoResolution.value === '' ? undefined : videoResolution.value,
@@ -954,7 +968,7 @@ async function onComposerSend(): Promise<void> {
   }
   const urls = composerImageUrls(composerRefs.value)
   await submitImageTask({
-    prompt,
+    prompt: styledSendPrompt(prompt, composerWithStyle.value, ipStyle.value),
     model: composerModel.value,
     size: composeSize(composerRatio.value, composerResolution.value) || undefined,
     background: composerTransparent.value ? 'transparent' : undefined,
@@ -3462,6 +3476,8 @@ function backToList(): void {
         :ratio="composerMode === 'video' ? videoRatio : composerRatio"
         :resolution="composerMode === 'video' ? videoResolution : composerResolution"
         :transparent="composerTransparent"
+        :ip-style="ipStyle"
+        :with-style="composerMode === 'video' ? videoWithStyle : composerWithStyle"
         :duration="videoDuration"
         :generating="generating"
         :uploading="refUploading"
@@ -3471,6 +3487,7 @@ function backToList(): void {
         @update:ratio="onDraftUpdate(($v) => (videoRatio = $v), ($v) => (composerRatio = $v), $event)"
         @update:resolution="onDraftUpdate(($v) => (videoResolution = $v), ($v) => (composerResolution = $v), $event)"
         @update:transparent="composerTransparent = $event"
+        @update:with-style="onWithStyleUpdate"
         @update:duration="videoDuration = $event"
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"

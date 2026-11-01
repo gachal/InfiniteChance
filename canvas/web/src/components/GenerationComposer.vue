@@ -24,6 +24,7 @@ import {
   type VideoComposerRef,
   type VideoRefRole,
 } from '../composer'
+import { styleSegment } from '../ipStyle'
 import {
   composerRefMentions,
   insertMentionToken,
@@ -61,6 +62,12 @@ const props = defineProps<{
   /** 图片模式草稿:透明背景开关(37 号票,所有生图模型显示;视频模式
    * 不出现 —— 视频透明显式 out of scope)。 */
   transparent: boolean
+  /** 画布所属 IP 的画面风格(69 号票);空串 = 未定,「带 IP 风格」开关
+   * 不显示。 */
+  ipStyle: string
+  /** 当前模式草稿:「带 IP 风格」开关(默认关;图片/视频两模式各存一份,
+   * 37 号票透明背景开关范式),开 = 发送时把风格段拼在提示词前部。 */
+  withStyle: boolean
   /** 视频模式草稿:时长档('' = 自动,不传 seconds)。 */
   duration: string
   /** 提交在途(编辑器级状态,防连点)。 */
@@ -76,6 +83,7 @@ const emit = defineEmits<{
   'update:ratio': [value: string]
   'update:resolution': [value: string]
   'update:transparent': [value: boolean]
+  'update:withStyle': [value: boolean]
   'update:duration': [value: string]
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
@@ -98,6 +106,9 @@ const thumbs = useThumbFallback()
 
 const isVideo = computed(() => props.mode === 'video')
 const activeModels = computed(() => (isVideo.value ? props.videoModels : props.imageModels))
+
+/** IP 已定画面风格才出「带 IP 风格」开关(69 号票:未配风格不显示)。 */
+const styleAvailable = computed(() => styleSegment(props.ipStyle) !== '')
 
 /** 时长区间随所选模型收敛(官方校准:seedance 2.0 = 4–15,2.5 = 4–30;
  * minimax-h3 = 4–15、h3-max = 5–15;未知模型保守 4–15)。留空 = 自动
@@ -707,6 +718,22 @@ function onFileChange(e: Event): void {
         >
         透明背景
       </label>
+      <!-- 带 IP 风格开关(69 号票):图片/视频两模式都有、默认关;IP 未定
+           风格时不显示。开 = 发送时风格段拼在提示词前部(任务行可审计),
+           手写 prompt 不被偷改。 -->
+      <label
+        v-if="styleAvailable"
+        class="with-style"
+        :title="`发送时在提示词前拼「${styleSegment(ipStyle)}」(在 IP 编辑里可改风格)`"
+      >
+        <input
+          type="checkbox"
+          :checked="withStyle"
+          :disabled="disabledReason !== ''"
+          @change="emit('update:withStyle', ($event.target as HTMLInputElement).checked)"
+        >
+        带 IP 风格
+      </label>
       <select
         :value="model"
         class="model"
@@ -1141,8 +1168,9 @@ textarea:focus {
   box-sizing: border-box;
 }
 
-/* 透明背景开关:与下拉同排的小号复选项。 */
-.controls label.transparent {
+/* 透明背景 / 带 IP 风格开关:与下拉同排的小号复选项。 */
+.controls label.transparent,
+.controls label.with-style {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1154,7 +1182,8 @@ textarea:focus {
   white-space: nowrap;
 }
 
-.controls label.transparent input {
+.controls label.transparent input,
+.controls label.with-style input {
   accent-color: var(--accent);
   margin: 0;
 }
