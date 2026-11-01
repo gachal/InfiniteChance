@@ -26,6 +26,13 @@ import {
 } from '../composer'
 import { styleSegment } from '../ipStyle'
 import {
+  buildElementLine,
+  CHARACTER_ELEMENT_HINT_LIMIT,
+  countCharacterElements,
+  ELEMENT_TYPE_LABELS,
+} from '../element'
+import { mentionInsertText } from '../composerElements'
+import {
   composerRefMentions,
   insertMentionToken,
   mentionTriggerIndex,
@@ -54,6 +61,11 @@ const props = defineProps<{
   refs: ComposerRef[]
   /** 视频模式的全模态参考条(角色在 chip 上切换)。 */
   videoRefs: VideoComposerRef[]
+  /** 元素显示名(71 号票):与 refs / videoRefs 各自同序同长,编辑器按 IP
+   * 目录实时解析后下传(组件不直连 API);null = 无名参考图(含实体已删
+   * 退化的元素 chip)。缺省 = 全部无名(行为与 71 号票前一致)。 */
+  refNames?: readonly (string | null)[]
+  videoRefNames?: readonly (string | null)[]
   /** 当前模式的草稿:提示词/模型/比例/分辨率(视频分辨率为档位串)。 */
   prompt: string
   model: string
@@ -239,8 +251,11 @@ const mentionOpen = ref(false)
 const mentionHighlight = ref(0)
 const mentionTriggerAt = ref(-1)
 
+// 71 号票:元素 chip 的条目带显示名与类型(names 与条目同序),选中插纯名字。
 const mentionCandidates = computed(() =>
-  isVideo.value ? videoRefMentions(props.videoRefs) : composerRefMentions(props.refs),
+  isVideo.value
+    ? videoRefMentions(props.videoRefs, props.videoRefNames)
+    : composerRefMentions(props.refs, props.refNames),
 )
 
 watch(mentionCandidates, (list) => {
@@ -294,7 +309,7 @@ function insertMention(c: MentionCandidate): void {
   if (!el || mentionTriggerAt.value < 0) {
     return
   }
-  const { text, cursor } = insertMentionToken(el.value, mentionTriggerAt.value, c.token)
+  const { text, cursor } = insertMentionToken(el.value, mentionTriggerAt.value, mentionInsertText(c))
   emit('update:prompt', text)
   closeMention()
   void nextTick(() => {
@@ -370,6 +385,20 @@ const uploadAccept = computed(() => (isVideo.value ? 'image/*,video/*,audio/*' :
  * 因,故在参考条上就地提醒留空「自动」。 */
 const hasVideoRef = computed(() => props.videoRefs.some((r) => r.kind === 'video'))
 
+/** 绑定行预览(71 号票 B5):发送时会插进提示词的那一行(编号与 chip 角标
+ * 同口径),输入框下方只读展示、不改写输入框;无元素为空串,不显示。 */
+const elementLine = computed(() =>
+  isVideo.value
+    ? buildElementLine(props.videoRefs, props.videoRefNames ?? [], 'video')
+    : buildElementLine(props.refs, props.refNames ?? [], 'image'),
+)
+
+/** 出场角色超过阈值的提示(71 号票 B7;Seedance 官方:超过 4 人稳定性下降)。
+ * 只提示不拦发送;视频模式才出(文案指向视频模型)。 */
+const tooManyCharacters = computed(
+  () => isVideo.value && countCharacterElements(props.videoRefs) > CHARACTER_ELEMENT_HINT_LIMIT,
+)
+
 const uploadTitle = computed(() => {
   if (isVideo.value) {
     return videoRefsVacant.value ? '上传本机图片/视频/音频作为参考' : '各角色参考已满员'
@@ -437,6 +466,16 @@ function onFileChange(e: Event): void {
           @click="emit('preview-ref', { kind: 'image', url: r.url })"
           @error="thumbs.onThumbError(r.url)"
         >
+        <!-- 元素名称角标(71 号票 B4):类型小标 + 实时显示名;实体已删退化
+             无名时不出(编号角标照旧)。 -->
+        <span
+          v-if="r.element && refNames?.[i]"
+          class="ref-element"
+          :title="`元素:${refNames?.[i]}(${ELEMENT_TYPE_LABELS[r.element.type]})`"
+        >
+          <span class="ref-element-type">{{ ELEMENT_TYPE_LABELS[r.element.type] }}</span>
+          <span class="ref-element-name">{{ refNames?.[i] }}</span>
+        </span>
         <button
           class="ref-remove"
           type="button"
@@ -514,11 +553,21 @@ function onFileChange(e: Event): void {
           v-else
           class="vref-icon"
         >♪</span>
+        <span
+          v-if="r.element && videoRefNames?.[i]"
+          class="ref-element"
+          :title="`元素:${videoRefNames?.[i]}(${ELEMENT_TYPE_LABELS[r.element.type]})`"
+        >
+          <span class="ref-element-type">{{ ELEMENT_TYPE_LABELS[r.element.type] }}</span>
+          <span class="ref-element-name">{{ videoRefNames?.[i] }}</span>
+        </span>
+        <!-- 元素 chip 恒为参考图(71 号票 B3):角色切换禁用。 -->
         <select
           v-if="r.kind === 'image'"
           class="vref-role"
           :value="r.role"
-          :title="`角色(${VIDEO_ROLE_LABEL[r.role]})`"
+          :disabled="r.element !== undefined"
+          :title="r.element !== undefined ? '元素固定为参考图' : `角色(${VIDEO_ROLE_LABEL[r.role]})`"
           @change="emit('set-ref-role', i, ($event.target as HTMLSelectElement).value as VideoRefRole)"
         >
           <option
@@ -579,6 +628,13 @@ function onFileChange(e: Event): void {
       含参考视频:任务可能被识别为「视频编辑」,输出比例与时长将跟随输入视频(需
       4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
     </p>
+    <!-- 出场角色数提示(71 号票 B7):角色元素超阈值时出,不拦发送。 -->
+    <p
+      v-if="tooManyCharacters"
+      class="vref-hint"
+    >
+      出场角色超过 {{ CHARACTER_ELEMENT_HINT_LIMIT }} 个,Seedance 等模型稳定性会下降
+    </p>
 
     <!-- 设定图类型选择(70 号票入口一):预填在途时出现,五类型固定序、
          默认三视图;切换上抛编辑器重拼提示词(模板 + 四件套 + 变体 +
@@ -635,7 +691,13 @@ function onFileChange(e: Event): void {
               alt=""
               @error="thumbs.onThumbError(c.url)"
             >
-            <span class="mention-token">{{ c.token }}</span>
+            <!-- 71 号票 B6:元素条目显示名称 + 类型(选中插纯名字),无名图
+                 维持 @图N。 -->
+            <span class="mention-token">{{ c.elementName ?? c.token }}</span>
+            <span
+              v-if="c.elementType"
+              class="mention-type"
+            >{{ ELEMENT_TYPE_LABELS[c.elementType] }}</span>
             <span
               v-if="c.roleLabel"
               class="mention-role"
@@ -644,6 +706,16 @@ function onFileChange(e: Event): void {
         </ul>
       </div>
     </div>
+
+    <!-- 绑定行预览(71 号票 B5):发送时插在风格段之后的那一行,只读、不
+         改写输入框;无元素不显示。 -->
+    <p
+      v-if="elementLine"
+      class="element-line"
+      :title="elementLine"
+    >
+      将附加:{{ elementLine }}
+    </p>
 
     <!-- 成本预估(38 号票):有价才显示,随参数联动。 -->
     <p
@@ -855,18 +927,47 @@ function onFileChange(e: Event): void {
 .ref-chip {
   position: relative;
   width: 48px;
-  height: 48px;
   flex-shrink: 0;
+  display: grid;
+  gap: 2px;
 }
 
 .ref-chip img {
-  width: 100%;
-  height: 100%;
+  width: 48px;
+  height: 48px;
   object-fit: cover;
   border-radius: var(--r-lg);
   border: 1px solid var(--line-action);
   display: block;
   cursor: zoom-in;
+}
+
+/* 元素名称角标(71 号票 B4):类型小标 + 显示名,窄 chip 内省略号截断,
+   全称见 title;无名 chip 不渲染本行,尺寸与 71 号票前一致。 */
+.ref-element {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.3;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ref-element-type {
+  flex-shrink: 0;
+  padding: 0 3px;
+  border-radius: var(--r-sm);
+  background: rgba(var(--teal-rgb), 0.16);
+  color: var(--teal);
+}
+
+.ref-element-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 视频参考 chip:图片缩略或图标占位,角色标记贴在底部。 */
@@ -930,6 +1031,12 @@ button.vref-icon:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 元素 chip 的角色下拉禁用态(71 号票:元素固定为参考图)。 */
+.vref-role:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .ref-remove {
@@ -1094,6 +1201,22 @@ button.vref-icon:hover {
   margin-left: auto;
   font-size: var(--fs-micro);
   color: var(--text-muted);
+}
+
+/* 元素条目的类型小标(71 号票 B6,与 chip 名称角标同色)。 */
+.mention-type {
+  font-size: var(--fs-micro);
+  color: var(--teal);
+}
+
+/* 绑定行预览(71 号票 B5):发送时附加的那一行,只读小字、单行省略。 */
+.element-line {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 目录不可用禁态:整体降不透明度,交互面全部 :disabled。 */

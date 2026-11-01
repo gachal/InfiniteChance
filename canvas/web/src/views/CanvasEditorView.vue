@@ -20,6 +20,8 @@ import {
   type CharacterVariantRecord,
   type ModelPriceSummary,
   type PromptTemplateOption,
+  type PropRecord,
+  type SceneRecord,
   type VoiceRecord,
 } from '@infinitechance/api'
 
@@ -84,6 +86,7 @@ import {
   VIDEO_REFS_TOTAL_CAP,
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
+  type ComposerElement,
   type ComposerRef,
   type VideoComposerRef,
   type VideoRefKind,
@@ -91,7 +94,19 @@ import {
 } from '../composer'
 import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
-import { styledSendPrompt } from '../ipStyle'
+import {
+  mergeImageElementPick,
+  mergeVideoElementPick,
+  resolveElementNames,
+  type ElementCatalog,
+  type ElementPickResult,
+} from '../element'
+import {
+  applyElementPickToDraft,
+  composeSendPrompt,
+  elementPickNotice,
+  elementPickRejectNotice,
+} from '../composerElements'
 import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
 import type { SheetCharacterFacts } from '../sheet'
 import { useAutosave } from '../composables/useAutosave'
@@ -873,11 +888,19 @@ const composerPickerKinds = computed<Array<'image' | 'video' | 'audio'>>(() =>
   composerMode.value === 'video' ? ['image', 'video', 'audio'] : ['image'],
 )
 
-const composerPickerHint = computed(() =>
-  composerMode.value === 'video'
-    ? '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。'
-    : '点选挂为参考图,再点取消。',
-)
+/** 面板说明行随模式;带 IP 归属时才有资产视图(角色/场景/道具),一并说明
+ * 那里挑出的是元素(71 号票:带名称、视频模式恒参考图)。 */
+const composerPickerHint = computed(() => {
+  const library = canvasIPID.value > 0
+  if (composerMode.value === 'video') {
+    return library
+      ? '素材视图点选按默认角色挂为参考;角色/场景/道具视图点选挂为元素(带名称,恒为参考图);再点取消。'
+      : '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。'
+  }
+  return library
+    ? '点选挂为参考图;角色/场景/道具视图点选挂为元素(带名称);再点取消。'
+    : '点选挂为参考图,再点取消。'
+})
 
 /** 已选高亮 = 当前模式参考条上的素材 id(选中节点产物 + 上传/挑选条目)。 */
 const composerPickerSelectedIds = computed<number[]>(() => {
@@ -925,11 +948,16 @@ function detachComposerAsset(a: AssetRecord): void {
 
 /** 素材库点选(对话框):已在条上 = 摘下;不在 = 按 44 号票默认角色规则
  * 落条(多选连选逐条应用:空白条多选图时第一张落首帧、其余落参考图),
- * 上限守卫与上传同款,超限整条拒收。 */
-function onComposerPickToggle(a: AssetRecord): void {
+ * 上限守卫与上传同款,超限整条拒收。资产视图点选带 element(71 号票)走
+ * 元素合并;「同一张图再点 = 取消」两路共用上面的已选判定。 */
+function onComposerPickToggle(a: AssetRecord, element?: ComposerElement): void {
   const selectedIds = composerPickerSelectedIds.value
   if (selectedIds.includes(a.id)) {
     detachComposerAsset(a)
+    return
+  }
+  if (element) {
+    pickComposerElement(a, element)
     return
   }
   if (composerMode.value === 'video') {
@@ -943,6 +971,43 @@ function onComposerPickToggle(a: AssetRecord): void {
     return
   }
   uploadedRefs.value = appendComposerRef(uploadedRefs.value, composerRefFromAsset(a))
+}
+
+/** 资产视图点选 = 元素 chip(71 号票 B3):合并对「生效参考条」算 —— 上限
+ * 与去重要算上选中产物 chip(坑 4),结果经 applyElementPickToDraft 落回上传
+ * 草稿(产物 chip 是计算值,不写进草稿、detached 标记不动)。视频模式恒参考
+ * 图;同实体换图出 toast 报实时显示名;拒收沿用参考条满员的横幅出口。 */
+function pickComposerElement(a: AssetRecord, element: ComposerElement): void {
+  const pick = { url: a.content_url, asset_id: a.id, element }
+  if (composerMode.value === 'video') {
+    const visible = videoComposerRefs.value
+    const result = mergeVideoElementPick(visible, pick)
+    if (result.action === 'rejected') {
+      generateError.value = elementPickRejectNotice('video', visible, pick.url)
+      return
+    }
+    uploadedVideoRefs.value = applyElementPickToDraft(uploadedVideoRefs.value, visible, result)
+    toastElementPick(result)
+    return
+  }
+  const visible = composerRefs.value
+  const result = mergeImageElementPick(visible, pick)
+  if (result.action === 'rejected') {
+    generateError.value = elementPickRejectNotice('image', visible, pick.url)
+    return
+  }
+  uploadedRefs.value = applyElementPickToDraft(uploadedRefs.value, visible, result)
+  toastElementPick(result)
+}
+
+/** 元素点选的轻提示:名字按合并后的条实时解析(多变体同条时带「·变体名」)。 */
+function toastElementPick(result: ElementPickResult<ComposerRef | VideoComposerRef>): void {
+  const name =
+    result.index === undefined ? null : (resolveElementNames(result.refs, elementCatalog.value)[result.index] ?? null)
+  const text = elementPickNotice(result.action, name)
+  if (text !== '') {
+    showNotice(text)
+  }
 }
 
 /** 草稿更新的模式分发:video 分支写视频草稿,image 分支写图片草稿
@@ -992,8 +1057,16 @@ async function onComposerSend(): Promise<void> {
       return
     }
     const refs = composerVideoRefs(videoComposerRefs.value)
+    // 71 号票 B5:风格段之后插绑定行(元素名 ↔ 图N),全文随任务行落库。
     await submitVideoTask({
-      prompt: styledSendPrompt(prompt, videoWithStyle.value, ipStyle.value),
+      prompt: composeSendPrompt(
+        prompt,
+        videoWithStyle.value,
+        ipStyle.value,
+        videoComposerRefs.value,
+        videoRefNames.value,
+        'video',
+      ),
       model: videoModel.value,
       seconds: parsed === '' ? undefined : parsed,
       size: videoResolution.value === '' ? undefined : videoResolution.value,
@@ -1012,7 +1085,14 @@ async function onComposerSend(): Promise<void> {
   // 不影响已发任务),随提交落 sheetPending。
   const preset = activeSheetPreset.value
   await submitImageTask({
-    prompt: styledSendPrompt(prompt, composerWithStyle.value, ipStyle.value),
+    prompt: composeSendPrompt(
+      prompt,
+      composerWithStyle.value,
+      ipStyle.value,
+      composerRefs.value,
+      composerRefNames.value,
+      'image',
+    ),
     model: composerModel.value,
     size: composeSize(composerRatio.value, composerResolution.value) || undefined,
     background: composerTransparent.value ? 'transparent' : undefined,
@@ -1186,6 +1266,52 @@ async function refreshIPCharacters(): Promise<void> {
     /* 拉不到就保持现状,下次聚焦再试 */
   }
 }
+
+// ---- 本 IP 场景/道具目录与元素显示名(71 号票)----
+
+// 元素 chip 只存 entityId(角色另带 variantId),名称渲染与发送时从 IP 目录
+// 实时取(52 号票不存快照精神):角色走上方 ipCharacters,场景/道具照其先例
+// 补两份目录 —— 画布加载后拉一次、窗口聚焦刷新、两类各自失败静默保旧值。
+// 实体或变体已删 → 解析为 null,chip 退化无名参考图(名称角标消失、不进
+// 绑定行)。
+const ipScenes = ref<SceneRecord[]>([])
+const ipProps = ref<PropRecord[]>([])
+
+async function refreshIPScenesAndProps(): Promise<void> {
+  if (canvasIPID.value <= 0) {
+    return
+  }
+  const ipId = canvasIPID.value
+  await Promise.all([
+    client.listIPScenes(ipId).then(
+      (list) => {
+        ipScenes.value = list
+      },
+      () => {
+        /* 拉不到就保持现状,下次聚焦再试 */
+      },
+    ),
+    client.listIPProps(ipId).then(
+      (list) => {
+        ipProps.value = list
+      },
+      () => {
+        /* 同上 */
+      },
+    ),
+  ])
+}
+
+const elementCatalog = computed<ElementCatalog>(() => ({
+  characters: ipCharacters.value,
+  scenes: ipScenes.value,
+  props: ipProps.value,
+}))
+
+/** 两模式参考条的元素显示名(与条目同序同长;null = 无名)。编辑器解析后
+ * 下传对话框(组件不直连 API),发送拼装用同一份。 */
+const composerRefNames = computed(() => resolveElementNames(composerRefs.value, elementCatalog.value))
+const videoRefNames = computed(() => resolveElementNames(videoComposerRefs.value, elementCatalog.value))
 
 // ---- 本 IP 画面风格(69 号票)----
 
@@ -3317,6 +3443,7 @@ onMounted(() => {
   void loadCanvas().finally(() => {
     void taskSync.start()
     void refreshIPCharacters()
+    void refreshIPScenesAndProps()
     void refreshIPStyle()
     void refreshVoices()
   })
@@ -3324,6 +3451,7 @@ onMounted(() => {
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('focus', refreshIPCharacters)
+  window.addEventListener('focus', refreshIPScenesAndProps)
   window.addEventListener('focus', refreshIPStyle)
   window.addEventListener('focus', refreshVoices)
   window.addEventListener('beforeunload', beforeUnload)
@@ -3333,6 +3461,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
   window.removeEventListener('focus', refreshIPCharacters)
+  window.removeEventListener('focus', refreshIPScenesAndProps)
   window.removeEventListener('focus', refreshIPStyle)
   window.removeEventListener('focus', refreshVoices)
   window.removeEventListener('keydown', onGlobalKeydown)
@@ -3640,6 +3769,8 @@ function backToList(): void {
         :disabled-reason="composerDisabledReason"
         :refs="composerRefs"
         :video-refs="videoComposerRefs"
+        :ref-names="composerRefNames"
+        :video-ref-names="videoRefNames"
         :prompt="composerMode === 'video' ? videoPrompt : composerPrompt"
         :model="composerMode === 'video' ? videoModel : composerModel"
         :ratio="composerMode === 'video' ? videoRatio : composerRatio"
