@@ -1068,7 +1068,9 @@ export interface UsageAuditParams {
   channel_id?: number
   model?: string
   status?: UsageStatus
-  source?: 'canvas' | 'direct'
+  /** canvas = 画布标记(canvas=… 前缀)、direct = 直连流量、asset = 库级
+   * 生成产物(ip=… gen=asset,70 号票)。 */
+  source?: 'canvas' | 'direct' | 'asset'
 }
 
 export interface ListUsageLogsParams extends UsageAuditParams {
