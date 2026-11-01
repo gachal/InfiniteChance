@@ -73,6 +73,13 @@ type CharacterSource interface {
 	GetCharacter(ctx context.Context, id int64) (character.Character, error)
 }
 
+// IPGetter is the slice of the IP store the Agent stream needs(69 号票):
+// 每次带工具的会话按请求读画布所属 IP 的画面风格注入导演系统提示词(目录
+// 按请求读表先例,无缓存 —— IP 编辑改风格、set_style 落库后下一请求即见)。
+type IPGetter interface {
+	GetIP(ctx context.Context, id int64) (canvas.IP, error)
+}
+
 // AssetGetter is the slice of the asset store the handlers need: a video
 // reference in the content-addressed form resolves through it to the
 // address the asset row holds.
@@ -109,8 +116,12 @@ type Handlers struct {
 	// Characters 承载角色设定注入(52 号票):nil 时带 character_ids 的
 	// 请求按装配缺口回答 500,不带则不受影响(反推/分析不注入)。
 	Characters CharacterSource
-	Models     ModelPricer
-	Gateway    Gateway
+	// IPs 承载画面风格注入(69 号票):带工具的 Agent 会话按请求读画布
+	// 所属 IP 的 style 拼进导演系统提示词末尾;nil = 不注入(装配宽容
+	// 路径,生产装配恒非 nil)。
+	IPs     IPGetter
+	Models  ModelPricer
+	Gateway Gateway
 	// AgentTools 是 Agent 工具循环可调用的领域工具(63 号票):nil 等价
 	// 空注册表——请求不带 tools 字段,端点退化为普通流式会话 + done 帧。
 	// 66 号票在此装配六个领域工具。

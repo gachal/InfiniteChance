@@ -225,6 +225,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Canvases:      s.Canvases,
 		Assets:        s.Assets,
 		Characters:    s.Characters,
+		IPs:           s.IPs,
 		Models:        s.Prices,
 		Gateway:       chatGateway,
 		AgentTools:    agentTools,

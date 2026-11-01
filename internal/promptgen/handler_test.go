@@ -170,6 +170,10 @@ type envParams struct {
 	gateway       promptgen.Gateway
 	agentTools    *promptgen.AgentToolRegistry
 	publicBaseURL func(ctx context.Context) string
+	// canvases 缺省 fakeCanvases(画布 7 属 IP 3);ips 缺省 nil = 不读
+	// 画面风格(69 号票注入面的装配宽容路径)。
+	canvases promptgen.CanvasGetter
+	ips      promptgen.IPGetter
 }
 
 type handlerEnv struct {
@@ -197,6 +201,7 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 			12: {ID: 12, IPID: 3, Name: "陈远", Alias: "", Description: "", Detail: "黑色长发的领航员。"},
 			13: {ID: 13, IPID: 9, Name: "别家角色", Alias: "跨 IP", Description: "属于其他 IP", Detail: "不应可注入。"},
 		}},
+		canvases: fakeCanvases{},
 	}
 	if mutate != nil {
 		mutate(params)
@@ -205,9 +210,10 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 	engine := gin.New()
 	promptgen.RegisterRoutes(engine.Group("/canvases"), &promptgen.Handlers{
 		Templates:  params.templates,
-		Canvases:   fakeCanvases{},
+		Canvases:   params.canvases,
 		Assets:     params.assets,
 		Characters: params.characters,
+		IPs:        params.ips,
 		Models: fakePrices{byModel: map[string]pricing.Price{
 			"chat-m": {PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
 			"img-m":  {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},

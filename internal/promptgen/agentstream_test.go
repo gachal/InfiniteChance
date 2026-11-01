@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/gachal/InfiniteChance/internal/promptgen"
 )
@@ -102,7 +103,13 @@ func relayToolRound(t *testing.T, lead, id, name string, args map[string]any) st
 		t.Fatalf("marshal tool args: %v", err)
 	}
 	argStr := string(argsRaw)
+	// 劈在 rune 边界上:真实上游每个分片都是合法 JSON(字符串值是合法
+	// Unicode),不会把一个多字节字符劈成两半 —— 按字节中点硬劈会让中文
+	// 参数在各片 Marshal 时变成 U+FFFD(69 号票中文风格参数暴露)。
 	half := len(argStr) / 2
+	for half > 0 && !utf8.RuneStart(argStr[half]) {
+		half--
+	}
 	var b strings.Builder
 	if lead != "" {
 		b.WriteString(relayChunk(t, map[string]any{

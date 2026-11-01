@@ -3,6 +3,7 @@ package canvas
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,24 @@ const DefaultIPName = "默认 IP"
 // Agent 系统提示词,封顶防提示词膨胀。按 rune 计,IP 编辑面与 set_style
 // 工具同一口径。
 const MaxIPStyleRunes = 500
+
+// styleSegmentMark 是风格段的固定标记(69 号票):随提交落任务行/系统提示
+// 词,审计时按它即可认出注入面。
+const styleSegmentMark = "【画面风格】"
+
+// StyleSegment renders the IP style as the fixed-marker segment the
+// generation paths prepend(69 号票):「【画面风格】」+ trim 后的风格文本;
+// 未定(空/全空白)答空串 —— 调用方据此不拼不显示,存量行为不变。服务端
+// 消费方:Agent 工具循环系统提示词(本票)、角色设定图 prompt 拼装(70 号
+// 票可复用)。前端同形实现在 canvas/web/src/ipStyle.ts styleSegment,两
+// 侧各有字面量测试钉住形状。
+func StyleSegment(style string) string {
+	trimmed := strings.TrimSpace(style)
+	if trimmed == "" {
+		return ""
+	}
+	return styleSegmentMark + trimmed
+}
 
 // IP is one IP 企划:创作侧第一层容器——一个 ACG 企划/作品宇宙(50 号票,
 // ADR 0004)。CoverAssetID 引用素材行(0 = 无封面);素材行被删后封面由

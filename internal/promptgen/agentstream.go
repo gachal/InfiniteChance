@@ -11,6 +11,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/gachal/InfiniteChance/internal/canvas"
 )
 
 // AgentStream 承载带工具的 Agent 会话(63 号票,ADR 0006 的事件回传面):
@@ -38,6 +40,22 @@ func (h *Handlers) AgentStream(c *gin.Context) {
 	prep, ok := h.prepareGenerate(c)
 	if !ok {
 		return
+	}
+
+	// 「剧本导演」system 提示词(66 号票定案 3)只随带工具的会话出现;69
+	// 号票起末尾拼画布所属 IP 的画面风格段(按请求读表、无缓存,空 = 不带
+	// 该段)。读表在开流之前:读失败照校验纪律回答 JSON 错误,流不开始。
+	var tools []json.RawMessage
+	if h.AgentTools != nil {
+		tools = h.AgentTools.Definitions()
+	}
+	systemPrompt := ""
+	if len(tools) > 0 {
+		style, ok := h.ipStyle(c, prep.ipID)
+		if !ok {
+			return
+		}
+		systemPrompt = directorSystemPrompt(style)
 	}
 
 	c.Header("Content-Type", "text/event-stream")
@@ -70,17 +88,13 @@ func (h *Handlers) AgentStream(c *gin.Context) {
 	// 的普通流式会话一致。工具经请求 context 拿到画布作用域(66 号票,
 	// 库表类工具严格限本 IP)。
 	instruction := prep.instructionText
-	var tools []json.RawMessage
-	if h.AgentTools != nil {
-		tools = h.AgentTools.Definitions()
-	}
 	if len(tools) > 0 && prep.usedBuiltin {
 		instruction = builtinAgentInstruction
 	}
 	messages := conversationMessages(instruction, prep.characterSection, prep.history, prep.topic, prep.currentMedia)
 	ctx := c.Request.Context()
 	if len(tools) > 0 {
-		messages = append([]ChatMessage{{Role: "system", Content: agentDirectorSystemPrompt}}, messages...)
+		messages = append([]ChatMessage{{Role: "system", Content: systemPrompt}}, messages...)
 		ctx = WithAgentScope(ctx, AgentScope{CanvasID: prep.canvasID, IPID: prep.ipID})
 	}
 
@@ -100,4 +114,23 @@ func (h *Handlers) AgentStream(c *gin.Context) {
 		return
 	}
 	writeEvent(sseDoneMarker)
+}
+
+// ipStyle reads the canvas IP's visual style for the director prompt
+// (69 号票,每次请求读表、无缓存)。IPs 未装配(测试/装配宽容路径)或 IP
+// 行不存在 = 无风格(不注入);其余读失败按 store 错误回答 500 —— false
+// 表示已应答,调用方不得开流。
+func (h *Handlers) ipStyle(c *gin.Context, ipID int64) (string, bool) {
+	if h.IPs == nil {
+		return "", true
+	}
+	ip, err := h.IPs.GetIP(c.Request.Context(), ipID)
+	if errors.Is(err, canvas.ErrIPNotFound) {
+		return "", true
+	}
+	if err != nil {
+		h.failStore(c, err)
+		return "", false
+	}
+	return ip.Style, true
 }
