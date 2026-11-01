@@ -13,7 +13,7 @@
  * 自由文本理解;悬空(参考被移除后编号漂移)不校验不警告,与手写「图N」
  * 的既有语义一致,同一参考可重复引用。
  */
-import { VIDEO_ROLE_LABEL, type ComposerRef, type VideoComposerRef } from './composer'
+import { VIDEO_ROLE_LABEL, type ComposerElement, type ComposerRef, type VideoComposerRef } from './composer'
 import type { PendingAgentMedia } from './agentMedia'
 
 /** 浮层里的一条可 @ 条目:token 是插入文本,kind 决定缩略(图)或徽章
@@ -24,30 +24,67 @@ export interface MentionCandidate {
   url: string
   /** 视频模式浮层的角色标签(恒「参考图」);其余上下文缺省。 */
   roleLabel?: string
+  /** 元素 chip 的显示名与类型(71 号票):有名元素在浮层条目上显示名称与
+   * 类型小标;实体/变体已删退化无名的 chip 与普通参考图两者皆缺省。 */
+  elementName?: string
+  elementType?: ComposerElement['type']
 }
 
-/** 图片模式:参考条全部条目按序编号。 */
-export function composerRefMentions(refs: ComposerRef[]): MentionCandidate[] {
-  return refs.map((r, i) => ({ token: `@图${i + 1}`, kind: 'image' as const, url: r.url }))
+/** 元素 chip 的显示字段拼装:名字解析成功才带(名称 + 类型成对出现,
+ * 退化无名 = 与普通参考图同形)。 */
+function withElementDisplay(
+  candidate: MentionCandidate,
+  name: string | null | undefined,
+  el?: ComposerElement,
+): MentionCandidate {
+  if (!el || name == null || name === '') {
+    return candidate
+  }
+  return { ...candidate, elementName: name, elementType: el.type }
+}
+
+/** 图片模式:参考条全部条目按序编号。names(可选)与 refs 同序,是编辑器
+ * 经 element.resolveElementNames 解析好的显示名;缺省时行为与旧口径逐字节
+ * 一致。 */
+export function composerRefMentions(
+  refs: ComposerRef[],
+  names?: readonly (string | null)[],
+): MentionCandidate[] {
+  return refs.map((r, i) =>
+    withElementDisplay(
+      { token: `@图${i + 1}`, kind: 'image' as const, url: r.url },
+      names?.[i],
+      r.element,
+    ),
+  )
 }
 
 /** 视频模式:仅「参考图」角色按其在参考图序列中的顺序编号 —— 编号即
  * references 数组下标,与上游契约严格对齐(44 号票「首帧切参考图」场景
- * 下编号不漂移)。 */
-export function videoRefMentions(refs: VideoComposerRef[]): MentionCandidate[] {
+ * 下编号不漂移)。names 与 refs 同序(按条目下标对位,不按参考图序)。 */
+export function videoRefMentions(
+  refs: VideoComposerRef[],
+  names?: readonly (string | null)[],
+): MentionCandidate[] {
   const out: MentionCandidate[] = []
   let n = 0
-  for (const r of refs) {
+  for (const [i, r] of refs.entries()) {
     if (r.role !== 'reference_image') {
       continue
     }
     n += 1
-    out.push({
-      token: `@图${n}`,
-      kind: 'image',
-      url: r.url,
-      roleLabel: VIDEO_ROLE_LABEL.reference_image,
-    })
+    out.push(
+      withElementDisplay(
+        {
+          token: `@图${n}`,
+          kind: 'image',
+          url: r.url,
+          roleLabel: VIDEO_ROLE_LABEL.reference_image,
+        },
+        names?.[i],
+        r.element,
+      ),
+    )
   }
   return out
 }

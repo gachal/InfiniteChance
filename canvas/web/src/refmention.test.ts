@@ -137,6 +137,61 @@ describe('mentionTriggerIndex', () => {
   })
 })
 
+// ---- 元素候选显示字段(71 号票 B6)----
+
+const el = (type: 'character' | 'scene' | 'prop', entityId: number, variantId?: number) =>
+  ({ type, entityId, ...(variantId !== undefined ? { variantId } : {}) })
+
+describe('元素 chip 的浮层显示字段(71 号票 B6)', () => {
+  it('图片模式:有名元素带名称与类型,无名图缺省;token/kind/url 口径不变', () => {
+    const refs: ComposerRef[] = [
+      { url: 'a', element: el('character', 1, 2) },
+      { url: 'b' },
+      { url: 'c', element: el('scene', 3) },
+    ]
+    const out = composerRefMentions(refs, ['小蓝', null, '天台'])
+    expect(out[0].elementName).toBe('小蓝')
+    expect(out[0].elementType).toBe('character')
+    expect(out[1].elementName).toBeUndefined()
+    expect(out[1].elementType).toBeUndefined()
+    expect(out[2].elementName).toBe('天台')
+    expect(out[2].elementType).toBe('scene')
+    expect(out.map((c) => c.token)).toEqual(['@图1', '@图2', '@图3'])
+    expect(out.map((c) => c.url)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('退化无名(名字解析为 null)的元素 chip 与普通参考图完全同形', () => {
+    const refs: ComposerRef[] = [{ url: 'a', element: el('prop', 9) }]
+    const out = composerRefMentions(refs, [null])
+    expect(out[0].elementName).toBeUndefined()
+    expect(out[0].elementType).toBeUndefined()
+  })
+
+  it('不传 names(既有调用方)行为不变:只多出元素类型也无,纯可选字段', () => {
+    const refs: ComposerRef[] = [{ url: 'a', element: el('character', 1, 2) }]
+    const out = composerRefMentions(refs)
+    expect(out).toEqual([{ token: '@图1', kind: 'image', url: 'a' }])
+  })
+
+  it('视频模式:参考图角色元素同样带名称与类型,roleLabel 不受影响', () => {
+    const refs: VideoComposerRef[] = [
+      { url: 'f', kind: 'image', role: 'first_frame' },
+      { url: 'r1', kind: 'image', role: 'reference_image', element: el('character', 1, 2) },
+      { url: 'r2', kind: 'image', role: 'reference_image', element: el('scene', 3) },
+    ]
+    const out = videoRefMentions(refs, [null, '小蓝', '天台'])
+    // 首帧不占号不进浮层;names 按条目下标对位:r1 对「小蓝」、r2 对「天台」。
+    expect(out.map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(out[0].elementName).toBe('小蓝')
+    expect(out[0].elementType).toBe('character')
+    expect(out[1].elementName).toBe('天台')
+    expect(out[1].elementType).toBe('scene')
+    expect(out[1].roleLabel).toBe('参考图')
+    // 首帧不在浮层(不可 @)。
+    expect(out.some((c) => c.url === 'f')).toBe(false)
+  })
+})
+
 describe('insertMentionToken', () => {
   it('把触发字符替换为 token,光标落在 token 之后', () => {
     expect(insertMentionToken('画一只@', 3, '@图2')).toEqual({ text: '画一只@图2', cursor: 6 })
