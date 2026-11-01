@@ -2557,22 +2557,23 @@ const sheetPending = new Map<string, { characterId: number; variantId: number; l
  * 类型默认三视图、变体 = 卡片当前选中变体、提示词 = TS 模板拼装(四件套
  * + 变体名/服装 + 风格段)、参考条按 B3 预填(变体已存设定图默认带最近
  * 一张,可手动移除)。人工确认后才发送(花钱操作总案 Q5)。 */
-function onCharacterGenerateSheet(
-  nodeId: string,
-  p: { character: CharacterRecord; variant: CharacterVariantRecord },
-): void {
-  const node = findNode(nodeId)
+/** 直通生成的落节点骨架(源右侧 380px、按出边数纵向级联的既有形态):
+ * 落一个空产物节点 + 来源边 + 选中(选中切换的 watch 负责对话框模式锁定
+ * 与拆下标记复位)。返回新节点 id;源节点不存在返回 null。生成设定图与
+ * 生成登场视频两条直通先用,其余历史落点后续票据再收。 */
+function spawnProductNode(sourceId: string, type: Extract<CanvasNodeType, 'image' | 'video'>): string | null {
+  const node = findNode(sourceId)
   if (!node) {
-    return
+    return null
   }
   nodeSeq += 1
-  const newId = `image-${Date.now()}-${nodeSeq}`
-  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  const newId = `${type}-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === sourceId).length
   removeSelectedNodes(getSelectedNodes.value)
   addNodes([
     {
       id: newId,
-      type: 'image',
+      type,
       position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
       data: { url: '', note: '' } satisfies MediaNodeData,
     },
@@ -2581,7 +2582,18 @@ function onCharacterGenerateSheet(
   if (added) {
     addSelectedNodes([added])
   }
-  connectNodes(nodeId, newId)
+  connectNodes(sourceId, newId)
+  return newId
+}
+
+function onCharacterGenerateSheet(
+  nodeId: string,
+  p: { character: CharacterRecord; variant: CharacterVariantRecord },
+): void {
+  const newId = spawnProductNode(nodeId, 'image')
+  if (newId === null) {
+    return
+  }
   const facts: SheetCharacterFacts = {
     name: p.character.name,
     alias: p.character.alias || undefined,
@@ -2615,38 +2627,21 @@ function onSheetTypeChange(type: string): void {
 
 // ---- 角色登场视频直通(71 号票 D1)----
 
-/** 角色引用卡「生成登场视频」:照 onCharacterGenerateSheet 骨架落空**视频**
- * 节点(源右侧 380px、按出边数纵向级联)+ 角色→视频来源边 + 选中(选中切换
- * 的 watch 自动把模式锁成视频、复位拆下标记);视频草稿预填走纯函数
- * buildEntrancePrefill —— 参考条整条替换为该角色元素 chip(变体 = 卡片当前
- * 选中变体,取图与 cut 注入共用 pickVariantAssetId),取不到图不带 chip 并
- * 提示先生成设定图;提示词 = 单角色登场玩法预设填名,IP 风格段拼最前。
- * 时长/比例/分辨率不动;人工确认后才发送(花钱操作总案 Q5)。 */
+/** 角色引用卡「生成登场视频」:经 spawnProductNode 落空**视频**节点 + 角色
+ * →视频来源边 + 选中(选中切换的 watch 自动把模式锁成视频、复位拆下标记);
+ * 视频草稿预填走纯函数 buildEntrancePrefill —— 参考条整条替换为该角色元素
+ * chip(变体 = 卡片当前选中变体,取图与 cut 注入共用 pickVariantAssetId),
+ * 取不到图不带 chip 并提示先生成设定图;提示词 = 单角色登场玩法预设填名,
+ * IP 风格段拼最前。时长/比例/分辨率不动;人工确认后才发送(花钱操作总案
+ * Q5)。 */
 function onCharacterGenerateEntrance(
   nodeId: string,
   p: { character: CharacterRecord; variant?: CharacterVariantRecord },
 ): void {
-  const node = findNode(nodeId)
-  if (!node) {
+  const newId = spawnProductNode(nodeId, 'video')
+  if (newId === null) {
     return
   }
-  nodeSeq += 1
-  const newId = `video-${Date.now()}-${nodeSeq}`
-  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
-  removeSelectedNodes(getSelectedNodes.value)
-  addNodes([
-    {
-      id: newId,
-      type: 'video',
-      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
-      data: { url: '', note: '' } satisfies MediaNodeData,
-    },
-  ])
-  const added = findNode(newId)
-  if (added) {
-    addSelectedNodes([added])
-  }
-  connectNodes(nodeId, newId)
   const prefill = buildEntrancePrefill(p.character, p.variant, ipStyle.value)
   videoPrompt.value = prefill.prompt
   uploadedVideoRefs.value = prefill.refs
