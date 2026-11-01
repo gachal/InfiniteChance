@@ -64,8 +64,8 @@ func newIPTaskEnv(gateway *okGateway) *ipTaskEnv {
 		gw = gateway
 	}
 	canvastask.RegisterIPRoutes(r.Group("/ips/:id/tasks"), &canvastask.Handlers{
-		Tasks:      tasks,
-		IPs:        fakeIPStore{},
+		Tasks: tasks,
+		IPs:   fakeIPStore{},
 		Characters: fakeCharacters{byID: map[int64]character.Character{
 			11: {ID: 11, IPID: 3, Name: "林小满", Variants: []character.Variant{
 				{ID: 21, CharacterID: 11, Name: "冬季制服", Note: "深蓝色大衣"},

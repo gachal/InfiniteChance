@@ -472,7 +472,8 @@ func TestMySQLCanvasTaskSongFieldsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMySQLCanvasTaskAttachRemoteOnlyOnRunning(t *testing.T) {	store, _ := openTaskTestDB(t)
+func TestMySQLCanvasTaskAttachRemoteOnlyOnRunning(t *testing.T) {
+	store, _ := openTaskTestDB(t)
 	ctx := context.Background()
 	task := seedVideoTask(t, store, 7, "video-1-1", canvastask.StatusQueued)
 	if _, err := store.Claim(ctx); err != nil {

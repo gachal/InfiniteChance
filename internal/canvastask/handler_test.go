@@ -30,6 +30,7 @@ type fakeTasks struct {
 func newFakeTasks() *fakeTasks {
 	return &fakeTasks{tasks: map[string]canvastask.Task{}}
 }
+
 // all answers every task in insertion-insensitive order for assertions.
 func (f *fakeTasks) all() []canvastask.Task {
 	out := make([]canvastask.Task, 0, len(f.tasks))
@@ -38,7 +39,6 @@ func (f *fakeTasks) all() []canvastask.Task {
 	}
 	return out
 }
-
 
 func (f *fakeTasks) Create(_ context.Context, t canvastask.Task) (canvastask.Task, error) {
 	if t.Status == "" {

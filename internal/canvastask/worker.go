@@ -789,14 +789,14 @@ func (w *Worker) runVoice(parent context.Context, t Task) {
 // store's one-transaction finalizer.
 func (w *Worker) finalizeVoice(ctx context.Context, t Task, spec VoiceSpec, channelID int64, remoteVoiceID string, preview *asset.Asset) {
 	in := voice.CreateInput{
-		VoiceID:        remoteVoiceID,
-		ChannelID:      channelID,
-		TargetModel:    spec.TargetModel,
-		Name:           spec.Name,
-		SourceMode:     spec.Mode,
-		SourcePrompt:   spec.VoicePrompt,
-		SampleAssetID:  spec.SampleAssetID,
-		Status:         voice.StatusOK,
+		VoiceID:       remoteVoiceID,
+		ChannelID:     channelID,
+		TargetModel:   spec.TargetModel,
+		Name:          spec.Name,
+		SourceMode:    spec.Mode,
+		SourcePrompt:  spec.VoicePrompt,
+		SampleAssetID: spec.SampleAssetID,
+		Status:        voice.StatusOK,
 	}
 	if spec.Mode == voice.SourceModeClone {
 		// clone 的出处是样本地址(design 存音色描述,同列两语义)。
