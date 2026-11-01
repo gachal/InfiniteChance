@@ -34,7 +34,8 @@ const (
 //	GET    /      — list with canvas_count(排序键 = IP 与名下画布最近更新取大者)
 //	POST   /      — create {name, description?, cover_asset_id?}
 //	GET    /:id   — detail
-//	PATCH  /:id   — partial update {name?/description?/cover_asset_id?}(0 = 清封面)
+//	PATCH  /:id   — partial update {name?/description?/cover_asset_id?/style?}
+//	                (cover 0 = 清封面;style 空串 = 清风格,69 号票)
 //	DELETE /:id   — remove (204);名下有画布或有直接素材 → 409 ip_not_empty
 func RegisterIPRoutes(group *gin.RouterGroup, h *IPHandlers) {
 	group.GET("", h.List)
@@ -46,11 +47,13 @@ func RegisterIPRoutes(group *gin.RouterGroup, h *IPHandlers) {
 
 // ipJSON is the wire form of one IP. latest_at 是「最近更新」的展示时点
 // (排序键同源:IP 自身与名下画布 max(updated_at) 取大者),驱动卡片墙。
+// style 是画面风格(69 号票),未定恒为空串、键始终在场。
 type ipJSON struct {
 	ID           int64     `json:"id"`
 	Name         string    `json:"name"`
 	Description  string    `json:"description"`
 	CoverAssetID int64     `json:"cover_asset_id"`
+	Style        string    `json:"style"`
 	CanvasCount  int64     `json:"canvas_count"`
 	LatestAt     time.Time `json:"latest_at"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -60,7 +63,7 @@ type ipJSON struct {
 func toIPJSON(ip IP) ipJSON {
 	return ipJSON{
 		ID: ip.ID, Name: ip.Name, Description: ip.Description,
-		CoverAssetID: ip.CoverAssetID, CanvasCount: ip.CanvasCount,
+		CoverAssetID: ip.CoverAssetID, Style: ip.Style, CanvasCount: ip.CanvasCount,
 		LatestAt: ip.LatestAt, CreatedAt: ip.CreatedAt, UpdatedAt: ip.UpdatedAt,
 	}
 }
@@ -121,11 +124,13 @@ func (h *IPHandlers) Get(c *gin.Context) {
 }
 
 // ipUpdateInput is PATCH 的部分更新体:nil 字段不动;cover_asset_id 显式
-// 0 = 清除封面(回「渐变+首字」占位)。
+// 0 = 清除封面(回「渐变+首字」占位);style 显式空串 = 清除风格(69 号票,
+// 回到无风格注入)。
 type ipUpdateInput struct {
 	Name         *string `json:"name"`
 	Description  *string `json:"description"`
 	CoverAssetID *int64  `json:"cover_asset_id"`
+	Style        *string `json:"style"`
 }
 
 func (h *IPHandlers) Update(c *gin.Context) {
@@ -135,11 +140,11 @@ func (h *IPHandlers) Update(c *gin.Context) {
 	}
 	var in ipUpdateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		apierr.InvalidRequest(c, "请求体必须是 {name?/description?/cover_asset_id?} 的 JSON")
+		apierr.InvalidRequest(c, "请求体必须是 {name?/description?/cover_asset_id?/style?} 的 JSON")
 		return
 	}
-	if in.Name == nil && in.Description == nil && in.CoverAssetID == nil {
-		apierr.InvalidRequest(c, "至少提供 name、description 或 cover_asset_id 之一")
+	if in.Name == nil && in.Description == nil && in.CoverAssetID == nil && in.Style == nil {
+		apierr.InvalidRequest(c, "至少提供 name、description、cover_asset_id 或 style 之一")
 		return
 	}
 	u := &IPUpdate{}
@@ -165,6 +170,15 @@ func (h *IPHandlers) Update(c *gin.Context) {
 			return
 		}
 		u.CoverAssetID = in.CoverAssetID
+	}
+	if in.Style != nil {
+		// 画面风格可选(69 号票):空串 = 清除;非空时只限长(按 rune 计)。
+		style := strings.TrimSpace(*in.Style)
+		if utf8.RuneCountInString(style) > MaxIPStyleRunes {
+			apierr.InvalidRequest(c, "画面风格最多 500 个字符")
+			return
+		}
+		u.Style = &style
 	}
 	updated, err := h.Store.UpdateIP(c.Request.Context(), id, u)
 	if err != nil {

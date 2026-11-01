@@ -18,6 +18,12 @@ var ErrIPNotEmpty = errors.New("canvas: ip not empty")
 // canvases. 收编条件只看「ips 表为空」,改名后不会重复建。
 const DefaultIPName = "默认 IP"
 
+// MaxIPStyleRunes 是画面风格的字数上限(69 号票):字段管「一句话风格定位」,
+// 长文档归推迟的风格指南节点(53 号票)—— 风格段会拼进每条直通生成预填与
+// Agent 系统提示词,封顶防提示词膨胀。按 rune 计,IP 编辑面与 set_style
+// 工具同一口径。
+const MaxIPStyleRunes = 500
+
 // IP is one IP 企划:创作侧第一层容器——一个 ACG 企划/作品宇宙(50 号票,
 // ADR 0004)。CoverAssetID 引用素材行(0 = 无封面);素材行被删后封面由
 // 前端回落「渐变+首字」占位,后端无对象回收问题(节点-素材引用同哲学)。

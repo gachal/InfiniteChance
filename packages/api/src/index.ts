@@ -213,12 +213,14 @@ export interface PatchCanvasInput {
 /** 一个 IP 企划:创作侧第一层容器(ACG 企划/作品宇宙),下挂多张画布。
  * cover_asset_id 引用素材行(0 = 无封面,卡片回落「渐变+首字」占位);
  * canvas_count / latest_at 是列表投影(名下画布数、最近更新时点 —— 排序
- * 键 = IP 自身与名下画布 max(updated_at) 取大者,新到旧)。 */
+ * 键 = IP 自身与名下画布 max(updated_at) 取大者,新到旧)。style 是画面
+ * 风格(69 号票):企划级一句话风格定位,空串 = 未定(无风格注入)。 */
 export interface IPRecord {
   id: number
   name: string
   description: string
   cover_asset_id: number
+  style: string
   canvas_count: number
   latest_at: string
   created_at: string
@@ -231,11 +233,13 @@ export interface CreateIPInput {
   cover_asset_id?: number
 }
 
-/** IP 部分更新:字段任选;cover_asset_id 显式 0 = 清除封面。 */
+/** IP 部分更新:字段任选;cover_asset_id 显式 0 = 清除封面;style 显式
+ * 空串 = 清除画面风格(69 号票,服务端 trim、≤500 字)。 */
 export interface PatchIPInput {
   name?: string
   description?: string
   cover_asset_id?: number
+  style?: string
 }
 
 // ---- 角色库(canvas/server,51 号票,需 JWT 会话)----
@@ -1299,7 +1303,8 @@ export class ApiClient {
     return this.request<IPRecord>(`/ips/${id}`)
   }
 
-  /** IP 部分更新;cover_asset_id 显式 0 = 清除封面。 */
+  /** IP 部分更新;cover_asset_id 显式 0 = 清除封面;style 显式空串 = 清除
+   * 画面风格(69 号票)。 */
   patchIP(id: number, input: PatchIPInput): Promise<IPRecord> {
     return this.request<IPRecord>(`/ips/${id}`, { method: 'PATCH', body: input })
   }
