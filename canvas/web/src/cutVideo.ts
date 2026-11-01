@@ -14,38 +14,20 @@
  */
 import type { CharacterRecord } from '@infinitechance/api'
 
+import type { VideoComposerRef } from './composer'
 import type { StoryboardCut } from './graph'
-import { defaultCharacterVariant, pickVariantAssetId } from './sheet'
+import { pickCutCharacterRefs } from './sheet'
 import { assetContentURL } from './thumbnail'
 
-/** 元素 chip 标注(71 号票 B2 钉死的形状,与 composer.ts 将加的 element
- * 字段同形):资产库实体在一次生成里的出场引用;名称不存快照,渲染与发送时
- * 按 entityId 从 IP 目录实时取。本模块只产 character 一类。 */
-export interface CutRefElement {
-  type: 'character' | 'scene' | 'prop'
-  entityId: number
-  variantId?: number
-}
-
-/** cut 预填注入的一条角色参考:结构兼容 composer.ts 的 VideoComposerRef
- * (url/kind/role/asset_id 同名同义),外加 element 元素标注。此处就地定义
- * 而不 import composer.ts —— 该文件正由另一分支加 element 字段,避免跨分支
- * 依赖;wiring 层可原样塞进 uploadedVideoRefs。 */
-export interface CutVideoRef {
-  url: string
-  kind: 'image'
-  role: 'reference_image'
-  asset_id: number
-  element: CutRefElement
-}
-
-/** cut→视频预填结果。 */
+/** cut→视频预填结果。refs 即 composer.ts 的 VideoComposerRef(元素 chip
+ * 形态,element 恒 character;名称不存快照,渲染与发送时按 entityId 从 IP
+ * 目录实时取),wiring 层可原样塞进 uploadedVideoRefs。 */
 export interface CutVideoPrefill {
   /** cut 画面素材 id,0 = 无首帧(纯文生视频或多图参考)。wiring 层自行构造
    * first_frame 条目(走 image 单串,不进 references 数组)。 */
   firstFrameAssetId: number
   /** 注入参考条的角色元素 chip(role 恒 reference_image);有首帧时恒空。 */
-  refs: CutVideoRef[]
+  refs: VideoComposerRef[]
   /** 超上限未带上的角色数(toast「N 个角色设定图未带上(参考上限 9)」)。 */
   dropped: number
   /** cut 有画面且标了出场角色 —— 因首帧/参考互斥未注入设定图(toast「cut
@@ -55,8 +37,9 @@ export interface CutVideoPrefill {
 
 /** cut→视频预填(71 号票 A2/A4)。只消费 cut 的 asset_id(0 = 无画面)与
  * character_ids;cap 是 reference_* 合计上限(VIDEO_REFS_TOTAL_CAP = 9),首帧
- * 不计入。取图走 sheet.ts 的「按变体取图」共享函数(默认变体,与角色卡登场
- * 直通同一规则);角色/变体无图静默跳过(70 号票语义),不计入 dropped。 */
+ * 不计入。角色挑选整体复用 sheet.pickCutCharacterRefs(默认变体取图 + 无图
+ * 静默跳过 + 上限截断计数,与 cut→图片直通同一实现;取图规则与角色卡登场
+ * 直通同源);元素标注带命中变体的 variantId,角色无变体(防御路径)不带。 */
 export function buildCutVideoPrefill(
   cut: Pick<StoryboardCut, 'asset_id' | 'character_ids'>,
   characters: CharacterRecord[],
@@ -72,31 +55,16 @@ export function buildCutVideoPrefill(
       skippedInject: characterIds.length > 0,
     }
   }
-  const refs: CutVideoRef[] = []
-  let dropped = 0
-  for (const id of characterIds) {
-    const c = characters.find((x) => x.id === id)
-    if (!c) {
-      continue
-    }
-    const variant = defaultCharacterVariant(c)
-    const assetId = pickVariantAssetId(c, variant)
-    if (assetId === 0) {
-      continue
-    }
-    if (refs.length >= cap) {
-      dropped += 1
-      continue
-    }
-    refs.push({
-      url: assetContentURL(assetId),
-      kind: 'image',
-      role: 'reference_image',
-      asset_id: assetId,
-      element: variant
-        ? { type: 'character', entityId: id, variantId: variant.id }
-        : { type: 'character', entityId: id },
-    })
-  }
+  const { picks, dropped } = pickCutCharacterRefs(characters, characterIds, cap)
+  const refs: VideoComposerRef[] = picks.map((p) => ({
+    url: assetContentURL(p.assetId),
+    kind: 'image',
+    role: 'reference_image',
+    asset_id: p.assetId,
+    element:
+      p.variantId === undefined
+        ? { type: 'character', entityId: p.characterId }
+        : { type: 'character', entityId: p.characterId, variantId: p.variantId },
+  }))
   return { firstFrameAssetId: 0, refs, dropped, skippedInject: false }
 }

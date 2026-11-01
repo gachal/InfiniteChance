@@ -145,9 +145,9 @@ describe('pickCutCharacterRefs(cut 出场角色注入)', () => {
     ]
     const { picks, dropped } = pickCutCharacterRefs(chars, [1, 2, 3], 9)
     expect(picks).toEqual([
-      { characterId: 1, assetId: 109 },
-      { characterId: 2, assetId: 203 },
-      { characterId: 3, assetId: 303 },
+      { characterId: 1, assetId: 109, variantId: 21 },
+      { characterId: 2, assetId: 203, variantId: 22 },
+      { characterId: 3, assetId: 303, variantId: 23 },
     ])
     expect(dropped).toBe(0)
   })
@@ -155,7 +155,7 @@ describe('pickCutCharacterRefs(cut 出场角色注入)', () => {
   it('变体名非「默认」时回落首个变体', () => {
     const c = character(1, [{ ...variant(30, [{ id: 2, asset_id: 302, label: '三视图' }]), name: '冬装' }])
     const { picks } = pickCutCharacterRefs([c], [1], 9)
-    expect(picks).toEqual([{ characterId: 1, assetId: 302 }])
+    expect(picks).toEqual([{ characterId: 1, assetId: 302, variantId: 30 }])
   })
 
   it('无图角色静默跳过;超上限按序截断并计 dropped', () => {
@@ -166,13 +166,13 @@ describe('pickCutCharacterRefs(cut 出场角色注入)', () => {
     ]
     const { picks, dropped } = pickCutCharacterRefs(chars, [1, 2, 3], 2)
     expect(picks).toEqual([
-      { characterId: 1, assetId: 101 },
-      { characterId: 3, assetId: 103 },
+      { characterId: 1, assetId: 101, variantId: 21 },
+      { characterId: 3, assetId: 103, variantId: 23 },
     ])
     expect(dropped).toBe(0)
     // 上限 1:角色 3 被截掉,dropped = 1。
     const capped = pickCutCharacterRefs(chars, [1, 2, 3], 1)
-    expect(capped.picks).toEqual([{ characterId: 1, assetId: 101 }])
+    expect(capped.picks).toEqual([{ characterId: 1, assetId: 101, variantId: 21 }])
     expect(capped.dropped).toBe(1)
   })
 
@@ -250,15 +250,22 @@ describe('pickVariantAssetId(按变体取图:视图类最近一张 > 变体任�
     const { picks } = pickCutCharacterRefs(chars, ids, 9)
     // 独立已知值:直通路径(角色卡登场)按同一规则应得同一组图。
     expect(picks).toEqual([
-      { characterId: 1, assetId: 107 },
-      { characterId: 2, assetId: 203 },
-      { characterId: 3, assetId: 303 },
+      { characterId: 1, assetId: 107, variantId: 21 },
+      { characterId: 2, assetId: 203, variantId: 22 },
+      { characterId: 3, assetId: 303, variantId: 23 },
       { characterId: 4, assetId: 404 },
-      { characterId: 6, assetId: 601 },
+      { characterId: 6, assetId: 601, variantId: 26 },
     ])
     const viaShared = ids
       .map((id) => chars.find((c) => c.id === id)!)
-      .map((c) => ({ characterId: c.id, assetId: pickVariantAssetId(c, defaultCharacterVariant(c)) }))
+      .map((c) => {
+        const variant = defaultCharacterVariant(c)
+        return {
+          characterId: c.id,
+          assetId: pickVariantAssetId(c, variant),
+          ...(variant === undefined ? {} : { variantId: variant.id }),
+        }
+      })
       .filter((p) => p.assetId !== 0)
     expect(viaShared).toEqual(picks)
   })

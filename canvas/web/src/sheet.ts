@@ -93,6 +93,10 @@ export function latestVariantImage(
 export interface SheetRefPick {
   characterId: number
   assetId: number
+  /** 命中的默认变体 id;角色无任何变体时缺省(取图只走封面投影)。
+   * cut→视频注入以它带元素 chip 的 variantId(71 号票),cut→图片直通
+   * 不消费此字段。 */
+  variantId?: number
 }
 
 /** cut 注入取「默认变体」的规则(71 号票 D1 从 pickCutCharacterRefs 抽出):
@@ -133,7 +137,8 @@ export function pickVariantAssetId(
  * 变体」(defaultCharacterVariant)的设定图,取图走 pickVariantAssetId
  * (71 号票 D1 共享);角色无任何图静默跳过(不报错不阻塞,画面描述兜底)。
  * cap 是与既有参考合并后的总上限:超出按序截断,dropped = 未带上数量
- * (toast 文案用)。 */
+ * (toast 文案用)。picks 附带命中的默认变体 variantId(71 号票 cut→视频
+ * 注入的元素标注用;角色无变体时缺省)。 */
 export function pickCutCharacterRefs(
   characters: CharacterRecord[],
   characterIds: number[],
@@ -146,7 +151,8 @@ export function pickCutCharacterRefs(
     if (!c) {
       continue
     }
-    const assetId = pickVariantAssetId(c, defaultCharacterVariant(c))
+    const variant = defaultCharacterVariant(c)
+    const assetId = pickVariantAssetId(c, variant)
     if (assetId === 0) {
       continue
     }
@@ -154,7 +160,11 @@ export function pickCutCharacterRefs(
       dropped += 1
       continue
     }
-    picks.push({ characterId: id, assetId })
+    picks.push(
+      variant === undefined
+        ? { characterId: id, assetId }
+        : { characterId: id, assetId, variantId: variant.id },
+    )
   }
   return { picks, dropped }
 }

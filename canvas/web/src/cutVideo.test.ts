@@ -122,7 +122,7 @@ describe('buildCutVideoPrefill(cut 无画面 = 按出场角色注入元素 chip)
     const got = buildCutVideoPrefill({ asset_id: 0, character_ids: ids }, CHARS, 9)
     const { picks } = pickCutCharacterRefs(CHARS, ids, 9)
     expect(got.refs.map((r) => r.asset_id)).toEqual(picks.map((p) => p.assetId))
-    expect(got.refs.map((r) => r.element.entityId)).toEqual(picks.map((p) => p.characterId))
+    expect(got.refs.map((r) => r.element?.entityId)).toEqual(picks.map((p) => p.characterId))
   })
 
   it('无图角色静默跳过(70 号票语义),不计入 dropped;不存在的角色 id 同样跳过', () => {
@@ -135,7 +135,7 @@ describe('buildCutVideoPrefill(cut 无画面 = 按出场角色注入元素 chip)
       chars,
       9,
     )
-    expect(got.refs.map((r) => r.element.entityId)).toEqual([1])
+    expect(got.refs.map((r) => r.element?.entityId)).toEqual([1])
     expect(got.dropped).toBe(0)
   })
 
@@ -146,7 +146,7 @@ describe('buildCutVideoPrefill(cut 无画面 = 按出场角色注入元素 chip)
       2,
     )
     expect(got.refs).toHaveLength(2)
-    expect(got.refs.map((r) => r.element.entityId)).toEqual([1, 2])
+    expect(got.refs.map((r) => r.element?.entityId)).toEqual([1, 2])
     expect(got.dropped).toBe(1)
   })
 
