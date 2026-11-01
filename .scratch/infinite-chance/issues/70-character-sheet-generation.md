@@ -1,7 +1,7 @@
 # 70 角色设定图生成与出场角色联动(角色库出图 + cut 角色注入)(2026-11-01 grilling 定案)
 
 Type: feat
-Status: planned(2026-11-01 grilling 定案,未实现;**依赖 69 号票先行**——设定图 prompt 消费 IP 风格字段)
+Status: implemented(2026-11-01 定案,已实现(2026-11-01,feat/70-character-sheets);依赖的 69 号票 IP 风格字段已先行落地)
 
 ## Question
 
