@@ -21,7 +21,7 @@ import {
   type ElementPickAction,
   type ElementPickResult,
 } from './element'
-import { styledSendPrompt } from './ipStyle'
+import { styledSendPrompt, styleSegment } from './ipStyle'
 import { fillPreset, presetSlotsFromElements, type GameplayPreset } from './presets'
 import type { MentionCandidate } from './refmention'
 
@@ -99,7 +99,9 @@ export function elementPickNotice(action: ElementPickAction, name: string | null
  * 行之后(无风格段则置最前,已含同一行不叠加 —— element.insertElementLine)。
  * names 与 refs 同序(编辑器经 resolveElementNames 实时解析);无元素时与
  * styledSendPrompt 逐字节一致。发出的全文随任务行与结果节点 prompt 落库,
- * 可审计。 */
+ * 可审计。多行风格兜底:IP 风格在编辑框里可以换行(styleSegment 只 trim 两端),
+ * 而 insertElementLine 以首个换行认风格段行尾,会把绑定行插进风格文本中间 ——
+ * 风格段本身多行且全稿以「整段风格 + 换行」开头时,这里按整段长度切开再插。 */
 export function composeSendPrompt(
   prompt: string,
   withStyle: boolean,
@@ -108,7 +110,13 @@ export function composeSendPrompt(
   names: readonly (string | null)[],
   mode: 'image' | 'video',
 ): string {
-  return insertElementLine(styledSendPrompt(prompt, withStyle, style), buildElementLine(refs, names, mode))
+  const styled = styledSendPrompt(prompt, withStyle, style)
+  const line = buildElementLine(refs, names, mode)
+  const segment = styleSegment(style)
+  if (line !== '' && segment.includes('\n') && styled.startsWith(`${segment}\n`) && !styled.includes(line)) {
+    return `${segment}\n${line}${styled.slice(segment.length)}`
+  }
+  return insertElementLine(styled, line)
 }
 
 /** 首帧/尾帧与参考互斥提示的显隐(71 号票 A3):方舟 Seedance 官方「图生

@@ -174,6 +174,20 @@ describe('composeSendPrompt(发送拼装,71 号票 B5:风格段 → 绑定行 �
     )
   })
 
+  it('多行 IP 风格(编辑框允许换行):绑定行插在整段风格之后,不切开风格文本', () => {
+    const refs = [img('/api/assets/1/content', 1, blue)]
+    expect(composeSendPrompt('登场', true, '水墨\n低饱和', refs, ['小蓝'], 'image')).toBe(
+      '【画面风格】水墨\n低饱和\n出场元素:小蓝@图1(角色)\n登场',
+    )
+  })
+
+  it('直通预填已把多行风格段写进草稿、开关关着:同样插在整段风格之后', () => {
+    const refs = [img('/api/assets/1/content', 1, blue)]
+    expect(composeSendPrompt('【画面风格】水墨\n低饱和\n登场', false, '水墨\n低饱和', refs, ['小蓝'], 'image')).toBe(
+      '【画面风格】水墨\n低饱和\n出场元素:小蓝@图1(角色)\n登场',
+    )
+  })
+
   it('提示词里已有同一绑定行(预填/手抄)不叠加', () => {
     const refs = [img('/api/assets/1/content', 1, blue)]
     const typed = '出场元素:小蓝@图1(角色)\n登场'
