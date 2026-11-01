@@ -1,0 +1,141 @@
+/**
+ * 角色设定图生成的纯逻辑(70 号票):五类型模板与服务端拼装的前端同形
+ * (类型模板 + 角色四件套 + 变体名/服装描述 + IP 风格段,≤2000 runes)、
+ * B3 参考图默认(变体已存设定图默认带最近一张)与 cut 出场角色参考挑选
+ * (C:按 character_ids 序取默认变体,优先视图类 > 任意图 > 封面投影,
+ * 无图静默跳过,上限截断计数)。
+ *
+ * 模板字面量与服务端 internal/canvastask/iptask.go 逐字一致,两侧测试各自
+ * 钉住同一组字面量防漂移 —— 改任何一段文案必须两侧同改。入口一(composer
+ * 预填)在前端拼装;入口二(抽屉对话框)由服务端拼装,本模块只供预览与
+ * 类型切换的重拼。
+ */
+import type { CharacterRecord, CharacterVariantRecord } from '@infinitechance/api'
+
+import { styleSegment } from './ipStyle'
+
+/** 设定图五类型(label 白名单六类去「其他」),固定序,默认三视图。 */
+export const SHEET_TYPES = ['三视图', '多视图', '表情集', '色板', '姿态'] as const
+
+export type SheetType = (typeof SHEET_TYPES)[number]
+
+/** 类型 → prompt 模板(与服务端 sheetTypeTemplates 同字面量)。 */
+export const SHEET_TYPE_TEMPLATES: Record<SheetType, string> = {
+  三视图: '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
+  多视图: '角色设定图·多视图:同一角色的全身多角度视图对照(正面、四分之三、侧面、背面),白底,各视角比例一致,标准设定图画风',
+  表情集: '角色设定图·表情集:同一角色头部的多种表情对照(喜、怒、哀、惊等),白底,构图整齐,表情差异清晰,标准设定图画风',
+  色板: '角色设定图·色板:该角色的配色色板展示(发色、肤色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风',
+  姿态: '角色设定图·姿态集:同一角色的多个典型动作与姿态对照,全身,白底,姿态自然清晰,标准设定图画风',
+}
+
+/** 拼装后的 prompt 截断上限(与服务端 MaxSheetPromptRunes 同值)。 */
+export const MAX_SHEET_PROMPT_RUNES = 2000
+
+/** 拼装的角色事实(name 必给,其余可空整行跳过)。 */
+export interface SheetCharacterFacts {
+  name: string
+  alias?: string
+  description?: string
+  detail?: string
+  variantName: string
+  variantNote?: string
+}
+
+/** 设定图 prompt 拼装(与服务端 BuildSheetPrompt 同形):类型模板 + 四件套
+ * + 变体名/服装,IP 风格段(69 号票 styleSegment,有则拼)放最前单独成行,
+ * 最后按 rune 截断。未知类型跳过模板行。 */
+export function buildSheetPrompt(
+  type: string,
+  facts: SheetCharacterFacts,
+  style = '',
+): string {
+  const lines: string[] = []
+  const tpl = (SHEET_TYPE_TEMPLATES as Record<string, string>)[type]
+  if (tpl) {
+    lines.push(tpl)
+  }
+  lines.push(`角色:${facts.name}`)
+  if (facts.alias) {
+    lines.push(`别名:${facts.alias}`)
+  }
+  if (facts.description) {
+    lines.push(`简介:${facts.description}`)
+  }
+  if (facts.detail) {
+    lines.push(`详细设定:${facts.detail}`)
+  }
+  lines.push(`造型:${facts.variantName}`)
+  if (facts.variantNote) {
+    lines.push(`服装:${facts.variantNote}`)
+  }
+  const body = lines.join('\n')
+  const segment = styleSegment(style)
+  const prompt = segment === '' ? body : `${segment}\n${body}`
+  const runes = [...prompt]
+  return runes.length <= MAX_SHEET_PROMPT_RUNES ? prompt : runes.slice(0, MAX_SHEET_PROMPT_RUNES).join('')
+}
+
+/** 变体下最近一张设定图(id 最大 = 创建序最近,B3 的「最近一张」);
+ * 空变体返回 null。 */
+export function latestVariantImage(
+  variant: Pick<CharacterVariantRecord, 'images'>,
+): CharacterVariantRecord['images'][number] | null {
+  let latest: CharacterVariantRecord['images'][number] | null = null
+  for (const im of variant.images) {
+    if (latest === null || im.id > latest.id) {
+      latest = im
+    }
+  }
+  return latest
+}
+
+/** cut 注入挑出的一条角色参考。 */
+export interface SheetRefPick {
+  characterId: number
+  assetId: number
+}
+
+/** cut 出场角色参考挑选(70 号票 C):按 character_ids 序逐角色取「默认
+ * 变体」(名为「默认」的变体,改名后回落首个)的设定图 —— 优先级 = 该
+ * 变体最新一张视图类(label ∈ 五类型)> 该变体任意设定图 > 角色任意图
+ * (封面投影);角色无任何图静默跳过(不报错不阻塞,画面描述兜底)。
+ * cap 是与既有参考合并后的总上限:超出按序截断,dropped = 未带上数量
+ * (toast 文案用)。 */
+export function pickCutCharacterRefs(
+  characters: CharacterRecord[],
+  characterIds: number[],
+  cap: number,
+): { picks: SheetRefPick[]; dropped: number } {
+  const picks: SheetRefPick[] = []
+  let dropped = 0
+  for (const id of characterIds) {
+    const c = characters.find((x) => x.id === id)
+    if (!c) {
+      continue
+    }
+    const variant = c.variants.find((v) => v.name === '默认') ?? c.variants[0]
+    let assetId = 0
+    if (variant) {
+      // 视图类优先(label ∈ 五类型),取其中最近一张;再回落任意一张。
+      const viewImages = variant.images.filter((im) =>
+        (SHEET_TYPES as readonly string[]).includes(im.label),
+      )
+      const latestView = latestVariantImage({ images: viewImages }) ?? latestVariantImage(variant)
+      if (latestView) {
+        assetId = latestView.asset_id
+      }
+    }
+    if (assetId === 0) {
+      assetId = c.cover_asset_id // 封面投影(无图角色为 0 → 静默跳过)
+    }
+    if (assetId === 0) {
+      continue
+    }
+    if (picks.length >= cap) {
+      dropped += 1
+      continue
+    }
+    picks.push({ characterId: id, assetId })
+  }
+  return { picks, dropped }
+}
