@@ -15,6 +15,7 @@
 import type { CharacterRecord } from '@infinitechance/api'
 
 import type { VideoComposerRef } from './composer'
+import { characterElement } from './element'
 import type { StoryboardCut } from './graph'
 import { pickCutCharacterRefs } from './sheet'
 import { assetContentURL } from './thumbnail'
@@ -61,10 +62,7 @@ export function buildCutVideoPrefill(
     kind: 'image',
     role: 'reference_image',
     asset_id: p.assetId,
-    element:
-      p.variantId === undefined
-        ? { type: 'character', entityId: p.characterId }
-        : { type: 'character', entityId: p.characterId, variantId: p.variantId },
+    element: characterElement(p.characterId, p.variantId),
   }))
   return { firstFrameAssetId: 0, refs, dropped, skippedInject: false }
 }

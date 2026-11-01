@@ -7,8 +7,9 @@
  */
 import type { CharacterRecord, CharacterVariantRecord } from '@infinitechance/api'
 
-import type { ComposerElement, VideoComposerRef } from './composer'
+import type { VideoComposerRef } from './composer'
 import type { CutVideoPrefill } from './cutVideo'
+import { characterElement } from './element'
 import { prependStyleSegment } from './ipStyle'
 import { fillPreset, GAMEPLAY_PRESET_TEMPLATES, GAMEPLAY_PRESETS } from './presets'
 import { pickVariantAssetId } from './sheet'
@@ -72,12 +73,17 @@ export function buildEntrancePrefill(
   style: string | null | undefined,
 ): EntrancePrefill {
   const assetId = pickVariantAssetId(character, variant)
-  const element: ComposerElement = variant
-    ? { type: 'character', entityId: character.id, variantId: variant.id }
-    : { type: 'character', entityId: character.id }
   const refs: VideoComposerRef[] =
     assetId > 0
-      ? [{ url: assetContentURL(assetId), kind: 'image', role: 'reference_image', asset_id: assetId, element }]
+      ? [
+          {
+            url: assetContentURL(assetId),
+            kind: 'image',
+            role: 'reference_image',
+            asset_id: assetId,
+            element: characterElement(character.id, variant?.id),
+          },
+        ]
       : []
   return {
     refs,

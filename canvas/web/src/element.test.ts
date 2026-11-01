@@ -10,6 +10,7 @@ import {
 } from './composer'
 import {
   buildElementLine,
+  characterElement,
   countCharacterElements,
   CHARACTER_ELEMENT_HINT_LIMIT,
   elementEntityKey,
@@ -92,7 +93,8 @@ const catalog: ElementCatalog = {
   props: [prop(30, '长剑')],
 }
 
-const charEl = (entityId: number, variantId?: number) => ({ type: 'character' as const, entityId, ...(variantId !== undefined ? { variantId } : {}) })
+// 角色元素夹具直接用生产构造器(characterElement),字面量漂移即测试红。
+const charEl = characterElement
 const sceneEl = (entityId: number) => ({ type: 'scene' as const, entityId })
 const propEl = (entityId: number) => ({ type: 'prop' as const, entityId })
 
@@ -446,5 +448,13 @@ describe('hasResolvedElement', () => {
     expect(hasResolvedElement({ url: 'a', element: charEl(12, 120) }, '')).toBe(false)
     expect(hasResolvedElement({ url: 'a' }, undefined)).toBe(false)
     expect(hasResolvedElement({ url: 'a', element: sceneEl(99) }, null)).toBe(false)
+  })
+})
+
+describe('characterElement(角色元素构造统一出口)', () => {
+  it('带变体带 variantId;变体缺省不带该键(toStrictEqual 钉死键形状)', () => {
+    expect(characterElement(10, 100)).toStrictEqual({ type: 'character', entityId: 10, variantId: 100 })
+    expect(characterElement(10)).toStrictEqual({ type: 'character', entityId: 10 })
+    expect('variantId' in characterElement(10)).toBe(false)
   })
 })

@@ -25,6 +25,7 @@ import {
 
 import { useAuth } from '../auth'
 import type { ComposerElement } from '../composer'
+import { characterElement } from '../element'
 import { useThumbFallback } from '../thumbnail'
 import { useAssetListQuery } from '../composables/useAssetList'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
@@ -248,13 +249,9 @@ function onPickLibraryAsset(assetId: number, element: ComposerElement): void {
   onPick(libraryAsset(assetId), element)
 }
 
-/** 角色视图点选的元素标注(71 号票 B3):角色 + 卡片所在变体(同一角色
- * 的不同造型是不同元素)。 */
-function characterElement(c: CharacterRecord, v: CharacterRecord['variants'][number]): ComposerElement {
-  return { type: 'character', entityId: c.id, variantId: v.id }
-}
-
-/** 场景/道具视图点选的元素标注:按实体(无造型变体)。 */
+/** 场景/道具视图点选的元素标注:按实体(无造型变体);角色视图直接用
+ * element.ts 的 characterElement(角色 + 卡片所在变体,同一角色的不同造型
+ * 是不同元素,71 号票 B3)。 */
 function libraryElement(e: LibraryEntity): ComposerElement {
   return { type: libraryViewKind.value, entityId: e.id }
 }
@@ -493,7 +490,7 @@ onMounted(refresh)
                 class="asset-card"
                 :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
                 :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
-                @click="onPickLibraryAsset(img.asset_id, characterElement(c, v))"
+                @click="onPickLibraryAsset(img.asset_id, characterElement(c.id, v.id))"
               >
                 <span
                   v-if="brokenLibraryAssets.has(img.asset_id)"

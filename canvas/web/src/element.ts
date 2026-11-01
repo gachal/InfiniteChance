@@ -101,6 +101,15 @@ export function hasResolvedElement(
   return ref.element !== undefined && name != null && name !== ''
 }
 
+/** 角色元素构造的统一出口(71 号票 B2 数据形态):直通预填与挑选合并都用
+ * 这一份字面量,不再各处手写。变体缺省(角色无任何变体的防御路径)不带
+ * variantId 键 —— 与「有变体必须带 id」的路径严格区分,实体键含变体。 */
+export function characterElement(entityId: number, variantId?: number): ComposerElement {
+  return variantId === undefined
+    ? { type: 'character', entityId }
+    : { type: 'character', entityId, variantId }
+}
+
 // ---- 元素 pick 合并(71 号票 B3)----
 
 export type ElementPickAction = 'added' | 'replaced' | 'removed' | 'rejected'
