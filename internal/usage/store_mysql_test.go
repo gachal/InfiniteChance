@@ -331,3 +331,44 @@ func TestMySQLUsageSummaryReconcilesWithList(t *testing.T) {
 		t.Errorf("canvas by model = %+v, want %+v", buckets, wantCanvas)
 	}
 }
+
+// TestMySQLUsageAssetSourceFilter 覆盖 70 号票的 asset 档来源过滤:库级
+// 生成产物(ip=… gen=asset)与画布标记、直连流量三档互不串档。
+func TestMySQLUsageAssetSourceFilter(t *testing.T) {
+	store, _ := openUsageTestDB(t)
+	ctx := context.Background()
+	rows := []usage.Log{
+		{KeyID: 1, ChannelID: 1, ChannelName: "c", PublicModel: "img", Unit: "call",
+			DurationMS: 10, Status: usage.StatusSuccess, ChargeMicros: 1,
+			Source: "ip=3 task=ct_d gen=asset"},
+		{KeyID: 1, ChannelID: 1, ChannelName: "c", PublicModel: "img", Unit: "call",
+			DurationMS: 10, Status: usage.StatusSuccess, ChargeMicros: 2,
+			Source: "canvas=7 task=ct_e node=n"},
+		{KeyID: 1, ChannelID: 1, ChannelName: "c", PublicModel: "img", Unit: "call",
+			DurationMS: 10, Status: usage.StatusSuccess, ChargeMicros: 3},
+	}
+	for i, r := range rows {
+		if _, err := store.Insert(ctx, r); err != nil {
+			t.Fatalf("seed row %d: %v", i, err)
+		}
+	}
+	cases := []struct {
+		name   string
+		filter usage.Filter
+		want   int64
+	}{
+		{"asset 档", usage.Filter{Source: usage.SourceAsset}, 1},
+		{"canvas 档", usage.Filter{Source: usage.SourceCanvas}, 1},
+		{"direct 档", usage.Filter{Source: usage.SourceDirect}, 1},
+		{"全量", usage.Filter{}, 3},
+	}
+	for _, tc := range cases {
+		page, err := store.List(ctx, tc.filter, 10, 0)
+		if err != nil {
+			t.Fatalf("List %s: %v", tc.name, err)
+		}
+		if page.Total != tc.want || int64(len(page.Logs)) != tc.want {
+			t.Errorf("%s: total = %d rows = %d, want %d", tc.name, page.Total, len(page.Logs), tc.want)
+		}
+	}
+}

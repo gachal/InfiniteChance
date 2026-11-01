@@ -47,7 +47,7 @@ const keyFilter = ref('');
 const channelFilter = ref('');
 const modelInput = ref('');
 const statusFilter = ref<'' | 'success' | 'upstream_error'>('');
-const sourceFilter = ref<'' | 'canvas' | 'direct'>('');
+const sourceFilter = ref<'' | 'canvas' | 'direct' | 'asset'>('');
 
 const keys = ref<ApiKeyRecord[]>([]);
 const channels = ref<Channel[]>([]);
@@ -185,14 +185,21 @@ function formatQuantity(l: UsageLogRecord): string {
   return `${amount} 秒${l.request?.size ? ` · ${l.request.size}` : ''}`;
 }
 
-// 来源标记:画布侧解析出画布 id(完整标记悬停可见),空 = 直连流量;
-// 其它自报标记原样显示。
+// 来源标记:画布侧解析出画布 id、库级生成解析出 IP id(70 号票 asset 档,
+// 完整标记悬停可见),空 = 直连流量;其它自报标记原样显示。
 function sourceLabel(l: UsageLogRecord): string {
   if (!l.source) {
     return '直连';
   }
-  const m = /canvas=(\d+)/.exec(l.source);
-  return m ? `画布 ${m[1]}` : l.source;
+  const canvas = /canvas=(\d+)/.exec(l.source);
+  if (canvas) {
+    return `画布 ${canvas[1]}`;
+  }
+  if (/^ip=\d+ task=\S+ gen=asset$/.test(l.source)) {
+    const ip = /ip=(\d+)/.exec(l.source);
+    return ip ? `IP 资产 ${ip[1]}` : 'IP 资产';
+  }
+  return l.source;
 }
 
 function bucketLabel(b: UsageBucket): string {
@@ -291,6 +298,7 @@ onMounted(() => {
             { label: '全部来源', value: '' },
             { label: '画布', value: 'canvas' },
             { label: '直连', value: 'direct' },
+            { label: 'IP 资产', value: 'asset' },
           ]"
         />
         <Button
