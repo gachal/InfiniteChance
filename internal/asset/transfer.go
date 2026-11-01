@@ -43,6 +43,30 @@ type Stored struct {
 func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 	canvasID int64, taskID, kind, url string,
 ) (Stored, error) {
+	return transfer(ctx, st, hc, taskID, kind, url, func(contentType string) string {
+		return ObjectKey(canvasID, taskID, kind, contentType)
+	})
+}
+
+// TransferIP archives one IP-level generated artifact (70 号票 ADR 0007
+// 四分归档):无画布任务的产物按 ip/{id}/任务 归档 —— 与 Transfer 同一
+// 字节纪律(data: URI 就地解、http(s) 下载、写前算哈希、只落列不复用),
+// 只是目录形状落到 ips/ 档。
+func TransferIP(ctx context.Context, st objectstore.Store, hc *http.Client,
+	ipID int64, taskID, kind, url string,
+) (Stored, error) {
+	return transfer(ctx, st, hc, taskID, kind, url, func(contentType string) string {
+		return IPObjectKey(ipID, taskID, kind, contentType)
+	})
+}
+
+// transfer is the shared body of Transfer 与 TransferIP:data: URI 解在
+// 原地、http(s) 下载、octet-stream 按产物种类回退默认类型、写前算哈希
+// (48 号票)、只落列不复用。目录形状由 keyFn 定 —— 两入口薄壳只挑键
+// 路径,字节纪律与失败语义共用这一份。
+func transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
+	taskID, kind, url string, keyFn func(contentType string) string,
+) (Stored, error) {
 	if st == nil {
 		return Stored{}, errors.New("asset: object storage not configured")
 	}
@@ -68,44 +92,7 @@ func Transfer(ctx context.Context, st objectstore.Store, hc *http.Client,
 		contentType = defaultContentType(kind)
 	}
 	contentHash := hashBytes(payload) // 写前算:字节全量在手,先定指纹再落对象
-	key := ObjectKey(canvasID, taskID, kind, contentType)
-	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
-		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
-	}
-	return Stored{Key: key, ContentType: contentType, SizeBytes: int64(len(payload)), ContentHash: contentHash}, nil
-}
-
-// TransferIP archives one IP-level generated artifact (70 号票 ADR 0007
-// 四分归档):无画布任务的产物按 ip/{id}/任务 归档 —— 与 Transfer 同一
-// 字节纪律(data: URI 就地解、http(s) 下载、写前算哈希、只落列不复用),
-// 只是目录形状落到 ips/ 档。
-func TransferIP(ctx context.Context, st objectstore.Store, hc *http.Client,
-	ipID int64, taskID, kind, url string,
-) (Stored, error) {
-	if st == nil {
-		return Stored{}, errors.New("asset: object storage not configured")
-	}
-	if hc == nil {
-		hc = transferClient // handler.go 的共享下载 client,复用连接池
-	}
-
-	var payload []byte
-	var contentType string
-	if data, ct, ok := splitDataURI(url); ok {
-		payload, contentType = data, ct
-	} else {
-		body, ct, err := fetchArtifact(ctx, hc, url)
-		if err != nil {
-			return Stored{}, err
-		}
-		payload, contentType = body, ct
-	}
-
-	if contentType == "" || contentType == "application/octet-stream" {
-		contentType = defaultContentType(kind)
-	}
-	contentHash := hashBytes(payload) // 写前算:同 Transfer
-	key := IPObjectKey(ipID, taskID, kind, contentType)
+	key := keyFn(contentType)
 	if err := st.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), contentType); err != nil {
 		return Stored{}, fmt.Errorf("产物转存失败: %w", err)
 	}

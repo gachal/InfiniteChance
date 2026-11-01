@@ -202,9 +202,6 @@ func (s *SQLiteStore) ListByIP(ctx context.Context, ipID int64, limit int) ([]Ta
 	return out, rows.Err()
 }
 
-// and attempt bump land as one conditional UPDATE, so racing workers each
-// take a different row and no task is ever claimed twice. 与 MySQL 版同一
-// 写法:SELECT 拾取 → 条件 UPDATE → 受影响行数定胜负。SQLite 的 UPDATE
 // Claim hands one queued task to this worker: FIFO pick, state transition
 // and attempt bump land as one conditional UPDATE, so racing workers each
 // take a different row and no task is ever claimed twice. 与 MySQL 版同一

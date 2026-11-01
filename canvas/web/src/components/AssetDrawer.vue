@@ -29,7 +29,7 @@ import { imageLabelsForKind, isPrimaryLabel, orderedImages } from '../assetlib'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
 import { composeSize, RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
 import { SHEET_TYPES, latestVariantImage } from '../sheet'
-import { voiceStatusBadge } from '../voice'
+import { fmtCNY, voiceStatusBadge } from '../voice'
 import AssetPicker from './AssetPicker.vue'
 
 /** 画廊图行的最小视图形状:角色/场景/道具三族的图行记录都满足。 */
@@ -580,11 +580,6 @@ async function loadSheetModels(): Promise<void> {
 
 /** 比例 × 分辨率 → size 串(composer 同一组合表;双自动 = 不传)。 */
 const sheetSize = computed(() => composeSize(sheetRatio.value, sheetResolution.value) || undefined)
-
-/** 人民币金额的紧凑展示(与 GenerationComposer 同规)。 */
-function fmtCNY(n: number): string {
-  return `¥${n.toFixed(3).replace(/\.?0+$/, '')}`
-}
 
 /** 发送前预估(38 号票口径):按次轨单价 × 1 张;无价不显示。 */
 const sheetEstimate = computed(() => {

@@ -13,7 +13,6 @@ package canvastask
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -150,13 +149,15 @@ func (h *Handlers) IPCreate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	exists, err := h.IPs.IPExists(c.Request.Context(), ipID)
-	if err != nil {
-		h.failStore(c, err)
+	// 单次 GetIP 回答存在性(ErrIPNotFound → 404)并把行带回 —— prompt
+	// 的风格段复用同一行,不再先 IPExists 后 GetIP 双查询。
+	ip, err := h.IPs.GetIP(c.Request.Context(), ipID)
+	if errors.Is(err, canvas.ErrIPNotFound) {
+		apierr.NotFound(c, "IP 企划不存在")
 		return
 	}
-	if !exists {
-		apierr.NotFound(c, "IP 企划不存在")
+	if err != nil {
+		h.failStore(c, err)
 		return
 	}
 	if !h.requireGateway(c) {
@@ -264,15 +265,9 @@ func (h *Handlers) IPCreate(c *gin.Context) {
 		return
 	}
 
-	// IP 画面风格(69 号票)读库拼段:读失败不拦生成(风格是增益不是
-	// 前置),只留日志按未定处理。
-	var style string
-	ip, err := h.IPs.GetIP(c.Request.Context(), ipID)
-	if err != nil {
-		log.Printf("canvastask: read ip %d style for sheet prompt: %v", ipID, err)
-	} else {
-		style = ip.Style
-	}
+	// IP 画面风格(69 号票)拼段:入口单次 GetIP 已把行带回,这里只取
+	// Style —— 风格是增益不是前置,未配/为空即无风格段,不拦生成。
+	style := ip.Style
 	prompt := BuildSheetPrompt(sheetType, SheetFacts{
 		Name:        ch.Name,
 		Alias:       ch.Alias,
