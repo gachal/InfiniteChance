@@ -410,6 +410,29 @@ describe('insertElementLine', () => {
     expect(insertElementLine('   ', line)).toBe(line)
     expect(insertElementLine(STYLE_SEGMENT_MARK + '风', line)).toBe(`${STYLE_SEGMENT_MARK}风\n${line}`)
   })
+
+  it('多行风格段:给了段文本按整段切,绑定行插在整段之后(不切风格文本)', () => {
+    const segment = `${STYLE_SEGMENT_MARK}水墨\n低饱和`
+    const styled = `${segment}\n一只猫在跳舞`
+    expect(insertElementLine(styled, line, segment)).toBe(`${segment}\n${line}\n一只猫在跳舞`)
+  })
+
+  it('段文本未给(直调):退回首行启发式,单行段行为不变', () => {
+    const styled = `${STYLE_SEGMENT_MARK}水墨\n一只猫在跳舞`
+    expect(insertElementLine(styled, line)).toBe(`${STYLE_SEGMENT_MARK}水墨\n${line}\n一只猫在跳舞`)
+  })
+
+  it('段文本与稿首不符(用户改过风格):回落首行启发式', () => {
+    const styled = `${STYLE_SEGMENT_MARK}油画\n一只猫在跳舞`
+    expect(insertElementLine(styled, line, `${STYLE_SEGMENT_MARK}水墨`)).toBe(
+      `${STYLE_SEGMENT_MARK}油画\n${line}\n一只猫在跳舞`,
+    )
+  })
+
+  it('稿子恰好只有段文本:追加其后', () => {
+    const segment = `${STYLE_SEGMENT_MARK}水墨`
+    expect(insertElementLine(segment, line, segment)).toBe(`${segment}\n${line}`)
+  })
 })
 
 // ---- 超 4 角色检测(71 号票 B7;计数只数可解析元素,见 B2)----

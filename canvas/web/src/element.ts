@@ -254,11 +254,15 @@ export function buildElementLine(
 }
 
 /** 发送拼装(71 号票 B5,图片/视频两路 onComposerSend 共用):绑定行插进
- * styledSendPrompt 之后的全稿 —— 提示词以风格段开头(风格段恒在首行)则
- * 插在风格段那一行之后,否则置于最前;已含同一绑定行不叠加(69 号票
- * prependStyleSegment 同款纪律);提示词为空只回绑定行。绑定行空串 =
- * 无元素,原样返回(行为逐字节不变)。 */
-export function insertElementLine(prompt: string, line: string): string {
+ * styledSendPrompt 之后的全稿 —— 提示词以风格段开头则插在整段风格之后,
+ * 否则置于最前;已含同一绑定行不叠加(69 号票 prependStyleSegment 同款
+ * 纪律);提示词为空只回绑定行。绑定行空串 = 无元素,原样返回(行为逐
+ * 字节不变)。段定位:IP 风格在编辑框里可含换行,段尾以调用方给的段文本
+ * (styleSegment 产物)为准 —— 全稿恰为「段 + 换行 + 正文」时按整段长度
+ * 切,绑定行不会插进风格文本中间;未给段文本或与稿首不符(用户改过风格、
+ * 直通预填草稿形态未知)退回「标记开头 + 首个换行」的首行启发式(风格段
+ * 单行的存量形态,行为不变)。 */
+export function insertElementLine(prompt: string, line: string, segment?: string): string {
   if (line === '') {
     return prompt
   }
@@ -267,6 +271,9 @@ export function insertElementLine(prompt: string, line: string): string {
   }
   if (prompt.trim() === '') {
     return line
+  }
+  if (segment !== undefined && segment !== '' && (prompt === segment || prompt.startsWith(`${segment}\n`))) {
+    return `${segment}\n${line}${prompt.slice(segment.length)}`
   }
   if (prompt.startsWith(STYLE_SEGMENT_MARK)) {
     const nl = prompt.indexOf('\n')
