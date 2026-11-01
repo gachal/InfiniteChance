@@ -108,7 +108,7 @@ import {
   elementPickRejectNotice,
 } from '../composerElements'
 import { buildCutVideoPrefill } from '../cutVideo'
-import { cutPrefillNotice, cutPrefillVideoRefs } from '../videoPrefill'
+import { buildEntrancePrefill, cutPrefillNotice, cutPrefillVideoRefs } from '../videoPrefill'
 import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
 import type { SheetCharacterFacts } from '../sheet'
 import { useAutosave } from '../composables/useAutosave'
@@ -2611,6 +2611,48 @@ function onSheetTypeChange(type: string): void {
   }
 }
 
+// ---- 角色登场视频直通(71 号票 D1)----
+
+/** 角色引用卡「生成登场视频」:照 onCharacterGenerateSheet 骨架落空**视频**
+ * 节点(源右侧 380px、按出边数纵向级联)+ 角色→视频来源边 + 选中(选中切换
+ * 的 watch 自动把模式锁成视频、复位拆下标记);视频草稿预填走纯函数
+ * buildEntrancePrefill —— 参考条整条替换为该角色元素 chip(变体 = 卡片当前
+ * 选中变体,取图与 cut 注入共用 pickVariantAssetId),取不到图不带 chip 并
+ * 提示先生成设定图;提示词 = 单角色登场玩法预设填名,IP 风格段拼最前。
+ * 时长/比例/分辨率不动;人工确认后才发送(花钱操作总案 Q5)。 */
+function onCharacterGenerateEntrance(
+  nodeId: string,
+  p: { character: CharacterRecord; variant?: CharacterVariantRecord },
+): void {
+  const node = findNode(nodeId)
+  if (!node) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `video-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'video',
+      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
+      data: { url: '', note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  const prefill = buildEntrancePrefill(p.character, p.variant, ipStyle.value)
+  videoPrompt.value = prefill.prompt
+  uploadedVideoRefs.value = prefill.refs
+  if (prefill.notice !== '') {
+    showNotice(prefill.notice)
+  }
+}
+
 // ---- ネーム(54 号票)----
 
 // 54 号票:全屏ネーム编辑层绑定的节点('' = 关闭)。与絵コンテ编辑层
@@ -3609,9 +3651,9 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
-        <!-- 52 号票角色引用节点;70 号票口径修订:仅可作设定图来源边的源
-             (右 + 连图片节点),绑定/换绑、落图与「生成设定图」动作经事件
-             回编辑器。 -->
+        <!-- 52 号票角色引用节点;70 号票口径修订、71 号票扩视频:仅可作生成
+             来源边的源(右 + 连图片/视频节点),绑定/换绑、落图与「生成设定
+             图」「生成登场视频」动作经事件回编辑器。 -->
         <template #node-character="nodeProps">
           <CharacterNode
             :id="nodeProps.id"
@@ -3623,6 +3665,7 @@ function backToList(): void {
             @bind="onCharacterBind(nodeProps.id, $event)"
             @land-image="onCharacterLandImage($event)"
             @generate-sheet="onCharacterGenerateSheet(nodeProps.id, $event)"
+            @generate-entrance="onCharacterGenerateEntrance(nodeProps.id, $event)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>

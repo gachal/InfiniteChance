@@ -2,14 +2,16 @@
 // 角色引用节点(52 号票;70 号票口径修订):钉在画布上的设定参照卡 ——
 // 渲染本 IP 角色目录里 data.character_id 指向的角色(只存 id 不存快照,
 // 角色改名/换封面/加变体后随目录刷新即变),卡片含封面首图、name/alias、
-// 变体 tabs、逐图「落图」动作(素材插入语义)与「生成设定图」动作(对
-// 当前选中变体发起,入口一:落空图片节点 + 角色→图片来源边 + composer
-// 预填)。角色已删/跨 IP 落「角色不可用」占位,可换绑或删节点。
+// 变体 tabs、逐图「落图」动作(素材插入语义)与两个直通动作(都对当前
+// 选中变体发起):「生成设定图」(70 号票入口一:落空图片节点 + 角色→图片
+// 来源边 + composer 预填)与「生成登场视频」(71 号票:落空视频节点 + 角色→
+// 视频来源边 + composer 预填该角色元素与「单角色登场」玩法预设)。角色已删/
+// 跨 IP 落「角色不可用」占位,可换绑或删节点。
 //
-// 连线口径(70 号票修订):仅可作设定图来源边的源 —— 右 + 连图片节点,
-// 左侧不渲染把手,不可作任何边的目标(预演台只作源同族);「角色→图片」
-// 边只表达生成来源,锚定写库表不落边。变体选中态是组件内 UI 态,不入
-// 节点 data。
+// 连线口径(70 号票修订、71 号票扩视频):仅可作生成来源边的源 —— 右 + 连
+// 图片/视频节点,左侧不渲染把手,不可作任何边的目标(预演台只作源同族);
+// 「角色→图片/视频」边只表达生成来源,锚定写库表不落边。变体选中态是组件
+// 内 UI 态,不入节点 data。
 import { computed, ref } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
@@ -47,7 +49,11 @@ const emit = defineEmits<{
   /** 生成设定图(70 号票入口一):对当前选中变体发起,编辑器落空图片
    * 节点 + 来源边并预填 composer。 */
   'generate-sheet': [payload: { character: CharacterRecord; variant: CharacterVariantRecord }]
-  /** 右 + 连下游(70 号票:仅可作设定图来源边的源,无左 +)。 */
+  /** 生成登场视频(71 号票 D1):对当前选中变体发起,编辑器落空视频节点 +
+   * 来源边并预填 composer(该角色元素 + 「单角色登场」玩法预设)。variant
+   * 缺省 = 角色无任何变体(防御路径,建角色恒带「默认」变体)。 */
+  'generate-entrance': [payload: { character: CharacterRecord; variant?: CharacterVariantRecord }]
+  /** 右 + 连下游(70/71 号票:仅可作生成来源边的源,无左 +)。 */
   'connect-start': [side: ConnectSide]
 }>()
 
@@ -129,6 +135,15 @@ function onGenerateSheet(): void {
   const v = activeVariant.value
   if (c && v) {
     emit('generate-sheet', { character: c, variant: v })
+  }
+}
+
+// 生成登场视频(71 号票 D1):照「生成设定图」范式对当前选中变体发起;
+// 目录刷新竞态下角色解析不出静默不动。
+function onGenerateEntrance(): void {
+  const c = character.value
+  if (c) {
+    emit('generate-entrance', { character: c, variant: activeVariant.value ?? undefined })
   }
 }
 </script>
@@ -327,19 +342,31 @@ function onGenerateSheet(): void {
         </option>
       </select>
 
-      <!-- 生成设定图(70 号票入口一):对当前选中变体发起,落空图片节点
-           + 来源边 + composer 预填(人工确认发送)。 -->
-      <button
-        type="button"
-        class="gen-sheet"
-        :title="`为「${activeVariant?.name ?? '默认'}」生成设定图(三视图等五类型)`"
-        @click.stop="onGenerateSheet"
-      >
-        生成设定图
-      </button>
+      <!-- 两个直通动作并列,都对当前选中变体发起、人工确认发送:生成设定
+           图(70 号票入口一:落空图片节点 + 来源边 + composer 预填)与生成
+           登场视频(71 号票:落空视频节点 + 来源边 + 预填该角色元素与「单
+           角色登场」玩法预设)。 -->
+      <div class="gen-actions">
+        <button
+          type="button"
+          class="gen-sheet"
+          :title="`为「${activeVariant?.name ?? '默认'}」生成设定图(三视图等五类型)`"
+          @click.stop="onGenerateSheet"
+        >
+          生成设定图
+        </button>
+        <button
+          type="button"
+          class="gen-sheet"
+          :title="`以「${activeVariant?.name ?? '默认'}」造型生成登场视频(预填单角色登场玩法,人工确认发送)`"
+          @click.stop="onGenerateEntrance"
+        >
+          生成登场视频
+        </button>
+      </div>
     </template>
 
-    <!-- 70 号票:仅可作设定图来源边的源 —— 右 + 连图片节点,无左 +。 -->
+    <!-- 70/71 号票:仅可作生成来源边的源 —— 右 + 连图片/视频节点,无左 +。 -->
     <NodePorts
       :sides="['right']"
       @start="emit('connect-start', $event)"
@@ -603,7 +630,15 @@ function onGenerateSheet(): void {
   color: var(--text-muted);
 }
 
+/* 两个直通动作并列(71 号票:生成设定图 / 生成登场视频)。 */
+.gen-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .gen-sheet {
+  flex: 1;
+  min-width: 0;
   border: 1px solid rgba(var(--teal-rgb), 0.55);
   background: rgba(var(--teal-rgb), 0.08);
   color: var(--teal);
@@ -611,6 +646,7 @@ function onGenerateSheet(): void {
   padding: 5px 8px;
   font-size: var(--fs-label);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .gen-sheet:hover {
