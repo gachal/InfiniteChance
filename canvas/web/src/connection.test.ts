@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { EDGE_MATRIX, canConnect } from './connection'
+import { EDGE_MATRIX, canConnect, legalEdgeLabels } from './connection'
+import { NODE_TYPE_LABEL, type CanvasNodeType } from './graph'
 
 describe('canConnect', () => {
   it('admits the seven semantic edge kinds', () => {
@@ -157,5 +158,21 @@ describe('script 节点连线(64 号票)', () => {
     for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
       expect(EDGE_MATRIX[source]).not.toContain('script')
     }
+  })
+})
+
+describe('legalEdgeLabels(非法连线提示的合法清单,71 号票)', () => {
+  it('清单逐条 = EDGE_MATRIX 机械展开(矩阵加边文案自动跟上,不再手抄漏项)', () => {
+    const expected = (Object.keys(EDGE_MATRIX) as CanvasNodeType[]).flatMap((source) =>
+      EDGE_MATRIX[source].map((target) => `${NODE_TYPE_LABEL[source]}→${NODE_TYPE_LABEL[target]}`),
+    )
+    expect(legalEdgeLabels().split('、')).toEqual(expected)
+  })
+
+  it('评审补漏的两条旧账(分镜→视频、角色→视频)在清单里', () => {
+    const labels = legalEdgeLabels()
+    expect(labels).toContain('分镜→视频')
+    expect(labels).toContain('角色→视频')
+    expect(labels).toContain('音色→音频')
   })
 })

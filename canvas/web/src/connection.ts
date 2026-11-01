@@ -4,7 +4,7 @@
  * 管理员,矩阵错漏改代码即可,不上锁)。
  */
 
-import type { CanvasNodeType } from './graph'
+import { NODE_TYPE_LABEL, type CanvasNodeType } from './graph'
 
 /**
  * 合法矩阵(源类型 → 可达目标类型),语义收敛为十一种(CONTEXT.md「连线」):
@@ -59,4 +59,18 @@ export function canConnect(source: string | undefined, target: string | undefine
     return false
   }
   return (EDGE_MATRIX[source as CanvasNodeType] ?? []).includes(target as CanvasNodeType)
+}
+
+/** 非法连线提示里的「合法组合」清单(运行时从 EDGE_MATRIX 展开,节点中文
+ * 标签复用 graph.NODE_TYPE_LABEL):矩阵加边文案自动跟上,不再手抄清单 ——
+ * 手抄版漏过「分镜→视频」「角色→视频」两条(71 号票评审补漏)。顺序 =
+ * 矩阵键序 × 各自目标序,机械展开即全部合法组合。 */
+export function legalEdgeLabels(): string {
+  const parts: string[] = []
+  for (const source of Object.keys(EDGE_MATRIX) as CanvasNodeType[]) {
+    for (const target of EDGE_MATRIX[source]) {
+      parts.push(`${NODE_TYPE_LABEL[source]}→${NODE_TYPE_LABEL[target]}`)
+    }
+  }
+  return parts.join('、')
 }
