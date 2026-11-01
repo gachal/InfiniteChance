@@ -48,14 +48,15 @@ describe('canConnect', () => {
     expect(EDGE_MATRIX.analysis).toEqual([])
   })
 
-  it('lets character source a sheet edge into image nodes only (52/70 号票)', () => {
-    // 70 号票口径修订:角色引用卡由「不作任何连线端点」改为「仅可作设定图
+  it('lets character source generation edges into image and video nodes only (52/70/71 号票)', () => {
+    // 70 号票口径修订:角色引用卡由「不作任何连线端点」改为「仅可作生成
     // 来源边的源」(预演台只作源同族)—— 右 + 把手可连图片节点(生成设定
-    // 图的来源边),左侧不渲染把手,作任何边的目标都非法;历史已存边不
-    // 清洗不校验,锚定写库表不落边。
-    expect(EDGE_MATRIX.character).toEqual(['image'])
+    // 图的来源边),71 号票再放行视频节点(生成登场视频的来源边);左侧不
+    // 渲染把手,作任何边的目标都非法;历史已存边不清洗不校验,锚定写库表
+    // 不落边。
+    expect(EDGE_MATRIX.character).toEqual(['image', 'video'])
     expect(canConnect('character', 'image')).toBe(true)
-    expect(canConnect('character', 'video')).toBe(false)
+    expect(canConnect('character', 'video')).toBe(true)
     expect(canConnect('character', 'agent')).toBe(false)
     expect(canConnect('character', 'analysis')).toBe(false)
     expect(canConnect('character', 'character')).toBe(false)

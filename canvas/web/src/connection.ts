@@ -7,7 +7,7 @@
 import type { CanvasNodeType } from './graph'
 
 /**
- * 合法矩阵(源类型 → 可达目标类型),语义收敛为九种(CONTEXT.md「连线」):
+ * 合法矩阵(源类型 → 可达目标类型),语义收敛为十一种(CONTEXT.md「连线」):
  * - agent → image/video        提示词投递通道(29 号票推模式)
  * - video → agent              反推来源(13 号票)
  * - image/video → analysis     分析来源(17 号票)
@@ -22,11 +22,15 @@ import type { CanvasNodeType } from './graph'
  *                              「生成设定图」落空图片节点 + 来源边,composer
  *                              预填后人工确认发送;边只表达生成来源,锚定
  *                              写库表不落边)
+ * - character → video          登场视频生成来源边(71 号票:「生成登场视频」
+ *                              落空视频节点 + 来源边,composer 预填该角色
+ *                              元素与「单角色登场」玩法预设后人工确认发送;
+ *                              口径同 character → image,边只表达生成来源)
  * analysis 不作为任何连线的源;previz/storyboard/name 不作为任何连线的目标
  * (输入是用户摆的场景/cut/格的画面,回填走素材引用不走边);character 仅
- * 可作设定图来源边的源(52 号票「不作任何连线端点」由 70 号票修订,预演台
- * 只作源同族:右 + 连图片节点、左侧不渲染把手,不可作任何边的目标 ——
- * 「落图」的素材插入语义保留,历史已存边不清洗不校验);level
+ * 可作生成来源边的源(52 号票「不作任何连线端点」由 70 号票修订、71 号票
+ * 扩视频,预演台只作源同族:右 + 连图片/视频节点、左侧不渲染把手,不可作
+ * 任何边的目标 —— 「落图」的素材插入语义保留,历史已存边不清洗不校验);level
  * 也不作任何连线的源与目标(55 号票:关卡卡是文档卡,卡内直接编辑,无
  * 来源/投递语义,组件不渲染把手);audio
  * 不作为任何连线的源(57 号票:音频是合成产物,不派生新链);script 也不
@@ -40,7 +44,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   video: ['agent', 'image', 'video', 'analysis'],
   analysis: [],
   previz: ['image'],
-  character: ['image'],
+  character: ['image', 'video'],
   storyboard: ['image', 'video'],
   name: ['image'],
   level: [],
