@@ -1,7 +1,7 @@
 # 71 元素参考生视频(资产库实体同框/登场 + 玩法预设 + 首帧参考互斥修正)(2026-11-01 grilling 定案)
 
 Type: feat
-Status: approved(2026-11-01 grill-with-docs 定案,Q1–Q14 全按推荐;未实现。纯前端 canvas/web,网关与 canvas/server 零改动)
+Status: implemented(2026-11-01 grill-with-docs 定案,Q1–Q14 全按推荐;已实现(2026-11-01,feat/71-element-reference-video)。纯前端 canvas/web,网关与 canvas/server 零改动)。**口径注记**:①装配层判定下沉两个纯函数模块——`composerElements.ts`(元素合并结果落回上传草稿按实体键定位、拒收与替换文案、发送拼装、首帧/参考互斥判定、@ 插入文本、玩法填名与替换确认判定)、`videoPrefill.ts`(cut→视频预填折算、角色卡登场直通预填);②资产视图点选「同一张图再点 = 取消」沿用既有按素材 id 高亮的 detach(卡片显示已选即可取消,不论条上那条是否元素),元素合并只承接新增与同实体换图;拒收走参考条满员的横幅出口(generateError),区分「已在条上 / 满员 / 地址不可用」;③「玩法」下拉与绑定行预览同排置于提示词框下沿,替换确认用 window.confirm(项目既有确认范式)
 
 ## Question
 
