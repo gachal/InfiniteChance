@@ -15,10 +15,9 @@ import {
   CHARACTER_ELEMENT_HINT_LIMIT,
   elementEntityKey,
   ELEMENT_LINE_PREFIX,
-  ELEMENT_REF_INDEX_LABEL,
   ELEMENT_TYPE_LABELS,
-  insertElementLine,
   hasResolvedElement,
+  insertElementLine,
   mergeImageElementPick,
   mergeVideoElementPick,
   resolveElementNames,
@@ -26,7 +25,12 @@ import {
   type ElementPick,
 } from './element'
 import { STYLE_SEGMENT_MARK } from './ipStyle'
-import { composerRefMentions, videoRefMentions } from './refmention'
+import {
+  composerRefMentions,
+  REF_INDEX_LABEL,
+  refIndexNumbers,
+  videoRefMentions,
+} from './refmention'
 
 // ---- 轻量目录夹具:type-only import,运行时不依赖 api 包(composer.test.ts
 // 同款纪律);字段满足完整 Record 形状,经得起 vue-tsc。 ----
@@ -358,16 +362,18 @@ describe('buildElementLine', () => {
     )
   })
 
-  it('编号与 @浮层 token 同一字面(漂移钉:refmention 或本常量改任一侧测试即破)', () => {
-    expect(ELEMENT_REF_INDEX_LABEL).toBe('图')
+  it('编号与 @浮层 token 同一字面(漂移钉:refmention 常量或编号实现改任一侧测试即破)', () => {
+    expect(REF_INDEX_LABEL).toBe('图')
     const imgStrip: ComposerRef[] = [{ url: 'a' }, { url: 'b' }]
     expect(composerRefMentions(imgStrip).map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(refIndexNumbers(imgStrip, 'image')).toEqual([1, 2])
     const vstrip: VideoComposerRef[] = [
       { url: 'f', kind: 'image', role: 'first_frame' },
       { url: 'r1', kind: 'image', role: 'reference_image' },
       { url: 'r2', kind: 'image', role: 'reference_image' },
     ]
     expect(videoRefMentions(vstrip).map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(refIndexNumbers(vstrip, 'video')).toEqual([null, 1, 2])
   })
 
   it('行前缀与类型标签字面钉住(不用【】)', () => {

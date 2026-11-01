@@ -8,6 +8,8 @@ import {
   composerRefMentions,
   insertMentionToken,
   mentionTriggerIndex,
+  REF_INDEX_LABEL,
+  refIndexNumbers,
   videoRefBadge,
   videoRefMentions,
 } from './refmention'
@@ -210,5 +212,34 @@ describe('insertMentionToken', () => {
     const base = `${once.text} 再来一次@`
     const twice = insertMentionToken(base, mentionTriggerIndex(base, base.length), '@图1')
     expect(twice.text).toBe('@图1 再来一次@图1')
+  })
+})
+
+describe('refIndexNumbers(结构化编号,71 号票:绑定行与 @ 浮层同一份实现)', () => {
+  it('图片模式全部条目 1..N;视频模式仅参考图占号,其余角色为 null 不占号', () => {
+    const refs: VideoComposerRef[] = [
+      { url: 'f', kind: 'image', role: 'first_frame' },
+      { url: 'r1', kind: 'image', role: 'reference_image' },
+      { url: 'v', kind: 'video', role: 'reference_video' },
+      { url: 'a', kind: 'audio', role: 'reference_audio' },
+      { url: 'r2', kind: 'image', role: 'reference_image' },
+    ]
+    expect(refIndexNumbers(refs, 'video')).toEqual([null, 1, null, null, 2])
+    expect(refIndexNumbers(refs, 'image')).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('mentions token 与结构化编号同源(同一实现,口径不会各数各的)', () => {
+    const refs: VideoComposerRef[] = [
+      { url: 'f', kind: 'image', role: 'first_frame' },
+      { url: 'r1', kind: 'image', role: 'reference_image' },
+      { url: 'r2', kind: 'image', role: 'reference_image' },
+    ]
+    const numbers = refIndexNumbers(refs, 'video')
+    expect(videoRefMentions(refs).map((c) => c.token)).toEqual(
+      refs
+        .map((r, i) => ({ r, n: numbers[i] }))
+        .filter((x) => x.n !== null)
+        .map((x) => `@${REF_INDEX_LABEL}${x.n}`),
+    )
   })
 })

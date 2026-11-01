@@ -43,6 +43,30 @@ function withElementDisplay(
   return { ...candidate, elementName: name, elementType: el.type }
 }
 
+/** 「图N」编号的「图」字面:绑定行、chip 角标、@ 浮层 token 共用这一个
+ * 常量 —— Seedance 官方文档写作「图片N」,真 key 有差异时只改这里(71 号票
+ * B5;测试钉住了各处的一致性,不会被静默改漂)。 */
+export const REF_INDEX_LABEL = '图'
+
+/** 各上下文的「图N」结构化编号(不从 token 反解):图片模式 = 参考条全部
+ * 条目按序 1..N;视频模式 = 仅 reference_image 角色按其在参考图序列中的顺序
+ * 编号(即网关 references 数组序),其余角色 null 不占号。返回数组与 refs
+ * 同序同长;@ 浮层 token 与绑定行构建(element.buildElementLine)都从这里
+ * 取号,编号口径只有一份实现。 */
+export function refIndexNumbers(
+  refs: readonly (ComposerRef | VideoComposerRef)[],
+  mode: 'image' | 'video',
+): (number | null)[] {
+  let n = 0
+  return refs.map((r) => {
+    if (mode === 'video' && (r as VideoComposerRef).role !== 'reference_image') {
+      return null
+    }
+    n += 1
+    return n
+  })
+}
+
 /** 图片模式:参考条全部条目按序编号。names(可选)与 refs 同序,是编辑器
  * 经 element.resolveElementNames 解析好的显示名;缺省时行为与旧口径逐字节
  * 一致。 */
@@ -50,9 +74,10 @@ export function composerRefMentions(
   refs: ComposerRef[],
   names?: readonly (string | null)[],
 ): MentionCandidate[] {
+  const numbers = refIndexNumbers(refs, 'image')
   return refs.map((r, i) =>
     withElementDisplay(
-      { token: `@图${i + 1}`, kind: 'image' as const, url: r.url },
+      { token: `@${REF_INDEX_LABEL}${numbers[i]}`, kind: 'image' as const, url: r.url },
       names?.[i],
       r.element,
     ),
@@ -66,17 +91,16 @@ export function videoRefMentions(
   refs: VideoComposerRef[],
   names?: readonly (string | null)[],
 ): MentionCandidate[] {
+  const numbers = refIndexNumbers(refs, 'video')
   const out: MentionCandidate[] = []
-  let n = 0
   for (const [i, r] of refs.entries()) {
     if (r.role !== 'reference_image') {
       continue
     }
-    n += 1
     out.push(
       withElementDisplay(
         {
-          token: `@图${n}`,
+          token: `@${REF_INDEX_LABEL}${numbers[i]}`,
           kind: 'image',
           url: r.url,
           roleLabel: VIDEO_ROLE_LABEL.reference_image,
@@ -101,7 +125,7 @@ export function agentAttachmentMentions(list: PendingAgentMedia[]): MentionCandi
     }
     if (m.kind === 'image') {
       img += 1
-      out.push({ token: `@图${img}`, kind: 'image', url: m.ref })
+      out.push({ token: `@${REF_INDEX_LABEL}${img}`, kind: 'image', url: m.ref })
     } else {
       vid += 1
       out.push({ token: `@视频${vid}`, kind: 'video', url: m.ref })

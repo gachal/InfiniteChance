@@ -19,7 +19,7 @@ import {
   type VideoComposerRef,
 } from './composer'
 import { STYLE_SEGMENT_MARK } from './ipStyle'
-import { composerRefMentions, videoRefMentions } from './refmention'
+import { REF_INDEX_LABEL, refIndexNumbers } from './refmention'
 
 /** IP 目录三类的最小视图:直接用 @infinitechance/api 的目录记录(type-only
  * import,测试可自造轻量对象,运行时零依赖)。 */
@@ -203,11 +203,9 @@ export function mergeVideoElementPick(
 }
 
 // ---- 绑定行(71 号票 B5)----
-
-/** 绑定行「图N」编号字面:与 chip 角标、@浮层 token(59/71 号票)同一套。
- * Seedance 官方文档写作「图片N」,真 key 验证发现差异时改这里 —— 测试钉
- * 住了与 refmention token 的一致性,两侧不会被静默改漂。 */
-export const ELEMENT_REF_INDEX_LABEL = '图'
+// 「图N」的「图」字面与编号都来自 refmention(REF_INDEX_LABEL / refIndexNumbers):
+// 与 chip 角标、@ 浮层 token 是同一份实现,绑定行不再自带常量、也不再从
+// token 反解编号。
 
 /** 绑定行行前缀(不用【】,避开厂商字幕渲染风险)。 */
 export const ELEMENT_LINE_PREFIX = '出场元素:'
@@ -220,35 +218,27 @@ export const ELEMENT_TYPE_LABELS: Record<ComposerElement['type'], string> = {
 }
 
 /** 绑定行构建:`出场元素:小蓝@图1(角色)、阿红@图2(角色)、天台@图3(场景)`。
- * 只有元素 chip 进行,显示名取调用方解析结果(null/空 = 退化无名,不进);
- * 无元素返回空串(无元素时发送行为逐字节不变)。编号 = 参考序,直接复用
- * @ 浮层的口径函数:图片模式按参考条全部条目序,视频模式只数
- * reference_image —— 与 chip 角标、@图N 永远同一套,不会各数各的。 */
+ * 只有元素 chip 进行,且只进「可解析元素」(hasResolvedElement,71 号票 B2
+ * 退化语义);无元素返回空串(无元素时发送行为逐字节不变)。编号 = 参考序,
+ * 结构化取自 refmention.refIndexNumbers(图片模式按参考条全部条目序,视频
+ * 模式只数 reference_image)—— 与 chip 角标、@图N 永远同一套实现,不再从
+ * token 反解。 */
 export function buildElementLine(
   refs: (ComposerRef | VideoComposerRef)[],
   names: readonly (string | null)[],
   mode: 'image' | 'video',
 ): string {
-  // 视频分支由 mode 保证传入的是视频条;ComposerRef 形状的条目会被
-  // videoRefMentions 按 role 缺失自然跳过。
-  const mentions =
-    mode === 'image' ? composerRefMentions(refs) : videoRefMentions(refs as VideoComposerRef[])
-  const numberOf = new Map<string, number>()
-  for (const m of mentions) {
-    const n = Number(m.token.replace(/\D+/g, ''))
-    if (!Number.isNaN(n)) {
-      numberOf.set(m.url, n)
-    }
-  }
+  const numbers = refIndexNumbers(refs, mode)
   const parts: string[] = []
   refs.forEach((r, i) => {
     const el = r.element
     const name = names[i]
-    const n = numberOf.get(r.url)
-    if (!el || name == null || name === '' || n === undefined) {
+    const n = numbers[i]
+    // 与 hasResolvedElement 同一门;el 拆开只为类型收窄,判定不另起一份。
+    if (el === undefined || !hasResolvedElement(r, name) || n === null) {
       return
     }
-    parts.push(`${name}@${ELEMENT_REF_INDEX_LABEL}${n}(${ELEMENT_TYPE_LABELS[el.type]})`)
+    parts.push(`${name}@${REF_INDEX_LABEL}${n}(${ELEMENT_TYPE_LABELS[el.type]})`)
   })
   return parts.length === 0 ? '' : `${ELEMENT_LINE_PREFIX}${parts.join('、')}`
 }
