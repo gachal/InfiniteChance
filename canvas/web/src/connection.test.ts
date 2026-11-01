@@ -48,14 +48,19 @@ describe('canConnect', () => {
     expect(EDGE_MATRIX.analysis).toEqual([])
   })
 
-  it('keeps the character node out of the edge matrix entirely (52 号票)', () => {
-    // 角色引用节点 = 钉在画布上的设定参照卡:不作任何连线的源与目标
-    // (组件也不渲染把手),「本镜头主角」类语义显式不做。
-    expect(EDGE_MATRIX.character).toEqual([])
-    expect(canConnect('character', 'image')).toBe(false)
+  it('lets character source a sheet edge into image nodes only (52/70 号票)', () => {
+    // 70 号票口径修订:角色引用卡由「不作任何连线端点」改为「仅可作设定图
+    // 来源边的源」(预演台只作源同族)—— 右 + 把手可连图片节点(生成设定
+    // 图的来源边),左侧不渲染把手,作任何边的目标都非法;历史已存边不
+    // 清洗不校验,锚定写库表不落边。
+    expect(EDGE_MATRIX.character).toEqual(['image'])
+    expect(canConnect('character', 'image')).toBe(true)
+    expect(canConnect('character', 'video')).toBe(false)
+    expect(canConnect('character', 'agent')).toBe(false)
+    expect(canConnect('character', 'analysis')).toBe(false)
+    expect(canConnect('character', 'character')).toBe(false)
     expect(canConnect('image', 'character')).toBe(false)
     expect(canConnect('agent', 'character')).toBe(false)
-    expect(canConnect('character', 'character')).toBe(false)
     for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
       expect(EDGE_MATRIX[source]).not.toContain('character')
     }

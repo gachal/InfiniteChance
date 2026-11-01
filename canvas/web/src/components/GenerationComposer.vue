@@ -68,6 +68,12 @@ const props = defineProps<{
   /** 当前模式草稿:「带 IP 风格」开关(默认关;图片/视频两模式各存一份,
    * 37 号票透明背景开关范式),开 = 发送时把风格段拼在提示词前部。 */
   withStyle: boolean
+  /** 设定图五类型(70 号票):入口一「生成设定图」预填在途时非空 ——
+   * 图片模式顶部出现类型选择行(默认三视图),切换由编辑器重拼提示词;
+   * 缺省/空 = 普通生成,不出本行。 */
+  sheetTypes?: readonly string[]
+  /** 设定图类型草稿(预填时默认三视图)。 */
+  sheetType?: string
   /** 视频模式草稿:时长档('' = 自动,不传 seconds)。 */
   duration: string
   /** 提交在途(编辑器级状态,防连点)。 */
@@ -84,6 +90,7 @@ const emit = defineEmits<{
   'update:resolution': [value: string]
   'update:transparent': [value: boolean]
   'update:withStyle': [value: boolean]
+  'update:sheetType': [value: string]
   'update:duration': [value: string]
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
@@ -573,6 +580,28 @@ function onFileChange(e: Event): void {
       4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
     </p>
 
+    <!-- 设定图类型选择(70 号票入口一):预填在途时出现,五类型固定序、
+         默认三视图;切换上抛编辑器重拼提示词(模板 + 四件套 + 变体 +
+         风格段),label 随发送冻结进锚定预约。 -->
+    <div
+      v-if="!isVideo && (sheetTypes?.length ?? 0) > 0"
+      class="sheet-types"
+      role="tablist"
+      aria-label="设定图类型"
+    >
+      <button
+        v-for="t in sheetTypes"
+        :key="t"
+        type="button"
+        role="tab"
+        :class="{ on: t === sheetType }"
+        :aria-selected="t === sheetType"
+        @click="emit('update:sheetType', t)"
+      >
+        {{ t }}
+      </button>
+    </div>
+
     <div class="prompt-wrap">
       <textarea
         ref="promptEl"
@@ -779,6 +808,29 @@ function onFileChange(e: Event): void {
   box-shadow: var(--shadow-overlay), var(--glass-highlight);
   box-sizing: border-box;
   animation: composer-in var(--dur-slow) var(--ease);
+}
+
+/* 设定图五类型选择行(70 号票):chip 组,选中态描边提亮。 */
+.sheet-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sheet-types button {
+  border: 1px solid var(--line-control);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--r-pill);
+  padding: 2px 10px;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.sheet-types button.on {
+  border-color: rgba(var(--teal-rgb), 0.7);
+  color: var(--teal);
+  background: rgba(var(--teal-rgb), 0.1);
 }
 
 @keyframes composer-in {
