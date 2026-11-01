@@ -13,6 +13,7 @@ Status: implemented(2026-11-01 定案,已实现(2026-11-01,feat/70-character-she
 
 1. **canvas_tasks 放开无画布任务**:双方言加列 `ip_id`(0 = 画布任务;存量行不回填——画布任务归属照旧查画布,本列仅 `canvas_id=0` 任务消费);任务行允许 `canvas_id=0`(既有 `POST /canvases/:id/tasks` 路径校验不变,新端点不绑画布、`node_id` 为空)。
 2. **新端点**(canvas/server JWT 会话面,同 characters):`POST /api/ips/:id/tasks`(kind 仅 image,payload 同画布 image 任务:prompt/model/size/background/image_urls)+ `GET /api/ips/:id/tasks`(列表)+ `GET /api/ips/:id/tasks/:tid`(单查轮询);校验 IP 存在;未配 `CANVAS_SERVICE_KEY` 同码 `gateway_unconfigured` 拒绝。端点形状不排他——场景/道具将来复用另票。
+   **实现口径注记**(评审回写):①`POST /api/ips/:id/tasks` 请求体收 `character_id / variant_id / sheet_type + model/size/background/image_urls`,**不收 prompt**——prompt 由 canvas/server 按五类型模板(代码常量)+ 角色四件套 + 变体服装 + IP 风格段服务端拼装(≤2000 runes,`iptask.go` 的 `BuildSheetPrompt`,拼装落任务行可审计);②拼装依据 = 票面 B1「canvas/server 代码常量」与 B5 抽屉对话框无 prompt 编辑面,本条与票面「payload 同画布 image 任务(含 prompt)」的表述分叉以本注记为权威口径;③入口一(composer)预填在前端用同字面量 TS 常量(`canvas/web/src/sheet.ts` 的 `SHEET_TYPE_TEMPLATES` / `buildSheetPrompt`)拼装,两侧测试互钉防漂移。
 3. **worker 归属与对象键**:素材行 `ip_id` 读取 = 任务行 `ip_id` 优先(canvas_id=0 时)、画布任务照旧查画布;转存对象键任务无画布时落**新前缀 `ips/{ipID}/{taskID}/{kind}.{ext}`**——硬性约束 7 三分归档增补为**四分**(canvases 任务产物 / uploads 用户上传 / relay 直连转存 / ips 库级生成产物),48 号票跨前缀复用与按 object_key 计数删除防护语义不变。
 4. **来源标记**:`X-InfiniteChance-Source` 形如 `ip=<id> task=<ct> gen=asset`;admin 用量审计 source 过滤加 `asset` 档(后端 WHERE + admin-web 下拉)。
 5. **可见性**:生成记录面板按画布查、天然不见这些任务——进度看抽屉对话框状态,admin 素材页兜底产物枚举。
