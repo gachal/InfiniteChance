@@ -86,6 +86,11 @@ type Handlers struct {
 	Models   ModelPricer
 	Assets   AssetGetter
 	Gateway  Gateway
+	// IPs 裁决无画布任务(70 号票 /ips/:id/tasks 端点族)的 IP 存在性并
+	// 提供画面风格段;Characters 校验角色归属与变体隶属 —— 只被 IP 端点
+	// 族消费,画布路由面不读。wiring 生产装配恒非 nil。
+	IPs        canvas.IPStore
+	Characters CharacterGetter
 	// Voices 裁决台词合成的台账行存在性与可用性(57 号票);nil 时
 	// kind=tts 提交以 500 暴露装配缺口(生产装配恒非 nil)。
 	Voices VoiceLedger
@@ -121,6 +126,7 @@ type taskJSON struct {
 	ID         string `json:"id"`
 	CanvasID   int64  `json:"canvas_id"`
 	NodeID     string `json:"node_id"`
+	IPID       int64  `json:"ip_id"`
 	Kind       string `json:"kind"`
 	Prompt     string `json:"prompt"`
 	Model      string `json:"model"`
@@ -148,7 +154,7 @@ type taskJSON struct {
 
 func toTaskJSON(t Task) taskJSON {
 	return taskJSON{
-		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, Kind: t.Kind,
+		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, IPID: t.IPID, Kind: t.Kind,
 		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio,
 		Background: t.Background, Seconds: t.Seconds,
 		Lyrics: t.Lyrics, Instrumental: t.Instrumental,
@@ -159,21 +165,21 @@ func toTaskJSON(t Task) taskJSON {
 }
 
 type createInput struct {
-	NodeID        string       `json:"node_id"`
-	Kind          string       `json:"kind"`
-	Prompt        string       `json:"prompt"`
-	Model         string       `json:"model"`
-	Size          string       `json:"size"`
-	Ratio         string       `json:"ratio"`
-	Background    string       `json:"background"`
-	Seconds       *int64       `json:"seconds"`
-	Lyrics        string       `json:"lyrics"`
-	Instrumental  *bool        `json:"instrumental"`
-	ImageURL      string       `json:"image_url"`
-	ImageURLs     []string     `json:"image_urls"`
-	VideoRefs     []videoRefIn `json:"video_refs"`
-	Voice         *voiceIn     `json:"voice"`
-	Tts           *ttsIn       `json:"tts"`
+	NodeID       string       `json:"node_id"`
+	Kind         string       `json:"kind"`
+	Prompt       string       `json:"prompt"`
+	Model        string       `json:"model"`
+	Size         string       `json:"size"`
+	Ratio        string       `json:"ratio"`
+	Background   string       `json:"background"`
+	Seconds      *int64       `json:"seconds"`
+	Lyrics       string       `json:"lyrics"`
+	Instrumental *bool        `json:"instrumental"`
+	ImageURL     string       `json:"image_url"`
+	ImageURLs    []string     `json:"image_urls"`
+	VideoRefs    []videoRefIn `json:"video_refs"`
+	Voice        *voiceIn     `json:"voice"`
+	Tts          *ttsIn       `json:"tts"`
 }
 
 // voiceIn is the kind=voice 提交的专属入参 (57 号票):创建表单的内联事实

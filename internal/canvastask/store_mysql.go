@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	id             VARCHAR(64)  NOT NULL PRIMARY KEY,
 	canvas_id      BIGINT UNSIGNED NOT NULL,
 	node_id        VARCHAR(128) NOT NULL,
+	ip_id          BIGINT UNSIGNED NOT NULL DEFAULT 0,
 	kind           VARCHAR(16)  NOT NULL,
 	prompt         TEXT         NOT NULL,
 	model          VARCHAR(200) NOT NULL,
@@ -69,6 +70,9 @@ var migrations = []struct{ column, ddl string }{
 	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec MEDIUMTEXT NULL"},
 	{"lyrics", "ALTER TABLE canvas_tasks ADD COLUMN lyrics MEDIUMTEXT NULL"},
 	{"instrumental", "ALTER TABLE canvas_tasks ADD COLUMN instrumental TINYINT NOT NULL DEFAULT 1"},
+	// 70 号票的无画布任务:ip_id 缺省 0 = 画布任务,存量行不回填(归属
+	// 照旧查画布),只有 canvas_id=0 的任务行消费本列。
+	{"ip_id", "ALTER TABLE canvas_tasks ADD COLUMN ip_id BIGINT UNSIGNED NOT NULL DEFAULT 0"},
 }
 
 // EnsureSchema creates the canvas_tasks table when missing and widens an
@@ -97,7 +101,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
-const taskColumns = `id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds,
+const taskColumns = `id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds,
 	lyrics, instrumental, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
 	remote_task_id, voice_spec, created_at, updated_at`
 
@@ -106,9 +110,9 @@ func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
 		t.Seconds, t.Lyrics, t.Instrumental, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status)
 	if err != nil {
@@ -131,6 +135,28 @@ func (s *MySQLStore) ListByCanvas(ctx context.Context, canvasID int64, limit int
 		`SELECT `+taskColumns+` FROM canvas_tasks WHERE canvas_id = ?
 		 ORDER BY created_at DESC, id DESC LIMIT ?`,
 		canvasID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListByIP answers the IP's canvas-free tasks (70 号票), newest first.
+func (s *MySQLStore) ListByIP(ctx context.Context, ipID int64, limit int) ([]Task, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+taskColumns+` FROM canvas_tasks WHERE ip_id = ? AND canvas_id = 0
+		 ORDER BY created_at DESC, id DESC LIMIT ?`,
+		ipID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -588,7 +614,7 @@ func scanTask(row rowScanner) (Task, error) {
 	var t Task
 	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics sql.NullString
 	var assetID sql.NullInt64
-	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
+	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
 		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err

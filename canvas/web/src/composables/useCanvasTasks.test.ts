@@ -11,6 +11,7 @@ function task(overrides: Partial<CanvasTask>): CanvasTask {
     id: 'ct_abc',
     canvas_id: 7,
     node_id: 'image-1-1',
+    ip_id: 0,
     kind: 'image',
     prompt: 'p',
     model: 'img-m',

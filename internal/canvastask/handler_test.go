@@ -31,6 +31,15 @@ func newFakeTasks() *fakeTasks {
 	return &fakeTasks{tasks: map[string]canvastask.Task{}}
 }
 
+// all answers every task in insertion-insensitive order for assertions.
+func (f *fakeTasks) all() []canvastask.Task {
+	out := make([]canvastask.Task, 0, len(f.tasks))
+	for _, t := range f.tasks {
+		out = append(out, t)
+	}
+	return out
+}
+
 func (f *fakeTasks) Create(_ context.Context, t canvastask.Task) (canvastask.Task, error) {
 	if t.Status == "" {
 		t.Status = canvastask.StatusQueued
@@ -53,6 +62,20 @@ func (f *fakeTasks) ListByCanvas(_ context.Context, canvasID int64, limit int) (
 	var out []canvastask.Task
 	for _, t := range f.tasks {
 		if t.CanvasID == canvasID {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (f *fakeTasks) ListByIP(_ context.Context, ipID int64, limit int) ([]canvastask.Task, error) {
+	var out []canvastask.Task
+	for _, t := range f.tasks {
+		if t.IPID == ipID && t.CanvasID == 0 {
 			out = append(out, t)
 		}
 	}

@@ -182,6 +182,8 @@ func NewID() (string, error) {
 // carry them in VideoRefs the same way — resolved, kind-checked, capped;
 // ImageRef remains the single-string legacy shape old rows keep, and Seconds
 // 0 means "auto" (omit seconds on the wire, vendor default applies).
+// IPID 是无画布任务(70 号票,ADR 0007)的 IP 归属——canvas_id=0 时素材
+// 行归属与转存键都读它;画布任务恒 0(归属照旧查画布,存量行不回填)。
 // Ratio/Size carry the aspect-ratio and resolution tier strings verbatim.
 // Background (37 号票) is the image task's transparency request — 空串 =
 // 不传,非空只可能是 "transparent"(createInput 已校验),worker 非空即
@@ -192,31 +194,32 @@ func NewID() (string, error) {
 // 这对事实,否则失败重试会把人声歌曲重提成纯音乐(instrumental 列补全的
 // 存在理由,集成方对票面的补全)。
 type Task struct {
-	ID            string
-	CanvasID      int64
-	NodeID        string
-	Kind          string
-	Prompt        string
-	Model         string
-	Size          string
-	Ratio         string     // video: 显式宽高比串(如 16:9);空 = 不传
-	Background    string     // image: "transparent" = 透明背景;空 = 不传
-	Seconds       int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);sfx: 音效时长(1–30,61 号票复用 video 的列);image/music/tts 恒 0
-	Lyrics        string     // music: 歌词原文(62 号票歌曲);空 = 未携带(纯音乐或模型自动写词)
-	Instrumental  bool       // music: true = 纯音乐(缺省,60 号票);false = 人声歌曲(62 号票);其余 kind 不读
-	ImageRef      string     // video: 图生视频的单串参考图(12 号票旧形态)
-	VideoRefs     []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频
-	ImageRefs     []string   // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
-	VoiceSpec     VoiceSpec  // voice/tts:音色闭环事实与运行时句柄(57 号票);零值 = 其他 kind
-	Status        Status
-	Attempts      int64
-	Error         string // failed 的原因摘要;重试入队时清空
-	AssetID       int64  // succeeded 时产物素材
-	ImageURL      string // image 任务成功时的产物地址(与素材行同值)
-	VideoURL      string // video 任务成功时的产物地址(与素材行同值)
-	RemoteTaskID  string // 网关侧任务 id(vt_…),提交受理后回填
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID           string
+	CanvasID     int64
+	NodeID       string
+	IPID         int64 // 无画布任务的 IP 归属(70 号票);画布任务恒 0
+	Kind         string
+	Prompt       string
+	Model        string
+	Size         string
+	Ratio        string     // video: 显式宽高比串(如 16:9);空 = 不传
+	Background   string     // image: "transparent" = 透明背景;空 = 不传
+	Seconds      int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);sfx: 音效时长(1–30,61 号票复用 video 的列);image/music/tts 恒 0
+	Lyrics       string     // music: 歌词原文(62 号票歌曲);空 = 未携带(纯音乐或模型自动写词)
+	Instrumental bool       // music: true = 纯音乐(缺省,60 号票);false = 人声歌曲(62 号票);其余 kind 不读
+	ImageRef     string     // video: 图生视频的单串参考图(12 号票旧形态)
+	VideoRefs    []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频
+	ImageRefs    []string   // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
+	VoiceSpec    VoiceSpec  // voice/tts:音色闭环事实与运行时句柄(57 号票);零值 = 其他 kind
+	Status       Status
+	Attempts     int64
+	Error        string // failed 的原因摘要;重试入队时清空
+	AssetID      int64  // succeeded 时产物素材
+	ImageURL     string // image 任务成功时的产物地址(与素材行同值)
+	VideoURL     string // video 任务成功时的产物地址(与素材行同值)
+	RemoteTaskID string // 网关侧任务 id(vt_…),提交受理后回填
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // encodeVideoRefs serializes the structured reference list for its column;
@@ -285,6 +288,9 @@ type Store interface {
 	Get(ctx context.Context, id string) (Task, error)
 	// ListByCanvas returns the canvas's tasks, newest first, capped at limit.
 	ListByCanvas(ctx context.Context, canvasID int64, limit int) ([]Task, error)
+	// ListByIP returns the IP's canvas-free tasks (70 号票无画布任务),
+	// newest first, capped at limit —— 抽屉对话框轮询与兜底枚举的读路径。
+	ListByIP(ctx context.Context, ipID int64, limit int) ([]Task, error)
 	// Claim atomically moves one queued task (FIFO) to running and bumps its
 	// attempt counter; ErrNotFound when the queue is empty.
 	Claim(ctx context.Context) (Task, error)

@@ -17,6 +17,7 @@ import {
   type CanvasDetail,
   type CanvasTask,
   type CharacterRecord,
+  type CharacterVariantRecord,
   type ModelPriceSummary,
   type PromptTemplateOption,
   type VoiceRecord,
@@ -74,6 +75,7 @@ import {
   durationRangeFor,
   isReferenceRole,
   isRelayableRef,
+  MAX_COMPOSER_REFS,
   mediaSyncPatch,
   parseDurationInput,
   resultNodeData,
@@ -90,6 +92,8 @@ import {
 import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { styledSendPrompt } from '../ipStyle'
+import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
+import type { SheetCharacterFacts } from '../sheet'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { isHelpToggleKey } from '../canvasHelp'
@@ -364,8 +368,9 @@ function refreshModelCatalogs(): void {
 function syncTaskToCanvas(task: CanvasTask): void {
   const node = findNode(task.node_id)
   if (!node) {
-    // 结果节点被删:直通生成的回填预约随之作废,不残留。
+    // 结果节点被删:直通生成的回填/锚定预约随之作废,不残留。
     cutFramePending.delete(task.node_id)
+    sheetPending.delete(task.node_id)
     return
   }
   if (node.type === 'audio') {
@@ -409,6 +414,34 @@ function syncTaskToCanvas(task: CanvasTask): void {
     // 音色部署完成:台账行已由 worker 落库,目录刷新点亮节点卡面。
     void refreshVoices()
   }
+  // 设定图锚定(70 号票入口一):任务成功且产物带素材行时,按发送时冻结
+  // 的 (角色, 变体, label) 自动锚进角色库 —— 同 label 多张并存不覆盖
+  // (character_images 既有语义);失败静默留素材,可从抽屉手动锚兜底。
+  const sheetTarget = sheetPending.get(task.node_id)
+  if (sheetTarget && task.kind === 'image' && task.status === 'succeeded' && task.asset_id > 0) {
+    sheetPending.delete(task.node_id)
+    void anchorSheetImage(sheetTarget, task.asset_id)
+  }
+}
+
+/** 设定图自动锚:POST /characters/:cid/images(asset_id + variant_id +
+ * label = 所选类型),成功后刷新角色目录(引用卡画廊即时可见)。失败不
+ * 拦产物展示 —— 素材在库,抽屉里可手动锚。 */
+async function anchorSheetImage(
+  target: { characterId: number; variantId: number; label: string },
+  assetId: number,
+): Promise<void> {
+  try {
+    await client.createCharacterImage(target.characterId, {
+      variant_id: target.variantId,
+      asset_id: assetId,
+      label: target.label,
+    })
+    await refreshIPCharacters()
+    showNotice(`设定图已锚进角色库(${target.label})`)
+  } catch (e) {
+    generateError.value = e instanceof ApiError ? e.message : '设定图锚定失败,可稍后从抽屉手动锚'
+  }
 }
 
 /** 生成记录面板的数据源(28 号票):useCanvasTasks 每张任务表的同步快照
@@ -446,6 +479,9 @@ async function submitImageTask(payload: {
   background?: string
   imageUrls?: string[]
   sourceNodeId: string
+  /** 设定图锚定预约(70 号票):非空 = 本任务是入口一「生成设定图」,
+   * 任务成功后按 (角色, 变体, label) 自动锚进角色库。 */
+  sheet?: { characterId: number; variantId: number; label: string }
 }): Promise<void> {
   if (generating.value) {
     return
@@ -504,6 +540,11 @@ async function submitImageTask(payload: {
       ...(payload.imageUrls && payload.imageUrls.length > 0 ? { image_urls: payload.imageUrls } : {}),
     })
     taskSync.track(task)
+    // 设定图锚定预约在发送成功后冻结(label = 发送时所选类型):任务成功
+    // 在 syncTaskToCanvas 兑现,结果节点被删即作废(同 cutFramePending)。
+    if (payload.sheet) {
+      sheetPending.set(targetNodeId, payload.sheet)
+    }
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
   } finally {
@@ -967,6 +1008,9 @@ async function onComposerSend(): Promise<void> {
     return
   }
   const urls = composerImageUrls(composerRefs.value)
+  // 设定图锚定预约(70 号票):发送时冻结 label = 所选类型(此后改类型
+  // 不影响已发任务),随提交落 sheetPending。
+  const preset = activeSheetPreset.value
   await submitImageTask({
     prompt: styledSendPrompt(prompt, composerWithStyle.value, ipStyle.value),
     model: composerModel.value,
@@ -974,6 +1018,10 @@ async function onComposerSend(): Promise<void> {
     background: composerTransparent.value ? 'transparent' : undefined,
     imageUrls: urls.length > 0 ? urls : undefined,
     sourceNodeId: node.id,
+    sheet:
+      preset && preset.nodeId === node.id
+        ? { characterId: preset.characterId, variantId: preset.variantId, label: composerSheetType.value }
+        : undefined,
   })
 }
 
@@ -2283,8 +2331,16 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   videoPrompt.value = buildCutVideoPrompt(cut, ipStyle.value)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
-  uploadedVideoRefs.value =
-    cut.asset_id > 0
+  // 出场角色注入(70 号票 C):按 character_ids 序取默认变体设定图作
+  // 参考图(角色 reference_image,不进 prompt);无图角色静默跳过,
+  // 与首帧合计超 9 按序截断 + toast 计数。
+  const { picks, dropped } = pickCutCharacterRefs(
+    ipCharacters.value,
+    cut.character_ids ?? [],
+    VIDEO_REFS_TOTAL_CAP,
+  )
+  uploadedVideoRefs.value = [
+    ...(cut.asset_id > 0
       ? [
           {
             url: frameContentURL(cut.asset_id),
@@ -2293,7 +2349,17 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
             asset_id: cut.asset_id,
           },
         ]
-      : []
+      : []),
+    ...picks.map((p) => ({
+      url: characterImageContentURL(p.assetId),
+      kind: 'image' as const,
+      role: 'reference_image' as const,
+      asset_id: p.assetId,
+    })),
+  ]
+  if (dropped > 0) {
+    showNotice(`${dropped} 个角色设定图未带上(参考上限 9)`)
+  }
   // 收编辑层:生成对话框贴新视频节点正下方,全屏编辑层开着会挡住它。
   storyboardEditorNodeId.value = ''
 }
@@ -2308,7 +2374,8 @@ const cutFramePending = new Map<string, { storyboardId: string; cutIndex: number
  * + 分镜→图片来源边(EDGE_MATRIX 既有),选中驱动对话框进图片模式,提示
  * 词预填 buildCutFramePrompt(画面描述/景别);人工确认后才发送(花钱操作
  * 总案 Q5),任务成功后产物素材自动回填本 cut。收编辑层让位对话框,与
- * cut→视频直通同手势。 */
+ * cut→视频直通同手势。70 号票 C:出场角色设定图按 character_ids 序进
+ * 参考条(不进 prompt),无图角色静默跳过,超 9 截断 + toast。 */
 function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   const node = findNode(nodeId)
   const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
@@ -2335,7 +2402,105 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   composerPrompt.value = buildCutFramePrompt(cut, ipStyle.value)
+  // 出场角色注入(70 号票 C):整条替换参考条 —— 预填序 = character_ids
+  // 序(素材内容寻址引用);预填可手动移除。
+  const { picks, dropped } = pickCutCharacterRefs(
+    ipCharacters.value,
+    cut.character_ids ?? [],
+    MAX_COMPOSER_REFS,
+  )
+  uploadedRefs.value = picks.map((p) => ({
+    url: characterImageContentURL(p.assetId),
+    asset_id: p.assetId,
+  }))
+  if (dropped > 0) {
+    showNotice(`${dropped} 个角色设定图未带上(参考上限 9)`)
+  }
   storyboardEditorNodeId.value = ''
+}
+
+// ---- 角色设定图生成(70 号票入口一)----
+
+// 设定图预填上下文,绑到本次落的结果图片节点(composer 是「选中驱动」
+// 模型:选到别的节点预填即失效,不靠 watch 清理);类型草稿与提示词同族。
+interface SheetPreset {
+  nodeId: string
+  characterId: number
+  variantId: number
+  facts: SheetCharacterFacts
+}
+const sheetPreset = ref<SheetPreset | null>(null)
+const composerSheetType = ref<string>(SHEET_TYPES[0])
+
+/** 生效中的设定图预填:仅当预填的节点仍被选中(composer 正贴着它)。 */
+const activeSheetPreset = computed(() =>
+  sheetPreset.value && composerNode.value?.id === sheetPreset.value.nodeId ? sheetPreset.value : null,
+)
+
+// 结果图片节点 → 锚定预约(仅本会话内存态,照 cutFramePending 先例):
+// 发送时冻结 (角色, 变体, label),任务成功在 syncTaskToCanvas 兑现;
+// 刷新丢映射不自动锚,产物素材在库、可从抽屉手动锚(票面 B6 定案)。
+const sheetPending = new Map<string, { characterId: number; variantId: number; label: string }>()
+
+/** 入口一「生成设定图」(角色引用卡动作):落空图片节点 + 角色→图片
+ * 来源边(67 号票直通生成范式,节点与边先入图落盘)+ composer 预填 ——
+ * 类型默认三视图、变体 = 卡片当前选中变体、提示词 = TS 模板拼装(四件套
+ * + 变体名/服装 + 风格段)、参考条按 B3 预填(变体已存设定图默认带最近
+ * 一张,可手动移除)。人工确认后才发送(花钱操作总案 Q5)。 */
+function onCharacterGenerateSheet(
+  nodeId: string,
+  p: { character: CharacterRecord; variant: CharacterVariantRecord },
+): void {
+  const node = findNode(nodeId)
+  if (!node) {
+    return
+  }
+  nodeSeq += 1
+  const newId = `image-${Date.now()}-${nodeSeq}`
+  const lane = flowEdges.value.filter((e) => e.source === nodeId).length
+  removeSelectedNodes(getSelectedNodes.value)
+  addNodes([
+    {
+      id: newId,
+      type: 'image',
+      position: { x: node.position.x + 380, y: node.position.y + lane * 120 },
+      data: { url: '', note: '' } satisfies MediaNodeData,
+    },
+  ])
+  const added = findNode(newId)
+  if (added) {
+    addSelectedNodes([added])
+  }
+  connectNodes(nodeId, newId)
+  const facts: SheetCharacterFacts = {
+    name: p.character.name,
+    alias: p.character.alias || undefined,
+    description: p.character.description || undefined,
+    detail: p.character.detail || undefined,
+    variantName: p.variant.name,
+    variantNote: p.variant.note || undefined,
+  }
+  sheetPreset.value = { nodeId: newId, characterId: p.character.id, variantId: p.variant.id, facts }
+  composerSheetType.value = SHEET_TYPES[0]
+  // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
+  composerPrompt.value = buildSheetPrompt(SHEET_TYPES[0], facts, ipStyle.value)
+  // B3 参考图默认:变体已存设定图时默认带最近一张进参考条(素材内容寻址
+  // 引用);整条替换 —— 本动作的预填语义就是「以该变体现状为参考」,不带
+  // 会话残留。可手动移除(拆 chip 即文生图重 roll)。
+  const latest = latestVariantImage(p.variant)
+  uploadedRefs.value = latest
+    ? [{ url: characterImageContentURL(latest.asset_id), asset_id: latest.asset_id }]
+    : []
+}
+
+/** 设定图类型切换:重拼提示词(模板换段,四件套/变体/风格段不变);
+ * 用户已在框内手改的文字被预填语义覆盖 —— 类型选择本身就是改预填。 */
+function onSheetTypeChange(type: string): void {
+  composerSheetType.value = type
+  const preset = activeSheetPreset.value
+  if (preset) {
+    composerPrompt.value = buildSheetPrompt(type, preset.facts, ipStyle.value)
+  }
 }
 
 // ---- ネーム(54 号票)----
@@ -3333,8 +3498,9 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
-        <!-- 52 号票:角色引用节点 —— 参照卡,不渲染把手(不作任何连线的
-             源与目标);绑定/换绑与落图动作经事件回编辑器。 -->
+        <!-- 52 号票角色引用节点;70 号票口径修订:仅可作设定图来源边的源
+             (右 + 连图片节点),绑定/换绑、落图与「生成设定图」动作经事件
+             回编辑器。 -->
         <template #node-character="nodeProps">
           <CharacterNode
             :id="nodeProps.id"
@@ -3342,8 +3508,11 @@ function backToList(): void {
             :data="nodeProps.data"
             :characters="ipCharacters"
             :voices="voicesCatalog"
+            :connect-state="connection.stateOf(nodeProps.id)"
             @bind="onCharacterBind(nodeProps.id, $event)"
             @land-image="onCharacterLandImage($event)"
+            @generate-sheet="onCharacterGenerateSheet(nodeProps.id, $event)"
+            @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
         <!-- 53 号票:絵コンテ板卡,整卡点击进全屏编辑层;板名卡上直编,
@@ -3478,6 +3647,8 @@ function backToList(): void {
         :transparent="composerTransparent"
         :ip-style="ipStyle"
         :with-style="composerMode === 'video' ? videoWithStyle : composerWithStyle"
+        :sheet-types="activeSheetPreset ? SHEET_TYPES : undefined"
+        :sheet-type="composerSheetType"
         :duration="videoDuration"
         :generating="generating"
         :uploading="refUploading"
@@ -3488,6 +3659,7 @@ function backToList(): void {
         @update:resolution="onDraftUpdate(($v) => (videoResolution = $v), ($v) => (composerResolution = $v), $event)"
         @update:transparent="composerTransparent = $event"
         @update:with-style="onWithStyleUpdate"
+        @update:sheet-type="onSheetTypeChange"
         @update:duration="videoDuration = $event"
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"

@@ -7,14 +7,16 @@
 // 用 label 表达)。素材行被删的图行落「素材不可用」占位可手动移除。数据
 // 自取自管(get* 拉全树),每次变更 emit('changed', kind, record) 让父级
 // 卡墙同步刷新。
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import {
   ApiError,
   type AssetRecord,
+  type CanvasTask,
   type CharacterImageRecord,
   type CharacterRecord,
   type CharacterVariantRecord,
+  type ModelPriceSummary,
   type PropRecord,
   type SceneRecord,
   type VoiceRecord,
@@ -25,6 +27,8 @@ import { useThumbFallback, assetContentURL } from '../thumbnail'
 import type { AssetKind } from '../assetlib'
 import { imageLabelsForKind, isPrimaryLabel, orderedImages } from '../assetlib'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
+import { composeSize, RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
+import { SHEET_TYPES, latestVariantImage } from '../sheet'
 import { voiceStatusBadge } from '../voice'
 import AssetPicker from './AssetPicker.vue'
 
@@ -503,6 +507,173 @@ const galleryTitle = computed(() => {
   }
   return props.kind === 'scene' ? '场景设定图' : '道具设定图'
 })
+
+// ---- 设定图生成对话框(70 号票入口二,仅角色)----
+// 轻量生成面:选变体 + 选类型 + 选模型/尺寸,B3 参考默认可移除;prompt
+// 不在这里编辑 —— 由服务端按五类型模板拼装(POST /ips/:id/tasks),提交
+// 后对话框内轮询单查,成功自动锚进对应变体。模型/尺寸/价格预估/参考条
+// 复用 composer 的纯逻辑(composeSize 等),不搬 composer 组件(它是画布
+// 锚定单实例);对话框关闭/抽屉关闭即停轮询,任务照常服务端续跑,产物
+// 仍是素材,可从画廊「从库选」手动锚兜底。
+
+const sheetOpen = ref(false)
+const sheetVariantId = ref(0)
+const sheetType = ref<string>(SHEET_TYPES[0])
+const sheetModel = ref('')
+const sheetRatio = ref('')
+const sheetResolution = ref('')
+// B3 参考默认:所选变体下已存设定图时默认带最近一张(0 = 无/已移除);
+// 轻量面只做「移除」,不加挂(添加走画廊本机上传/从库选)。
+const sheetRefAssetId = ref(0)
+const imageModels = ref<string[]>([])
+const imagePrices = ref<Record<string, ModelPriceSummary>>({})
+const sheetModelsFailed = ref(false)
+const sheetSubmitting = ref(false)
+const sheetTask = ref<CanvasTask | null>(null)
+const sheetAnchoring = ref(false)
+const sheetDone = ref(false)
+const sheetError = ref('')
+let sheetPollTimer: number | undefined
+
+function sheetVariantOf(): CharacterVariantRecord | null {
+  return character.value?.variants.find((v) => v.id === sheetVariantId.value) ?? null
+}
+
+/** 打开对话框:类型/比例/分辨率回默认档,变体 = 当前选中,B3 参考随所选
+ * 变体重取;模型目录拉取(失败置位,对话框内说明)。 */
+function openSheetDialog(): void {
+  sheetOpen.value = true
+  sheetError.value = ''
+  sheetTask.value = null
+  sheetDone.value = false
+  sheetType.value = SHEET_TYPES[0]
+  sheetRatio.value = ''
+  sheetResolution.value = ''
+  sheetVariantId.value = activeVariant.value?.id ?? 0
+  resetSheetRef()
+  void loadSheetModels()
+}
+
+/** B3:参考默认 = 所选变体最近一张设定图(id 最大)。 */
+function resetSheetRef(): void {
+  const v = sheetVariantOf()
+  sheetRefAssetId.value = latestVariantImage(v ?? { images: [] })?.asset_id ?? 0
+}
+
+function onSheetVariantChange(): void {
+  resetSheetRef()
+}
+
+async function loadSheetModels(): Promise<void> {
+  sheetModelsFailed.value = false
+  try {
+    const catalog = await client.listImageModels()
+    imageModels.value = catalog.models
+    imagePrices.value = catalog.prices
+    if (!catalog.models.includes(sheetModel.value)) {
+      sheetModel.value = catalog.models[0] ?? ''
+    }
+  } catch {
+    sheetModelsFailed.value = true
+  }
+}
+
+/** 比例 × 分辨率 → size 串(composer 同一组合表;双自动 = 不传)。 */
+const sheetSize = computed(() => composeSize(sheetRatio.value, sheetResolution.value) || undefined)
+
+/** 人民币金额的紧凑展示(与 GenerationComposer 同规)。 */
+function fmtCNY(n: number): string {
+  return `¥${n.toFixed(3).replace(/\.?0+$/, '')}`
+}
+
+/** 发送前预估(38 号票口径):按次轨单价 × 1 张;无价不显示。 */
+const sheetEstimate = computed(() => {
+  const p = imagePrices.value[sheetModel.value]
+  if (p?.unit === 'call' && p.cny_per_call != null) {
+    return `预估 ${fmtCNY(p.cny_per_call)} / 张`
+  }
+  return ''
+})
+
+/** 提交无画布任务:prompt 服务端拼装;gateway 未配置(503)与校验拒绝
+ * (400)原文透出。 */
+async function submitSheet(): Promise<void> {
+  const c = character.value
+  if (!c || !sheetModel.value || sheetSubmitting.value) {
+    return
+  }
+  sheetSubmitting.value = true
+  sheetError.value = ''
+  sheetDone.value = false
+  try {
+    const task = await client.createIPTask(props.ipId, {
+      character_id: c.id,
+      variant_id: sheetVariantId.value,
+      sheet_type: sheetType.value,
+      model: sheetModel.value,
+      ...(sheetSize.value ? { size: sheetSize.value } : {}),
+      ...(sheetRefAssetId.value > 0
+        ? { image_urls: [characterImageContentURL(sheetRefAssetId.value)] }
+        : {}),
+    })
+    sheetTask.value = task
+    pollSheet(task.id)
+  } catch (e) {
+    fail(e, '提交失败,请稍后再试')
+  } finally {
+    sheetSubmitting.value = false
+  }
+}
+
+/** 对话框内轮询(2s):终态即停;succeeded 带产物素材行时自动锚。暂态
+ * 轮询失败静默下一拍再试;抽屉关闭(组件卸载)即停 —— 任务服务端照跑,
+ * 产物素材在库可手动锚。 */
+function pollSheet(taskId: string): void {
+  window.clearInterval(sheetPollTimer)
+  sheetPollTimer = window.setInterval(() => {
+    void (async () => {
+      try {
+        const t = await client.getIPTask(props.ipId, taskId)
+        sheetTask.value = t
+        if (t.status !== 'queued' && t.status !== 'running') {
+          window.clearInterval(sheetPollTimer)
+          sheetPollTimer = undefined
+          sheetDone.value = true
+          if (t.status === 'succeeded' && t.asset_id > 0) {
+            await anchorSheet(t.asset_id)
+          }
+        }
+      } catch {
+        /* 暂态失败下一拍再试 */
+      }
+    })()
+  }, 2000)
+}
+
+/** 自动锚:label = 所选类型落 character_images(同 label 多张并存);
+ * 失败不拦产物 —— 素材在库,画廊「从库选」可手动锚。 */
+async function anchorSheet(assetId: number): Promise<void> {
+  if (!character.value) {
+    return
+  }
+  sheetAnchoring.value = true
+  try {
+    await client.createCharacterImage(character.value.id, {
+      variant_id: sheetVariantId.value,
+      asset_id: assetId,
+      label: sheetType.value,
+    })
+    await refresh()
+  } catch (e) {
+    actionError.value = e instanceof ApiError ? e.message : '自动锚定失败,可稍后手动锚'
+  } finally {
+    sheetAnchoring.value = false
+  }
+}
+
+onUnmounted(() => {
+  window.clearInterval(sheetPollTimer)
+})
 </script>
 
 <template>
@@ -789,6 +960,15 @@ const galleryTitle = computed(() => {
         </p>
         <div class="gallery-actions">
           <button
+            v-if="character"
+            type="button"
+            class="mini primary"
+            title="生成设定图(三视图/多视图/表情集/色板/姿态,服务端拼装提示词)"
+            @click="openSheetDialog"
+          >
+            生成设定图
+          </button>
+          <button
             type="button"
             class="mini"
             :disabled="uploading"
@@ -912,6 +1092,205 @@ const galleryTitle = computed(() => {
         @toggle="onPickAsset"
         @close="pickingOpen = false"
       />
+
+      <!-- 生成设定图对话框(70 号票入口二,仅角色):选变体 + 类型 +
+           模型/尺寸,B3 参考默认可移除;提交走无画布任务,对话框内轮询,
+           成功自动锚。人工确认才发送(花钱操作总案 Q5)。 -->
+      <div
+        v-if="sheetOpen"
+        class="sheet-overlay"
+        role="dialog"
+        aria-label="生成设定图"
+        @click.self="sheetOpen = false"
+      >
+        <div class="sheet-dialog">
+          <header class="sheet-head">
+            <h4>生成设定图</h4>
+            <button
+              type="button"
+              class="mini"
+              title="关闭(任务照常在服务端续跑,产物在素材库可见)"
+              @click="sheetOpen = false"
+            >
+              关闭
+            </button>
+          </header>
+
+          <label class="sheet-field">
+            造型变体
+            <select
+              v-model.number="sheetVariantId"
+              aria-label="选择造型变体"
+              @change="onSheetVariantChange"
+            >
+              <option
+                v-for="v in character?.variants ?? []"
+                :key="v.id"
+                :value="v.id"
+              >
+                {{ v.name }}
+              </option>
+            </select>
+          </label>
+
+          <label class="sheet-field">
+            类型
+            <select
+              v-model="sheetType"
+              aria-label="设定图类型"
+            >
+              <option
+                v-for="t in SHEET_TYPES"
+                :key="t"
+                :value="t"
+              >
+                {{ t }}
+              </option>
+            </select>
+          </label>
+
+          <label class="sheet-field">
+            模型
+            <select
+              v-model="sheetModel"
+              :disabled="sheetModelsFailed || imageModels.length === 0"
+              aria-label="生图模型"
+            >
+              <option
+                v-for="m in imageModels"
+                :key="m"
+                :value="m"
+              >
+                {{ m }}
+              </option>
+            </select>
+          </label>
+          <p
+            v-if="sheetModelsFailed"
+            class="sheet-hint"
+            role="alert"
+          >
+            生图模型目录拉取失败(网关或画布服务不可达),生成暂不可用。
+          </p>
+          <p
+            v-else-if="imageModels.length === 0"
+            class="sheet-hint"
+          >
+            没有已配价的生图模型:请在管理台配置按次价格。
+          </p>
+
+          <div class="sheet-field-row">
+            <label class="sheet-field">
+              比例
+              <select
+                v-model="sheetRatio"
+                aria-label="画面比例"
+              >
+                <option
+                  v-for="p in RATIO_PRESETS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </option>
+              </select>
+            </label>
+            <label class="sheet-field">
+              分辨率
+              <select
+                v-model="sheetResolution"
+                aria-label="分辨率档位"
+              >
+                <option
+                  v-for="p in RESOLUTION_PRESETS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <!-- B3 参考默认:所选变体最近一张设定图,可移除(移除 = 干净
+               重 roll);轻量面不做加挂,添加走画廊上传/从库选。 -->
+          <div class="sheet-field">
+            <span class="sheet-label-text">参考图</span>
+            <div
+              v-if="sheetRefAssetId > 0"
+              class="sheet-ref"
+            >
+              <img
+                :src="thumbs.displayURL(characterImageContentURL(sheetRefAssetId), characterImageThumbURL(sheetRefAssetId))"
+                alt="参考图"
+                @error="onImageError(sheetRefAssetId)"
+              >
+              <button
+                type="button"
+                class="mini"
+                title="移除参考图(发送即文生图重 roll)"
+                @click="sheetRefAssetId = 0"
+              >
+                ×
+              </button>
+            </div>
+            <span
+              v-else
+              class="sheet-hint"
+            >不带参考(文生图重 roll)</span>
+          </div>
+
+          <p
+            v-if="sheetEstimate"
+            class="sheet-hint"
+          >
+            {{ sheetEstimate }}
+          </p>
+
+          <!-- 进度面:queued/running 转圈文案,终态落结果;刷新丢映射不
+               影响任务本身,产物素材在库。 -->
+          <p
+            v-if="sheetTask && !sheetDone"
+            class="sheet-hint"
+            role="status"
+          >
+            生成中…({{ sheetTask.status === 'queued' ? '排队中' : '生成中' }}),可关闭对话框,任务照常续跑。
+          </p>
+          <p
+            v-if="sheetDone && sheetTask?.status === 'succeeded'"
+            class="sheet-hint ok"
+            role="status"
+          >
+            {{ sheetAnchoring ? '已生成,正在锚进角色库…' : '已生成并锚进「' + (sheetVariantOf()?.name ?? '') + '」(' + sheetType + ')。' }}
+          </p>
+          <p
+            v-if="sheetDone && sheetTask && sheetTask.status !== 'succeeded'"
+            class="sheet-hint"
+            role="alert"
+          >
+            任务{{ sheetTask.status === 'canceled' ? '已取消' : '失败' }}{{ sheetTask.error ? ':' + sheetTask.error : '' }}(可重新提交)
+          </p>
+          <p
+            v-if="sheetError"
+            class="sheet-hint"
+            role="alert"
+          >
+            {{ sheetError }}
+          </p>
+
+          <div class="sheet-actions">
+            <button
+              type="button"
+              class="primary"
+              :disabled="sheetSubmitting || !sheetModel || sheetModelsFailed || imageModels.length === 0"
+              title="提交生成任务(服务端拼装提示词,人工确认后计费)"
+              @click="submitSheet"
+            >
+              {{ sheetSubmitting ? '提交中…' : '生成' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </template>
   </aside>
 </template>
@@ -1331,5 +1710,93 @@ const galleryTitle = computed(() => {
 .feedback.hint {
   color: var(--gold);
   margin-bottom: 8px;
+}
+
+/* 生成设定图对话框(70 号票入口二):覆盖抽屉的轻量浮层。 */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-drawer) + 1);
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.sheet-dialog {
+  width: min(420px, calc(100vw - 48px));
+  display: grid;
+  gap: var(--sp-sm);
+  padding: var(--sp-md);
+  background: rgba(var(--surface-panel-rgb), 0.98);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-overlay);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sheet-head h4 {
+  margin: 0;
+}
+
+.sheet-field {
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
+.sheet-field select {
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
+  padding: 6px;
+  color: inherit;
+  font-size: var(--fs-body);
+}
+
+.sheet-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-sm);
+}
+
+.sheet-label-text {
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
+.sheet-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+}
+
+.sheet-ref img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--r-md);
+  background: var(--wash-soft);
+  display: block;
+}
+
+.sheet-hint {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.sheet-hint.ok {
+  color: var(--success);
+}
+
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

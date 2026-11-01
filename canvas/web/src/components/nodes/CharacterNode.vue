@@ -1,19 +1,23 @@
 <script setup lang="ts">
-// 角色引用节点(52 号票):钉在画布上的设定参照卡 —— 渲染本 IP 角色目录
-// 里 data.character_id 指向的角色(只存 id 不存快照,角色改名/换封面/加
-// 变体后随目录刷新即变),卡片含封面首图、name/alias、变体 tabs 与逐图
-// 「落图」动作(素材插入语义:编辑器把该设定图插为独立图片节点落视口中
-// 心,不连线 —— 设定图进生成链的桥)。角色已删/跨 IP 落「角色不可用」
-// 占位,可在卡上换绑其他角色或删节点。
+// 角色引用节点(52 号票;70 号票口径修订):钉在画布上的设定参照卡 ——
+// 渲染本 IP 角色目录里 data.character_id 指向的角色(只存 id 不存快照,
+// 角色改名/换封面/加变体后随目录刷新即变),卡片含封面首图、name/alias、
+// 变体 tabs、逐图「落图」动作(素材插入语义)与「生成设定图」动作(对
+// 当前选中变体发起,入口一:落空图片节点 + 角色→图片来源边 + composer
+// 预填)。角色已删/跨 IP 落「角色不可用」占位,可换绑或删节点。
 //
-// 连线矩阵零改动:本组件不渲染 + 把手(Handle/NodePorts 一概没有),
-// character 不作任何连线的源与目标(参照卡语义)。变体选中态是组件内
-// UI 态,不入节点 data。
+// 连线口径(70 号票修订):仅可作设定图来源边的源 —— 右 + 连图片节点,
+// 左侧不渲染把手,不可作任何边的目标(预演台只作源同族);「角色→图片」
+// 边只表达生成来源,锚定写库表不落边。变体选中态是组件内 UI 态,不入
+// 节点 data。
 import { computed, ref } from 'vue'
+import { Handle, Position } from '@vue-flow/core'
 
-import type { CharacterImageRecord, CharacterRecord, VoiceRecord } from '@infinitechance/api'
+import type { CharacterImageRecord, CharacterRecord, CharacterVariantRecord, VoiceRecord } from '@infinitechance/api'
 
 import type { CharacterNodeData } from '../../graph'
+import type { ConnectSide, ConnectState } from '../../composables/useConnection'
+import NodePorts from './NodePorts.vue'
 import {
   characterImageContentURL,
   characterImageThumbURL,
@@ -31,6 +35,8 @@ const props = defineProps<{
   characters: CharacterRecord[]
   /** 音色台账目录(57 号票,编辑器拉取):绑定音色的徽章与试听从这解析。 */
   voices?: VoiceRecord[]
+  /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
+  connectState?: ConnectState
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +44,11 @@ const emit = defineEmits<{
   bind: [characterId: number]
   /** 把一张设定图落为独立图片节点(素材插入,不连线)。 */
   'land-image': [image: CharacterImageRecord]
+  /** 生成设定图(70 号票入口一):对当前选中变体发起,编辑器落空图片
+   * 节点 + 来源边并预填 composer。 */
+  'generate-sheet': [payload: { character: CharacterRecord; variant: CharacterVariantRecord }]
+  /** 右 + 连下游(70 号票:仅可作设定图来源边的源,无左 +)。 */
+  'connect-start': [side: ConnectSide]
 }>()
 
 // 目录解析:绑定 id 找不到(已删/跨 IP)与未绑定(0)是两种占位形态。
@@ -108,6 +119,16 @@ function onBindChange(e: Event): void {
   const value = Number((e.target as HTMLSelectElement).value)
   if (value > 0) {
     emit('bind', value)
+  }
+}
+
+// 生成设定图(70 号票入口一):对当前选中变体发起;变体解析不出(目录
+// 刷新竞态)静默不动。
+function onGenerateSheet(): void {
+  const c = character.value
+  const v = activeVariant.value
+  if (c && v) {
+    emit('generate-sheet', { character: c, variant: v })
   }
 }
 </script>
@@ -305,7 +326,29 @@ function onBindChange(e: Event): void {
           换绑:{{ c.name }}
         </option>
       </select>
+
+      <!-- 生成设定图(70 号票入口一):对当前选中变体发起,落空图片节点
+           + 来源边 + composer 预填(人工确认发送)。 -->
+      <button
+        type="button"
+        class="gen-sheet"
+        :title="`为「${activeVariant?.name ?? '默认'}」生成设定图(三视图等五类型)`"
+        @click.stop="onGenerateSheet"
+      >
+        生成设定图
+      </button>
     </template>
+
+    <!-- 70 号票:仅可作设定图来源边的源 —— 右 + 连图片节点,无左 +。 -->
+    <NodePorts
+      :sides="['right']"
+      @start="emit('connect-start', $event)"
+    />
+
+    <Handle
+      type="source"
+      :position="Position.Right"
+    />
   </div>
 </template>
 
@@ -558,5 +601,19 @@ function onBindChange(e: Event): void {
 .rebind {
   font-size: var(--fs-micro);
   color: var(--text-muted);
+}
+
+.gen-sheet {
+  border: 1px solid rgba(var(--teal-rgb), 0.55);
+  background: rgba(var(--teal-rgb), 0.08);
+  color: var(--teal);
+  border-radius: var(--r-md);
+  padding: 5px 8px;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
+.gen-sheet:hover {
+  background: rgba(var(--teal-rgb), 0.16);
 }
 </style>

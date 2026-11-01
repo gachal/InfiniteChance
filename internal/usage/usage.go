@@ -68,11 +68,13 @@ const (
 )
 
 // SourceFilter values narrow the trail by origin: canvas marks (the
-// canvas/server "canvas=…" prefix), direct key traffic, or everything.
+// canvas/server "canvas=…" prefix), direct key traffic, IP-level generated
+// assets (70 号票的 "ip=… gen=asset" 库级生成), or everything.
 const (
 	SourceAll    = ""
 	SourceCanvas = "canvas"
 	SourceDirect = "direct"
+	SourceAsset  = "asset"
 )
 
 // Filter narrows List and Summary to the same slice of the ledger. Zero

@@ -336,6 +336,25 @@ export interface PatchCharacterImageInput {
   variant_id?: number
 }
 
+// ---- 无画布任务(70 号票,ADR 0007;挂 /ips/:id/tasks,需 JWT 会话)----
+// IP 库级生成路径的第一条:角色设定图。prompt 由服务端按五类型模板拼装
+// (不收 prompt 字段),任务行 canvas_id=0、ip_id 携归属;轮询走单查,
+// 产物是素材行,锚定由前端在任务成功后调 createCharacterImage。
+
+/** 提交 IP 设定图任务的请求体:sheet_type ∈ 三视图/多视图/表情集/色板/
+ * 姿态(缺省三视图,服务端同默认);image_urls 同画布图生图(≤9 条:
+ * 厂商 http(s) 地址或素材内容寻址路径,服务端逐条解引用);background
+ * 仅 "transparent"。 */
+export interface CreateIPTaskInput {
+  character_id: number
+  variant_id: number
+  sheet_type?: string
+  model: string
+  size?: string
+  background?: string
+  image_urls?: string[]
+}
+
 // ---- 场景库 / 道具库(canvas/server,65 号票,需 JWT 会话)----
 // 资产库三类实体的第二、三类:照角色库同构但无造型变体(日景/夜景、
 // 使用态等变体语义用 images 的 label 表达);label 前端白名单(场景:
@@ -496,6 +515,8 @@ export interface CanvasTask {
   id: string
   canvas_id: number
   node_id: string
+  /** 无画布任务的 IP 归属(70 号票);画布任务恒 0。 */
+  ip_id: number
   kind: string
   prompt: string
   model: string
@@ -1047,7 +1068,9 @@ export interface UsageAuditParams {
   channel_id?: number
   model?: string
   status?: UsageStatus
-  source?: 'canvas' | 'direct'
+  /** canvas = 画布标记(canvas=… 前缀)、direct = 直连流量、asset = 库级
+   * 生成产物(ip=… gen=asset,70 号票)。 */
+  source?: 'canvas' | 'direct' | 'asset'
 }
 
 export interface ListUsageLogsParams extends UsageAuditParams {
@@ -1382,6 +1405,30 @@ export class ApiClient {
   /** 删设定图(只删图行,素材行不动)。 */
   async deleteCharacterImage(imageId: number): Promise<void> {
     await this.request<void>(`/character-images/${imageId}`, { method: 'DELETE' })
+  }
+
+  // ---- 无画布任务(70 号票;挂 /ips/:id/tasks)----
+
+  /** 提交 IP 设定图任务:prompt 服务端拼装,任务行落库即返回(queued),
+   * 服务端 worker 负责后续;gateway 未配置时 503 gateway_unconfigured。 */
+  createIPTask(ipId: number, input: CreateIPTaskInput): Promise<CanvasTask> {
+    return this.request<{ task: CanvasTask }>(`/ips/${ipId}/tasks`, {
+      method: 'POST',
+      body: input,
+    }).then((body) => body.task)
+  }
+
+  /** 该 IP 的无画布任务(最新在前):兜底枚举;对话框轮询走单查。 */
+  async listIPTasks(ipId: number): Promise<CanvasTask[]> {
+    const body = await this.request<{ tasks: CanvasTask[] }>(`/ips/${ipId}/tasks`)
+    return body.tasks
+  }
+
+  /** 单查一个 IP 任务(抽屉对话框轮询);跨 IP / 画布任务答 404。 */
+  getIPTask(ipId: number, taskId: string): Promise<CanvasTask> {
+    return this.request<{ task: CanvasTask }>(`/ips/${ipId}/tasks/${taskId}`).then(
+      (body) => body.task,
+    )
   }
 
   // ---- 场景库(65 号票;目录挂 /ips/:id/scenes,CRUD 挂 /scenes 系)----

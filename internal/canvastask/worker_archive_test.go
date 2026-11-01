@@ -131,3 +131,53 @@ func TestWorkerWithoutStorageKeepsLegacyVendorRows(t *testing.T) {
 		t.Errorf("object key = %q, want empty without storage", got.ObjectKey)
 	}
 }
+
+// TestWorkerArchivesIPAssetIntoIPSLayout 覆盖 70 号票的无画布任务链路:
+// canvas_id=0 + ip_id 任务经 worker 认领 → 网关(来源标记 ip=… gen=asset)
+// → 转存落 ips/ 新前缀 → 素材行 ip_id 取任务行(canvas_id=0 不查画布)。
+func TestWorkerArchivesIPAssetIntoIPSLayout(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	st, err := objectstore.NewFileSystem(t.TempDir())
+	if err != nil {
+		t.Fatalf("objectstore: %v", err)
+	}
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("png-bytes"))
+	}))
+	defer media.Close()
+
+	task, err := store.Create(context.Background(), canvastask.Task{
+		ID: "ct_ip_ok", CanvasID: 0, NodeID: "", IPID: 9, Kind: canvastask.KindImage,
+		Prompt: "三视图设定", Model: "img-m", Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("create ip task: %v", err)
+	}
+	gw := &stubGateway{fn: func(_ context.Context, req canvastask.ImageRequest) (canvastask.ImageResult, error) {
+		if req.Source != "ip=9 task=ct_ip_ok gen=asset" {
+			t.Errorf("source = %q, want ip=9 task=ct_ip_ok gen=asset", req.Source)
+		}
+		return canvastask.ImageResult{URL: media.URL + "/ok.png"}, nil
+	}}
+	runWorker(t, archiveWorker(t, store, gw, st))
+
+	done := awaitTask(t, store, task.ID)
+	if done.Status != canvastask.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", done.Status, done.Error)
+	}
+	wantKey := "ips/9/" + task.ID + "/image.png"
+	got, err := store.Assets.Get(context.Background(), done.AssetID)
+	if err != nil {
+		t.Fatalf("asset get: %v", err)
+	}
+	if got.ObjectKey != wantKey {
+		t.Errorf("object key = %q, want %q", got.ObjectKey, wantKey)
+	}
+	if got.IPID != 9 {
+		t.Errorf("asset ip_id = %d, want 9(归属读任务行)", got.IPID)
+	}
+	if got.CanvasID != 0 {
+		t.Errorf("asset canvas_id = %d, want 0(无画布任务)", got.CanvasID)
+	}
+}

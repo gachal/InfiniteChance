@@ -194,3 +194,57 @@ func mustTaskID(t *testing.T) string {
 	}
 	return id
 }
+
+// TestSQLiteCanvasTaskIPTaskRoundTrip 覆盖 70 号票的无画布任务形状:
+// canvas_id=0 + ip_id=N 的任务行落库回读,ListByIP 按归属列出、
+// ListByCanvas 不见(生成记录面板按画布查、天然不见此类任务的定案)。
+func TestSQLiteCanvasTaskIPTaskRoundTrip(t *testing.T) {
+	s := newSQLiteStore(t)
+	ctx := context.Background()
+
+	id, err := NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.Create(ctx, Task{
+		ID: id, CanvasID: 0, NodeID: "", IPID: 7, Kind: KindImage,
+		Prompt: "三视图设定", Model: "img-m",
+	})
+	if err != nil {
+		t.Fatalf("Create canvas-free task: %v", err)
+	}
+	got, err := s.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CanvasID != 0 || got.NodeID != "" {
+		t.Errorf("canvas_id/node_id = %d/%q, want 0/空(无画布任务)", got.CanvasID, got.NodeID)
+	}
+	if got.IPID != 7 {
+		t.Errorf("ip_id = %d, want 7(任务行携带 IP 归属)", got.IPID)
+	}
+
+	byIP, err := s.ListByIP(ctx, 7, 10)
+	if err != nil {
+		t.Fatalf("ListByIP: %v", err)
+	}
+	if len(byIP) != 1 || byIP[0].ID != created.ID {
+		t.Fatalf("ListByIP(7) = %+v, want the task", byIP)
+	}
+	byOther, err := s.ListByIP(ctx, 8, 10)
+	if err != nil {
+		t.Fatalf("ListByIP(8): %v", err)
+	}
+	if len(byOther) != 0 {
+		t.Fatalf("ListByIP(8) = %+v, want empty", byOther)
+	}
+	// 生成记录面板按真实画布 id 查(恒 ≥1),天然不见 canvas_id=0 任务
+	// (70 号票定案:这是口径,不是漏数);真实画布 id 查不到本任务。
+	byCanvas, err := s.ListByCanvas(ctx, 1, 10)
+	if err != nil {
+		t.Fatalf("ListByCanvas(1): %v", err)
+	}
+	if len(byCanvas) != 0 {
+		t.Fatalf("ListByCanvas(1) = %+v, want empty(无画布任务不进任何画布列表)", byCanvas)
+	}
+}

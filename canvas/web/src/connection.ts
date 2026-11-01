@@ -18,12 +18,17 @@ import type { CanvasNodeType } from './graph'
  *                              + 来源边,对话框预填后人工确认发送)
  * - name → image               格画面落点(54 号票,storyboard 同族来源语义)
  * - voice → audio              合成来源(57 号票:台词合成的产出边,絵コンテ→图片同族)
+ * - character → image          设定图生成来源边(70 号票,52 号票口径修订:
+ *                              「生成设定图」落空图片节点 + 来源边,composer
+ *                              预填后人工确认发送;边只表达生成来源,锚定
+ *                              写库表不落边)
  * analysis 不作为任何连线的源;previz/storyboard/name 不作为任何连线的目标
- * (输入是用户摆的场景/cut/格的画面,回填走素材引用不走边);character 不作
- * 任何连线的源与目标(52 号票:它是钉在画布上的设定参照卡,组件不渲染
- * 把手 —— 设定图进生成链走「落图节点」的素材插入语义,不走连线);level
+ * (输入是用户摆的场景/cut/格的画面,回填走素材引用不走边);character 仅
+ * 可作设定图来源边的源(52 号票「不作任何连线端点」由 70 号票修订,预演台
+ * 只作源同族:右 + 连图片节点、左侧不渲染把手,不可作任何边的目标 ——
+ * 「落图」的素材插入语义保留,历史已存边不清洗不校验);level
  * 也不作任何连线的源与目标(55 号票:关卡卡是文档卡,卡内直接编辑,无
- * 来源/投递语义,与 character 的「不连线」同族,组件不渲染把手);audio
+ * 来源/投递语义,组件不渲染把手);audio
  * 不作为任何连线的源(57 号票:音频是合成产物,不派生新链);script 也不
  * 作任何连线的源与目标(64 号票:剧本是文本载体卡,内容经 Agent 工具读写
  * 不靠边,66 号票 read_source 分段消费,与 level 的「不连线」同族,组件
@@ -35,7 +40,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   video: ['agent', 'image', 'video', 'analysis'],
   analysis: [],
   previz: ['image'],
-  character: [],
+  character: ['image'],
   storyboard: ['image', 'video'],
   name: ['image'],
   level: [],

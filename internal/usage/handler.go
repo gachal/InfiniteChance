@@ -63,8 +63,8 @@ func parseFilter(c *gin.Context) (Filter, bool) {
 		f.Status = v
 	}
 	if v := c.Query("source"); v != "" {
-		if v != SourceCanvas && v != SourceDirect {
-			apierr.InvalidRequest(c, "source 必须是 canvas、direct 或留空")
+		if v != SourceCanvas && v != SourceDirect && v != SourceAsset {
+			apierr.InvalidRequest(c, "source 必须是 canvas、direct、asset 或留空")
 			return f, false
 		}
 		f.Source = v

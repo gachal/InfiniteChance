@@ -133,13 +133,18 @@ func where(f Filter) (string, []any) {
 		args = append(args, f.Status)
 	}
 	// 画布标记恒以 "canvas=" 开头(10 号票),空串即直连流量;标记是调用方
-	// 自报的注记,这里只按前缀归类。
+	// 自报的注记,这里只按前缀归类。asset 档(70 号票)= 库级生成产物的
+	// "ip=<id> task=<ct> gen=asset" 形状,按首尾锚定匹配,不与将来的
+	// ip= 注记误并档。
 	switch f.Source {
 	case SourceCanvas:
 		conds = append(conds, "source LIKE ?")
 		args = append(args, SourceCanvas+"=%")
 	case SourceDirect:
 		conds = append(conds, "(source IS NULL OR source = '')")
+	case SourceAsset:
+		conds = append(conds, "source LIKE ?")
+		args = append(args, "ip=% gen=asset")
 	}
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
