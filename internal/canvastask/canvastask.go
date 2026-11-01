@@ -182,6 +182,8 @@ func NewID() (string, error) {
 // carry them in VideoRefs the same way — resolved, kind-checked, capped;
 // ImageRef remains the single-string legacy shape old rows keep, and Seconds
 // 0 means "auto" (omit seconds on the wire, vendor default applies).
+// IPID 是无画布任务(70 号票,ADR 0007)的 IP 归属——canvas_id=0 时素材
+// 行归属与转存键都读它;画布任务恒 0(归属照旧查画布,存量行不回填)。
 // Ratio/Size carry the aspect-ratio and resolution tier strings verbatim.
 // Background (37 号票) is the image task's transparency request — 空串 =
 // 不传,非空只可能是 "transparent"(createInput 已校验),worker 非空即
@@ -195,6 +197,7 @@ type Task struct {
 	ID            string
 	CanvasID      int64
 	NodeID        string
+	IPID          int64  // 无画布任务的 IP 归属(70 号票);画布任务恒 0
 	Kind          string
 	Prompt        string
 	Model         string
@@ -285,6 +288,9 @@ type Store interface {
 	Get(ctx context.Context, id string) (Task, error)
 	// ListByCanvas returns the canvas's tasks, newest first, capped at limit.
 	ListByCanvas(ctx context.Context, canvasID int64, limit int) ([]Task, error)
+	// ListByIP returns the IP's canvas-free tasks (70 号票无画布任务),
+	// newest first, capped at limit —— 抽屉对话框轮询与兜底枚举的读路径。
+	ListByIP(ctx context.Context, ipID int64, limit int) ([]Task, error)
 	// Claim atomically moves one queued task (FIFO) to running and bumps its
 	// attempt counter; ErrNotFound when the queue is empty.
 	Claim(ctx context.Context) (Task, error)

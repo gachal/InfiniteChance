@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	id             TEXT    NOT NULL PRIMARY KEY,
 	canvas_id      INTEGER NOT NULL,
 	node_id        TEXT    NOT NULL,
+	ip_id          INTEGER NOT NULL DEFAULT 0,
 	kind           TEXT    NOT NULL,
 	prompt         TEXT    NOT NULL,
 	model          TEXT    NOT NULL,
@@ -81,6 +82,9 @@ var sqliteMigrations = []struct{ column, ddl string }{
 	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec TEXT NULL"},
 	{"lyrics", "ALTER TABLE canvas_tasks ADD COLUMN lyrics TEXT NULL"},
 	{"instrumental", "ALTER TABLE canvas_tasks ADD COLUMN instrumental INTEGER NOT NULL DEFAULT 1"},
+	// 70 号票的无画布任务:ip_id 缺省 0 = 画布任务,存量行不回填,与
+	// MySQL 侧同一条幂等 ALTER 路。
+	{"ip_id", "ALTER TABLE canvas_tasks ADD COLUMN ip_id INTEGER NOT NULL DEFAULT 0"},
 }
 
 // EnsureSchema creates the canvas_tasks table and its indexes when missing,
@@ -134,9 +138,9 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.CanvasID, t.NodeID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
 		t.Seconds, t.Lyrics, t.Instrumental, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status, now, now)
 	if err != nil {
@@ -175,6 +179,31 @@ func (s *SQLiteStore) ListByCanvas(ctx context.Context, canvasID int64, limit in
 	return out, rows.Err()
 }
 
+// ListByIP answers the IP's canvas-free tasks (70 号票), newest first ——
+// 与 MySQL 版同构,仅 canvas_id=0 的行进列表(画布任务归属照旧查画布)。
+func (s *SQLiteStore) ListByIP(ctx context.Context, ipID int64, limit int) ([]Task, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+taskColumns+` FROM canvas_tasks WHERE ip_id = ? AND canvas_id = 0
+		 ORDER BY created_at DESC, id DESC LIMIT ?`,
+		ipID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Task
+	for rows.Next() {
+		t, err := scanSQLiteTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+// and attempt bump land as one conditional UPDATE, so racing workers each
+// take a different row and no task is ever claimed twice. 与 MySQL 版同一
+// 写法:SELECT 拾取 → 条件 UPDATE → 受影响行数定胜负。SQLite 的 UPDATE
 // Claim hands one queued task to this worker: FIFO pick, state transition
 // and attempt bump land as one conditional UPDATE, so racing workers each
 // take a different row and no task is ever claimed twice. 与 MySQL 版同一
@@ -603,7 +632,7 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics sql.NullString
 	var createdAt, updatedAt string
 	var assetID sql.NullInt64
-	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.Kind, &t.Prompt, &t.Model,
+	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
 		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &createdAt, &updatedAt); err != nil {
 		return Task{}, err

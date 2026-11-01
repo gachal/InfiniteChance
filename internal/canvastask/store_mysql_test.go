@@ -625,3 +625,68 @@ func TestMySQLCanvasTaskImageRefsRoundTrip(t *testing.T) {
 		t.Errorf("plain image_refs = %v, want nil", got.ImageRefs)
 	}
 }
+
+// TestMySQLCanvasTaskIPTaskRoundTrip 覆盖 70 号票无画布任务在 MySQL 侧的
+// 同款形状:canvas_id=0 + ip_id 行落库回读,ListByIP 按归属过滤,
+// ip_id 加列迁移在旧表上幂等生效(存量行缺省 0)。
+func TestMySQLCanvasTaskIPTaskRoundTrip(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.Create(ctx, canvastask.Task{
+		ID: id, CanvasID: 0, NodeID: "", IPID: 42, Kind: canvastask.KindImage,
+		Prompt: "三视图设定", Model: "img-m",
+	})
+	if err != nil {
+		t.Fatalf("Create canvas-free task: %v", err)
+	}
+	got, err := store.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CanvasID != 0 || got.NodeID != "" || got.IPID != 42 {
+		t.Fatalf("canvas/node/ip = %d/%q/%d, want 0/空/42", got.CanvasID, got.NodeID, got.IPID)
+	}
+	byIP, err := store.ListByIP(ctx, 42, 10)
+	if err != nil {
+		t.Fatalf("ListByIP: %v", err)
+	}
+	if len(byIP) != 1 || byIP[0].ID != task.ID {
+		t.Fatalf("ListByIP(42) = %+v, want the task", byIP)
+	}
+	byOther, err := store.ListByIP(ctx, 43, 10)
+	if err != nil {
+		t.Fatalf("ListByIP(43): %v", err)
+	}
+	if len(byOther) != 0 {
+		t.Fatalf("ListByIP(43) = %+v, want empty", byOther)
+	}
+}
+
+// TestMySQLCanvasTaskIPColumnMigratesOldTable 验证 ip_id 加列迁移:旧形状
+// (无 ip_id 列)的表经 EnsureSchema 原地加宽,存量行读回 0(不回填)。
+func TestMySQLCanvasTaskIPColumnMigratesOldTable(t *testing.T) {
+	_, db := openTaskTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx, `ALTER TABLE canvas_tasks DROP COLUMN ip_id`); err != nil {
+		t.Fatalf("drop ip_id to simulate old table: %v", err)
+	}
+	store := canvastask.NewMySQLStore(db, nil)
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema re-adds ip_id: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'canvas_tasks' AND COLUMN_NAME = 'ip_id'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("ip_id column missing after EnsureSchema")
+	}
+}
