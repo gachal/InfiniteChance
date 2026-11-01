@@ -26,6 +26,7 @@ import {
   VIDEO_RESOLUTION_PRESETS,
   videoPlaceholder,
   withVideoRefRole,
+  type ComposerElement,
   type ComposerRef,
   type TaskForNodeSync,
   type VideoComposerRef,
@@ -518,6 +519,41 @@ function makeTask(overrides: Partial<TaskForNodeSync> = {}): TaskForNodeSync {
     ...overrides,
   }
 }
+
+// ---- 元素 chip(71 号票):可选 element 字段只活在草稿,不出前端 ----
+
+describe('ComposerRef/VideoComposerRef 的 element 字段(71 号票 B2)', () => {
+  const element: ComposerElement = { type: 'character', entityId: 3, variantId: 7 }
+
+  it('element 随 append 系函数原样入条(可选字段,不参与上限/去重判定)', () => {
+    const list = appendComposerRef([], { url: '/api/assets/9/content', asset_id: 9, element })
+    expect(list[0].element).toEqual({ type: 'character', entityId: 3, variantId: 7 })
+    const vlist = appendVideoRef([], {
+      url: '/api/assets/9/content',
+      kind: 'image',
+      role: 'reference_image',
+      element,
+    })
+    expect(vlist[0].element).toEqual(element)
+  })
+
+  it('withVideoRefRole 换角色时 element 随条目保留(防御:UI 已对元素 chip 禁切,误调用也不丢名)', () => {
+    const list: VideoComposerRef[] = [
+      { url: '/api/assets/1/content', kind: 'image', role: 'reference_image', element },
+    ]
+    const switched = withVideoRefRole(list, 0, 'first_frame')
+    expect(switched[0].element).toEqual(element)
+  })
+
+  it('上送载荷形状不变:element 不出前端(钉住,防静默外泄)', () => {
+    expect(composerImageUrls([{ url: 'https://a/1.png', element }])).toEqual(['https://a/1.png'])
+    const vids = composerVideoRefs([
+      { url: 'https://a/1.png', kind: 'image', role: 'reference_image', element },
+    ])
+    expect(vids).toEqual([{ url: 'https://a/1.png', kind: 'image', role: 'reference_image' }])
+    expect('element' in vids[0]).toBe(false)
+  })
+})
 
 describe('composerRefFromAsset(47 号票素材库挑选)', () => {
   it('builds a content-addressed ref carrying the asset id', () => {

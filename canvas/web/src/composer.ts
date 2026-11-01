@@ -6,10 +6,23 @@
  */
 import type { AudioNodeData, MediaNodeData } from './graph'
 
-/** 对话框参考条上的一条参考图:素材引用或厂商地址。 */
+/** 元素引用(71 号票):资产库实体在一次生成里的出场引用 —— 角色(连同
+ * 造型变体)/ 场景 / 道具三类之一,一元素一图。只活在 composer 草稿,不上
+ * 网关、不落库;名称不存快照,渲染与发送时按 entityId 从 IP 目录实时取
+ * (实体或变体已删 → chip 退化无名参考图,element 仍在,绑定行自动跳过)。 */
+export interface ComposerElement {
+  type: 'character' | 'scene' | 'prop'
+  entityId: number
+  /** 角色的造型变体(角色按 entityId + variantId 区分同实体;场景/道具无变体)。 */
+  variantId?: number
+}
+
+/** 对话框参考条上的一条参考图:素材引用或厂商地址。element 在场 = 元素
+ * chip(71 号票),缺省 = 无名参考图(本机上传、素材平铺挑选、节点产物)。 */
 export interface ComposerRef {
   url: string
   asset_id?: number
+  element?: ComposerElement
 }
 
 /** 一次图生图提交的参考图上限(与 canvas 后端 maxImageRefs 同值;43 号票
@@ -130,12 +143,14 @@ export type VideoRefRole =
   | 'reference_video'
   | 'reference_audio'
 
-/** 对话框视频参考条上的一条参考。 */
+/** 对话框视频参考条上的一条参考。element 在场 = 元素 chip,恒 reference_image
+ * 角色(71 号票,不走 44 号票默认角色规则,UI 禁切)。 */
 export interface VideoComposerRef {
   url: string
   kind: VideoRefKind
   role: VideoRefRole
   asset_id?: number
+  element?: ComposerElement
 }
 
 /** 每个角色的数量上限(与 canvas 后端 maxVideoRefsByRole 同值;42 号票
