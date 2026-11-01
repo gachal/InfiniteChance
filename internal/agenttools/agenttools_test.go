@@ -132,6 +132,27 @@ func (f *fakeCanvasStore) Get(_ context.Context, id int64) (canvas.Canvas, error
 	return canvas.Canvas{}, canvas.ErrNotFound
 }
 
+// fakeIPStyles 是 set_style 用的 IP store 切片桩(69 号票):按 id 记风格,
+// 未登记的 id 答 ErrIPNotFound;writes 留档每次写入的 IP。
+type fakeIPStyles struct {
+	mu     sync.Mutex
+	styles map[int64]string
+	writes []int64
+}
+
+func (f *fakeIPStyles) UpdateIP(_ context.Context, id int64, u *canvas.IPUpdate) (canvas.IP, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.styles[id]; !ok {
+		return canvas.IP{}, canvas.ErrIPNotFound
+	}
+	if u.Style != nil {
+		f.styles[id] = *u.Style
+		f.writes = append(f.writes, id)
+	}
+	return canvas.IP{ID: id, Name: "测试 IP", Style: f.styles[id]}, nil
+}
+
 // ---- 装配辅助 ----
 
 func scopeCtx(canvasID, ipID int64) context.Context {
@@ -578,11 +599,110 @@ func TestReadSourceWithoutNodeIDListsScriptNodes(t *testing.T) {
 	}
 }
 
+// ---- set_style(69 号票)----
+
+// newStyleRegistry 装一个画布 7 归属 IP 3 的世界:IP 3 与 IP 9 都存在(9 是
+// 越权目标),风格初始为空。
+func newStyleRegistry(t *testing.T) (*fakeIPStyles, promptgen.AgentTool) {
+	t.Helper()
+	ips := &fakeIPStyles{styles: map[int64]string{3: "", 9: ""}}
+	reg := agenttools.NewRegistry(agenttools.Deps{
+		IPs:      ips,
+		Canvases: &fakeCanvasStore{byID: map[int64]canvas.Canvas{7: {ID: 7, IPID: 3}}},
+	})
+	return ips, lookup(t, reg, "set_style")
+}
+
+func TestSetStyleWritesCanvasIPStyle(t *testing.T) {
+	ips, tool := newStyleRegistry(t)
+
+	summary, payload, err := tool.Execute(scopeCtx(7, 3), mustArgs(t, map[string]any{"style": "  赛博朋克霓虹,高对比冷暖撞色  "}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if ips.styles[3] != "赛博朋克霓虹,高对比冷暖撞色" {
+		t.Fatalf("ip 3 style = %q, want the trimmed style written", ips.styles[3])
+	}
+	if !strings.Contains(summary, "赛博朋克霓虹,高对比冷暖撞色") {
+		t.Errorf("summary = %q, want the style echoed", summary)
+	}
+	pm := payloadMap(t, payload)
+	if pm["kind"] != "style" || pm["ip_id"].(float64) != 3 || pm["style"] != "赛博朋克霓虹,高对比冷暖撞色" {
+		t.Errorf("payload = %v, want {kind:style, ip_id:3, style}", pm)
+	}
+}
+
+// 幂等可覆盖:同值重写不报错、结果不变;换值即覆盖(用户再次确认即写)。
+func TestSetStyleIsIdempotentAndOverwrites(t *testing.T) {
+	ips, tool := newStyleRegistry(t)
+	for i := 0; i < 2; i++ {
+		if _, _, err := tool.Execute(scopeCtx(7, 3), mustArgs(t, map[string]any{"style": "水彩手绘"})); err != nil {
+			t.Fatalf("execute #%d: %v", i+1, err)
+		}
+	}
+	if ips.styles[3] != "水彩手绘" {
+		t.Fatalf("style after rewrite = %q", ips.styles[3])
+	}
+	if _, _, err := tool.Execute(scopeCtx(7, 3), mustArgs(t, map[string]any{"style": "厚涂油画质感"})); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	if ips.styles[3] != "厚涂油画质感" {
+		t.Fatalf("style after overwrite = %q, want the new style", ips.styles[3])
+	}
+}
+
+// 越权拒绝:目标 IP(会话作用域)必须等于画布当前所属 IP —— 画布中途被移
+// 到别的 IP、或作用域与画布不符时一律拒绝,任何 IP 都不落笔。
+func TestSetStyleRejectsTargetIPOtherThanCanvasIP(t *testing.T) {
+	ips, tool := newStyleRegistry(t)
+	_, _, err := tool.Execute(scopeCtx(7, 9), mustArgs(t, map[string]any{"style": "水彩手绘"}))
+	if err == nil {
+		t.Fatal("want the cross-IP write refused")
+	}
+	if !strings.Contains(err.Error(), "越权") {
+		t.Errorf("error = %q, want an explicit 越权 refusal", err)
+	}
+	if len(ips.writes) != 0 {
+		t.Errorf("writes = %v, want none", ips.writes)
+	}
+}
+
+func TestSetStyleRejectsBadInput(t *testing.T) {
+	ips, tool := newStyleRegistry(t)
+	cases := []struct {
+		name   string
+		ctx    context.Context
+		args   map[string]any
+		errSub string
+	}{
+		{"缺作用域", context.Background(), map[string]any{"style": "水彩"}, "画布上下文"},
+		{"缺风格", scopeCtx(7, 3), map[string]any{}, "画面风格不能为空"},
+		{"空白风格", scopeCtx(7, 3), map[string]any{"style": "   "}, "画面风格不能为空"},
+		{"非字符串", scopeCtx(7, 3), map[string]any{"style": 42}, "必须是字符串"},
+		{"超长风格", scopeCtx(7, 3), map[string]any{"style": strings.Repeat("风", 501)}, "画面风格最多 500"},
+		{"画布不存在", scopeCtx(404, 3), map[string]any{"style": "水彩"}, "读取画布失败"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := tool.Execute(tc.ctx, mustArgs(t, tc.args))
+			if err == nil {
+				t.Fatalf("want error, got none")
+			}
+			if !strings.Contains(err.Error(), tc.errSub) {
+				t.Errorf("error = %q, want contains %q", err, tc.errSub)
+			}
+		})
+	}
+	if len(ips.writes) != 0 {
+		t.Errorf("failed calls must not write, got %v", ips.writes)
+	}
+}
+
 // ---- 注册表 ----
 
 func TestRegistryExposesAllToolsInOrder(t *testing.T) {
 	reg := agenttools.NewRegistry(agenttools.Deps{Characters: &fakeCharacters{}, Scenes: &fakeScenes{}, Props: &fakeProps{}})
-	want := []string{"create_character", "create_scene", "create_prop", "list_assets", "save_outline", "save_script", "save_storyboard", "read_source"}
+	want := []string{"create_character", "create_scene", "create_prop", "list_assets", "save_outline", "save_script", "save_storyboard", "read_source", "set_style"}
 	defs := reg.Definitions()
 	if len(defs) != len(want) {
 		t.Fatalf("definitions = %d, want %d", len(defs), len(want))

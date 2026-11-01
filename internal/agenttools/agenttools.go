@@ -3,9 +3,10 @@
 // create_prop 把纯文本资产写入本 IP 库(65 号票三类实体),list_assets 读
 // 库供角色对表,save_outline/save_script/save_storyboard 产出「图改动草案」
 // 交前端应用(单一写者:本包永不改库内图 JSON),read_source 按 rune 区间
-// 分段读剧本节点原文。工具实现 promptgen.AgentTool,经 wiring 装配注册表;
-// 画布作用域(哪个画布/哪个 IP)由 SSE 端点注入请求 context(见
-// promptgen.AgentScope),Execute 按它绑定。
+// 分段读剧本节点原文;set_style(69 号票)把用户确认的画面风格写进本 IP
+// 行。工具实现 promptgen.AgentTool,经 wiring 装配注册表;画布作用域(哪个
+// 画布/哪个 IP)由 SSE 端点注入请求 context(见 promptgen.AgentScope),
+// Execute 按它绑定。
 package agenttools
 
 import (
@@ -27,6 +28,7 @@ type Deps struct {
 	Scenes     SceneSource
 	Props      PropSource
 	Canvases   CanvasSource
+	IPs        IPSource
 }
 
 // CharacterSource is the slice of the character store the tools use.
@@ -47,13 +49,20 @@ type PropSource interface {
 	ListProps(ctx context.Context, ipID int64) ([]prop.Prop, error)
 }
 
-// CanvasSource is the slice of the canvas store read_source uses.
+// CanvasSource is the slice of the canvas store read_source and set_style
+// use(set_style 实时读画布行核对其当前所属 IP)。
 type CanvasSource interface {
 	Get(ctx context.Context, id int64) (canvas.Canvas, error)
 }
 
-// NewRegistry wires the eight tools in exposure order(create 三兄弟 →
-// list_assets → save 三兄弟 → read_source)并注册进一张新注册表。
+// IPSource is the slice of the IP store set_style writes through(69 号票:
+// 库表直写 ips.style,ADR 0006 库表类)。
+type IPSource interface {
+	UpdateIP(ctx context.Context, id int64, u *canvas.IPUpdate) (canvas.IP, error)
+}
+
+// NewRegistry wires the nine tools in exposure order(create 三兄弟 →
+// list_assets → save 三兄弟 → read_source → set_style)并注册进一张新注册表。
 func NewRegistry(deps Deps) *promptgen.AgentToolRegistry {
 	reg := promptgen.NewAgentToolRegistry()
 	reg.Register(newCreateCharacter(deps))
@@ -64,6 +73,7 @@ func NewRegistry(deps Deps) *promptgen.AgentToolRegistry {
 	reg.Register(newSaveScript("save_script", "剧本", deps))
 	reg.Register(newSaveStoryboard(deps))
 	reg.Register(newReadSource(deps))
+	reg.Register(newSetStyle(deps))
 	return reg
 }
 
