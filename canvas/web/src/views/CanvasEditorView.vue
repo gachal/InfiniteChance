@@ -58,6 +58,7 @@ import {
   scriptDraftFromPayload,
   setAgentToolApplier,
   storyboardDraftFromPayload,
+  styleFromPayload,
   upsertAgentToolStep,
 } from '../agentTools'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
@@ -1652,10 +1653,19 @@ for (const name of AGENT_NOOP_APPLY_TOOLS) {
 setAgentToolApplier('save_outline', applyAgentScriptDraft)
 setAgentToolApplier('save_script', applyAgentScriptDraft)
 setAgentToolApplier('save_storyboard', applyAgentStoryboardDraft)
+// set_style(69 号票):库表类,后端已写 ips.style;回执只刷新本地风格
+// 缓存(本画布所属 IP 才认),让同一编辑器会话里下一次直通预填即用新值
+// —— UI 态,不落图、不入节点 data(工具帧不进持久会话历史,63 号票)。
+setAgentToolApplier('set_style', (payload) => {
+  const receipt = styleFromPayload(payload)
+  if (receipt.ipId === canvasIPID.value) {
+    ipStyle.value = receipt.style
+  }
+})
 onBeforeUnmount(() => {
   // 编辑器实例卸载即注销应用器:闭包持着旧图状态,残留会写进重挂后的
   // 新编辑器(63 号票 setAgentToolApplier(name, null) 的注销语义)。
-  for (const name of [...AGENT_NOOP_APPLY_TOOLS, 'save_outline', 'save_script', 'save_storyboard']) {
+  for (const name of [...AGENT_NOOP_APPLY_TOOLS, 'save_outline', 'save_script', 'save_storyboard', 'set_style']) {
     setAgentToolApplier(name, null)
   }
 })

@@ -4,7 +4,8 @@
 // save_outline/save_script/save_storyboard 在此定义草案形状与校验(纯函数,
 // 落图动作由编辑器装配时注册),create_*/list_assets/read_source 是库表/
 // 只读类(无可落图之物,编辑器注册空应用器);未知写图类结果到达时显式
-// 报错,不静默。
+// 报错,不静默。69 号票 +1:set_style 是库表类,回执经 styleFromPayload
+// 定形后只刷新编辑器的本地风格缓存(不落图)。
 
 import type { StoryboardCut } from './graph'
 import { SECONDS_MAX } from './storyboard'
@@ -22,7 +23,7 @@ export interface AgentToolStep {
 
 /** 工具名的中文展示标签(过程展示文案,如 create_character → 「创建角色」
  * —— 「正在创建角色…」式文案由 AgentNode 以 running 态 + 标签拼出)。
- * 与后端注册表八工具一一对应;未映射的原样显示工具名。 */
+ * 与后端注册表九工具一一对应;未映射的原样显示工具名。 */
 export const AGENT_TOOL_LABELS: Record<string, string> = {
   create_character: '创建角色',
   create_scene: '创建场景',
@@ -32,6 +33,7 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   save_script: '保存剧本',
   save_storyboard: '保存分镜板',
   read_source: '读取原文',
+  set_style: '设定画面风格',
 }
 
 export function agentToolLabel(name: string): string {
@@ -215,4 +217,27 @@ export function storyboardDraftFromPayload(payload: unknown): AgentStoryboardDra
     return draft
   })
   return { title, cuts }
+}
+
+// ---- 库表类回执(69 号票 set_style) ----
+
+/** set_style 的回执:后端已直写 ips.style,前端据此即时刷新编辑器的本地
+ * 风格缓存(下一次直通预填即用新值)—— UI 态,不落图、不入节点 data。 */
+export interface AgentStyleReceipt {
+  ipId: number
+  style: string
+}
+
+/** 定形 set_style 回执({kind:"style", ip_id, style}):形状不对抛错,由
+ * applyAgentToolResult 显式上报(ADR 0006:应用失败不静默)。 */
+export function styleFromPayload(payload: unknown): AgentStyleReceipt {
+  const obj = payloadObject(payload)
+  if (obj['kind'] !== 'style') {
+    throw new Error('画面风格回执的 kind 必须是 style')
+  }
+  const ipId = obj['ip_id']
+  if (typeof ipId !== 'number' || !Number.isInteger(ipId) || ipId <= 0) {
+    throw new Error('画面风格回执的 ip_id 必须是正整数')
+  }
+  return { ipId, style: optionalString(obj, 'style') }
 }
