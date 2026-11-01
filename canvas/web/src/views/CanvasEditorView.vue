@@ -1124,6 +1124,26 @@ async function refreshIPCharacters(): Promise<void> {
   }
 }
 
+// ---- 本 IP 画面风格(69 号票)----
+
+// 画布所属 IP 的画面风格(ips.style):直通生成预填(cut 画面 / cut→视频)
+// 与 composer「带 IP 风格」开关的唯一来源。按请求读表先例(角色目录同款):
+// 画布加载后拉一次、窗口聚焦刷新 —— IP 编辑对话框改风格后下一次预填即用
+// 新值;空串 = 未定(不拼不显示)。
+const ipStyle = ref('')
+
+async function refreshIPStyle(): Promise<void> {
+  if (canvasIPID.value <= 0) {
+    return
+  }
+  try {
+    const ip = await client.getIP(canvasIPID.value)
+    ipStyle.value = ip.style ?? ''
+  } catch {
+    /* 拉不到就保持现状,下次聚焦再试 */
+  }
+}
+
 // ---- 音色台账目录(57 号票,全局作用域)----
 
 // 音色节点卡面与角色绑定 picker 共用的目录源:节点只存 ledger_id 不存
@@ -2236,7 +2256,8 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // 替换,本动作的预填语义就是「这个 cut 的画面即首帧」,不带其他会话
   // 残留;无画面清空参考条,纯文生视频。选中切换的 watch 会把拆下标记与
   // 模式(锁视频)一并复位,这里只写草稿。
-  videoPrompt.value = buildCutVideoPrompt(cut)
+  // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
+  videoPrompt.value = buildCutVideoPrompt(cut, ipStyle.value)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
   uploadedVideoRefs.value =
     cut.asset_id > 0
@@ -2288,7 +2309,8 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   }
   connectNodes(nodeId, newId)
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
-  composerPrompt.value = buildCutFramePrompt(cut)
+  // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
+  composerPrompt.value = buildCutFramePrompt(cut, ipStyle.value)
   storyboardEditorNodeId.value = ''
 }
 
@@ -3106,12 +3128,14 @@ onMounted(() => {
   void loadCanvas().finally(() => {
     void taskSync.start()
     void refreshIPCharacters()
+    void refreshIPStyle()
     void refreshVoices()
   })
   refreshModelCatalogs()
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('focus', refreshIPCharacters)
+  window.addEventListener('focus', refreshIPStyle)
   window.addEventListener('focus', refreshVoices)
   window.addEventListener('beforeunload', beforeUnload)
   window.addEventListener('keydown', onGlobalKeydown)
@@ -3120,6 +3144,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
   window.removeEventListener('focus', refreshIPCharacters)
+  window.removeEventListener('focus', refreshIPStyle)
   window.removeEventListener('focus', refreshVoices)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (historyTimer !== undefined) {

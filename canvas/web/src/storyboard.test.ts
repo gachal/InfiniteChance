@@ -178,6 +178,39 @@ describe('buildCutFramePrompt(分镜画面直通生成)', () => {
   })
 })
 
+describe('直通预填拼 IP 画面风格段(69 号票)', () => {
+  const style = '赛博朋克霓虹,高对比冷暖撞色'
+
+  it('prefixes the cut frame prompt with the style segment', () => {
+    // 风格段放 prompt 前部、逐字来自 ips.style,随提交落任务行可审计。
+    expect(buildCutFramePrompt(cut({ note: '雨夜巷口,林小满回头', shot: '中' }), style)).toBe(
+      '【画面风格】赛博朋克霓虹,高对比冷暖撞色\n画面描述:雨夜巷口,林小满回头\n景别:中',
+    )
+  })
+
+  it('prefixes the cut video prompt with the style segment', () => {
+    expect(
+      buildCutVideoPrompt(
+        cut({ note: '雨夜巷口', shot: '近', camera_moves: ['推'], lines: '「你来了。」' }),
+        style,
+      ),
+    ).toBe('【画面风格】赛博朋克霓虹,高对比冷暖撞色\n画面描述:雨夜巷口\n景别:近\n运镜:推\n台词/音效:「你来了。」')
+  })
+
+  it('keeps the style on an empty cut so the user writes after it', () => {
+    expect(buildCutFramePrompt(emptyStoryboardCut(), style)).toBe('【画面风格】赛博朋克霓虹,高对比冷暖撞色')
+    expect(buildCutVideoPrompt(emptyStoryboardCut(), style)).toBe('【画面风格】赛博朋克霓虹,高对比冷暖撞色')
+  })
+
+  it('leaves both prompts byte-identical when the IP has no style', () => {
+    // 无风格 = 不拼不显示:与 69 号票之前的预填逐字节一致。
+    const c = cut({ note: '转场空镜', shot: '远', camera_moves: ['摇'] })
+    expect(buildCutFramePrompt(c, '')).toBe(buildCutFramePrompt(c))
+    expect(buildCutVideoPrompt(c, '   ')).toBe(buildCutVideoPrompt(c))
+    expect(buildCutFramePrompt(c, '')).toBe('画面描述:转场空镜\n景别:远')
+  })
+})
+
 describe('clampSecondsInput', () => {
   it('treats empty or non-numeric input as unset', () => {
     // 时长可空:清空/乱写失焦后回到未填,汇总时跳过。
