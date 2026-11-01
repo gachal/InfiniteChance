@@ -56,11 +56,14 @@ const createOpen = ref(false)
 const createName = ref('')
 const creating = ref(false)
 
-// IP 编辑对话框(名称 + 简介 + 封面;封面交互对齐 IP 列表页编辑态:
+// IP 编辑对话框(名称 + 简介 + 画面风格 + 封面;封面交互对齐 IP 列表页编辑态:
 // 素材库选记 id 随保存 PATCH,本机上传即时生效)。
 const editOpen = ref(false)
 const editName = ref('')
 const editDescription = ref('')
+// 画面风格(69 号票):手填兜底通道(Agent 经 set_style 落库是另一通道);
+// 空串保存 = 清除风格,回到无风格注入。
+const editStyle = ref('')
 const editCoverId = ref(0)
 const savingIP = ref(false)
 
@@ -205,6 +208,7 @@ function openEditIP(): void {
   }
   editName.value = ip.value.name
   editDescription.value = ip.value.description
+  editStyle.value = ip.value.style ?? ''
   editCoverId.value = ip.value.cover_asset_id
   coverPickerOpen.value = false
   actionError.value = ''
@@ -268,6 +272,7 @@ async function saveIP(): Promise<void> {
     ip.value = await client.patchIP(ip.value.id, {
       name,
       description: editDescription.value.trim(),
+      style: editStyle.value.trim(),
       cover_asset_id: editCoverId.value,
     })
     closeEditIP()
@@ -539,6 +544,12 @@ function back(): void {
           <h1>{{ ip.name }}</h1>
           <p class="description">
             {{ ip.description || '(还没有一句话简介)' }}
+          </p>
+          <p
+            v-if="ip.style"
+            class="ip-style"
+          >
+            画面风格:{{ ip.style }}
           </p>
           <p class="meta">
             {{ ip.canvas_count }} 张画布 · 更新于 {{ formatTime(ip.latest_at) }}
@@ -872,7 +883,7 @@ function back(): void {
       </div>
     </div>
 
-    <!-- 编辑 IP 对话框:名称 + 简介 + 封面(交互与 IP 列表页编辑态同款)。 -->
+    <!-- 编辑 IP 对话框:名称 + 简介 + 画面风格 + 封面(交互与 IP 列表页编辑态同款)。 -->
     <div
       v-if="editOpen"
       class="dialog-mask"
@@ -900,6 +911,17 @@ function back(): void {
               type="text"
               maxlength="1024"
             >
+          </label>
+          <!-- 画面风格(69 号票):企划级一句话风格定位;定下后分镜画面与
+               cut→视频直通预填自动带上,生成对话框可勾「带 IP 风格」。 -->
+          <label class="field">
+            画面风格(一句话,留空 = 未定)
+            <textarea
+              v-model="editStyle"
+              rows="2"
+              maxlength="500"
+              placeholder="如:日系赛璐璐动画,明亮高饱和,柔和阴影"
+            />
           </label>
           <div class="cover-field">
             <span class="cover-label">封面</span>
@@ -1206,6 +1228,14 @@ function back(): void {
   margin: 6px 0 0;
   color: var(--text-muted);
   font-size: var(--fs-body);
+}
+
+/* 画面风格(69 号票):已定时在简介下一行只读展示,改动走编辑对话框。 */
+.ip-style {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  white-space: pre-wrap;
 }
 
 .meta {
