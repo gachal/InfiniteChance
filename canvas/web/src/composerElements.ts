@@ -22,6 +22,7 @@ import {
   type ElementPickResult,
 } from './element'
 import { styledSendPrompt } from './ipStyle'
+import { fillPreset, presetSlotsFromElements, type GameplayPreset } from './presets'
 import type { MentionCandidate } from './refmention'
 
 /** 把对「生效参考条」算出的元素合并结果落回上传草稿。选中产物 chip 是
@@ -124,4 +125,21 @@ export function hasFrameReferenceConflict(refs: readonly VideoComposerRef[]): bo
  * 已删退化的元素 chip)维持 59 号票的 @图N。 */
 export function mentionInsertText(c: MentionCandidate): string {
   return c.elementName ?? c.token
+}
+
+/** 「玩法」下拉选中后写进提示词的文本(71 号票 C3):按参考条元素 chip 序
+ * 填名(第 1/2 个角色、第 1 个场景;names 为编辑器实时解析的显示名),必需
+ * 槽缺失留可见占位、可选场景从句缺场景整段省略(presets.fillPreset)。 */
+export function presetPromptFor(
+  preset: GameplayPreset,
+  refs: readonly (ComposerRef | VideoComposerRef)[],
+  names: readonly (string | null)[],
+): string {
+  return fillPreset(preset.template, presetSlotsFromElements(refs, names))
+}
+
+/** 写入前是否要确认替换(71 号票 C4):提示词空(含全空白)直接写入;与将写
+ * 入的模板逐字相同也不必确认(无损);其余非空 = 会覆盖用户手写,需确认。 */
+export function presetNeedsConfirm(current: string, next: string): boolean {
+  return current.trim() !== '' && current !== next
 }

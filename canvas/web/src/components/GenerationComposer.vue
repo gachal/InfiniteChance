@@ -31,7 +31,13 @@ import {
   countCharacterElements,
   ELEMENT_TYPE_LABELS,
 } from '../element'
-import { hasFrameReferenceConflict, mentionInsertText } from '../composerElements'
+import {
+  hasFrameReferenceConflict,
+  mentionInsertText,
+  presetNeedsConfirm,
+  presetPromptFor,
+} from '../composerElements'
+import { GAMEPLAY_PRESETS } from '../presets'
 import {
   composerRefMentions,
   insertMentionToken,
@@ -403,6 +409,23 @@ const tooManyCharacters = computed(
   () => isVideo.value && countCharacterElements(props.videoRefs) > CHARACTER_ELEMENT_HINT_LIMIT,
 )
 
+/** 「玩法」下拉(71 号票 C,仅视频模式):选中即按参考条元素 chip 序填名
+ * 写进提示词 —— 提示词空直接写入、非空先确认替换;只写提示词,不动时长/
+ * 比例/分辨率/模型/风格,不记「当前预设」状态(下拉写完复位到占位项)。 */
+function onPresetChange(e: Event): void {
+  const select = e.target as HTMLSelectElement
+  const preset = GAMEPLAY_PRESETS.find((p) => p.key === select.value)
+  select.value = ''
+  if (!preset) {
+    return
+  }
+  const next = presetPromptFor(preset, props.videoRefs, props.videoRefNames ?? [])
+  if (presetNeedsConfirm(props.prompt, next) && !window.confirm(`用「${preset.label}」模板替换当前提示词?`)) {
+    return
+  }
+  emit('update:prompt', next)
+}
+
 const uploadTitle = computed(() => {
   if (isVideo.value) {
     return videoRefsVacant.value ? '上传本机图片/视频/音频作为参考' : '各角色参考已满员'
@@ -718,15 +741,40 @@ function onFileChange(e: Event): void {
       </div>
     </div>
 
-    <!-- 绑定行预览(71 号票 B5):发送时插在风格段之后的那一行,只读、不
-         改写输入框;无元素不显示。 -->
-    <p
-      v-if="elementLine"
-      class="element-line"
-      :title="elementLine"
+    <!-- 提示词框下沿一行:绑定行预览(71 号票 B5:发送时插在风格段之后的
+         那一行,只读、不改写输入框;无元素不显示)+「玩法」下拉(71 号票
+         C:仅视频模式,选中写提示词,非空先确认替换)。 -->
+    <div
+      v-if="elementLine || isVideo"
+      class="prompt-meta"
     >
-      将附加:{{ elementLine }}
-    </p>
+      <p
+        v-if="elementLine"
+        class="element-line"
+        :title="elementLine"
+      >
+        将附加:{{ elementLine }}
+      </p>
+      <select
+        v-if="isVideo"
+        class="preset"
+        :disabled="disabledReason !== ''"
+        title="玩法预设:按参考条元素填名写进提示词(只写提示词,不动时长/比例/分辨率/模型)"
+        aria-label="玩法预设"
+        @change="onPresetChange"
+      >
+        <option value="">
+          玩法…
+        </option>
+        <option
+          v-for="p in GAMEPLAY_PRESETS"
+          :key="p.key"
+          :value="p.key"
+        >
+          {{ p.label }}
+        </option>
+      </select>
+    </div>
 
     <!-- 成本预估(38 号票):有价才显示,随参数联动。 -->
     <p
@@ -1220,14 +1268,52 @@ button.vref-icon:hover {
   color: var(--teal);
 }
 
+/* 提示词框下沿一行(71 号票):绑定行预览靠左省略,「玩法」下拉贴右。 */
+.prompt-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 /* 绑定行预览(71 号票 B5):发送时附加的那一行,只读小字、单行省略。 */
 .element-line {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: var(--fs-label);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 「玩法」下拉(71 号票 C):与参数栏下拉同款小号控件。 */
+.prompt-meta .preset {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--wash-soft);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
+  padding: 4px 6px;
+  color: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.prompt-meta .preset:hover:not(:disabled) {
+  border-color: var(--line-action);
+}
+
+.prompt-meta .preset:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.85);
+}
+
+.prompt-meta .preset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 目录不可用禁态:整体降不透明度,交互面全部 :disabled。 */

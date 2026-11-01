@@ -12,8 +12,11 @@ import {
   elementPickRejectNotice,
   hasFrameReferenceConflict,
   mentionInsertText,
+  presetNeedsConfirm,
+  presetPromptFor,
 } from './composerElements'
 import { mergeImageElementPick, mergeVideoElementPick, type ElementPick } from './element'
+import { GAMEPLAY_PRESETS } from './presets'
 import { composerRefMentions, videoRefMentions } from './refmention'
 
 const img = (url: string, asset_id?: number, element?: ComposerRef['element']): ComposerRef => ({
@@ -210,5 +213,34 @@ describe('mentionInsertText(@ 浮层选中插入的文本,71 号票 B6)', () => 
     const gone = { type: 'scene' as const, entityId: 404 }
     const [degraded] = videoRefMentions([vref('/api/assets/1/content', 'reference_image', gone)], [null])
     expect(mentionInsertText(degraded)).toBe('@图1')
+  })
+})
+
+describe('玩法预设写入(71 号票 C3/C4)', () => {
+  const duo = GAMEPLAY_PRESETS.find((p) => p.key === 'duo-interaction')!
+  const solo = GAMEPLAY_PRESETS.find((p) => p.key === 'solo-entrance')!
+
+  it('按参考条元素 chip 序填名:第 1/2 个角色 + 第 1 个场景(场景排在前面也只进场景槽)', () => {
+    const refs = [
+      vref('/api/assets/3/content', 'reference_image', { type: 'scene', entityId: 3 }),
+      vref('/api/assets/1/content', 'reference_image', { type: 'character', entityId: 7, variantId: 70 }),
+      vref('/api/assets/2/content', 'reference_image', { type: 'character', entityId: 8, variantId: 80 }),
+    ]
+    const text = presetPromptFor(duo, refs, ['天台', '小蓝', '阿红'])
+    expect(text.startsWith('小蓝与阿红在天台同框:两人并肩而行')).toBe(true)
+    expect(text).not.toMatch(/[{}〔〕[\]]/)
+  })
+
+  it('没有元素:必需槽留可见占位,可选场景从句整段省略', () => {
+    const text = presetPromptFor(solo, [], [])
+    expect(text.startsWith('〔角色1〕登场:空镜开场,〔角色1〕从画面深处缓步走出')).toBe(true)
+    expect(text).not.toContain('场景')
+  })
+
+  it('替换前确认:提示词空(含全空白)或与模板逐字相同 → 直接写入;非空且不同 → 确认', () => {
+    expect(presetNeedsConfirm('', '小蓝登场')).toBe(false)
+    expect(presetNeedsConfirm('  \n ', '小蓝登场')).toBe(false)
+    expect(presetNeedsConfirm('小蓝登场', '小蓝登场')).toBe(false)
+    expect(presetNeedsConfirm('手写的提示词', '小蓝登场')).toBe(true)
   })
 })
