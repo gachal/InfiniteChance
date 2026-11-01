@@ -17,6 +17,7 @@ import {
   ELEMENT_REF_INDEX_LABEL,
   ELEMENT_TYPE_LABELS,
   insertElementLine,
+  hasResolvedElement,
   mergeImageElementPick,
   mergeVideoElementPick,
   resolveElementNames,
@@ -409,7 +410,7 @@ describe('insertElementLine', () => {
   })
 })
 
-// ---- 超 4 角色检测(71 号票 B7)----
+// ---- 超 4 角色检测(71 号票 B7;计数只数可解析元素,见 B2)----
 
 describe('countCharacterElements', () => {
   it('只数角色元素(变体各算一个),场景/道具/无名图不算;阈值常量钉 4', () => {
@@ -421,6 +422,29 @@ describe('countCharacterElements', () => {
       { url: 'd', element: propEl(30) },
       { url: 'e' },
     ]
-    expect(countCharacterElements(refs)).toBe(2)
+    expect(countCharacterElements(refs, resolveElementNames(refs, catalog))).toBe(2)
+  })
+
+  it('退化无名的角色 chip 不进计数(71 号票 B2:已不是有名元素),解析成功的照常进', () => {
+    const refs: ComposerRef[] = [
+      { url: 'a', element: charEl(12, 120) }, // 实体已删 → null
+      { url: 'b', element: charEl(10, 100) },
+      { url: 'c', element: charEl(10, 999) }, // 变体已删 → null
+      { url: 'd', element: charEl(11, 110) },
+    ]
+    expect(countCharacterElements(refs, resolveElementNames(refs, catalog))).toBe(2)
+  })
+})
+
+// ---- B2 退化语义的行为门(chip 角色切换的禁用判定也绑这一个出口;
+// 组件无 DOM 测试基建,这里钉纯判定,模板侧只消费)----
+
+describe('hasResolvedElement', () => {
+  it('element 在场且名字解析成功 → true;退化(null/空串)或无 element → false', () => {
+    expect(hasResolvedElement({ url: 'a', element: charEl(10, 100) }, '小蓝')).toBe(true)
+    expect(hasResolvedElement({ url: 'a', element: charEl(12, 120) }, null)).toBe(false)
+    expect(hasResolvedElement({ url: 'a', element: charEl(12, 120) }, '')).toBe(false)
+    expect(hasResolvedElement({ url: 'a' }, undefined)).toBe(false)
+    expect(hasResolvedElement({ url: 'a', element: sceneEl(99) }, null)).toBe(false)
   })
 })

@@ -30,6 +30,7 @@ import {
   CHARACTER_ELEMENT_HINT_LIMIT,
   countCharacterElements,
   ELEMENT_TYPE_LABELS,
+  hasResolvedElement,
 } from '../element'
 import {
   hasFrameReferenceConflict,
@@ -404,9 +405,13 @@ const elementLine = computed(() =>
 )
 
 /** 出场角色超过阈值的提示(71 号票 B7;Seedance 官方:超过 4 人稳定性下降)。
- * 只提示不拦发送;视频模式才出(文案指向视频模型)。 */
+ * 只提示不拦发送;视频模式才出(文案指向视频模型)。退化无名的角色 chip 不
+ * 进计数(已不是有名元素,71 号票 B2)。 */
 const tooManyCharacters = computed(
-  () => isVideo.value && countCharacterElements(props.videoRefs) > CHARACTER_ELEMENT_HINT_LIMIT,
+  () =>
+    isVideo.value &&
+    countCharacterElements(props.videoRefs, props.videoRefNames ?? []) >
+      CHARACTER_ELEMENT_HINT_LIMIT,
 )
 
 /** 「玩法」下拉(71 号票 C,仅视频模式):选中即按参考条元素 chip 序填名
@@ -588,13 +593,14 @@ function onFileChange(e: Event): void {
           <span class="ref-element-type">{{ ELEMENT_TYPE_LABELS[r.element.type] }}</span>
           <span class="ref-element-name">{{ videoRefNames?.[i] }}</span>
         </span>
-        <!-- 元素 chip 恒为参考图(71 号票 B3):角色切换禁用。 -->
+        <!-- 可解析元素 chip 恒为参考图(71 号票 B3):角色切换禁用;实体已删
+             退化无名的 chip 不再算元素,恢复 44 号票普通角色规则(71 号票 B2)。 -->
         <select
           v-if="r.kind === 'image'"
           class="vref-role"
           :value="r.role"
-          :disabled="r.element !== undefined"
-          :title="r.element !== undefined ? '元素固定为参考图' : `角色(${VIDEO_ROLE_LABEL[r.role]})`"
+          :disabled="hasResolvedElement(r, videoRefNames?.[i])"
+          :title="hasResolvedElement(r, videoRefNames?.[i]) ? '元素固定为参考图' : `角色(${VIDEO_ROLE_LABEL[r.role]})`"
           @change="emit('set-ref-role', i, ($event.target as HTMLSelectElement).value as VideoRefRole)"
         >
           <option

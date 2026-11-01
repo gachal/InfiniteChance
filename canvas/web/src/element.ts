@@ -3,7 +3,9 @@
  * 合并、绑定行构建与发送拼装插入。元素 = 资产库实体(角色/场景/道具)在
  * 一次生成里的出场引用,一元素一图;名称不存快照,一律按 entityId 从 IP
  * 目录实时取(52 号票精神),实体或变体已删的 chip 退化无名参考图 —— 角标
- * 隐藏、绑定行跳过。UI 装配(chip 角标、toast 文案、目录缓存、同图取消的
+ * 隐藏、绑定行跳过、不进超 4 角色计数,角色切换恢复可用(71 号票 B2:退化
+ * 后按无名参考图对待;行为门一律走 hasResolvedElement 判定,不在调用处
+ * 各自直查 element 字段)。UI 装配(chip 角标、toast 文案、目录缓存、同图取消的
  * 选中态回退)归编辑器层,这里只出可单测的判定。
  */
 import type { CharacterRecord, PropRecord, SceneRecord } from '@infinitechance/api'
@@ -84,6 +86,19 @@ export function resolveElementNames(
     }
     return entry.name
   })
+}
+
+/** 「可解析元素」判定(B2 退化语义的唯一行为门):element 在场且显示名已
+ * 解析(非 null 非空)。实体或变体已删的 chip 名称解析为 null —— 在行为上
+ * 一律按无名参考图对待:角标消失、不进绑定行、不进超 4 角色计数,角色切换
+ * 不再被「元素固定为参考图」禁用(退化后按 44 号票普通角色规则);仍在条上
+ * 占参考额度与编号位。绑定行构建、超 4 计数与 chip 角色切换禁用都从这里取
+ * 判定,口径不会各改各的。 */
+export function hasResolvedElement(
+  ref: ComposerRef | VideoComposerRef,
+  name: string | null | undefined,
+): boolean {
+  return ref.element !== undefined && name != null && name !== ''
 }
 
 // ---- 元素 pick 合并(71 号票 B3)----
@@ -260,8 +275,20 @@ export function insertElementLine(prompt: string, line: string): string {
  * 不拦发送,上游裁决原则不变)。 */
 export const CHARACTER_ELEMENT_HINT_LIMIT = 4
 
-/** 出场角色元素数(同一角色的不同变体各算一个 chip;退化无名仍算 —— 它
- * 还在条上占参考额度)。阈值判断与提示文案归调用方。 */
-export function countCharacterElements(refs: readonly (ComposerRef | VideoComposerRef)[]): number {
-  return refs.filter((r) => r.element?.type === 'character').length
+/** 出场角色元素数(同一角色的不同变体各算一个 chip)。只数可解析元素
+ * (hasResolvedElement):退化无名的 chip 不进计数 —— 它已不是有名元素,
+ * 「出场角色超过 4 个」提示说的是模型还能拿到名字绑定的情况(71 号票 B2
+ * 修订;chip 本身仍在条上占参考额度)。names 与 refs 同序,调用方经
+ * resolveElementNames 解析后传入;阈值判断与提示文案归调用方。 */
+export function countCharacterElements(
+  refs: readonly (ComposerRef | VideoComposerRef)[],
+  names: readonly (string | null)[],
+): number {
+  let count = 0
+  refs.forEach((r, i) => {
+    if (r.element?.type === 'character' && hasResolvedElement(r, names[i])) {
+      count += 1
+    }
+  })
+  return count
 }
