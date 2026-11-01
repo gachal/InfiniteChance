@@ -153,7 +153,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	// 画布面:一律先过 JWT 会话,与管理面同一套令牌体系。
 	group := r.Group("/canvases", auth.RequireAuth(issuer))
 	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases, IPs: s.IPs})
-	canvastask.RegisterRoutes(group, &canvastask.Handlers{
+	taskHandlers := &canvastask.Handlers{
 		Tasks:         s.Tasks,
 		Canvases:      s.Canvases,
 		Models:        s.Prices,
@@ -161,7 +161,14 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Gateway:       gateway,
 		Voices:        s.Voices,
 		PublicBaseURL: publicBase,
-	})
+		IPs:           s.IPs,
+		Characters:    s.Characters,
+	}
+	canvastask.RegisterRoutes(group, taskHandlers)
+	// 无画布任务端点族(70 号票,ADR 0007):IP 库级生成路径(角色设定图
+	// 先行,形状不排他),挂 /ips/:id/tasks JWT 会话面 —— gateway 为 nil
+	// 时提交以 gateway_unconfigured 拒绝,与画布任务同纪律。
+	canvastask.RegisterIPRoutes(r.Group("/ips/:id/tasks", auth.RequireAuth(issuer)), taskHandlers)
 	// IP 企划面(50 号票):CRUD 挂 JWT 会话,与画布同一令牌体系;
 	// admin-web 不设 IP 管理页,增删改全在创作侧。
 	ipsGroup := r.Group("/ips", auth.RequireAuth(issuer))
