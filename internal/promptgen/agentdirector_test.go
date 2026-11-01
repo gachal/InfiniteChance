@@ -345,11 +345,12 @@ func TestAgentStreamPipelineToolsFullChain(t *testing.T) {
 		}
 	}
 
-	// 上行:第一轮即带 8 个工具定义 + 导演 system,来源 gen=agent。
+	// 上行:第一轮即带 9 个工具定义(66 号票八工具 + 69 号票 set_style)+
+	// 导演 system,来源 gen=agent。
 	req0 := relay.request(0)
 	tools, _ := req0.Body["tools"].([]any)
-	if len(tools) != 8 {
-		t.Errorf("round-1 tools = %d, want the eight definitions", len(tools))
+	if len(tools) != 9 {
+		t.Errorf("round-1 tools = %d, want the nine definitions", len(tools))
 	}
 	msgs0, _ := req0.Body["messages"].([]any)
 	if msgs0[0].(map[string]any)["role"] != "system" {

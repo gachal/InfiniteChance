@@ -1,7 +1,7 @@
 # 69 IP 画面风格链(企划级风格定位与生成注入)(2026-11-01 grilling 定案)
 
 Type: feat
-Status: planned(2026-11-01 grilling 定案,未实现;**先行于 70 号票**——设定图生成与分镜预填消费本票风格字段)
+Status: implemented(2026-11-01 实现;feat/69-ip-style-chain)。**口径注记**:①风格段 =「【画面风格】」+ trim 后文本、未定为空串,前后端两份同形纯函数——服务端 `canvas.StyleSegment`(internal/canvas/ip.go)、前端 `styleSegment` / `prependStyleSegment` / `styledSendPrompt`(canvas/web/src/ipStyle.ts),70 号票设定图拼装直接复用;②字段上限 500 字(按 rune,`canvas.MaxIPStyleRunes`,编辑面与 set_style 同口径),PATCH 空串 = 清除落 NULL;③set_style 只收 `{style}`,「越权」= 落笔前实时读画布行,会话作用域 IP 不再是画布当前所属 IP 即拒(画布中途跨 IP 移动),清除不走工具;④系统提示词风格段恒在导演提示词末尾,纪律按末尾有无该段判已定/未定;读 IP 失败流前 JSON 500,IP 行缺失按无风格;⑤cut 全空的直通预填仍带风格段(用户在其后续写);composer 开关在发送时拼段、不改写输入框,预填已含同段时不叠段;⑥前端风格缓存随画布加载与窗口聚焦按请求读 `GET /ips/:id`,set_style 回执即时刷新(只认本画布 IP)。定案背景:2026-11-01 grilling 定案;**先行于 70 号票**——设定图生成与分镜预填消费本票风格字段
 
 ## Question
 

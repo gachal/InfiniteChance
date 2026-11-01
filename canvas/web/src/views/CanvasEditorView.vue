@@ -58,6 +58,7 @@ import {
   scriptDraftFromPayload,
   setAgentToolApplier,
   storyboardDraftFromPayload,
+  styleFromPayload,
   upsertAgentToolStep,
 } from '../agentTools'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
@@ -88,6 +89,7 @@ import {
 } from '../composer'
 import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
+import { styledSendPrompt } from '../ipStyle'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { isHelpToggleKey } from '../canvasHelp'
@@ -527,6 +529,9 @@ const composerModel = ref('')
 const composerRatio = ref('')
 const composerResolution = ref('')
 const composerTransparent = ref(false)
+// 「带 IP 风格」开关(69 号票):与透明背景同款独立草稿、默认关,图片与视频
+// 两模式各存一份;发送时经 styledSendPrompt 把风格段拼在提示词前部。
+const composerWithStyle = ref(false)
 // 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
 const uploadedRefs = ref<ComposerRef[]>([])
 // 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
@@ -540,6 +545,7 @@ const videoModel = ref('')
 const videoDuration = ref('')
 const videoRatio = ref('')
 const videoResolution = ref('')
+const videoWithStyle = ref(false)
 const uploadedVideoRefs = ref<VideoComposerRef[]>([])
 const detachedVideoFromSelection = ref(false)
 
@@ -912,6 +918,15 @@ function onDraftUpdate(
   }
 }
 
+/** 「带 IP 风格」开关的模式分发(69 号票):写当前模式那一份草稿。 */
+function onWithStyleUpdate(value: boolean): void {
+  if (composerMode.value === 'video') {
+    videoWithStyle.value = value
+  } else {
+    composerWithStyle.value = value
+  }
+}
+
 /** 对话框发送:按模式分流。图片模式 —— 选中图片节点产物即参考图(可拆
  * 下),有参考走图生图、无参考走文生图(空占位锚点直接填入),比例×分
  * 辨率组合成 size。视频模式 —— 参考组合交给 submitVideoTask(空参考 =
@@ -937,7 +952,7 @@ async function onComposerSend(): Promise<void> {
     }
     const refs = composerVideoRefs(videoComposerRefs.value)
     await submitVideoTask({
-      prompt,
+      prompt: styledSendPrompt(prompt, videoWithStyle.value, ipStyle.value),
       model: videoModel.value,
       seconds: parsed === '' ? undefined : parsed,
       size: videoResolution.value === '' ? undefined : videoResolution.value,
@@ -953,7 +968,7 @@ async function onComposerSend(): Promise<void> {
   }
   const urls = composerImageUrls(composerRefs.value)
   await submitImageTask({
-    prompt,
+    prompt: styledSendPrompt(prompt, composerWithStyle.value, ipStyle.value),
     model: composerModel.value,
     size: composeSize(composerRatio.value, composerResolution.value) || undefined,
     background: composerTransparent.value ? 'transparent' : undefined,
@@ -1119,6 +1134,26 @@ async function refreshIPCharacters(): Promise<void> {
   }
   try {
     ipCharacters.value = await client.listIPCharacters(canvasIPID.value)
+  } catch {
+    /* 拉不到就保持现状,下次聚焦再试 */
+  }
+}
+
+// ---- 本 IP 画面风格(69 号票)----
+
+// 画布所属 IP 的画面风格(ips.style):直通生成预填(cut 画面 / cut→视频)
+// 与 composer「带 IP 风格」开关的唯一来源。按请求读表先例(角色目录同款):
+// 画布加载后拉一次、窗口聚焦刷新 —— IP 编辑对话框改风格后下一次预填即用
+// 新值;空串 = 未定(不拼不显示)。
+const ipStyle = ref('')
+
+async function refreshIPStyle(): Promise<void> {
+  if (canvasIPID.value <= 0) {
+    return
+  }
+  try {
+    const ip = await client.getIP(canvasIPID.value)
+    ipStyle.value = ip.style ?? ''
   } catch {
     /* 拉不到就保持现状,下次聚焦再试 */
   }
@@ -1632,10 +1667,19 @@ for (const name of AGENT_NOOP_APPLY_TOOLS) {
 setAgentToolApplier('save_outline', applyAgentScriptDraft)
 setAgentToolApplier('save_script', applyAgentScriptDraft)
 setAgentToolApplier('save_storyboard', applyAgentStoryboardDraft)
+// set_style(69 号票):库表类,后端已写 ips.style;回执只刷新本地风格
+// 缓存(本画布所属 IP 才认),让同一编辑器会话里下一次直通预填即用新值
+// —— UI 态,不落图、不入节点 data(工具帧不进持久会话历史,63 号票)。
+setAgentToolApplier('set_style', (payload) => {
+  const receipt = styleFromPayload(payload)
+  if (receipt.ipId === canvasIPID.value) {
+    ipStyle.value = receipt.style
+  }
+})
 onBeforeUnmount(() => {
   // 编辑器实例卸载即注销应用器:闭包持着旧图状态,残留会写进重挂后的
   // 新编辑器(63 号票 setAgentToolApplier(name, null) 的注销语义)。
-  for (const name of [...AGENT_NOOP_APPLY_TOOLS, 'save_outline', 'save_script', 'save_storyboard']) {
+  for (const name of [...AGENT_NOOP_APPLY_TOOLS, 'save_outline', 'save_script', 'save_storyboard', 'set_style']) {
     setAgentToolApplier(name, null)
   }
 })
@@ -2236,7 +2280,8 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // 替换,本动作的预填语义就是「这个 cut 的画面即首帧」,不带其他会话
   // 残留;无画面清空参考条,纯文生视频。选中切换的 watch 会把拆下标记与
   // 模式(锁视频)一并复位,这里只写草稿。
-  videoPrompt.value = buildCutVideoPrompt(cut)
+  // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
+  videoPrompt.value = buildCutVideoPrompt(cut, ipStyle.value)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
   uploadedVideoRefs.value =
     cut.asset_id > 0
@@ -2288,7 +2333,8 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   }
   connectNodes(nodeId, newId)
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
-  composerPrompt.value = buildCutFramePrompt(cut)
+  // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
+  composerPrompt.value = buildCutFramePrompt(cut, ipStyle.value)
   storyboardEditorNodeId.value = ''
 }
 
@@ -3106,12 +3152,14 @@ onMounted(() => {
   void loadCanvas().finally(() => {
     void taskSync.start()
     void refreshIPCharacters()
+    void refreshIPStyle()
     void refreshVoices()
   })
   refreshModelCatalogs()
   void refreshCatalogs()
   window.addEventListener('focus', refreshCatalogs)
   window.addEventListener('focus', refreshIPCharacters)
+  window.addEventListener('focus', refreshIPStyle)
   window.addEventListener('focus', refreshVoices)
   window.addEventListener('beforeunload', beforeUnload)
   window.addEventListener('keydown', onGlobalKeydown)
@@ -3120,6 +3168,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
   window.removeEventListener('focus', refreshIPCharacters)
+  window.removeEventListener('focus', refreshIPStyle)
   window.removeEventListener('focus', refreshVoices)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (historyTimer !== undefined) {
@@ -3427,6 +3476,8 @@ function backToList(): void {
         :ratio="composerMode === 'video' ? videoRatio : composerRatio"
         :resolution="composerMode === 'video' ? videoResolution : composerResolution"
         :transparent="composerTransparent"
+        :ip-style="ipStyle"
+        :with-style="composerMode === 'video' ? videoWithStyle : composerWithStyle"
         :duration="videoDuration"
         :generating="generating"
         :uploading="refUploading"
@@ -3436,6 +3487,7 @@ function backToList(): void {
         @update:ratio="onDraftUpdate(($v) => (videoRatio = $v), ($v) => (composerRatio = $v), $event)"
         @update:resolution="onDraftUpdate(($v) => (videoResolution = $v), ($v) => (composerResolution = $v), $event)"
         @update:transparent="composerTransparent = $event"
+        @update:with-style="onWithStyleUpdate"
         @update:duration="videoDuration = $event"
         @remove-ref="composerMode === 'video' ? onRemoveVideoRef($event) : onRemoveRef($event)"
         @set-ref-role="onSetVideoRefRole"

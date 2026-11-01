@@ -5,6 +5,7 @@
  * ネーム复用编辑层骨架与画面槽交互,数据结构各自定义、不强行归一。
  */
 import type { StoryboardCut, StoryboardNodeData } from './graph'
+import { prependStyleSegment } from './ipStyle'
 import { moveItem, removeAt } from './list'
 import { assetContentURL } from './thumbnail'
 
@@ -78,8 +79,10 @@ export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
  * 留白,占位文案引导)。画面描述取 note(53 号票备注字段;66 号票
  * save_storyboard 产物的 note 即画面内容描述,工具产物与人工 cut 同规);
  * 它是对画面内容的自然语言描述、信息密度最高,排最前。纯函数便于单测;
- * 出场角色不进提示词(「出场角色→生成注入」二期,67 号票 Out of Scope)。 */
-export function buildCutVideoPrompt(cut: StoryboardCut): string {
+ * 出场角色不进提示词(「出场角色→生成注入」二期,67 号票 Out of Scope)。
+ * 69 号票:style 是画布所属 IP 的画面风格,经 ipStyle.prependStyleSegment
+ * 拼在最前(空 = 不拼,输出与此前逐字节一致;cut 全空仍带风格段)。 */
+export function buildCutVideoPrompt(cut: StoryboardCut, style = ''): string {
   const sections: string[] = []
   const note = (cut.note ?? '').trim()
   if (note !== '') {
@@ -95,14 +98,15 @@ export function buildCutVideoPrompt(cut: StoryboardCut): string {
   if (lines !== '') {
     sections.push(`台词/音效:${lines}`)
   }
-  return sections.join('\n')
+  return prependStyleSegment(sections.join('\n'), style)
 }
 
 /** cut → 图片提示词拼装(分镜画面直通生成):画面描述排最前、景别作构图
  * 指引随后;空段落跳过,全空返回空串(对话框提示词留白,占位文案引导)。
  * 不拼运镜/台词——那是视频语汇,图片画面只吃内容与构图;出场角色不进
- * 提示词(「出场角色→生成注入」二期)。纯函数便于单测。 */
-export function buildCutFramePrompt(cut: StoryboardCut): string {
+ * 提示词(「出场角色→生成注入」二期)。纯函数便于单测。69 号票:style
+ * 同 buildCutVideoPrompt,风格段拼在最前。 */
+export function buildCutFramePrompt(cut: StoryboardCut, style = ''): string {
   const sections: string[] = []
   const note = (cut.note ?? '').trim()
   if (note !== '') {
@@ -111,7 +115,7 @@ export function buildCutFramePrompt(cut: StoryboardCut): string {
   if (cut.shot) {
     sections.push(`景别:${cut.shot}`)
   }
-  return sections.join('\n')
+  return prependStyleSegment(sections.join('\n'), style)
 }
 
 /** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。

@@ -8,6 +8,7 @@ import {
   scriptDraftFromPayload,
   setAgentToolApplier,
   storyboardDraftFromPayload,
+  styleFromPayload,
   upsertAgentToolStep,
 } from './agentTools'
 
@@ -22,8 +23,28 @@ describe('agentToolLabel', () => {
     expect(agentToolLabel('save_script')).toBe('保存剧本')
     expect(agentToolLabel('save_storyboard')).toBe('保存分镜板')
     expect(agentToolLabel('read_source')).toBe('读取原文')
+    // 69 号票 +1:set_style。
+    expect(agentToolLabel('set_style')).toBe('设定画面风格')
     expect(agentToolLabel('no_such_tool')).toBe('no_such_tool')
-    expect(Object.keys(AGENT_TOOL_LABELS)).toHaveLength(8)
+    expect(Object.keys(AGENT_TOOL_LABELS)).toHaveLength(9)
+  })
+})
+
+describe('styleFromPayload(set_style 的回执,69 号票)', () => {
+  it('parses the written IP style receipt', () => {
+    // 后端已直写 ips.style(库表类);前端据回执即时刷新本地风格缓存,
+    // 下一次直通预填即用新值 —— 不落图、不入节点 data。
+    expect(styleFromPayload({ kind: 'style', ip_id: 3, style: '赛博朋克霓虹' })).toEqual({
+      ipId: 3,
+      style: '赛博朋克霓虹',
+    })
+  })
+
+  it('rejects malformed receipts explicitly', () => {
+    expect(() => styleFromPayload('赛博朋克')).toThrow('不是合法对象')
+    expect(() => styleFromPayload({ kind: 'other', ip_id: 3, style: 'x' })).toThrow('kind')
+    expect(() => styleFromPayload({ kind: 'style', ip_id: 0, style: 'x' })).toThrow('ip_id')
+    expect(() => styleFromPayload({ kind: 'style', ip_id: 3, style: 42 })).toThrow('style 必须是字符串')
   })
 })
 

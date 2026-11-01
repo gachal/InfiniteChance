@@ -35,9 +35,42 @@ CREATE TABLE IF NOT EXISTS ips (
 	name            VARCHAR(255) NOT NULL,
 	description     VARCHAR(1024) NOT NULL DEFAULT '',
 	cover_asset_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,
+	style           TEXT NULL,
 	created_at      TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	updated_at      TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
+
+// ipsMigrations widens an ips table created by earlier tickets in place
+// (69 号票的画面风格列,可空 —— 存量行读回空串 = 无风格注入,行为不变)。
+// information_schema 检查后 ALTER,幂等(canvases 加列同款)。
+var ipsMigrations = []struct{ column, ddl string }{
+	{"style", "ALTER TABLE ips ADD COLUMN style TEXT NULL"},
+}
+
+// ensureMySQLIPsTable creates the ips table when missing and widens an
+// existing one in place. canvas store 与 IP store 的 EnsureSchema 都调它
+// (双保险幂等):无论哪个先跑,ips 表就绪即是完整形状。
+func ensureMySQLIPsTable(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, ipsSchema); err != nil {
+		return err
+	}
+	for _, m := range ipsMigrations {
+		var count int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM information_schema.COLUMNS
+			 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ips' AND COLUMN_NAME = ?`,
+			m.column).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // migrations widens canvases tables created by earlier tickets in place
 // (50 号票的 ip_id/type):CREATE TABLE IF NOT EXISTS never widens an
@@ -71,10 +104,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := s.DB.ExecContext(ctx, ipsSchema); err != nil {
-		return err
-	}
-	return nil
+	return ensureMySQLIPsTable(ctx, s.DB)
 }
 
 func (s *MySQLStore) List(ctx context.Context, ipID int64) ([]Canvas, error) {

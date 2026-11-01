@@ -23,11 +23,12 @@ func NewSQLiteIPStore(db *sql.DB) *SQLiteIPStore { return &SQLiteIPStore{DB: db}
 var _ IPStore = (*SQLiteIPStore)(nil)
 
 // EnsureSchema creates the ips table when missing (canvases store 的
-// EnsureSchema 也建同一张表,双保险幂等) and runs the self-heal adoption.
+// EnsureSchema 也建同一张表,双保险幂等), widens it in place (69 号票的
+// style 列) and runs the self-heal adoption.
 // 依赖 canvases.ip_id 列已就位——装配顺序 canvases → assets → ips
 // (canvas/server main.go 与桌面 runtime.go 同序)。
 func (s *SQLiteIPStore) EnsureSchema(ctx context.Context) error {
-	if _, err := s.DB.ExecContext(ctx, sqliteIPsSchema); err != nil {
+	if err := ensureSQLiteIPsTable(ctx, s.DB); err != nil {
 		return err
 	}
 	return s.selfHeal(ctx)
@@ -70,7 +71,7 @@ func (s *SQLiteIPStore) selfHeal(ctx context.Context) error {
 	return err
 }
 
-const sqliteIPColumns = `i.id, i.name, i.description, i.cover_asset_id, i.created_at, i.updated_at`
+const sqliteIPColumns = `i.id, i.name, i.description, i.cover_asset_id, i.style, i.created_at, i.updated_at`
 
 // sqliteIPListSelect 的排序键 = ips.updated_at 与名下画布 max(updated_at)
 // 取大者(SQLite 两参 max 即标量函数,TEXT 定宽时间字典序=时间序)。
@@ -99,14 +100,17 @@ func (s *SQLiteIPStore) ListIPs(ctx context.Context) ([]IP, error) {
 }
 
 // scanSQLiteIPRow 按列表投影的列序扫描一行(canvas_count 与排序键随行;
-// 排序键的时间形态落 LatestAt,即卡片墙「最近更新」)。
+// 排序键的时间形态落 LatestAt,即卡片墙「最近更新」)。style 可空列,
+// NULL 读回空串。
 func scanSQLiteIPRow(rows *sql.Rows) (IP, error) {
 	var ip IP
+	var style sql.NullString
 	var createdAt, updatedAt, sortKey string
-	if err := rows.Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID,
+	if err := rows.Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID, &style,
 		&createdAt, &updatedAt, &ip.CanvasCount, &sortKey); err != nil {
 		return IP{}, err
 	}
+	ip.Style = style.String
 	t, err := sqlitedb.ParseTime(createdAt)
 	if err != nil {
 		return IP{}, err
@@ -125,21 +129,23 @@ func scanSQLiteIPRow(rows *sql.Rows) (IP, error) {
 	return ip, nil
 }
 
-const sqliteIPGetSelect = `SELECT i.id, i.name, i.description, i.cover_asset_id,
+const sqliteIPGetSelect = `SELECT i.id, i.name, i.description, i.cover_asset_id, i.style,
 	(SELECT COUNT(*) FROM canvases c WHERE c.ip_id = i.id), i.created_at, i.updated_at
 	FROM ips i WHERE i.id = ?`
 
 func (s *SQLiteIPStore) GetIP(ctx context.Context, id int64) (IP, error) {
 	var ip IP
+	var style sql.NullString
 	var createdAt, updatedAt string
 	err := s.DB.QueryRowContext(ctx, sqliteIPGetSelect, id).
-		Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID, &ip.CanvasCount, &createdAt, &updatedAt)
+		Scan(&ip.ID, &ip.Name, &ip.Description, &ip.CoverAssetID, &style, &ip.CanvasCount, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return IP{}, ErrIPNotFound
 	}
 	if err != nil {
 		return IP{}, err
 	}
+	ip.Style = style.String
 	t, err := sqlitedb.ParseTime(createdAt)
 	if err != nil {
 		return IP{}, err
@@ -188,6 +194,15 @@ func (s *SQLiteIPStore) UpdateIP(ctx context.Context, id int64, u *IPUpdate) (IP
 	if u.CoverAssetID != nil {
 		sets = append(sets, "cover_asset_id = ?")
 		args = append(args, *u.CoverAssetID)
+	}
+	if u.Style != nil {
+		// 空串 = 清除:落 NULL,与存量未定行同形(voice_id 清绑同款)。
+		if *u.Style == "" {
+			sets = append(sets, "style = NULL")
+		} else {
+			sets = append(sets, "style = ?")
+			args = append(args, *u.Style)
+		}
 	}
 	args = append(args, id)
 	if _, err := s.DB.ExecContext(ctx,

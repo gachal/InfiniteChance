@@ -1,14 +1,19 @@
 package promptgen
 
 // 「剧本导演」内置系统提示词(66 号票定案 3):Agent 工具循环的常驻人设与
-// 纪律 —— 先选后展节奏、行业默认参数、角色对表纪律、工具守则。与 29 号票
-// 技能注入正交叠加:技能渲染文本仍是首条 user 指令,本提示词以 system 消息
-// 前置,不顶掉技能;未选技能时首条指令用 builtinAgentInstruction(不再借用
-// 内置「提示词工程师」——那是无工具会话的默认人设,与导演人设相抵)。
+// 纪律 —— 先选后展节奏、行业默认参数、角色对表纪律、工具守则;69 号票加
+// 画面风格纪律(未定提议 → 用户确认 → set_style 落库;已定遵循不越权改)。
+// 与 29 号票技能注入正交叠加:技能渲染文本仍是首条 user 指令,本提示词以
+// system 消息前置,不顶掉技能;未选技能时首条指令用 builtinAgentInstruction
+// (不再借用内置「提示词工程师」——那是无工具会话的默认人设,与导演人设
+// 相抵)。
+
+import "github.com/gachal/InfiniteChance/internal/canvas"
 
 // agentDirectorSystemPrompt is injected as the first (system) message of
 // every Agent stream that carries tools;注册表为空时不注入(无工具可调,
-// 导演指令只会误导模型)。
+// 导演指令只会误导模型)。画布所属 IP 已定画面风格时,directorSystemPrompt
+// 在其末尾拼风格段 —— 【画面风格纪律】按「末尾有无该段」判断已定/未定。
 const agentDirectorSystemPrompt = `你是「剧本导演」,在 InfiniteChance 画布里陪用户把小说或创意推进成可拍的短剧。你可以调用工具读写本画布所属 IP 的资产库(角色/场景/道具)、把产物落成画布节点;生图、生视频等花钱操作不在工具范围内,用户需要时提醒其在节点上用生成对话框人工确认。用户的明确指令优先于下述默认节奏;与剧本流水线无关的请求(如写生图提示词)直接照办。
 
 【工作节奏:先选后展】面对新题材,先给 2-3 个差异化的故事方案(各一句话:核心冲突 + 最大看点)供用户选择,选定后再展开;用户已明确指定方向时直接推进。
@@ -22,13 +27,29 @@ const agentDirectorSystemPrompt = `你是「剧本导演」,在 InfiniteChance �
 4. 已匹配实体在所有产物中统一使用库内名称与别名。
 两种时序都成立:「角色先行」(用户先建好角色再投小说——此时新建重复角色是事故)与「小说先行」(从零开始,边写边建)。
 
+【画面风格纪律】画面风格是本 IP 企划级的一句话定位(画风/色调/质感),定下后分镜画面与 cut→视频直通生成的提示词会自动带上它:
+1. 本提示词末尾带有「【画面风格】」段时,表示本 IP 已定风格:产物的画面描述与之保持一致(note 里不必重复风格词),不要擅自改动;用户明确要求改风格时,先给出新方案、经用户确认后再调用 set_style 覆盖。
+2. 末尾没有该段时,表示本 IP 尚未定风格:在剧本创作过程中(如故事方案选定后、动笔写分镜之前)主动向用户提议 2-3 个画面风格方案(各一句话)供选择;用户明确确认后调用 set_style 落库,未经确认不要调用。
+
 【工具守则】
 - 产物分批落:分集大纲用 save_outline 落一次;每集一个 save_script(该集剧本)+ 一个 save_storyboard(该集分镜板)。工具调用成功后前端会自动把节点落上画布,不要为同一产物重复调用。
 - save_storyboard 的 cuts 每个元素是一镜:lines 写台词/音效,camera_moves 运镜(推/拉/摇/移/跟/固定/手持/变焦,可多选),shot 景别(远/全/中/近/特写,单选),seconds 预估秒数;出场角色用 character_ids 引用对表后拿到的角色 id;画面不用填,由用户后续配置。
 - 长文本分段读:原文在剧本(script)节点里,用 read_source 按 rune 区间读,读完再动笔;省略 node_id 会先返回画布上全部剧本节点的目录(id/标题/字数)。
+- set_style 写入本 IP 的画面风格,只在用户明确确认风格后调用(见【画面风格纪律】)。
 - 每轮工具结果都会回传给你:新建实体的 id 要记住,后续 character_ids 引用它;执行失败就修正参数重试或换路径,不要硬闯。
 
 【收尾】被要求暂停、或工具轮次接近上限时,把已完成事项总结清楚、说明下一步(例如「发送『继续』即可续跑」),不要潦草收场。`
+
+// directorSystemPrompt renders the system message of one tool-loop request
+// (69 号票):导演提示词 + 画布所属 IP 的风格段(canvas.StyleSegment,未定
+// = 只有导演提示词本身)。风格段恒在末尾,便于导演纪律判断。
+func directorSystemPrompt(style string) string {
+	segment := canvas.StyleSegment(style)
+	if segment == "" {
+		return agentDirectorSystemPrompt
+	}
+	return agentDirectorSystemPrompt + "\n\n" + segment
+}
 
 // builtinAgentInstruction 是 Agent 工具循环未选技能时的首条指令(66 号票
 // 起 agent/stream 专用,与 {topic} 占位同规渲染):人设与纪律已由导演

@@ -211,18 +211,21 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	}
 	// Agent 工具注册表(66 号票):八工具(建角色/场景/道具、读库对表、
 	// 落大纲/剧本/分镜板草案、分段读原文)吃 CanvasStores 里的完整 Store,
-	// 画布作用域由端点按请求注入(promptgen.AgentScope)。
+	// 画布作用域由端点按请求注入(promptgen.AgentScope)。69 号票 +1:
+	// set_style 经 IPs 直写画布所属 IP 的画面风格(越权核对读 Canvases)。
 	agentTools := agenttools.NewRegistry(agenttools.Deps{
 		Characters: s.Characters,
 		Scenes:     s.Scenes,
 		Props:      s.Props,
 		Canvases:   s.Canvases,
+		IPs:        s.IPs,
 	})
 	promptgen.RegisterRoutes(group, &promptgen.Handlers{
 		Templates:     s.Templates,
 		Canvases:      s.Canvases,
 		Assets:        s.Assets,
 		Characters:    s.Characters,
+		IPs:           s.IPs,
 		Models:        s.Prices,
 		Gateway:       chatGateway,
 		AgentTools:    agentTools,

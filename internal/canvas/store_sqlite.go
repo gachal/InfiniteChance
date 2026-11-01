@@ -47,9 +47,56 @@ CREATE TABLE IF NOT EXISTS ips (
 	name            TEXT    NOT NULL,
 	description     TEXT    NOT NULL DEFAULT '',
 	cover_asset_id  INTEGER NOT NULL DEFAULT 0,
+	style           TEXT    NULL,
 	created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
 	updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 )`
+
+// sqliteIPsMigrations widens an ips table created by earlier desktop builds
+// (69 号票的画面风格列,可空 —— 存量行读回空串 = 无风格注入,行为不变)。
+// 与 canvases 加列同款:PRAGMA table_info 检查后 ALTER,幂等。
+var sqliteIPsMigrations = []struct{ column, ddl string }{
+	{"style", "ALTER TABLE ips ADD COLUMN style TEXT NULL"},
+}
+
+// ensureSQLiteIPsTable creates the ips table when missing and widens an
+// existing one in place. canvas store 与 IP store 的 EnsureSchema 都调它
+// (双保险幂等):无论哪个先跑,ips 表就绪即是完整形状。
+func ensureSQLiteIPsTable(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, sqliteIPsSchema); err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(ips)`)
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dfltValue any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, m := range sqliteIPsMigrations {
+		if existing[m.column] {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, m.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // sqliteMigrations widens tables created by earlier desktop builds in place
 // (48 号票同款决策:CREATE TABLE IF NOT EXISTS 不会加宽已存在的表,存量
@@ -99,10 +146,7 @@ func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := s.DB.ExecContext(ctx, sqliteIPsSchema); err != nil {
-		return err
-	}
-	return nil
+	return ensureSQLiteIPsTable(ctx, s.DB)
 }
 
 func (s *SQLiteStore) List(ctx context.Context, ipID int64) ([]Canvas, error) {

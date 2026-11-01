@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/sqlitedb"
@@ -293,6 +294,105 @@ func TestSQLiteIPListOrdersByLatestActivity(t *testing.T) {
 	}
 	if list[0].CanvasCount != 1 || list[1].CanvasCount != 0 {
 		t.Fatalf("canvas counts = %d/%d, want 1/0", list[0].CanvasCount, list[1].CanvasCount)
+	}
+}
+
+// ---- 画面风格列(69 号票)----
+
+// 存量库自愈加列:69 号票之前建出的 ips 表没有 style 列,启动 EnsureSchema
+// 幂等补列;存量行 style 读回空串(= 无风格注入,行为不变),补列后即可写。
+func TestSQLiteEnsureSchemaWidensLegacyIPsWithStyle(t *testing.T) {
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ctx := context.Background()
+	// 69 号票之前的 ips 表形状(无 style 列)+ 一行存量 IP。
+	if _, err := db.ExecContext(ctx, `CREATE TABLE ips (
+		id              INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		name            TEXT    NOT NULL,
+		description     TEXT    NOT NULL DEFAULT '',
+		cover_asset_id  INTEGER NOT NULL DEFAULT 0,
+		created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+		updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+	)`); err != nil {
+		t.Fatalf("seed legacy ips table: %v", err)
+	}
+	now := sqlitedb.FormatTime(time.Now())
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO ips (name, description, created_at, updated_at) VALUES ('存量 IP', 'logline', ?, ?)`, now, now)
+	if err != nil {
+		t.Fatalf("seed legacy ip row: %v", err)
+	}
+	legacyID, _ := res.LastInsertId()
+
+	canvases := canvas.NewSQLiteStore(db)
+	ips := canvas.NewSQLiteIPStore(db)
+	// 装配顺序 canvases → ips,两遍验幂等(重启自愈不报错不重复加列)。
+	for i := 0; i < 2; i++ {
+		if err := canvases.EnsureSchema(ctx); err != nil {
+			t.Fatalf("canvas EnsureSchema #%d: %v", i+1, err)
+		}
+		if err := ips.EnsureSchema(ctx); err != nil {
+			t.Fatalf("ip EnsureSchema #%d: %v", i+1, err)
+		}
+	}
+
+	got, err := ips.GetIP(ctx, legacyID)
+	if err != nil {
+		t.Fatalf("GetIP legacy: %v", err)
+	}
+	if got.Style != "" || got.Name != "存量 IP" || got.Description != "logline" {
+		t.Fatalf("legacy ip = %+v, want empty style and untouched fields", got)
+	}
+	style := "日系赛璐璐动画,明亮高饱和"
+	updated, err := ips.UpdateIP(ctx, legacyID, &canvas.IPUpdate{Style: &style})
+	if err != nil {
+		t.Fatalf("UpdateIP style on widened table: %v", err)
+	}
+	if updated.Style != style {
+		t.Fatalf("style after widen = %q, want %q", updated.Style, style)
+	}
+}
+
+// 风格读写:新建为空;写入后 Get/List 都带回;只改别的字段时风格保持;
+// 显式写空串 = 清除(回到无风格注入)。
+func TestSQLiteIPStyleRoundTrip(t *testing.T) {
+	ips, _, _ := newSQLiteIPWorld(t)
+	ctx := context.Background()
+
+	created, err := ips.CreateIP(ctx, "星穹之愿", "", 0)
+	if err != nil {
+		t.Fatalf("CreateIP: %v", err)
+	}
+	if created.Style != "" {
+		t.Fatalf("new ip style = %q, want empty", created.Style)
+	}
+
+	style := "赛博朋克霓虹,高对比冷暖撞色"
+	if _, err := ips.UpdateIP(ctx, created.ID, &canvas.IPUpdate{Style: &style}); err != nil {
+		t.Fatalf("set style: %v", err)
+	}
+	got, err := ips.GetIP(ctx, created.ID)
+	if err != nil || got.Style != style {
+		t.Fatalf("GetIP style = %q, %v; want %q", got.Style, err, style)
+	}
+	list, err := ips.ListIPs(ctx)
+	if err != nil || len(list) != 1 || list[0].Style != style {
+		t.Fatalf("ListIPs = %+v, %v; want the style on the row", list, err)
+	}
+
+	name := "只改名字"
+	renamed, err := ips.UpdateIP(ctx, created.ID, &canvas.IPUpdate{Name: &name})
+	if err != nil || renamed.Style != style {
+		t.Fatalf("partial update = %+v, %v; want style kept", renamed, err)
+	}
+
+	empty := ""
+	cleared, err := ips.UpdateIP(ctx, created.ID, &canvas.IPUpdate{Style: &empty})
+	if err != nil || cleared.Style != "" {
+		t.Fatalf("clear style = %+v, %v; want empty", cleared, err)
 	}
 }
 
