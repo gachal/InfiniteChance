@@ -75,6 +75,7 @@ import {
   durationRangeFor,
   isReferenceRole,
   isRelayableRef,
+  MAX_COMPOSER_REFS,
   mediaSyncPatch,
   parseDurationInput,
   resultNodeData,
@@ -91,7 +92,7 @@ import {
 import { characterImageContentURL } from '../characters'
 import { buildCutFramePrompt, buildCutVideoPrompt, frameContentURL } from '../storyboard'
 import { styledSendPrompt } from '../ipStyle'
-import { SHEET_TYPES, buildSheetPrompt, latestVariantImage } from '../sheet'
+import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
 import type { SheetCharacterFacts } from '../sheet'
 import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
@@ -2330,8 +2331,16 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   videoPrompt.value = buildCutVideoPrompt(cut, ipStyle.value)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
-  uploadedVideoRefs.value =
-    cut.asset_id > 0
+  // 出场角色注入(70 号票 C):按 character_ids 序取默认变体设定图作
+  // 参考图(角色 reference_image,不进 prompt);无图角色静默跳过,
+  // 与首帧合计超 9 按序截断 + toast 计数。
+  const { picks, dropped } = pickCutCharacterRefs(
+    ipCharacters.value,
+    cut.character_ids ?? [],
+    VIDEO_REFS_TOTAL_CAP,
+  )
+  uploadedVideoRefs.value = [
+    ...(cut.asset_id > 0
       ? [
           {
             url: frameContentURL(cut.asset_id),
@@ -2340,7 +2349,17 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
             asset_id: cut.asset_id,
           },
         ]
-      : []
+      : []),
+    ...picks.map((p) => ({
+      url: characterImageContentURL(p.assetId),
+      kind: 'image' as const,
+      role: 'reference_image' as const,
+      asset_id: p.assetId,
+    })),
+  ]
+  if (dropped > 0) {
+    showNotice(`${dropped} 个角色设定图未带上(参考上限 9)`)
+  }
   // 收编辑层:生成对话框贴新视频节点正下方,全屏编辑层开着会挡住它。
   storyboardEditorNodeId.value = ''
 }
@@ -2355,7 +2374,8 @@ const cutFramePending = new Map<string, { storyboardId: string; cutIndex: number
  * + 分镜→图片来源边(EDGE_MATRIX 既有),选中驱动对话框进图片模式,提示
  * 词预填 buildCutFramePrompt(画面描述/景别);人工确认后才发送(花钱操作
  * 总案 Q5),任务成功后产物素材自动回填本 cut。收编辑层让位对话框,与
- * cut→视频直通同手势。 */
+ * cut→视频直通同手势。70 号票 C:出场角色设定图按 character_ids 序进
+ * 参考条(不进 prompt),无图角色静默跳过,超 9 截断 + toast。 */
 function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   const node = findNode(nodeId)
   const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
@@ -2382,6 +2402,20 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   composerPrompt.value = buildCutFramePrompt(cut, ipStyle.value)
+  // 出场角色注入(70 号票 C):整条替换参考条 —— 预填序 = character_ids
+  // 序(素材内容寻址引用);预填可手动移除。
+  const { picks, dropped } = pickCutCharacterRefs(
+    ipCharacters.value,
+    cut.character_ids ?? [],
+    MAX_COMPOSER_REFS,
+  )
+  uploadedRefs.value = picks.map((p) => ({
+    url: characterImageContentURL(p.assetId),
+    asset_id: p.assetId,
+  }))
+  if (dropped > 0) {
+    showNotice(`${dropped} 个角色设定图未带上(参考上限 9)`)
+  }
   storyboardEditorNodeId.value = ''
 }
 
