@@ -340,3 +340,21 @@ body {
 .vue-flow__minimap-mask {
   fill: rgba(var(--bg-deep-rgb), 0.65);
 }
+
+/* ---- 画布分组(72 号票)----
+
+   组节点恒压底:!important 覆盖 vue-flow 写在 wrapper 上的 inline
+   z-index(含 elevateNodesOnSelect 选中 +1000)——纯 CSS 方案对 reload/
+   undo 整图回放免疫(快照只存 5 个语义字段,挂节点对象的运行时 props
+   会丢);负 z 在 transformationpane 的 stacking context 内,边(z:0)
+   与普通节点照旧呈现在组框之上,选中组也不会盖住成员。 */
+.vue-flow__node-group {
+  z-index: -1 !important;
+}
+
+/* minimap 隐藏组节点(大色块喧宾夺主):MiniMap 的 node-class-name
+   把类名绑到 <rect class="vue-flow__minimap-node"> 上,display:none
+   对 SVG 元素同样生效。 */
+.vue-flow__minimap-node.minimap-group {
+  display: none;
+}

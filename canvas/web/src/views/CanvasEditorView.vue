@@ -9,7 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
-import { VueFlow, useVueFlow, type Connection, type Edge } from '@vue-flow/core'
+import { VueFlow, useVueFlow, type Connection, type Edge, type GraphNode } from '@vue-flow/core'
 
 import {
   ApiError,
@@ -48,7 +48,29 @@ import {
   type StoryboardCut,
   type StoryboardNodeData,
   type VoiceNodeData,
+  type GroupNodeData,
 } from '../graph'
+import {
+  clampUserGroupSize,
+  defaultGroupData,
+  type DragMembershipPlan,
+  groupForLandedNode,
+  groupFrameSize,
+  type GroupColorToken,
+  type GroupFrame,
+  type GroupMembership,
+  GROUP_MIN_HEIGHT,
+  GROUP_MIN_WIDTH,
+  GROUP_PADDING,
+  type NodeBox,
+  NOMINAL_NODE_HEIGHT,
+  NOMINAL_NODE_WIDTH,
+  nodeCenter,
+  planCreateGroupSelection,
+  pruneGroupsAfterRemoval,
+  resolveDragMembership,
+  unionMemberBounds,
+} from '../canvasGroup'
 import {
   type PendingAgentMedia,
   type AgentMediaKind,
@@ -148,6 +170,7 @@ import StoryboardNode from '../components/nodes/StoryboardNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 import AudioNode from '../components/nodes/AudioNode.vue'
 import VoiceNode from '../components/nodes/VoiceNode.vue'
+import GroupNode from '../components/nodes/GroupNode.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -169,13 +192,18 @@ const {
   onConnect,
   onEdgesChange,
   onNodeClick,
+  onNodeDrag,
+  onNodeDragStart,
+  onNodeDragStop,
   onNodesChange,
   onPaneClick,
+  removeNodes,
   removeSelectedNodes,
   screenToFlowCoordinate,
   setEdges,
   setNodes,
   toObject,
+  updateNode,
   updateNodeData,
   viewport,
   vueFlowRef,
@@ -1816,6 +1844,8 @@ function addAgentProducedNode(type: CanvasNodeType, data: CanvasNodeData): void 
   if (added) {
     addSelectedNodes([added])
   }
+  // 落点自动入组(72 号票 C4):Agent 产物落点中心在组框内即成成员。
+  adoptLandedNode(id)
 }
 
 /** save_outline / save_script:script 节点草案(64 号票载体,payload =
@@ -2583,6 +2613,9 @@ function spawnProductNode(sourceId: string, type: Extract<CanvasNodeType, 'image
     addSelectedNodes([added])
   }
   connectNodes(sourceId, newId)
+  // 落点自动入组(72 号票 C4):直通生成落点中心在组框内即成成员 ——
+  // 把一组生成链圈进分组后,迭代产物自动留组的关键体验。
+  adoptLandedNode(newId)
   return newId
 }
 
@@ -2953,6 +2986,11 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     if (topbarRef.value?.cancelRenaming()) {
       return
     }
+    // 72 号票:画框模式与连接态同族 —— Esc 取消,不落组。
+    if (groupDrawActive.value) {
+      cancelGroupDraw()
+      return
+    }
     if (connection.pending.value) {
       connection.cancel()
       return
@@ -2982,6 +3020,23 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     }
     e.preventDefault()
     redoGraph()
+    return
+  }
+  // 72 号票:⌘G 框选成组、⌘Shift+G 解组选中的组。mac 上 Shift 会把 key
+  // 变大写,'g'/'G' 都要判;浏览器 ⌘G = 查找下一个,必须 preventDefault。
+  if (mod && (e.key === 'g' || e.key === 'G')) {
+    if (isTypingTarget(e)) {
+      return
+    }
+    e.preventDefault()
+    if (e.shiftKey) {
+      const group = getSelectedNodes.value.find((n) => isGroupNode(n))
+      if (group) {
+        ungroupNode(group.id)
+      }
+    } else {
+      groupSelectedNodes()
+    }
     return
   }
   if (isHelpToggleKey(e)) {
@@ -3034,12 +3089,16 @@ function snapshot() {
 }
 
 // 尺寸/选中态变更不改变持久化文档,不触发保存。删除给出可撤销提示
-// (38 号票评审:误删零恢复的焦虑由撤销栈兜底,提示把这条路告诉用户)。
+// (38 号票评审:误删零恢复的焦虑由撤销栈兜底,提示把这条路告诉用户);
+// 删除同时做组侧悬空清理(72 号票:成员删则各组摘除其 id,组删只删组
+// 节点、成员原地保留)。
 onNodesChange((changes) => {
+  const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id)
+  if (removals.length > 0) {
+    pruneDanglingGroupMembers(removals)
+    showNotice('已删除节点,⌘Z / Ctrl+Z 可撤销')
+  }
   if (changes.some((c) => c.type === 'add' || c.type === 'remove' || c.type === 'position')) {
-    if (changes.some((c) => c.type === 'remove')) {
-      showNotice('已删除节点,⌘Z / Ctrl+Z 可撤销')
-    }
     markChanged()
   }
 })
@@ -3058,6 +3117,458 @@ function onTextChange(nodeId: string, text: string): void {
   updateNodeData(nodeId, { text })
   markChanged()
 }
+
+// ---- 画布分组(72 号票)----
+// 组 = 第十三种节点类型(type 'group',组织装饰):成员关系单源存组侧
+// data.memberIds,成员节点 data 零改动;归属判定锚点恒为节点包围盒中心
+// (拖入加入/拖出脱离/跨组换组/落点入组四处同一锚点);框实际尺寸 =
+// max(用户设定尺寸 data.w/h, 成员包围盒 + 24px 内边距)。纯函数在
+// canvasGroup.ts,本区段只做 flow 状态的读写与编辑边界收口(markChanged)。
+
+/** 拖动中的节点 id(整组移动/归属高亮期间置位):这些节点不计入成员
+ * 包围盒 —— 拖动中框不实时扩,释放结算后一次性 expand/回落(票 C2)。 */
+const draggingNodeIds = ref<Set<string>>(new Set())
+
+/** 拖动中「松手将加入」的组 id 集合(实时高亮,票 C2)。 */
+const hoverJoinGroupIds = ref<Set<string>>(new Set())
+
+/** 逐组渲染尺寸:groupFrameSize(用户 data.w/h, 成员包围盒+内边距)。
+ * 成员盒子用实时 position + dimensions(未量出按近似值回落)。 */
+const groupFrameSizes = computed<Record<string, { width: number; height: number }>>(() => {
+  const dragging = draggingNodeIds.value
+  const sizes: Record<string, { width: number; height: number }> = {}
+  for (const node of flowNodes.value) {
+    if (normalizeNodeType(node.type) !== 'group') {
+      continue
+    }
+    const data = node.data as GroupNodeData
+    const members: NodeBox[] = []
+    for (const id of data.memberIds ?? []) {
+      if (dragging.has(id)) {
+        continue
+      }
+      const m = findNode(id)
+      if (!m) {
+        continue
+      }
+      members.push({
+        x: m.position.x,
+        y: m.position.y,
+        width: m.dimensions?.width ?? NOMINAL_NODE_WIDTH,
+        height: m.dimensions?.height ?? NOMINAL_NODE_HEIGHT,
+      })
+    }
+    sizes[node.id] = groupFrameSize(data, members)
+  }
+  return sizes
+})
+
+function isGroupNode(node: { type?: string | null } | undefined): boolean {
+  return !!node && normalizeNodeType(node.type) === 'group'
+}
+
+/** 节点盒子(包围盒判定的输入):dimensions 未量出按近似宽高回落。 */
+function nodeBoxOf(node: GraphNode): NodeBox {
+  return {
+    x: node.position.x,
+    y: node.position.y,
+    width: node.dimensions?.width ?? NOMINAL_NODE_WIDTH,
+    height: node.dimensions?.height ?? NOMINAL_NODE_HEIGHT,
+  }
+}
+
+/** 图内各组当前的成员清单(组侧单源)。 */
+function collectGroupMemberships(): GroupMembership[] {
+  return flowNodes.value
+    .filter((n) => isGroupNode(n))
+    .map((n) => ({ id: n.id, memberIds: [...((n.data as GroupNodeData).memberIds ?? [])] }))
+}
+
+/** 图内各组当前的框矩形(position + 渲染尺寸)。 */
+function collectGroupFrames(): GroupFrame[] {
+  return collectGroupMemberships().map((g) => {
+    const node = findNode(g.id)
+    const size = groupFrameSizes.value[g.id]
+    return {
+      id: g.id,
+      x: node?.position.x ?? 0,
+      y: node?.position.y ?? 0,
+      width: size?.width ?? GROUP_MIN_WIDTH,
+      height: size?.height ?? GROUP_MIN_HEIGHT,
+    }
+  })
+}
+
+/** 归属计划落图:有变化的组才写 data;updateNodeData 直改不发变更事件,
+ * 组语义改动必须自己 markChanged(与 onTextChange 同款纪律)。 */
+function applyMembershipPlan(plan: DragMembershipPlan): void {
+  if (plan.groupUpdates.length === 0) {
+    return
+  }
+  for (const g of plan.groupUpdates) {
+    updateNodeData(g.id, { memberIds: g.memberIds })
+  }
+  markChanged()
+}
+
+/** 节点删除后的组侧悬空清理:被删组自身跳过(组删只删组节点),其余组
+ * 摘除被删成员 id。markChanged 由同一批 remove 变更事件收口,不重复调。 */
+function pruneDanglingGroupMembers(removedIds: string[]): void {
+  const removed = new Set(removedIds)
+  const live = collectGroupMemberships().filter((g) => !removed.has(g.id))
+  for (const g of pruneGroupsAfterRemoval(live, removedIds)) {
+    updateNodeData(g.id, { memberIds: g.memberIds })
+  }
+}
+
+// 组不参与框选与多选(票 E1):选中集合多于一个且含组时摘除组 —— Shift
+// 框选与 ⌘/Shift 点选两条路径都过这里;点选单选(单独选中组)放行。
+// 不用 selectable:false:那会连点选一起关掉(vue-flow isSelectable 门控
+// 点选与框选共用)。
+watch(getSelectedNodes, (selected) => {
+  if (selected.length < 2) {
+    return
+  }
+  const groups = selected.filter((n) => isGroupNode(n))
+  if (groups.length > 0) {
+    removeSelectedNodes(groups)
+  }
+})
+
+// 拖动三钩:起点记组节点位移基线(整组移动用)与拖动集合;拖动中逐帧
+// 算「松手将加入」高亮 + 组成员随组位移;停手一次结算整组位移与逐节点
+// 归属(票 C1-C5)。只挂 nodeDrag 三钩,不挂 selectionDrag(框选后拖的
+// 是选择矩形,同一 useDrag 双发,两个都挂会结算两遍)。
+let groupDragOrigin: {
+  id: string
+  x: number
+  y: number
+  members: Map<string, { x: number; y: number }>
+} | null = null
+
+onNodeDragStart(({ node, nodes }) => {
+  draggingNodeIds.value = new Set(nodes.map((n) => n.id))
+  hoverJoinGroupIds.value = new Set()
+  if (!isGroupNode(node)) {
+    return
+  }
+  // 组位移基线:成员原位快照(随动结算按「原位 + delta」幂等,不叠加)。
+  // 已在拖动集合里的成员(理论上不会出现 —— 多选摘组)一并跳过防双动。
+  const members = new Map<string, { x: number; y: number }>()
+  const dragged = new Set(nodes.map((n) => n.id))
+  for (const id of (node.data as GroupNodeData).memberIds ?? []) {
+    if (dragged.has(id)) {
+      continue
+    }
+    const m = findNode(id)
+    if (m) {
+      members.set(id, { x: m.position.x, y: m.position.y })
+    }
+  }
+  groupDragOrigin = { id: node.id, x: node.position.x, y: node.position.y, members }
+})
+
+onNodeDrag(({ nodes }) => {
+  const frames = collectGroupFrames()
+  const nextHover = new Set<string>()
+  for (const n of nodes) {
+    if (isGroupNode(n)) {
+      continue
+    }
+    const gid = groupForLandedNode({ type: n.type, center: nodeCenter(n.position, n.dimensions) }, frames)
+    if (gid) {
+      nextHover.add(gid)
+    }
+  }
+  hoverJoinGroupIds.value = nextHover
+  // 拖组整组移动(票 C5):原生只拖组节点自己,成员按「原位 + delta」
+  // 逐帧跟随;updateNode 直改不发事件,停手统一 markChanged。
+  if (groupDragOrigin) {
+    const group = findNode(groupDragOrigin.id)
+    if (!group) {
+      groupDragOrigin = null
+      return
+    }
+    const dx = group.position.x - groupDragOrigin.x
+    const dy = group.position.y - groupDragOrigin.y
+    for (const [id, origin] of groupDragOrigin.members) {
+      updateNode(id, { position: { x: origin.x + dx, y: origin.y + dy } })
+    }
+  }
+})
+
+onNodeDragStop(({ nodes }) => {
+  // 1) 拖组收尾:成员终位再兜一次(防最后一帧 onNodeDrag 丢失),位移
+  //    非零才 markChanged。
+  if (groupDragOrigin) {
+    const group = findNode(groupDragOrigin.id)
+    if (group) {
+      const dx = group.position.x - groupDragOrigin.x
+      const dy = group.position.y - groupDragOrigin.y
+      if (dx !== 0 || dy !== 0) {
+        for (const [id, origin] of groupDragOrigin.members) {
+          updateNode(id, { position: { x: origin.x + dx, y: origin.y + dy } })
+        }
+        markChanged()
+      }
+    }
+    groupDragOrigin = null
+  }
+  // 2) 归属结算(票 C1-C3):被拖非组节点逐个按中心判定 —— 入框加入、
+  //    出框脱离、跨组换组;多选拖动逐节点独立;组节点跳过(组不吸纳组)。
+  const frames = collectGroupFrames()
+  const dragged = nodes
+    .filter((n) => !isGroupNode(n))
+    .map((n) => ({ id: n.id, type: n.type, center: nodeCenter(n.position, n.dimensions) }))
+  if (dragged.length > 0) {
+    applyMembershipPlan(resolveDragMembership(dragged, frames, collectGroupMemberships()))
+  }
+  // 3) 清场:高亮与拖动集合先清,组框按最终成员一次性 expand/回落。
+  hoverJoinGroupIds.value = new Set()
+  draggingNodeIds.value = new Set()
+})
+
+/** 框选成组(票 B1):⌘G —— 所选普通节点进新组(跨组成员一律换组,组
+ * 节点排除),组框自动包住所选节点(包围盒 + 内边距;该尺寸即用户设定
+ * 尺寸落 data.w/h)。新组不自动选中(组只走点选)。 */
+function groupSelectedNodes(): void {
+  const selected = getSelectedNodes.value
+  const plan = planCreateGroupSelection(selected.map((n) => n.id), collectGroupMemberships())
+  if (plan.memberIds.length === 0) {
+    return
+  }
+  const boxes = selected.filter((n) => plan.memberIds.includes(n.id)).map((n) => nodeBoxOf(n))
+  const bounds = unionMemberBounds(boxes)
+  const size = clampUserGroupSize(
+    bounds ? bounds.maxX - bounds.minX + GROUP_PADDING * 2 : GROUP_MIN_WIDTH,
+    bounds ? bounds.maxY - bounds.minY + GROUP_PADDING * 2 : GROUP_MIN_HEIGHT,
+  )
+  nodeSeq += 1
+  addNodes([
+    {
+      id: `group-${Date.now()}-${nodeSeq}`,
+      type: 'group',
+      position: {
+        x: (bounds?.minX ?? 0) - GROUP_PADDING,
+        y: (bounds?.minY ?? 0) - GROUP_PADDING,
+      },
+      data: { ...defaultGroupData(), memberIds: plan.memberIds, w: size.width, h: size.height },
+    },
+  ])
+  // 跨组换组的旧组侧:updateNodeData 不发事件,这里补 markChanged(与
+  // addNodes 的 'add' 变更在防抖窗口合并成一帧快照,⌘Z 一步回滚)。
+  for (const g of plan.updatedGroups) {
+    updateNodeData(g.id, { memberIds: g.memberIds })
+  }
+  if (plan.updatedGroups.length > 0) {
+    markChanged()
+  }
+}
+
+/** 解组(票 E2):删组 = 解组,成员原地保留 —— removeNodes 走 vue-flow
+ * 删除(组无边可连带),remove 变更事件在 onNodesChange 收口提示与
+ * markChanged;成员 data 本就不带组侧字段,零改动。 */
+function ungroupNode(groupId: string): void {
+  if (!isGroupNode(findNode(groupId))) {
+    return
+  }
+  removeNodes([groupId])
+}
+
+// ---- 分组标题栏动作(票 E3)----
+
+function onGroupTitleChange(groupId: string, title: string): void {
+  updateNodeData(groupId, { title })
+  markChanged()
+}
+
+function onGroupColorChange(groupId: string, color: GroupColorToken): void {
+  updateNodeData(groupId, { color })
+  markChanged()
+}
+
+// ---- 四角 resize(票 D4):只改用户设定尺寸,成员不动 ----
+
+type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se'
+
+let groupResizeActive: { id: string; corner: GroupResizeCorner } | null = null
+const groupResizeStarts = new Map<string, { x: number; y: number; w: number; h: number }>()
+
+function onGroupResizeStart(groupId: string, corner: GroupResizeCorner): void {
+  const node = findNode(groupId)
+  if (!node) {
+    return
+  }
+  const size = groupFrameSizes.value[groupId]
+  groupResizeActive = { id: groupId, corner }
+  groupResizeStarts.set(groupId, {
+    x: node.position.x,
+    y: node.position.y,
+    w: size?.width ?? GROUP_MIN_WIDTH,
+    h: size?.height ?? GROUP_MIN_HEIGHT,
+  })
+}
+
+function onGroupResizeMove(groupId: string, dx: number, dy: number): void {
+  const active = groupResizeActive
+  const start = groupResizeStarts.get(groupId)
+  if (!active || active.id !== groupId || !start) {
+    return
+  }
+  let w: number
+  let h: number
+  if (active.corner === 'nw') {
+    w = start.w - dx
+    h = start.h - dy
+  } else if (active.corner === 'ne') {
+    w = start.w + dx
+    h = start.h - dy
+  } else if (active.corner === 'sw') {
+    w = start.w - dx
+    h = start.h + dy
+  } else {
+    w = start.w + dx
+    h = start.h + dy
+  }
+  const size = clampUserGroupSize(w, h)
+  // W/N 向 resize 锚定对边:按夹紧后的实际增量补偿左上角(SE 向原点不动)。
+  const anchorW = active.corner === 'ne' || active.corner === 'se'
+  const anchorH = active.corner === 'sw' || active.corner === 'se'
+  updateNode(groupId, {
+    position: {
+      x: anchorW ? start.x : start.x + (start.w - size.width),
+      y: anchorH ? start.y : start.y + (start.h - size.height),
+    },
+  })
+  updateNodeData(groupId, { w: size.width, h: size.height })
+}
+
+function onGroupResizeEnd(groupId: string): void {
+  if (groupResizeActive?.id !== groupId) {
+    return
+  }
+  groupResizeActive = null
+  groupResizeStarts.delete(groupId)
+  markChanged()
+}
+
+// ---- 落点自动入组(票 C4)----
+// 四个落点入口(工具栏添加 / 素材插入 / 直通生成 / Agent 产物)尾部各调
+// 一次:落点中心在组框内即成成员(跨组换组同款结算);组节点不被吸纳;
+// 任务产物回写位置不变,不走这里。
+
+function adoptLandedNode(nodeId: string): void {
+  const node = findNode(nodeId)
+  if (!node || isGroupNode(node)) {
+    return
+  }
+  const frames = collectGroupFrames()
+  if (frames.length === 0) {
+    return
+  }
+  const center = nodeCenter(node.position, node.dimensions)
+  if (!groupForLandedNode({ type: node.type, center }, frames)) {
+    return
+  }
+  applyMembershipPlan(
+    resolveDragMembership([{ id: nodeId, type: node.type, center }], frames, collectGroupMemberships()),
+  )
+}
+
+// ---- 画框模式(票 B2)----
+// 工具栏「分组」按钮进入:劫持画布区拖动画出矩形,单次生效(画完即退),
+// Esc 或再点按钮取消 —— 两击连线的「按钮激活态一次性交互」同构范式
+// (useConnection):激活期暂关选区,overlay 层受理指针。矩形两端 client
+// 坐标经 screenToFlowCoordinate 换算成图坐标(入参是 client 坐标,勿先
+// 减容器 rect);画出的矩形 = 空组的用户设定尺寸(不吸纳框内已有节点)。
+
+const groupDrawActive = ref(false)
+const groupDrawRect = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+let groupDrawOrigin: { x: number; y: number } | null = null
+
+function toggleGroupDraw(): void {
+  if (groupDrawActive.value) {
+    cancelGroupDraw()
+    return
+  }
+  groupDrawActive.value = true
+  groupDrawRect.value = null
+  groupDrawOrigin = null
+}
+
+function cancelGroupDraw(): void {
+  groupDrawActive.value = false
+  groupDrawRect.value = null
+  groupDrawOrigin = null
+}
+
+function groupDrawLocalRect(clientX: number, clientY: number): { x1: number; y1: number; x2: number; y2: number } | null {
+  const rect = wrapEl.value?.getBoundingClientRect()
+  const origin = groupDrawOrigin
+  if (!rect || !origin) {
+    return null
+  }
+  return { x1: origin.x - rect.left, y1: origin.y - rect.top, x2: clientX - rect.left, y2: clientY - rect.top }
+}
+
+function onGroupDrawMouseDown(e: MouseEvent): void {
+  if (e.button !== 0) {
+    return
+  }
+  groupDrawOrigin = { x: e.clientX, y: e.clientY }
+  groupDrawRect.value = groupDrawLocalRect(e.clientX, e.clientY)
+  window.addEventListener('mousemove', onGroupDrawMouseMove)
+  window.addEventListener('mouseup', onGroupDrawMouseUp)
+}
+
+function onGroupDrawMouseMove(e: MouseEvent): void {
+  if (!groupDrawOrigin) {
+    return
+  }
+  groupDrawRect.value = groupDrawLocalRect(e.clientX, e.clientY)
+}
+
+function onGroupDrawMouseUp(e: MouseEvent): void {
+  window.removeEventListener('mousemove', onGroupDrawMouseMove)
+  window.removeEventListener('mouseup', onGroupDrawMouseUp)
+  const origin = groupDrawOrigin
+  groupDrawOrigin = null
+  groupDrawRect.value = null
+  groupDrawActive.value = false // 单次生效即退出激活态
+  if (!origin) {
+    return
+  }
+  // 屏幕位移过小(点一下)按取消处理,不落零尺寸组。
+  if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) < 8) {
+    return
+  }
+  const a = screenToFlowCoordinate(origin)
+  const b = screenToFlowCoordinate({ x: e.clientX, y: e.clientY })
+  const size = clampUserGroupSize(Math.abs(a.x - b.x), Math.abs(a.y - b.y))
+  nodeSeq += 1
+  addNodes([
+    {
+      id: `group-${Date.now()}-${nodeSeq}`,
+      type: 'group',
+      position: { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) },
+      data: { ...defaultGroupData(), w: size.width, h: size.height },
+    },
+  ])
+  // 空组照票 B2 不吸纳框内已有节点;addNodes 的 'add' 变更已 markDirty。
+}
+
+const groupDrawRectStyle = computed(() => {
+  const r = groupDrawRect.value
+  if (!r) {
+    return {}
+  }
+  return {
+    left: `${Math.min(r.x1, r.x2)}px`,
+    top: `${Math.min(r.y1, r.y2)}px`,
+    width: `${Math.abs(r.x2 - r.x1)}px`,
+    height: `${Math.abs(r.y2 - r.y1)}px`,
+  }
+})
 
 let nodeSeq = 0
 
@@ -3095,6 +3606,8 @@ function addNode(type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>): void
   if (added) {
     addSelectedNodes([added])
   }
+  // 落点自动入组(72 号票 C4):落点中心在组框内即成成员。
+  adoptLandedNode(id)
   // addNodes 会产生 'add' 变更事件,那里已 markDirty;这里无需重复。
 }
 
@@ -3125,9 +3638,19 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#a78bfa'
     case 'script':
       return '#d3b571'
+    case 'group':
+      // 72 号票:组节点不进 minimap(大色块喧宾夺主),配合
+      // miniMapNodeClassName 的 minimap-group 类整块隐藏。
+      return 'transparent'
     default:
       return '#a78bfa'
   }
+}
+
+/** 72 号票:minimap 隐藏组节点 —— node-class-name 把类名绑到 minimap 的
+ * <rect> 上,display:none 在全局 style.css。 */
+function miniMapNodeClassName(node: { type?: string | null }): string {
+  return normalizeNodeType(node.type ?? undefined) === 'group' ? 'minimap-group' : ''
 }
 
 // ---- 媒体预览灯箱(33 号票)----
@@ -3181,6 +3704,8 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
     if (sourceAlive) {
       connectNodes(sourceId, newId)
     }
+    // 落点自动入组(72 号票 C4):截帧落点与其他落点同规。
+    adoptLandedNode(newId)
     showNotice(
       sourceAlive
         ? `已截帧 ${seconds.toFixed(1)}s 并落为图片节点`
@@ -3230,14 +3755,17 @@ function toggleRecordsPanel(): void {
 function insertAssetRef(kind: 'image' | 'video', assetId: number, contentUrl: string): void {
   nodeSeq += 1
   const type: CanvasNodeType = kind === 'video' ? 'video' : 'image'
+  const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([
     {
-      id: `${type}-${Date.now()}-${nodeSeq}`,
+      id,
       type,
       position: viewportCenterPosition(),
       data: { url: contentUrl, asset_id: assetId, note: '' } satisfies MediaNodeData,
     },
   ])
+  // 落点自动入组(72 号票 C4):素材插入落点中心在组框内即成成员。
+  adoptLandedNode(id)
 }
 
 /** 音频素材的插入落点(57 号票):音频节点持 asset_id,内容寻址路径由
@@ -3245,14 +3773,17 @@ function insertAssetRef(kind: 'image' | 'video', assetId: number, contentUrl: st
  * 落 source='insert'(来源判别:素材插入)。 */
 function insertAudioAsset(assetId: number): void {
   nodeSeq += 1
+  const id = `audio-${Date.now()}-${nodeSeq}`
   addNodes([
     {
-      id: `audio-${Date.now()}-${nodeSeq}`,
+      id,
       type: 'audio',
       position: viewportCenterPosition(),
       data: { asset_id: assetId, source: 'insert' } satisfies AudioNodeData,
     },
   ])
+  // 落点自动入组(72 号票 C4)。
+  adoptLandedNode(id)
 }
 
 /** 素材插入:从素材库把历史产物放进当前画布。音频落音频节点(57 号票
@@ -3549,7 +4080,7 @@ function backToList(): void {
         :min-zoom="0.2"
         :max-zoom="2"
         :nodes-connectable="false"
-        :elements-selectable="!connecting"
+        :elements-selectable="!connecting && !groupDrawActive"
       >
         <Background :gap="24" />
         <!-- 缩放/回正控件与小地图(38 号票评审:画布变大后回全景不再只能
@@ -3560,6 +4091,7 @@ function backToList(): void {
           pannable
           zoomable
           :node-color="miniMapNodeColor"
+          :node-class-name="miniMapNodeClassName"
         />
         <template #node-agent="nodeProps">
           <AgentNode
@@ -3762,6 +4294,25 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
+        <!-- 72 号票:分组节点(组织装饰)—— 渲染尺寸按 max(用户尺寸,
+             成员包围盒+内边距)在编辑器算好传入;标题/色板/解组/resize
+             事件回编辑器收 markChanged。不渲染把手,不作连线端点。 -->
+        <template #node-group="nodeProps">
+          <GroupNode
+            :id="nodeProps.id"
+            :data="nodeProps.data"
+            :width="groupFrameSizes[nodeProps.id]?.width ?? 260"
+            :height="groupFrameSizes[nodeProps.id]?.height ?? 160"
+            :selected="nodeProps.selected"
+            :will-join="hoverJoinGroupIds.has(nodeProps.id)"
+            @title-change="onGroupTitleChange(nodeProps.id, $event)"
+            @color-change="onGroupColorChange(nodeProps.id, $event)"
+            @resize-start="onGroupResizeStart(nodeProps.id, $event)"
+            @resize-move="(dx, dy) => onGroupResizeMove(nodeProps.id, dx, dy)"
+            @resize-end="onGroupResizeEnd(nodeProps.id)"
+            @ungroup="ungroupNode(nodeProps.id)"
+          />
+        </template>
       </VueFlow>
       <!-- 30 号票:连接态预连线(画布区屏幕坐标;pointer-events none,
            不挡任何底层交互)。 -->
@@ -3781,6 +4332,19 @@ function backToList(): void {
           r="5"
         />
       </svg>
+      <!-- 72 号票:画框模式 overlay —— 劫持画布区指针画矩形(连接预览同档
+           z,层内 pointer-events 只在激活期存在),松手落空组。 -->
+      <div
+        v-if="groupDrawActive"
+        class="group-draw-layer"
+        @mousedown.prevent="onGroupDrawMouseDown"
+      >
+        <div
+          v-if="groupDrawRect"
+          class="group-draw-rect"
+          :style="groupDrawRectStyle"
+        />
+      </div>
       <GenerationComposer
         v-if="composerVisible"
         :style="composerStyle"
@@ -3977,11 +4541,13 @@ function backToList(): void {
       :asset-panel-open="assetPanelOpen"
       :records-panel-open="recordsPanelOpen"
       :uploading="uploading"
+      :group-draw-active="groupDrawActive"
       @add="addNode"
       @toggle-asset="toggleAssetPanel"
       @toggle-records="toggleRecordsPanel"
       @upload-change="onUploadChange"
       @toggle-help="helpOpen = !helpOpen"
+      @draw-group="toggleGroupDraw"
     />
   </div>
 </template>
@@ -4034,5 +4600,22 @@ function backToList(): void {
 
 .connect-preview circle {
   fill: rgba(var(--accent-rgb), 0.9);
+}
+
+/* 72 号票:画框模式 overlay(劫持画布区指针画矩形),z 领连接预览同档
+   —— 素材/记录面板(z6)仍在它之上不受阻。矩形即空组的用户设定尺寸。 */
+.group-draw-layer {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  z-index: var(--z-connect-preview);
+}
+
+.group-draw-rect {
+  position: absolute;
+  border: 1px dashed rgba(var(--accent-rgb), 0.8);
+  border-radius: var(--r-xl);
+  background: rgba(var(--accent-rgb), 0.08);
+  pointer-events: none;
 }
 </style>

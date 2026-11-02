@@ -9,6 +9,9 @@ defineProps<{
   assetPanelOpen: boolean
   recordsPanelOpen: boolean
   uploading: boolean
+  /** 画框模式激活态(72 号票):「分组」按钮按下进入,拖画矩形落空组,
+   * 单次生效;Esc 或再点取消。 */
+  groupDrawActive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +23,8 @@ const emit = defineEmits<{
   uploadChange: [event: Event]
   /** 开/关画布帮助浮层(68 号票);快捷键「?」同款开关。 */
   toggleHelp: []
+  /** 进入/取消画框模式(72 号票):再点一次 = 取消,与 Esc 同义。 */
+  drawGroup: []
 }>()
 
 // 53 号票:添加按钮分「创作/规划」两组(组间分隔线纯展示分组)。
@@ -40,7 +45,7 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 
 <template>
   <footer class="toolbar">
-    <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;Enter 在对话框直接发送;? 画布帮助。</span>
+    <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;⌘G 框选成组;Enter 在对话框直接发送;? 画布帮助。</span>
     <span class="add-group">
       <span class="group-label">创作</span>
       <button
@@ -73,6 +78,24 @@ const uploadInput = ref<HTMLInputElement | null>(null)
         @click="emit('add', t)"
       >
         + {{ NODE_TYPE_LABEL[t] }}
+      </button>
+      <span
+        class="group-sep"
+        aria-hidden="true"
+      />
+      <!-- 72 号票:第三组「组织」—— 画布分组是组织容器不是内容节点,
+           不走 CanvasNodeType 添加数组,单独 emit 进入画框模式。 -->
+      <span class="group-label">组织</span>
+      <button
+        class="add-group-draw"
+        :class="{ active: groupDrawActive }"
+        type="button"
+        :title="groupDrawActive
+          ? '取消画框(Esc 或再点一次):在画布拖一个矩形落空分组'
+          : '画一个分组框:点击后在画布拖出矩形,松手落空分组;框选节点按 Ctrl/Cmd+G 直接成组'"
+        @click="emit('drawGroup')"
+      >
+        {{ groupDrawActive ? '取消画框' : '+ 分组' }}
       </button>
       <span
         class="group-sep"
@@ -257,6 +280,19 @@ const uploadInput = ref<HTMLInputElement | null>(null)
 .add-script {
   background: rgba(var(--gold-rgb), 0.16);
   color: var(--gold);
+}
+
+/* 72 号票:分组按钮入「组织」组,中性蓝灰(分组是容器不是内容节点,
+   类型色留给节点,容器类动作用中性色);激活态 = 画框模式进行中。 */
+.add-group-draw {
+  background: rgba(var(--estimate-ink-rgb), 0.14);
+  color: var(--estimate-ink);
+}
+
+.add-group-draw.active {
+  background: rgba(var(--accent-rgb), 0.24);
+  border-color: rgba(var(--accent-rgb), 0.85);
+  color: var(--accent);
 }
 
 /* 素材库按钮改中性蓝灰(38 号票评审:旧紫色与分析节点撞色,素材不是
