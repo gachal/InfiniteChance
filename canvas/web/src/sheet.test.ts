@@ -63,9 +63,9 @@ describe('buildSheetPrompt(与 Go BuildSheetPrompt 同形)', () => {
     ].join('\n'))
   })
 
-  it('有风格:风格段拼最前单独成行(69 号票同形);风格全空白不拼', () => {
+  it('有风格:风格段拼最前单独成行(69 号票同形,73 号票标记换形);风格全空白不拼', () => {
     const got = buildSheetPrompt('姿态', { name: '阿银', variantName: '默认' }, ' 赛博朋克冷色调 ')
-    expect(got.startsWith('【画面风格】赛博朋克冷色调\n')).toBe(true)
+    expect(got.startsWith('画面风格:赛博朋克冷色调\n')).toBe(true)
     expect(buildSheetPrompt('姿态', { name: '阿银', variantName: '默认' }, '  ')).toBe(
       [
         '角色设定图·姿态集:同一角色的多个典型动作与姿态对照,全身,白底,姿态自然清晰,标准设定图画风',

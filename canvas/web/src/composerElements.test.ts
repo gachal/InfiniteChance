@@ -147,20 +147,20 @@ describe('composeSendPrompt(发送拼装,71 号票 B5:风格段 → 绑定行 �
   it('无元素:与 styledSendPrompt 逐字节一致(存量行为不变)', () => {
     const refs = [img('/api/assets/1/content', 1)]
     expect(composeSendPrompt('一只猫', false, '水墨', refs, [null], 'image')).toBe('一只猫')
-    expect(composeSendPrompt('一只猫', true, '水墨', refs, [null], 'image')).toBe('【画面风格】水墨\n一只猫')
+    expect(composeSendPrompt('一只猫', true, '水墨', refs, [null], 'image')).toBe('画面风格:水墨\n一只猫')
   })
 
   it('带风格开关:绑定行插在风格段那一行之后、正文之前', () => {
     const refs = [img('/api/assets/1/content', 1, blue), img('/api/assets/2/content', 2, roof)]
     expect(composeSendPrompt('两人对视', true, '水墨', refs, ['小蓝', '天台'], 'image')).toBe(
-      '【画面风格】水墨\n出场元素:小蓝@图1(角色)、天台@图2(场景)\n两人对视',
+      '画面风格:水墨\n出场元素:小蓝@图片1(角色)、天台@图片2(场景)\n两人对视',
     )
   })
 
   it('风格开关关:绑定行置于最前', () => {
     const refs = [img('/api/assets/1/content', 1, blue)]
     expect(composeSendPrompt('登场', false, '水墨', refs, ['小蓝'], 'image')).toBe(
-      '出场元素:小蓝@图1(角色)\n登场',
+      '出场元素:小蓝@图片1(角色)\n登场',
     )
   })
 
@@ -170,27 +170,27 @@ describe('composeSendPrompt(发送拼装,71 号票 B5:风格段 → 绑定行 �
       vref('/api/assets/1/content', 'reference_image', blue),
     ]
     expect(composeSendPrompt('登场', false, '', refs, [null, '小蓝'], 'video')).toBe(
-      '出场元素:小蓝@图1(角色)\n登场',
+      '出场元素:小蓝@图片1(角色)\n登场',
     )
   })
 
   it('多行 IP 风格(编辑框允许换行):绑定行插在整段风格之后,不切开风格文本', () => {
     const refs = [img('/api/assets/1/content', 1, blue)]
     expect(composeSendPrompt('登场', true, '水墨\n低饱和', refs, ['小蓝'], 'image')).toBe(
-      '【画面风格】水墨\n低饱和\n出场元素:小蓝@图1(角色)\n登场',
+      '画面风格:水墨\n低饱和\n出场元素:小蓝@图片1(角色)\n登场',
     )
   })
 
   it('直通预填已把多行风格段写进草稿、开关关着:同样插在整段风格之后', () => {
     const refs = [img('/api/assets/1/content', 1, blue)]
-    expect(composeSendPrompt('【画面风格】水墨\n低饱和\n登场', false, '水墨\n低饱和', refs, ['小蓝'], 'image')).toBe(
-      '【画面风格】水墨\n低饱和\n出场元素:小蓝@图1(角色)\n登场',
+    expect(composeSendPrompt('画面风格:水墨\n低饱和\n登场', false, '水墨\n低饱和', refs, ['小蓝'], 'image')).toBe(
+      '画面风格:水墨\n低饱和\n出场元素:小蓝@图片1(角色)\n登场',
     )
   })
 
   it('提示词里已有同一绑定行(预填/手抄)不叠加', () => {
     const refs = [img('/api/assets/1/content', 1, blue)]
-    const typed = '出场元素:小蓝@图1(角色)\n登场'
+    const typed = '出场元素:小蓝@图片1(角色)\n登场'
     expect(composeSendPrompt(typed, false, '', refs, ['小蓝'], 'image')).toBe(typed)
   })
 })
@@ -213,20 +213,20 @@ describe('hasFrameReferenceConflict(首帧/尾帧与参考互斥提示,71 号票
 })
 
 describe('mentionInsertText(@ 浮层选中插入的文本,71 号票 B6)', () => {
-  it('有名元素插纯名字(无 @、不随参考序移位),无名图维持 @图N', () => {
+  it('有名元素插纯名字(无 @、不随参考序移位),无名图维持 @图片N', () => {
     const blue = { type: 'character' as const, entityId: 7, variantId: 70 }
     const [named, plain] = composerRefMentions(
       [img('/api/assets/1/content', 1, blue), img('/api/assets/2/content', 2)],
       ['小蓝', null],
     )
     expect(mentionInsertText(named)).toBe('小蓝')
-    expect(mentionInsertText(plain)).toBe('@图2')
+    expect(mentionInsertText(plain)).toBe('@图片2')
   })
 
-  it('退化无名的元素 chip(实体已删)与普通参考图同形,插 @图N', () => {
+  it('退化无名的元素 chip(实体已删)与普通参考图同形,插 @图片N', () => {
     const gone = { type: 'scene' as const, entityId: 404 }
     const [degraded] = videoRefMentions([vref('/api/assets/1/content', 'reference_image', gone)], [null])
-    expect(mentionInsertText(degraded)).toBe('@图1')
+    expect(mentionInsertText(degraded)).toBe('@图片1')
   })
 })
 

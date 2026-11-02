@@ -203,9 +203,10 @@ export function mergeVideoElementPick(
 }
 
 // ---- 绑定行(71 号票 B5)----
-// 「图N」的「图」字面与编号都来自 refmention(REF_INDEX_LABEL / refIndexNumbers):
-// 与 chip 角标、@ 浮层 token 是同一份实现,绑定行不再自带常量、也不再从
-// token 反解编号。
+// 「图片N」的「图片」字面与编号都来自 refmention(REF_INDEX_LABEL /
+// refIndexNumbers):与 chip 角标、@ 浮层 token 是同一份实现,绑定行不再自带
+// 常量、也不再从 token 反解编号(73 号票:「图N」→「图片N」换形走同一
+// 常量自动联动)。
 
 /** 绑定行行前缀(不用【】,避开厂商字幕渲染风险)。 */
 export const ELEMENT_LINE_PREFIX = '出场元素:'
@@ -217,12 +218,12 @@ export const ELEMENT_TYPE_LABELS: Record<ComposerElement['type'], string> = {
   prop: '道具',
 }
 
-/** 绑定行构建:`出场元素:小蓝@图1(角色)、阿红@图2(角色)、天台@图3(场景)`。
+/** 绑定行构建:`出场元素:小蓝@图片1(角色)、阿红@图片2(角色)、天台@图片3(场景)`。
  * 只有元素 chip 进行,且只进「可解析元素」(hasResolvedElement,71 号票 B2
  * 退化语义);无元素返回空串(无元素时发送行为逐字节不变)。编号 = 参考序,
  * 结构化取自 refmention.refIndexNumbers(图片模式按参考条全部条目序,视频
- * 模式只数 reference_image)—— 与 chip 角标、@图N 永远同一套实现,不再从
- * token 反解。 */
+ * 模式只数 reference_image)—— 与 chip 角标、@图片N 永远同一套实现,不再从
+ * token 反解(73 号票:指代换形「图片N」,对齐 Seedance 官方文档)。 */
 export function buildElementLine(
   refs: (ComposerRef | VideoComposerRef)[],
   names: readonly (string | null)[],

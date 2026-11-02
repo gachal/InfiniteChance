@@ -126,10 +126,15 @@ export interface StoryboardCut {
 /** 絵コンテ节点数据(53 号票,第七种节点类型「规划」组):板名 + cut
  * 列表随节点 data 存整图 JSON(预演台先例)。title 空 = 展示层回落
  * 「分镜」;cuts 可删到空 —— 板是画布工作件而非库实体,删节点只删
- * 图 JSON 里的节点,素材行不动。 */
+ * 图 JSON 里的节点,素材行不动。73 号票:brief 是可选的全片基调多行
+ * 三段文本(视觉基调 / 场景与空间坐标(站位、机位相对动作的方位、
+ * 同框纪律)/ 音效总纲(底/中/顶层)),随整图 JSON 走、零迁移,旧板
+ * 无该字段时拼装自动跳过(buildCutVideoPrompt/buildCutFramePrompt 的
+ * brief 缺省空串)。 */
 export interface StoryboardNodeData {
   title?: string
   cuts: StoryboardCut[]
+  brief?: string
 }
 
 /** ネーム单个格(54 号票,第八种节点类型「规划」组):画面持素材引用

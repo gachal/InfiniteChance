@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { StoryboardCut } from './graph'
 import {
   CAMERA_MOVE_OPTIONS,
+  QUALITY_TAIL,
   SHOT_SIZE_OPTIONS,
   appendCut,
   buildCutFramePrompt,
@@ -123,11 +124,12 @@ describe('setShotSize(67 号票)', () => {
   })
 })
 
-describe('buildCutVideoPrompt(67 号票)', () => {
+describe('buildCutVideoPrompt(67 号票;73 号票段序按官方公式重排)', () => {
   it('assembles note, shot, camera moves and lines into labeled sections', () => {
-    // 画面/台词/运镜/景别 → 视频提示词预填(票面定案 4:具体模板实现定);
-    // 有值的段落按 画面描述 → 景别 → 运镜 → 台词/音效 顺序拼装,画面描述
-    // (note,66 号票 save_storyboard 产物同字段)信息密度最高排最前。
+    // 画面/台词/运镜/景别 → 视频提示词预填(67 号票定案 4);73 号票段序
+    // 画面描述 → 景别 → 运镜 → 台词/音效 → 画质约束尾段,画面描述(note,
+    // 66 号票 save_storyboard 产物同字段)信息密度最高排基调段之后的首位,
+    // 尾段恒拼在最后。
     const full = buildCutVideoPrompt(
       cut({
         note: '雨夜巷口,林小满回头',
@@ -137,54 +139,118 @@ describe('buildCutVideoPrompt(67 号票)', () => {
       }),
     )
     expect(full).toBe(
-      '画面描述:雨夜巷口,林小满回头\n景别:中\n运镜:推、摇\n台词/音效:「你来了。」\n(雨声)',
+      `画面描述:雨夜巷口,林小满回头\n景别:中\n运镜:推、摇\n台词/音效:「你来了。」\n(雨声)\n${QUALITY_TAIL}`,
     )
   })
 
-  it('skips empty sections', () => {
-    expect(buildCutVideoPrompt(cut({ camera_moves: ['固定'] }))).toBe('运镜:固定')
-    expect(buildCutVideoPrompt(cut({ shot: '特写' }))).toBe('景别:特写')
-    expect(buildCutVideoPrompt(cut({ lines: '  雨夜巷口  ' }))).toBe('台词/音效:雨夜巷口')
+  it('skips empty sections but always appends the quality tail', () => {
+    expect(buildCutVideoPrompt(cut({ camera_moves: ['固定'] }))).toBe(`运镜:固定\n${QUALITY_TAIL}`)
+    expect(buildCutVideoPrompt(cut({ shot: '特写' }))).toBe(`景别:特写\n${QUALITY_TAIL}`)
+    expect(buildCutVideoPrompt(cut({ lines: '  雨夜巷口  ' }))).toBe(`台词/音效:雨夜巷口\n${QUALITY_TAIL}`)
   })
 
   it('emits the picture note alone as its own trimmed section', () => {
     // 只有备注(画面内容描述)也成立:trim 后成节,工具产物与人工 cut 同规。
-    expect(buildCutVideoPrompt(cut({ note: '  转场空镜  ' }))).toBe('画面描述:转场空镜')
+    expect(buildCutVideoPrompt(cut({ note: '  转场空镜  ' }))).toBe(`画面描述:转场空镜\n${QUALITY_TAIL}`)
   })
 
-  it('returns an empty string when the cut has no textual material', () => {
-    // 全空的 cut 拼出空串:对话框提示词留白,占位文案引导(纯文生视频)。
-    expect(buildCutVideoPrompt(emptyStoryboardCut())).toBe('')
+  it('answers the quality tail alone when the cut has no textual material', () => {
+    // 全空 cut 不再返回空串(73 号票定案 D.1/D.4 调整旧口径):尾段硬拼
+    // 无开关,输出至少含尾段一行 —— 对话框提示词以画质约束打底。
+    expect(buildCutVideoPrompt(emptyStoryboardCut())).toBe(QUALITY_TAIL)
   })
 })
 
 describe('buildCutFramePrompt(分镜画面直通生成)', () => {
   it('assembles note and shot for the image composer', () => {
-    // 画面描述(信息密度最高)排最前,景别作构图指引随后;图片提示词不拼
-    // 运镜/台词(那是视频语汇)。cut→画面直通与 cut→视频直通同族。
+    // 画面描述(信息密度最高)排基调段之后的首位,景别作构图指引随后,
+    // 尾段收尾;图片提示词不拼运镜/台词(那是视频语汇)。cut→画面直通与
+    // cut→视频直通同族。
     expect(
       buildCutFramePrompt(cut({ note: '雨夜巷口,林小满回头', shot: '中' })),
-    ).toBe('画面描述:雨夜巷口,林小满回头\n景别:中')
+    ).toBe(`画面描述:雨夜巷口,林小满回头\n景别:中\n${QUALITY_TAIL}`)
   })
 
-  it('skips empty sections and trims the note', () => {
-    expect(buildCutFramePrompt(cut({ shot: '特写' }))).toBe('景别:特写')
-    expect(buildCutFramePrompt(cut({ note: '  转场空镜  ' }))).toBe('画面描述:转场空镜')
+  it('skips empty sections, trims the note and keeps the tail', () => {
+    expect(buildCutFramePrompt(cut({ shot: '特写' }))).toBe(`景别:特写\n${QUALITY_TAIL}`)
+    expect(buildCutFramePrompt(cut({ note: '  转场空镜  ' }))).toBe(`画面描述:转场空镜\n${QUALITY_TAIL}`)
   })
 
-  it('returns an empty string when the cut has no textual material', () => {
-    // 全空 → 空串:对话框提示词留白,占位文案引导用户手写。
-    expect(buildCutFramePrompt(emptyStoryboardCut())).toBe('')
+  it('answers the quality tail alone when the cut has no textual material', () => {
+    // 全空 → 尾段一行(73 号票定案 D.5 生图直通同吃尾段)。
+    expect(buildCutFramePrompt(emptyStoryboardCut())).toBe(QUALITY_TAIL)
   })
 })
 
-describe('直通预填拼 IP 画面风格段(69 号票)', () => {
+describe('全片基调段与画质约束尾段(73 号票)', () => {
+  it('pins the quality tail to the verbatim constraint literal', () => {
+    // 尾段逐字钉死(半角逗号/分号;末句为无字幕/无 Logo/无水印官方约束词;
+    // 音乐与否交给 lines 的()段,尾段不写)。
+    expect(QUALITY_TAIL).toBe('高清,细节丰富,电影质感,色彩自然;保持无字幕,不要生成Logo和水印')
+  })
+
+  it('puts the brief segment between the style segment and the picture note', () => {
+    // 段序公式:画面风格 → 全片基调 → 画面描述 → 景别 → 运镜 → 台词/音效
+    // → 尾段;基调段标签半角冒号,brief trim 后文本前拼。
+    const brief = '东方神话高空都市。视觉基调:冷金撞青。场景与空间坐标:钟楼之巅,双线对峙。音效总纲:底层风声。'
+    expect(
+      buildCutVideoPrompt(
+        cut({ note: '雨夜巷口', shot: '近', camera_moves: ['推'], lines: '「你来了。」' }),
+        brief,
+        '赛博朋克霓虹,高对比冷暖撞色',
+      ),
+    ).toBe(
+      '画面风格:赛博朋克霓虹,高对比冷暖撞色\n'
+      + `全片基调:${brief}\n`
+      + '画面描述:雨夜巷口\n景别:近\n运镜:推\n台词/音效:「你来了。」\n'
+      + QUALITY_TAIL,
+    )
+  })
+
+  it('keeps the multi-line brief verbatim inside its segment', () => {
+    // brief 多行原样:只有首尾 trim,段内换行不折叠(基调三段各自成行)。
+    const brief = '视觉基调:水墨晕染,留白。\n场景与空间坐标:江南雨巷,小满居左,镜头右侧让位。\n音效总纲:底层雨声,中层足音。'
+    expect(buildCutVideoPrompt(cut({ note: '雨夜巷口' }), brief)).toBe(
+      `全片基调:${brief}\n画面描述:雨夜巷口\n${QUALITY_TAIL}`,
+    )
+  })
+
+  it('always assembles the brief regardless of style; whitespace-only brief is skipped', () => {
+    // brief 非空恒拼、不受 composer「带 IP 风格」开关管(开关只管 ips.style
+    // 段,brief 是 cut 板数据本身);空白 brief 与旧板缺省一样跳过该段。
+    const c = cut({ note: '雨夜巷口' })
+    expect(buildCutVideoPrompt(c, '基调文本')).toBe(`全片基调:基调文本\n画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+    expect(buildCutFramePrompt(c, '基调文本', '')).toBe(`全片基调:基调文本\n画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+    expect(buildCutVideoPrompt(c, '   \n  ')).toBe(`画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+    expect(buildCutFramePrompt(c, '', '水墨')).toBe(`画面风格:水墨\n画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+  })
+
+  it('answers style segment + tail for an empty cut with brief absent', () => {
+    // 全空 cut:无风格 = 仅尾段一行;有风格 = 风格段 + 尾段(73 号票口径)。
+    expect(buildCutVideoPrompt(emptyStoryboardCut())).toBe(QUALITY_TAIL)
+    expect(buildCutFramePrompt(emptyStoryboardCut(), '', '赛博朋克霓虹,高对比冷暖撞色')).toBe(
+      '画面风格:赛博朋克霓虹,高对比冷暖撞色\n' + QUALITY_TAIL,
+    )
+  })
+
+  it('mirrors the frame prompt section order with the video prompt', () => {
+    // 生图直通同吃(73 号票定案 D.5):画面风格 → 全片基调 → 画面描述 →
+    // 景别 → 尾段,两直通口径一致(只少运镜/台词两段)。
+    const brief = '视觉基调:冷金撞青。\n音效总纲:底层风声。'
+    const c = cut({ note: '钟楼之巅,双线对峙', shot: '远' })
+    expect(buildCutFramePrompt(c, brief, '水墨')).toBe(
+      `画面风格:水墨\n全片基调:${brief}\n画面描述:钟楼之巅,双线对峙\n景别:远\n${QUALITY_TAIL}`,
+    )
+  })
+})
+
+describe('直通预填拼 IP 画面风格段(69 号票;73 号票标记换形)', () => {
   const style = '赛博朋克霓虹,高对比冷暖撞色'
 
   it('prefixes the cut frame prompt with the style segment', () => {
     // 风格段放 prompt 前部、逐字来自 ips.style,随提交落任务行可审计。
-    expect(buildCutFramePrompt(cut({ note: '雨夜巷口,林小满回头', shot: '中' }), style)).toBe(
-      '【画面风格】赛博朋克霓虹,高对比冷暖撞色\n画面描述:雨夜巷口,林小满回头\n景别:中',
+    expect(buildCutFramePrompt(cut({ note: '雨夜巷口,林小满回头', shot: '中' }), '', style)).toBe(
+      `画面风格:赛博朋克霓虹,高对比冷暖撞色\n画面描述:雨夜巷口,林小满回头\n景别:中\n${QUALITY_TAIL}`,
     )
   })
 
@@ -192,22 +258,30 @@ describe('直通预填拼 IP 画面风格段(69 号票)', () => {
     expect(
       buildCutVideoPrompt(
         cut({ note: '雨夜巷口', shot: '近', camera_moves: ['推'], lines: '「你来了。」' }),
+        '',
         style,
       ),
-    ).toBe('【画面风格】赛博朋克霓虹,高对比冷暖撞色\n画面描述:雨夜巷口\n景别:近\n运镜:推\n台词/音效:「你来了。」')
+    ).toBe(
+      `画面风格:赛博朋克霓虹,高对比冷暖撞色\n画面描述:雨夜巷口\n景别:近\n运镜:推\n台词/音效:「你来了。」\n${QUALITY_TAIL}`,
+    )
   })
 
-  it('keeps the style on an empty cut so the user writes after it', () => {
-    expect(buildCutFramePrompt(emptyStoryboardCut(), style)).toBe('【画面风格】赛博朋克霓虹,高对比冷暖撞色')
-    expect(buildCutVideoPrompt(emptyStoryboardCut(), style)).toBe('【画面风格】赛博朋克霓虹,高对比冷暖撞色')
+  it('keeps the style on an empty cut (now with the mandatory tail)', () => {
+    // 73 号票后全空 cut = 风格段 + 尾段两行(旧口径只答风格段)。
+    expect(buildCutFramePrompt(emptyStoryboardCut(), '', style)).toBe(
+      '画面风格:赛博朋克霓虹,高对比冷暖撞色\n' + QUALITY_TAIL,
+    )
+    expect(buildCutVideoPrompt(emptyStoryboardCut(), '', style)).toBe(
+      '画面风格:赛博朋克霓虹,高对比冷暖撞色\n' + QUALITY_TAIL,
+    )
   })
 
   it('leaves both prompts byte-identical when the IP has no style', () => {
-    // 无风格 = 不拼不显示:与 69 号票之前的预填逐字节一致。
+    // 无风格 = 不拼风格段(尾段照旧恒拼):与 69 号票换形前仅差风格标记。
     const c = cut({ note: '转场空镜', shot: '远', camera_moves: ['摇'] })
-    expect(buildCutFramePrompt(c, '')).toBe(buildCutFramePrompt(c))
-    expect(buildCutVideoPrompt(c, '   ')).toBe(buildCutVideoPrompt(c))
-    expect(buildCutFramePrompt(c, '')).toBe('画面描述:转场空镜\n景别:远')
+    expect(buildCutFramePrompt(c, '', '')).toBe(buildCutFramePrompt(c))
+    expect(buildCutVideoPrompt(c, '', '   ')).toBe(buildCutVideoPrompt(c))
+    expect(buildCutFramePrompt(c)).toBe(`画面描述:转场空镜\n景别:远\n${QUALITY_TAIL}`)
   })
 })
 

@@ -732,7 +732,7 @@ function onFileChange(e: Event): void {
               @error="thumbs.onThumbError(c.url)"
             >
             <!-- 71 号票 B6:元素条目显示名称 + 类型(选中插纯名字),无名图
-                 维持 @图N。 -->
+                 维持 @图片N。 -->
             <span class="mention-token">{{ c.elementName ?? c.token }}</span>
             <span
               v-if="c.elementType"

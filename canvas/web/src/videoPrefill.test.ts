@@ -122,9 +122,9 @@ describe('角色卡「生成登场视频」预填(71 号票 D1)', () => {
     expect(prefill.notice).toBe('')
   })
 
-  it('IP 已定画面风格:风格段拼最前(69 号票直通先例)', () => {
+  it('IP 已定画面风格:风格段拼最前(69 号票直通先例,73 号票标记换形)', () => {
     const prefill = buildEntrancePrefill(blue, blue.variants[0], '水墨')
-    expect(prefill.prompt).toBe(`【画面风格】水墨\n${ENTRANCE_BLUE}`)
+    expect(prefill.prompt).toBe(`画面风格:水墨\n${ENTRANCE_BLUE}`)
   })
 
   it('与 cut 注入同一取图规则:默认变体两路取到同一张图、同一元素', () => {

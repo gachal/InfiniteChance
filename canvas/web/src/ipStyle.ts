@@ -1,6 +1,6 @@
 /**
  * IP 画面风格段(69 号票):企划级一句话风格定位(ips.style)在生成路径上的
- * 统一拼装。形状与服务端 canvas.StyleSegment 一致 ——「【画面风格】」+ trim
+ * 统一拼装。形状与服务端 canvas.StyleSegment 一致 ——「画面风格:」+ trim
  * 后的风格文本,两侧各有字面量测试钉住;风格段放 prompt 前部,随提交落任务
  * 行可审计(生成记录面板可查)。
  *
@@ -8,10 +8,16 @@
  * (storyboard.buildCutVideoPrompt)、composer「带 IP 风格」开关的发送拼装;
  * 70 号票角色设定图预填复用同一对纯函数。Agent 聊天注入不走这里(52 号票
  * 规则不动)。
+ *
+ * 73 号票:段标记由「【画面风格】」换形为「画面风格:」(半角冒号)——
+ * 官方 Seedance 提示词指南把 `【】` 定为字幕标记,旧形态可能把「画面风格」
+ * 四字渲染成字幕;与服务端 canvas.StyleSegment 同步换形,69 号票口径随之
+ * 修订(段判定/不叠段检查走本常量,自动换形)。
  */
 
-/** 风格段固定标记(与服务端 canvas.StyleSegment 同形)。 */
-export const STYLE_SEGMENT_MARK = '【画面风格】'
+/** 风格段固定标记(与服务端 canvas.StyleSegment 同形;73 号票换形躲开
+ * 官方 `【】` 字幕标记语义)。 */
+export const STYLE_SEGMENT_MARK = '画面风格:'
 
 /** IP 画面风格 → 风格段;未定(空/全空白/缺省)= 空串,调用方据此不拼不
  * 显示 —— 存量行为逐字节不变。 */
