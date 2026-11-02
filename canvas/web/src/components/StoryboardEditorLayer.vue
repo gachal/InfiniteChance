@@ -9,6 +9,8 @@
 // AgentNode 角色 chip 同范式;只存引用不存快照,目录刷新即变)+ 一行
 // 备注 + 生成视频/上移/下移/删除;底部「+ cut」。cut 可删到空(板是画布
 // 工作件非库实体);排序用按钮不做拖拽(40 号票编辑层手势冲突教训)。
+// 73 号票:cut 列表之前加板级「全片基调」多行文本域(brief,三段写法
+// 视觉基调/场景与空间坐标/音效总纲),随 scene-change 整包落盘。
 // Esc/返回按钮双路等价,Esc 刻意走元素级(层上可再开编辑器级灯箱,两层
 // 同听 window 会一次全关)。素材挑选面板(AssetPicker)挂在层右缘:点选
 // 即设为本 cut 画面,再点取消。
@@ -44,8 +46,9 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** cut/板名整包变更,编辑器 updateNodeData 落盘(数组换新)。 */
-  'scene-change': [patch: { title: string; cuts: StoryboardCut[] }]
+  /** cut/板名/全片基调整包变更,编辑器 updateNodeData 落盘(数组换新;
+   * brief 同包替换,73 号票)。 */
+  'scene-change': [patch: { title: string; cuts: StoryboardCut[]; brief?: string }]
   /** 画面槽本机上传:编辑器入库后按素材 id 回填本 cut。 */
   upload: [cutIndex: number, file: File]
   /** 落图节点:cut 画面落为图片节点并连线(编辑器处理)。 */
@@ -61,12 +64,24 @@ const emit = defineEmits<{
   close: []
 }>()
 
-/** cut 数据统一出口:整包上抛(数组换新,纯函数纪律),由编辑器落盘。 */
-function emitScene(patch: Partial<{ title: string; cuts: StoryboardCut[] }> = {}): void {
+/** cut 数据统一出口:整包上抛(数组换新,纯函数纪律),由编辑器落盘。
+ * brief 默认带 props.data.brief(73 号票全片基调;旧板无字段时缺省空串,
+ * 编辑过一次即落键)。 */
+function emitScene(
+  patch: Partial<{ title: string; cuts: StoryboardCut[]; brief: string }> = {},
+): void {
   emit('scene-change', {
     title: patch.title ?? props.data.title ?? '',
     cuts: patch.cuts ?? props.data.cuts,
+    brief: patch.brief ?? props.data.brief ?? '',
   })
+}
+
+/** 全片基调多行编辑(73 号票定案 B):层顶部文本域,随 scene-change 整包
+ * 落盘;brief 非空时直通拼装恒拼「全片基调:」段(不受「带 IP 风格」
+ * 开关管)。 */
+function onBriefInput(value: string): void {
+  emitScene({ brief: value })
 }
 
 function patchCut(index: number, patch: Partial<StoryboardCut>): void {
@@ -268,6 +283,21 @@ onBeforeUnmount(() => {
 
       <div class="body">
         <div class="cuts">
+          <!-- 全片基调(73 号票,板级):多行三段写法 —— 视觉基调(场景
+               氛围/色彩光源)/ 场景与空间坐标(地点、各主体站位、机位
+               相对动作的方位、同框纪律)/ 音效总纲(底/中/顶层分层);
+               brief 非空时 cut→视频/图片直通在画面风格段之后恒拼
+               「全片基调:」段,不受「带 IP 风格」开关管。 -->
+          <label class="field brief">
+            <span>全片基调</span>
+            <textarea
+              :value="data.brief ?? ''"
+              rows="4"
+              placeholder="全片基调(可选,多行三段):①视觉基调——氛围、色彩光源;②场景与空间坐标——地点布局、各主体站位、机位相对动作的方位、同框纪律;③音效总纲——底层/中层/顶层分层"
+              @input="onBriefInput(($event.target as HTMLTextAreaElement).value)"
+            />
+          </label>
+
           <p
             v-if="data.cuts.length === 0"
             class="empty"
