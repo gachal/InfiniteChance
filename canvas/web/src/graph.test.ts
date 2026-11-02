@@ -33,6 +33,9 @@ describe('normalizeNodeType', () => {
     expect(normalizeNodeType('name')).toBe('name')
     // 55 号票:关卡是第九种类型(规划组),原样通过。
     expect(normalizeNodeType('level')).toBe('level')
+    // 72 号票:分组是第十三种类型(组织装饰),原样通过 —— 注册表未
+    // 登记时这里会被吞成 agent,存量组节点一重新加载即面目全非。
+    expect(normalizeNodeType('group')).toBe('group')
   })
 
   it('falls back to agent for unknown types', () => {
@@ -207,5 +210,25 @@ describe('script 节点类型(64 号票)', () => {
     expect(NODE_TYPE_LABEL.script).toBe('剧本')
     // 新节点是空文本载体:title 空(展示层回落)、text 空(编辑层全文编辑)。
     expect(initialData('script')).toEqual({ title: '', text: '' })
+  })
+})
+
+describe('group 节点类型(72 号票)', () => {
+  it('registers the thirteenth type with label and initial data', () => {
+    // 第十三种节点类型:组织装饰,非内容节点。成员关系单源存组侧
+    // (memberIds),新组缺省标题「分组」、色板第一色、空成员、无用户
+    // 尺寸(w/h 只在用户画框/resize 时写入)。
+    expect(isCanvasNodeType('group')).toBe(true)
+    expect(normalizeNodeType('group')).toBe('group')
+    expect(NODE_TYPE_LABEL.group).toBe('分组')
+    expect(initialData('group')).toEqual({ title: '分组', color: 'sky', memberIds: [] })
+    expect('w' in (initialData('group') as Record<string, unknown>)).toBe(false)
+    expect('h' in (initialData('group') as Record<string, unknown>)).toBe(false)
+  })
+
+  it('still falls back to agent for unknown types (回归)', () => {
+    // 登记了 group 之后,未知类型照旧回落 agent(文本生产者是万能落点)。
+    expect(normalizeNodeType('mystery')).toBe('agent')
+    expect(normalizeNodeType(undefined)).toBe('agent')
   })
 })

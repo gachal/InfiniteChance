@@ -16,6 +16,10 @@ import { defaultName } from './name'
 import { defaultStoryboard } from './storyboard'
 import { defaultLevel } from './level'
 import { defaultScript } from './script'
+// 72 号票:分组节点的缺省数据工厂在 canvasGroup(归属判定/尺寸合并的
+// 纯函数同住);本模块对 canvasGroup 只剩这一个运行时引用,反向是类型
+// 引用(编译期擦除),无运行时环。
+import { defaultGroupData } from './canvasGroup'
 
 // 对话轮次的线类型与服务端契约共用一份定义(packages/api),此处再导出
 // 供节点组件与编辑器引用。
@@ -227,6 +231,21 @@ export interface ScriptNodeData {
   text: string
 }
 
+/** 分组节点数据(72 号票,第十三种节点类型,组织装饰非内容节点):
+ * title + color(色板 token 名,渲染层映射 rgba 透明色)+ memberIds
+ * (成员关系单源存组侧,成员节点 data 零改动)+ w/h 用户设定尺寸
+ * (框实际尺寸 = max(用户尺寸, 成员包围盒 + 24px 内边距),用户尺寸
+ * 是「装饰尺寸不入库」惯例的显式例外,随 data 入库)。所有坐标绝对
+ * (节点 position 语义零变化);组不作任何连线端点、不吸纳组、不嵌套;
+ * 归属判定与尺寸合并的纯函数在 canvasGroup.ts。 */
+export interface GroupNodeData {
+  title: string
+  color: string
+  memberIds: string[]
+  w?: number
+  h?: number
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
@@ -239,6 +258,7 @@ export type CanvasNodeData =
   | VoiceNodeData
   | AudioNodeData
   | ScriptNodeData
+  | GroupNodeData
 
 export type CanvasNodeType =
   | 'agent'
@@ -253,6 +273,7 @@ export type CanvasNodeType =
   | 'voice'
   | 'audio'
   | 'script'
+  | 'group'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -267,7 +288,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'level' ||
     value === 'voice' ||
     value === 'audio' ||
-    value === 'script'
+    value === 'script' ||
+    value === 'group'
   )
 }
 
@@ -316,6 +338,11 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
   if (type === 'script') {
     return defaultScript()
   }
+  if (type === 'group') {
+    // 72 号票:缺省标题「分组」、色板第一色、空成员;尺寸 w/h 不落
+    // (用户画框/落点计算时才写入,空组按最小占位渲染)。
+    return defaultGroupData()
+  }
   return { url: '', note: '' }
 }
 
@@ -332,6 +359,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   voice: '音色',
   audio: '音频',
   script: '剧本',
+  group: '分组',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出
