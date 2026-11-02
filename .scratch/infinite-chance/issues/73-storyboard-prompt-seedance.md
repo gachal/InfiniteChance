@@ -1,7 +1,7 @@
 # 73 分镜提示词对齐 Seedance 2.0(storyboard prompt alignment)(2026-11-02 grilling 定案)
 
 Type: feat
-Status: grilled(2026-11-02 grill-with-docs 定案,两轮 Q1–Q13;待实现)。**口径注记**:①cut 字段零扩(参考图元素全靠写作纪律装进 note/lines,拼装照旧整段透传);②小节秒数参照照进 prompt 文本——用户拍板推翻官方「精确时间不稳不建议写」的告诫,以参考图实测打法为准;③「默认基调 = IP 风格」走纪律承接落法(双段并存,brief 视觉基调小节以 ips.style 为基底下笔),不动 69/70 号票已实现的段语义。
+Status: implemented(2026-11-02 定案当日 implement-spec 落 feat/73-storyboard-prompt-seedance;真渠道点验/浏览器点验遗留)。**口径注记**:①cut 字段零扩(参考图元素全靠写作纪律装进 note/lines,拼装照旧整段透传);②小节秒数参照照进 prompt 文本——用户拍板推翻官方「精确时间不稳不建议写」的告诫,以参考图实测打法为准;③「默认基调 = IP 风格」走纪律承接落法(双段并存,brief 视觉基调小节以 ips.style 为基底下笔),不动 69/70 号票已实现的段语义。
 
 ## Question
 
