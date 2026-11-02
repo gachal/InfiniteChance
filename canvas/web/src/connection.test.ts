@@ -135,11 +135,11 @@ describe('voice → audio(57 号票)', () => {
     expect(canConnect('voice', 'character')).toBe(false)
   })
 
-  it('keeps the matrix total over the twelve node types', () => {
-    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):12 种节点各有条目
-    // (64 号票起 script 入册)。
+  it('keeps the matrix total over the thirteen node types', () => {
+    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):13 种节点各有条目
+    // (64 号票起 script 入册,72 号票起 group 入册)。
     expect(Object.keys(EDGE_MATRIX).sort()).toEqual(
-      ['agent', 'analysis', 'audio', 'character', 'image', 'level', 'name', 'previz', 'script', 'storyboard', 'video', 'voice'].sort(),
+      ['agent', 'analysis', 'audio', 'character', 'group', 'image', 'level', 'name', 'previz', 'script', 'storyboard', 'video', 'voice'].sort(),
     )
   })
 })
@@ -157,6 +157,21 @@ describe('script 节点连线(64 号票)', () => {
     expect(canConnect('image', 'script')).toBe(false)
     for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
       expect(EDGE_MATRIX[source]).not.toContain('script')
+    }
+  })
+})
+
+describe('group 节点连线(72 号票)', () => {
+  it('keeps the group node out of the edge matrix entirely', () => {
+    // 分组 = 组织装饰容器:不作任何连线的源与目标(组件不渲染把手)。
+    // Record 全键类型缺键即编译失败,此处钉运行时形状。
+    expect(EDGE_MATRIX.group).toEqual([])
+    expect(canConnect('group', 'image')).toBe(false)
+    expect(canConnect('group', 'group')).toBe(false)
+    expect(canConnect('agent', 'group')).toBe(false)
+    expect(canConnect('image', 'group')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('group')
     }
   })
 })
