@@ -26,11 +26,14 @@ const DefaultIPName = "默认 IP"
 const MaxIPStyleRunes = 500
 
 // styleSegmentMark 是风格段的固定标记(69 号票):随提交落任务行/系统提示
-// 词,审计时按它即可认出注入面。
-const styleSegmentMark = "【画面风格】"
+// 词,审计时按它即可认出注入面。73 号票把原「【画面风格】」换形为
+// 「画面风格:」(半角冒号,与前端 storyboard 段标签族一致)——官方
+// Seedance 提示词指南里 `【】` 是字幕标记,「画面风格」四字可能被渲染成
+// 字幕,换形躲开。
+const styleSegmentMark = "画面风格:"
 
 // StyleSegment renders the IP style as the fixed-marker segment the
-// generation paths prepend(69 号票):「【画面风格】」+ trim 后的风格文本;
+// generation paths prepend(69 号票):「画面风格:」+ trim 后的风格文本;
 // 未定(空/全空白)答空串 —— 调用方据此不拼不显示,存量行为不变。服务端
 // 消费方:Agent 工具循环系统提示词(本票)、角色设定图 prompt 拼装(70 号
 // 票可复用)。前端同形实现在 canvas/web/src/ipStyle.ts styleSegment,两

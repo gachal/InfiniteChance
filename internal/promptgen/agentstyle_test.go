@@ -79,11 +79,11 @@ func systemContent(t *testing.T, relay *fakeRelay, n int) string {
 	return content
 }
 
-// endsWithStyleSegment 判定系统提示词是否以「【画面风格】…」段收尾
-// (导演纪律正文里也会提到该标记,只看末段)。
+// endsWithStyleSegment 判定系统提示词是否以「画面风格:…」段收尾(73 号票
+// 换形;导演纪律正文里也会提到该标记,只看末段)。
 func endsWithStyleSegment(content string) bool {
 	tail := content[strings.LastIndex(content, "\n")+1:]
-	return strings.HasPrefix(tail, "【画面风格】")
+	return strings.HasPrefix(tail, "画面风格:")
 }
 
 // 注入按请求读表、无缓存:同一画布两次请求之间 IP 风格被改(IP 编辑对话框
@@ -124,7 +124,7 @@ func TestAgentStreamInjectsIPStylePerRequest(t *testing.T) {
 		t.Fatalf("second stream = %s", raw)
 	}
 	styled := systemContent(t, relay, 1)
-	if styled != unstyled+"\n\n【画面风格】赛博朋克霓虹,高对比冷暖撞色" {
+	if styled != unstyled+"\n\n画面风格:赛博朋克霓虹,高对比冷暖撞色" {
 		t.Fatalf("styled system prompt = %q\nwant the unstyled prompt + the style segment suffix", styled)
 	}
 }
@@ -267,7 +267,7 @@ func TestAgentStreamStyleProposeConfirmFollowChain(t *testing.T) {
 		t.Fatalf("third stream = %s", raw3)
 	}
 	third := relay.count() - 1
-	if !strings.HasSuffix(systemContent(t, relay, third), "\n\n【画面风格】赛博朋克霓虹,高对比冷暖撞色") {
+	if !strings.HasSuffix(systemContent(t, relay, third), "\n\n画面风格:赛博朋克霓虹,高对比冷暖撞色") {
 		t.Fatalf("follow-up system prompt = %q, want the set style injected", systemContent(t, relay, third))
 	}
 	msgs, _ := relay.request(third).Body["messages"].([]any)

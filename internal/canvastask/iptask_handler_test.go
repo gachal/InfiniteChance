@@ -110,9 +110,10 @@ func TestIPCreateAssemblesPromptAndLandsCanvasFreeTask(t *testing.T) {
 	if got.Kind != canvastask.KindImage {
 		t.Fatalf("kind = %q, want image(IP 端点仅 image)", got.Kind)
 	}
-	// 拼装落行可审计:风格段(该 IP 定了水彩淡彩)+ 模板 + 四件套 + 变体。
+	// 拼装落行可审计:风格段(该 IP 定了水彩淡彩,73 号票换形)+ 模板 +
+	// 四件套 + 变体。
 	for _, want := range []string{
-		"【画面风格】水彩淡彩\n",
+		"画面风格:水彩淡彩\n",
 		"角色设定图·三视图:",
 		"角色:林小满",
 		"造型:冬季制服",

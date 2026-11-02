@@ -58,9 +58,9 @@ func TestBuildSheetPromptAssembly(t *testing.T) {
 		t.Fatalf("BuildSheetPrompt =\n%q\nwant\n%q", got, want)
 	}
 
-	// 有风格:风格段拼在最前、单独成行(69 号票注入面同形)。
+	// 有风格:风格段拼在最前、单独成行(69 号票注入面同形,73 号票换形)。
 	withStyle := BuildSheetPrompt(SheetTypeTurnaround, f, " 赛博朋克冷色调 ")
-	if !strings.HasPrefix(withStyle, "【画面风格】赛博朋克冷色调\n"+want) {
+	if !strings.HasPrefix(withStyle, "画面风格:赛博朋克冷色调\n"+want) {
 		t.Fatalf("style segment must lead the prompt, got %q", withStyle)
 	}
 
