@@ -32,7 +32,7 @@ const media = (id: number, kind: PendingAgentMedia['kind'], state: PendingAgentM
 describe('composerRefMentions', () => {
   it('图片模式:参考条全部条目按序编号', () => {
     const out = composerRefMentions([ref('a'), ref('b'), ref('c')])
-    expect(out.map((c) => c.token)).toEqual(['@图1', '@图2', '@图3'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1', '@图片2', '@图片3'])
     expect(out.every((c) => c.kind === 'image')).toBe(true)
     expect(out.map((c) => c.url)).toEqual(['a', 'b', 'c'])
   })
@@ -52,7 +52,7 @@ describe('videoRefMentions', () => {
       vref('clip', 'reference_video', 'video'),
       vref('voice', 'reference_audio', 'audio'),
     ])
-    expect(out.map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1', '@图片2'])
     expect(out.map((c) => c.url)).toEqual(['r1', 'r2'])
     expect(out.every((c) => c.kind === 'image' && c.roleLabel === '参考图')).toBe(true)
   })
@@ -62,7 +62,7 @@ describe('videoRefMentions', () => {
       vref('first', 'first_frame'),
       vref('only', 'reference_image'),
     ])
-    expect(out.map((c) => c.token)).toEqual(['@图1'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1'])
   })
 })
 
@@ -73,7 +73,7 @@ describe('agentAttachmentMentions', () => {
       media(2, 'video', 'ready', 'v1'),
       media(3, 'image', 'ready', 'a2'),
     ])
-    expect(out.map((c) => c.token)).toEqual(['@图1', '@视频1', '@图2'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1', '@视频1', '@图片2'])
     expect(out.map((c) => c.kind)).toEqual(['image', 'video', 'image'])
   })
 
@@ -83,7 +83,7 @@ describe('agentAttachmentMentions', () => {
       media(2, 'image', 'failed'),
       media(3, 'image', 'ready', 'a1'),
     ])
-    expect(out.map((c) => c.token)).toEqual(['@图1'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1'])
   })
 })
 
@@ -129,13 +129,13 @@ describe('mentionTriggerIndex', () => {
   it('光标前一字符是 @ 时返回其下标', () => {
     expect(mentionTriggerIndex('@', 1)).toBe(0)
     expect(mentionTriggerIndex('画一只@', 4)).toBe(3)
-    expect(mentionTriggerIndex('前文@图1 后面', 3)).toBe(2)
+    expect(mentionTriggerIndex('前文@图片1 后面', 3)).toBe(2)
   })
 
   it('其余情况返回 -1(行首、前字符不是 @、caret 越界)', () => {
     expect(mentionTriggerIndex('abc', 0)).toBe(-1)
     expect(mentionTriggerIndex('abc', 3)).toBe(-1)
-    expect(mentionTriggerIndex('@图1', 4)).toBe(-1)
+    expect(mentionTriggerIndex('@图片1', 4)).toBe(-1)
   })
 })
 
@@ -158,7 +158,7 @@ describe('元素 chip 的浮层显示字段(71 号票 B6)', () => {
     expect(out[1].elementType).toBeUndefined()
     expect(out[2].elementName).toBe('天台')
     expect(out[2].elementType).toBe('scene')
-    expect(out.map((c) => c.token)).toEqual(['@图1', '@图2', '@图3'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1', '@图片2', '@图片3'])
     expect(out.map((c) => c.url)).toEqual(['a', 'b', 'c'])
   })
 
@@ -172,7 +172,7 @@ describe('元素 chip 的浮层显示字段(71 号票 B6)', () => {
   it('不传 names(既有调用方)行为不变:只多出元素类型也无,纯可选字段', () => {
     const refs: ComposerRef[] = [{ url: 'a', element: el('character', 1, 2) }]
     const out = composerRefMentions(refs)
-    expect(out).toEqual([{ token: '@图1', kind: 'image', url: 'a' }])
+    expect(out).toEqual([{ token: '@图片1', kind: 'image', url: 'a' }])
   })
 
   it('视频模式:参考图角色元素同样带名称与类型,roleLabel 不受影响', () => {
@@ -183,7 +183,7 @@ describe('元素 chip 的浮层显示字段(71 号票 B6)', () => {
     ]
     const out = videoRefMentions(refs, [null, '小蓝', '天台'])
     // 首帧不占号不进浮层;names 按条目下标对位:r1 对「小蓝」、r2 对「天台」。
-    expect(out.map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(out.map((c) => c.token)).toEqual(['@图片1', '@图片2'])
     expect(out[0].elementName).toBe('小蓝')
     expect(out[0].elementType).toBe('character')
     expect(out[1].elementName).toBe('天台')
@@ -196,22 +196,23 @@ describe('元素 chip 的浮层显示字段(71 号票 B6)', () => {
 
 describe('insertMentionToken', () => {
   it('把触发字符替换为 token,光标落在 token 之后', () => {
-    expect(insertMentionToken('画一只@', 3, '@图2')).toEqual({ text: '画一只@图2', cursor: 6 })
+    // 「图片N」比旧「图N」多一字(73 号票),cursor = 触发位 + token 长度。
+    expect(insertMentionToken('画一只@', 3, '@图片2')).toEqual({ text: '画一只@图片2', cursor: 7 })
   })
 
   it('正文中段插入时保留 @ 后的原文', () => {
-    expect(insertMentionToken('用@的风格画山', 1, '@图3')).toEqual({
-      text: '用@图3的风格画山',
-      cursor: 4,
+    expect(insertMentionToken('用@的风格画山', 1, '@图片3')).toEqual({
+      text: '用@图片3的风格画山',
+      cursor: 5,
     })
   })
 
   it('同一参考可重复引用', () => {
-    const once = insertMentionToken('@', 0, '@图1')
-    expect(once.text).toBe('@图1')
+    const once = insertMentionToken('@', 0, '@图片1')
+    expect(once.text).toBe('@图片1')
     const base = `${once.text} 再来一次@`
-    const twice = insertMentionToken(base, mentionTriggerIndex(base, base.length), '@图1')
-    expect(twice.text).toBe('@图1 再来一次@图1')
+    const twice = insertMentionToken(base, mentionTriggerIndex(base, base.length), '@图片1')
+    expect(twice.text).toBe('@图片1 再来一次@图片1')
   })
 })
 

@@ -125,7 +125,7 @@ export function hasFrameReferenceConflict(refs: readonly VideoComposerRef[]): bo
 
 /** @ 浮层选中后插进提示词的文本(71 号票 B6):有名元素插纯名字 —— 不带
  * @、不随参考序移位,名字与图的对应由发送时的绑定行承担;无名图(含实体
- * 已删退化的元素 chip)维持 59 号票的 @图N。 */
+ * 已删退化的元素 chip)维持 59 号票的 @图片N。 */
 export function mentionInsertText(c: MentionCandidate): string {
   return c.elementName ?? c.token
 }

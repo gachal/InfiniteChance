@@ -310,7 +310,7 @@ describe('buildElementLine', () => {
     const names = resolveElementNames(refs, catalog)
     expect(names).toEqual(['小蓝', null, '阿红', '天台'])
     expect(buildElementLine(refs, names, 'image')).toBe(
-      '出场元素:小蓝@图1(角色)、阿红@图3(角色)、天台@图4(场景)',
+      '出场元素:小蓝@图片1(角色)、阿红@图片3(角色)、天台@图片4(场景)',
     )
   })
 
@@ -325,7 +325,7 @@ describe('buildElementLine', () => {
     ]
     const names = resolveElementNames(refs, catalog)
     expect(buildElementLine(refs, names, 'video')).toBe(
-      '出场元素:小蓝@图1(角色)、天台@图2(场景)、长剑@图3(道具)',
+      '出场元素:小蓝@图片1(角色)、天台@图片2(场景)、长剑@图片3(道具)',
     )
   })
 
@@ -337,7 +337,7 @@ describe('buildElementLine', () => {
     ]
     const names = resolveElementNames(refs, catalog)
     expect(names).toEqual([null, '小蓝', null])
-    expect(buildElementLine(refs, names, 'image')).toBe('出场元素:小蓝@图2(角色)')
+    expect(buildElementLine(refs, names, 'image')).toBe('出场元素:小蓝@图片2(角色)')
   })
 
   it('无元素 / 全部退化无名 = 空串(行为逐字节不变)', () => {
@@ -358,21 +358,22 @@ describe('buildElementLine', () => {
     const names = resolveElementNames(refs, catalog)
     expect(names).toEqual([null, '小蓝·战斗服', '小蓝·默认'])
     expect(buildElementLine(refs, names, 'image')).toBe(
-      '出场元素:小蓝·战斗服@图2(角色)、小蓝·默认@图3(角色)',
+      '出场元素:小蓝·战斗服@图片2(角色)、小蓝·默认@图片3(角色)',
     )
   })
 
   it('编号与 @浮层 token 同一字面(漂移钉:refmention 常量或编号实现改任一侧测试即破)', () => {
-    expect(REF_INDEX_LABEL).toBe('图')
+    // 73 号票定案 D.3:「图N」换形「图片N」,对齐 Seedance 官方文档指代。
+    expect(REF_INDEX_LABEL).toBe('图片')
     const imgStrip: ComposerRef[] = [{ url: 'a' }, { url: 'b' }]
-    expect(composerRefMentions(imgStrip).map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(composerRefMentions(imgStrip).map((c) => c.token)).toEqual(['@图片1', '@图片2'])
     expect(refIndexNumbers(imgStrip, 'image')).toEqual([1, 2])
     const vstrip: VideoComposerRef[] = [
       { url: 'f', kind: 'image', role: 'first_frame' },
       { url: 'r1', kind: 'image', role: 'reference_image' },
       { url: 'r2', kind: 'image', role: 'reference_image' },
     ]
-    expect(videoRefMentions(vstrip).map((c) => c.token)).toEqual(['@图1', '@图2'])
+    expect(videoRefMentions(vstrip).map((c) => c.token)).toEqual(['@图片1', '@图片2'])
     expect(refIndexNumbers(vstrip, 'video')).toEqual([null, 1, 2])
   })
 
@@ -387,7 +388,7 @@ describe('buildElementLine', () => {
 // ---- 发送拼装插入(71 号票 B5)----
 
 describe('insertElementLine', () => {
-  const line = '出场元素:小蓝@图1(角色)'
+  const line = '出场元素:小蓝@图片1(角色)'
 
   it('prompt 以风格段开头 → 插在风格段那一行之后', () => {
     const styled = `${STYLE_SEGMENT_MARK}赛博霓虹,高对比\n一只猫在跳舞`

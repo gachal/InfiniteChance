@@ -95,6 +95,29 @@ describe('storyboardDraftFromPayload(save_storyboard 的草案)', () => {
     expect(() => storyboardDraftFromPayload({ cuts: [{ seconds: -1 }] })).toThrow('seconds')
     expect(() => storyboardDraftFromPayload({ cuts: [{ shot: 7 }] })).toThrow('shot')
   })
+
+  it('carries a trimmed non-empty brief; missing/blank brief keeps the key off (73 号票)', () => {
+    // brief 与 Go 侧 save_storyboard 同形:trim 后非空才带键 —— 旧 payload
+    // 无键不落,旧板不受影响。
+    const withBrief = storyboardDraftFromPayload({
+      title: 'EP01 分镜',
+      brief: '  视觉基调:水墨晕染,留白。\n场景与空间坐标:江南雨巷,小满居左。\n音效总纲:底层雨声。  ',
+      cuts: [{ note: '转场空镜' }],
+    })
+    expect(withBrief.brief).toBe(
+      '视觉基调:水墨晕染,留白。\n场景与空间坐标:江南雨巷,小满居左。\n音效总纲:底层雨声。',
+    )
+    const noBrief = storyboardDraftFromPayload({ title: 'x', cuts: [{ note: '一镜' }] })
+    expect('brief' in noBrief).toBe(false)
+    const blankBrief = storyboardDraftFromPayload({ title: 'x', brief: '   ', cuts: [{ note: '一镜' }] })
+    expect('brief' in blankBrief).toBe(false)
+  })
+
+  it('rejects a non-string brief explicitly', () => {
+    expect(() => storyboardDraftFromPayload({ title: 'x', brief: 42, cuts: [{ note: '一镜' }] })).toThrow(
+      'brief 必须是字符串',
+    )
+  })
 })
 
 describe('applyAgentToolResult(ADR 0006 前端落图 seam)', () => {

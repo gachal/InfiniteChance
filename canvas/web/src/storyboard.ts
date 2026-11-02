@@ -3,6 +3,9 @@
  * 多选切换、时长汇总。组件只做渲染与交互,这里集中可单测的判定 —— 与
  * previz.ts 同族(整图 JSON 随节点 data,自动保存免费获得);54 号票
  * ネーム复用编辑层骨架与画面槽交互,数据结构各自定义、不强行归一。
+ * 73 号票:cut→视频/图片两条直通的 prompt 拼装按 Seedance 2.0 官方公式
+ * 重排段序(画面风格→全片基调→画面描述→…→画质约束尾段),并新增
+ * 全片基调段(brief)与画质约束尾段(QUALITY_TAIL)。
  */
 import type { StoryboardCut, StoryboardNodeData } from './graph'
 import { prependStyleSegment } from './ipStyle'
@@ -74,16 +77,40 @@ export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
   return { ...cut, shot }
 }
 
-/** cut → 视频提示词拼装(67 号票 cut→视频直通):画面描述/景别/运镜/
- * 台词音效按序拼成带标签的小节,空段落跳过,全空返回空串(对话框提示词
- * 留白,占位文案引导)。画面描述取 note(53 号票备注字段;66 号票
- * save_storyboard 产物的 note 即画面内容描述,工具产物与人工 cut 同规);
- * 它是对画面内容的自然语言描述、信息密度最高,排最前。纯函数便于单测;
- * 出场角色不进提示词(「出场角色→生成注入」二期,67 号票 Out of Scope)。
- * 69 号票:style 是画布所属 IP 的画面风格,经 ipStyle.prependStyleSegment
- * 拼在最前(空 = 不拼,输出与此前逐字节一致;cut 全空仍带风格段)。 */
-export function buildCutVideoPrompt(cut: StoryboardCut, style = ''): string {
+// ---- 直通预填拼装(67 号票;73 号票按 Seedance 2.0 官方公式重排) ----
+
+/** 全片基调段标签(73 号票定案 B):半角冒号,拼在 brief trim 后文本前,
+ * brief 多行原样。基调段拼在画面风格段之后、画面描述之前。 */
+const BRIEF_SEGMENT_LABEL = '全片基调:'
+
+/** 画质约束尾段(73 号票定案 D.4):单行恒拼在提示词最尾(硬拼无开关);
+ * 内容逐字钉死 —— 半角逗号/分号,末句为无字幕/无 Logo/无水印约束
+ * (官方约束词;要不要背景音乐交给 lines 的音乐`()`段,尾段不写)。 */
+export const QUALITY_TAIL =
+  '高清,细节丰富,电影质感,色彩自然;保持无字幕,不要生成Logo和水印'
+
+/** cut → 视频提示词拼装(67 号票 cut→视频直通;73 号票段序按官方公式
+ * 重排):画面风格段 → 全片基调段 → 画面描述 → 景别 → 运镜 → 台词/音效 →
+ * 画质约束尾段。基调段(brief)与尾段作为 sections 成员参与序位 —— 基调
+ * 最前、尾段最后,最后照旧经 ipStyle.prependStyleSegment 把风格段顶到
+ * 最前(风格段不在 sections 里,「带 IP 风格」开关语义不变)。
+ *
+ * - brief trim 非空恒拼,**不受 composer「带 IP 风格」开关管**(73 号票
+ *   定案 B.4:开关只管 ips.style 段,brief 是 cut 板数据本身)。
+ * - 尾段恒拼(硬拼无开关):因此全空 cut + 无 brief + 无风格的输出不再
+ *   是空串而是尾段一行(旧「全空返回空串」行为按 73 号票定案 D.1/D.4
+ *   调整);有风格则风格段照旧在最前。
+ * - 画面描述取 note(53 号票备注字段;66 号票 save_storyboard 产物的
+ *   note 即画面内容描述,工具产物与人工 cut 同规),信息密度最高,排
+ *   基调段之后的首位;台词/音效段标签、运镜顿号连接、cut.seconds 不进
+ *   prompt 照旧(秒数参照由导演写进 note,73 号票定案 D.7)。
+ * 纯函数便于单测;出场角色不进提示词(70 号票已走参考图注入)。 */
+export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = ''): string {
   const sections: string[] = []
+  const briefText = brief.trim()
+  if (briefText !== '') {
+    sections.push(`${BRIEF_SEGMENT_LABEL}${briefText}`)
+  }
   const note = (cut.note ?? '').trim()
   if (note !== '') {
     sections.push(`画面描述:${note}`)
@@ -98,16 +125,22 @@ export function buildCutVideoPrompt(cut: StoryboardCut, style = ''): string {
   if (lines !== '') {
     sections.push(`台词/音效:${lines}`)
   }
+  sections.push(QUALITY_TAIL)
   return prependStyleSegment(sections.join('\n'), style)
 }
 
-/** cut → 图片提示词拼装(分镜画面直通生成):画面描述排最前、景别作构图
- * 指引随后;空段落跳过,全空返回空串(对话框提示词留白,占位文案引导)。
- * 不拼运镜/台词——那是视频语汇,图片画面只吃内容与构图;出场角色不进
- * 提示词(「出场角色→生成注入」二期)。纯函数便于单测。69 号票:style
- * 同 buildCutVideoPrompt,风格段拼在最前。 */
-export function buildCutFramePrompt(cut: StoryboardCut, style = ''): string {
+/** cut → 图片提示词拼装(分镜画面直通生成;73 号票定案 D.5 生图直通
+ * 同吃):画面风格段 → 全片基调段 → 画面描述 → 景别 → 画质约束尾段 ——
+ * 分镜画面是视频首帧种子,同需基调一致与画面干净,两直通口径一致;不拼
+ * 运镜/台词照旧(那是视频语汇)。基调段/尾段/风格段的拼装口径与
+ * buildCutVideoPrompt 逐条一致(含尾段恒拼、brief 不受开关管)。纯函数
+ * 便于单测。 */
+export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = ''): string {
   const sections: string[] = []
+  const briefText = brief.trim()
+  if (briefText !== '') {
+    sections.push(`${BRIEF_SEGMENT_LABEL}${briefText}`)
+  }
   const note = (cut.note ?? '').trim()
   if (note !== '') {
     sections.push(`画面描述:${note}`)
@@ -115,6 +148,7 @@ export function buildCutFramePrompt(cut: StoryboardCut, style = ''): string {
   if (cut.shot) {
     sections.push(`景别:${cut.shot}`)
   }
+  sections.push(QUALITY_TAIL)
   return prependStyleSegment(sections.join('\n'), style)
 }
 

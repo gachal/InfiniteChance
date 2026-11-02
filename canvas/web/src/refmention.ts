@@ -2,16 +2,17 @@
  * 提示词 @ 引用(59 号票)的纯逻辑:各输入上下文「可 @ 条目」的派生、
  * chip 编号角标与引用 token 的构造。@ 的对象口径按上下文三态:
  *
- *  - 生成对话框图片模式:参考条全部条目,@图1..@图N(N = 参考条顺序);
- *  - 生成对话框视频模式:仅「参考图」角色,@图1..@图N(编号与网关
+ *  - 生成对话框图片模式:参考条全部条目,@图片1..@图片N(N = 参考条顺序);
+ *  - 生成对话框视频模式:仅「参考图」角色,@图片1..@图片N(编号与网关
  *    references 数组序对齐;首帧/尾帧走单串 image/last_image 不占序,
  *    参考视频/参考音频上游无编号语义,均不可 @);
- *  - Agent 输入框:当前输入的图片与视频附件,图片 @图1..@图N、视频
+ *  - Agent 输入框:当前输入的图片与视频附件,图片 @图片1..@图片N、视频
  *    @视频1(各自插入序;会话历史媒体与未就绪附件不进)。
  *
  * token 是纯文本 —— 22 号票「顺序即参考序」的前端对应物,上游按提示词
- * 自由文本理解;悬空(参考被移除后编号漂移)不校验不警告,与手写「图N」
- * 的既有语义一致,同一参考可重复引用。
+ * 自由文本理解;悬空(参考被移除后编号漂移)不校验不警告,与手写
+ * 「图片N」的既有语义一致,同一参考可重复引用(73 号票:「图N」指代
+ * 换形「图片N」,对齐 Seedance 官方文档)。
  */
 import { VIDEO_ROLE_LABEL, type ComposerElement, type ComposerRef, type VideoComposerRef } from './composer'
 import type { PendingAgentMedia } from './agentMedia'
@@ -43,12 +44,13 @@ function withElementDisplay(
   return { ...candidate, elementName: name, elementType: el.type }
 }
 
-/** 「图N」编号的「图」字面:绑定行、chip 角标、@ 浮层 token 共用这一个
- * 常量 —— Seedance 官方文档写作「图片N」,真 key 有差异时只改这里(71 号票
- * B5;测试钉住了各处的一致性,不会被静默改漂)。 */
-export const REF_INDEX_LABEL = '图'
+/** 「图片N」编号的「图片」字面:绑定行、chip 角标、@ 浮层 token 共用这
+ * 一个常量 —— Seedance 官方文档指代写作「图片N」,73 号票定案 D.3 由
+ * 旧值「图」换形收编(71 号票 B5 留的口子由本票落定);将来真 key 实测
+ * 再有差异时只改这里。测试钉住了各处的一致性,不会被静默改漂。 */
+export const REF_INDEX_LABEL = '图片'
 
-/** 各上下文的「图N」结构化编号(不从 token 反解):图片模式 = 参考条全部
+/** 各上下文的「图片N」结构化编号(不从 token 反解):图片模式 = 参考条全部
  * 条目按序 1..N;视频模式 = 仅 reference_image 角色按其在参考图序列中的顺序
  * 编号(即网关 references 数组序),其余角色 null 不占号。返回数组与 refs
  * 同序同长;@ 浮层 token 与绑定行构建(element.buildElementLine)都从这里
@@ -113,7 +115,7 @@ export function videoRefMentions(
   return out
 }
 
-/** Agent 输入框:待发附件按各自插入序编号(图片 @图N、视频 @视频N);
+/** Agent 输入框:待发附件按各自插入序编号(图片 @图片N、视频 @视频N);
  * 上传中/失败的 chip 没有可引用素材,不进浮层也不编号。 */
 export function agentAttachmentMentions(list: PendingAgentMedia[]): MentionCandidate[] {
   const out: MentionCandidate[] = []

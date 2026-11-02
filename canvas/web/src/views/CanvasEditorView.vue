@@ -1860,10 +1860,15 @@ function applyAgentScriptDraft(payload: unknown): void {
 }
 
 /** save_storyboard:絵コンテ节点草案(cuts 为 53 号票结构 + 67 号票
- * shot/character_ids,画面 asset_id 恒空 → 卡面「未配画面」占位)。 */
+ * shot/character_ids,画面 asset_id 恒空 → 卡面「未配画面」占位)。
+ * 73 号票:brief trim 后非空才落 StoryboardNodeData.brief,旧 payload
+ * 无键不落、旧板不受影响。 */
 function applyAgentStoryboardDraft(payload: unknown): void {
   const draft = storyboardDraftFromPayload(payload)
   const data: StoryboardNodeData = { title: draft.title, cuts: draft.cuts }
+  if (draft.brief !== undefined) {
+    data.brief = draft.brief
+  }
   addAgentProducedNode('storyboard', data)
 }
 
@@ -2356,11 +2361,12 @@ const storyboardEditorNode = computed(() => {
 // 画面槽本机上传在途(编辑器级全局,任一在途即禁用各槽上传按钮)。
 const storyboardUploading = ref(false)
 
-/** cut/板名数据落盘:updateNodeData 浅合并(cuts 整包替换,数组换新由
- * 编辑层纯函数保证),自动保存免费获得(整图 JSON 随节点 data 先例)。 */
+/** cut/板名/全片基调数据落盘:updateNodeData 浅合并(cuts 整包替换,数组
+ * 换新由编辑层纯函数保证;brief 同包替换,73 号票),自动保存免费获得
+ * (整图 JSON 随节点 data 先例)。 */
 function onStoryboardSceneChange(
   nodeId: string,
-  patch: { title: string; cuts: StoryboardCut[] },
+  patch: { title: string; cuts: StoryboardCut[]; brief?: string },
 ): void {
   updateNodeData(nodeId, patch)
   markChanged()
@@ -2467,7 +2473,8 @@ function onStoryboardLayerUpload(cutIndex: number, file: File): void {
  * 这里只落节点与预填,不发任务。 */
 function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   const node = findNode(nodeId)
-  const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
+  const board = node?.data as StoryboardNodeData | undefined
+  const cut = board?.cuts[cutIndex]
   if (!node || !cut) {
     return
   }
@@ -2493,7 +2500,9 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // cut 的首帧/出场角色」,不带其他会话残留;选中切换的 watch 会把拆下标记
   // 与模式(锁视频)一并复位,这里只写草稿。
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
-  videoPrompt.value = buildCutVideoPrompt(cut, ipStyle.value)
+  // 73 号票:分镜板的 brief 作全片基调段拼在风格段之后(签名新序
+  // cut, brief, style;brief 非空恒拼,不受 composer「带 IP 风格」开关管)。
+  videoPrompt.value = buildCutVideoPrompt(cut, board?.brief ?? '', ipStyle.value)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
   // 71 号票 A2(修 70 号票 C 节):首帧与参考互斥判定在纯函数层;角色无图
   // 静默跳过,超上限按序截断,有画面而标了出场角色时说明未注入原因。
@@ -2521,7 +2530,8 @@ const cutFramePending = new Map<string, { storyboardId: string; cutIndex: number
  * 参考条(不进 prompt),无图角色静默跳过,超 9 截断 + toast。 */
 function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   const node = findNode(nodeId)
-  const cut = (node?.data as StoryboardNodeData | undefined)?.cuts[cutIndex]
+  const board = node?.data as StoryboardNodeData | undefined
+  const cut = board?.cuts[cutIndex]
   if (!node || !cut) {
     return
   }
@@ -2544,7 +2554,9 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   connectNodes(nodeId, newId)
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
-  composerPrompt.value = buildCutFramePrompt(cut, ipStyle.value)
+  // 73 号票:brief 全片基调段 + 画质约束尾段同吃(生图直通与视频直通
+  // 口径一致,签名新序 cut, brief, style)。
+  composerPrompt.value = buildCutFramePrompt(cut, board?.brief ?? '', ipStyle.value)
   // 出场角色注入(70 号票 C):整条替换参考条 —— 预填序 = character_ids
   // 序(素材内容寻址引用);预填可手动移除。
   const { picks, dropped } = pickCutCharacterRefs(

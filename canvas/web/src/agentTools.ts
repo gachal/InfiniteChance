@@ -164,14 +164,19 @@ export function scriptDraftFromPayload(payload: unknown): AgentScriptDraft {
   return { title, text }
 }
 
-/** save_storyboard 的草案(絵コンテ节点 data)。 */
+/** save_storyboard 的草案(絵コンテ节点 data)。brief 是 73 号票扩的可选
+ * 全片基调多行文本:payload 无键或 trim 后空 = 不带键(旧 payload 旧板
+ * 不受影响)。 */
 export interface AgentStoryboardDraft {
   title: string
   cuts: StoryboardCut[]
+  brief?: string
 }
 
 /** 定形絵コンテ节点草案:画面恒空(asset_id = 0,「未配画面」占位),
- * 景别/运镜/出场角色按 67 号票扩字段透传;字段形状不对抛错。 */
+ * 景别/运镜/出场角色按 67 号票扩字段透传;字段形状不对抛错。73 号票:
+ * 可选 brief(trim 后非空才落键,与 Go 侧 save_storyboard trim 后非空才
+ * 带键同形)。 */
 export function storyboardDraftFromPayload(payload: unknown): AgentStoryboardDraft {
   const obj = payloadObject(payload)
   const title = optionalString(obj, 'title').trim()
@@ -216,6 +221,10 @@ export function storyboardDraftFromPayload(payload: unknown): AgentStoryboardDra
     }
     return draft
   })
+  const brief = optionalString(obj, 'brief').trim()
+  if (brief !== '') {
+    return { title, cuts, brief }
+  }
   return { title, cuts }
 }
 

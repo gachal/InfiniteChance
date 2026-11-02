@@ -255,7 +255,7 @@ watch(input, () => {
 
 // 触发与保活同一条判定:光标前一字符是 @ 且待发附件里有可引用条目;
 // 继续输入、移动光标离开 @ 位即收,不做文本过滤。列表只收就绪附件
-// (图片 @图N、视频 @视频N)—— 上传中/失败的 chip 没有可引用素材。
+// (图片 @图片N、视频 @视频N)—— 上传中/失败的 chip 没有可引用素材。
 const mentionOpen = ref(false)
 const mentionHighlight = ref(0)
 const mentionTriggerAt = ref(-1)
