@@ -111,22 +111,25 @@ func (t saveStoryboardTool) Definition() json.RawMessage {
 					"items":    storyboardCutSchema,
 					"minItems": 1,
 				},
+				"brief": map[string]any{"type": "string", "description": "全片基调,多行文本;三段:视觉基调/场景与空间坐标(地点布局、各主体站位、机位相对动作的方位、同框纪律)/音效总纲(底/中/顶层);已定画面风格时视觉基调以该风格为基底再叠本集增量,不要与风格段重复"},
 			},
 			"required": []string{"cuts"},
 		})
 }
 
 // storyboardCutSchema 描述单个 cut 的参数形状(景别/出场角色按 67 号票扩
-// 字段;camera_moves 运镜多选白名单见导演提示词)。
+// 字段;camera_moves 运镜多选白名单见导演提示词)。各字段 description 只点
+// 关键规则,写作细则以系统提示词「分镜画面写作纪律」为单一来源,避免两处
+// 长文漂移(73 号票)。
 var storyboardCutSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
-		"shot":           map[string]any{"type": "string", "description": "景别,单选:远/全/中/近/特写"},
-		"lines":          map[string]any{"type": "string", "description": "这一镜的台词/音效"},
-		"camera_moves":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "运镜,可多选:推/拉/摇/移/跟/固定/手持/变焦"},
-		"seconds":        map[string]any{"type": "number", "description": "预估时长(秒)"},
-		"note":           map[string]any{"type": "string", "description": "画面内容描述/备注"},
-		"character_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "description": "出场角色的资产 id(list_assets/create_* 拿到的 id)"},
+		"shot":          map[string]any{"type": "string", "description": "景别,单选:远/全/中/近/特写"},
+		"lines":         map[string]any{"type": "string", "description": "台词/音效/音乐各占一行,符号:台词{ }、音效< >、音乐( );角色首次开口在台词前括注声音特质;语言统一不中英混排(专有名词除外)"},
+		"camera_moves":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "运镜:推/拉/摇/移/跟/固定/手持/变焦;一镜跨节拍按小节各配运镜,每小节只一种"},
+		"seconds":       map[string]any{"type": "number", "description": "预估时长(秒);一镜跨节拍时各小节秒数写进 note,小节合计=本值"},
+		"note":          map[string]any{"type": "string", "description": "画面内容描述,按「运镜→主体动作与表情→位置/空间变化→画面要点」顺序;跨节拍按「镜头N(起-止秒)」小节(≤3 小节、秒数连续、合计=本镜 seconds、每小节一种运镜);动作量化、情绪外化、特效写到可拍;写作细则见系统提示词「分镜画面写作纪律」"},
+		"character_ids": map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "description": "出场角色的资产 id(list_assets/create_* 拿到的 id);产物里用库内名称稳定指代,不重复描写外观"},
 	},
 }
 
@@ -140,6 +143,13 @@ func (t saveStoryboardTool) Execute(_ context.Context, args json.RawMessage) (st
 		return "", nil, err
 	}
 	title = strings.TrimSpace(title)
+	// brief 全片基调(73 号票):可选;空/全空白 = 未产出,payload 不带该键
+	// —— 前端按「无键 = 板上不落基调」处理,旧板零迁移。
+	brief, err := stringArg(m, "brief")
+	if err != nil {
+		return "", nil, err
+	}
+	brief = strings.TrimSpace(brief)
 	rawCuts, ok := m["cuts"]
 	if !ok {
 		return "", nil, fmt.Errorf("cuts 不能为空:每个元素是一镜")
@@ -160,7 +170,11 @@ func (t saveStoryboardTool) Execute(_ context.Context, args json.RawMessage) (st
 		cuts = append(cuts, cut)
 	}
 	summary := fmt.Sprintf("已保存分镜板「%s」共 %d 个分镜,节点将落上画布", title, len(cuts))
-	payload, err := json.Marshal(map[string]any{"title": title, "cuts": cuts})
+	payloadBody := map[string]any{"title": title, "cuts": cuts}
+	if brief != "" {
+		payloadBody["brief"] = brief
+	}
+	payload, err := json.Marshal(payloadBody)
 	if err != nil {
 		return summary, nil, nil
 	}

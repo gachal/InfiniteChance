@@ -462,6 +462,64 @@ func TestSaveStoryboardRejectsBadCuts(t *testing.T) {
 	}
 }
 
+// brief 全片基调三态(73 号票):缺省/空白 = payload 不带 brief 键(前端按
+// 「无键 = 板上不落基调」处理);非空 = trim 后透传,键名固定 brief。
+// Definition 恒暴露可选 brief,description 点明三段与「不与风格段重复」。
+func TestSaveStoryboardBriefThreeStates(t *testing.T) {
+	reg := agenttools.NewRegistry(agenttools.Deps{})
+	tool := lookup(t, reg, "save_storyboard")
+	cuts := func() []any { return []any{map[string]any{"note": "一镜"}} }
+
+	_, payload, err := tool.Execute(context.Background(), mustArgs(t, map[string]any{"title": "EP", "cuts": cuts()}))
+	if err != nil {
+		t.Fatalf("execute(缺省): %v", err)
+	}
+	if _, has := payloadMap(t, payload)["brief"]; has {
+		t.Errorf("absent brief leaked into payload: %s", payload)
+	}
+
+	_, payload, err = tool.Execute(context.Background(), mustArgs(t, map[string]any{
+		"title": "EP", "brief": " \n\t ", "cuts": cuts(),
+	}))
+	if err != nil {
+		t.Fatalf("execute(空白): %v", err)
+	}
+	if _, has := payloadMap(t, payload)["brief"]; has {
+		t.Errorf("blank brief leaked into payload: %s", payload)
+	}
+
+	_, payload, err = tool.Execute(context.Background(), mustArgs(t, map[string]any{
+		"title": "EP",
+		"brief": " 视觉基调:雨夜冷蓝\n场景与空间坐标:巷口\n音效总纲:底/中/顶 \n",
+		"cuts":  cuts(),
+	}))
+	if err != nil {
+		t.Fatalf("execute(非空): %v", err)
+	}
+	if got := payloadMap(t, payload)["brief"].(string); got != "视觉基调:雨夜冷蓝\n场景与空间坐标:巷口\n音效总纲:底/中/顶" {
+		t.Errorf("brief = %q, want trimmed passthrough", got)
+	}
+
+	def, err := json.Marshal(tool.Definition())
+	if err != nil {
+		t.Fatalf("marshal definition: %v", err)
+	}
+	var dm map[string]any
+	if err := json.Unmarshal(def, &dm); err != nil {
+		t.Fatalf("definition not JSON: %v", err)
+	}
+	props := dm["function"].(map[string]any)["parameters"].(map[string]any)["properties"].(map[string]any)
+	briefProp, ok := props["brief"].(map[string]any)
+	if !ok || briefProp["type"] != "string" {
+		t.Fatalf("definition properties = %v, want optional string brief", props)
+	}
+	for _, want := range []string{"视觉基调", "场景与空间坐标", "音效总纲", "不要与风格段重复"} {
+		if !strings.Contains(briefProp["description"].(string), want) {
+			t.Errorf("brief description lacks %q: %v", want, briefProp["description"])
+		}
+	}
+}
+
 // ---- read_source ----
 
 // graphJSON 拼一张编辑器 snapshot 形状的图:一个原文 script 节点 + 一个

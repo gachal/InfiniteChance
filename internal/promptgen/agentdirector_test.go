@@ -60,6 +60,12 @@ func TestAgentStreamInjectsDirectorSystemPrompt(t *testing.T) {
 	if !strings.Contains(system["content"].(string), "list_assets") {
 		t.Errorf("system prompt = %v, want the reconciliation discipline", system)
 	}
+	// 73 号票:分镜写作纪律与全片基调纪律是导演系统提示词的常驻段。
+	for _, want := range []string{"分镜画面写作纪律", "全片基调"} {
+		if !strings.Contains(system["content"].(string), want) {
+			t.Errorf("system prompt lacks %q (73 号票纪律段)", want)
+		}
+	}
 	user, _ := msgs[1].(map[string]any)
 	content := user["content"].(string)
 	if user["role"] != "user" || !strings.Contains(content, "把这段小说变成短剧") {
@@ -238,9 +244,13 @@ func TestAgentStreamPipelineToolsFullChain(t *testing.T) {
 			args map[string]any
 		}{
 			{"call_3", "save_script", map[string]any{"title": "第1集 雾都夜行", "text": "【第1场|内|夜|仓库】\n林小满:……"}},
-			{"call_4", "save_storyboard", map[string]any{"title": "EP01 分镜", "cuts": []any{
-				map[string]any{"shot": "远", "lines": "城市空镜", "camera_moves": []any{"推"}, "character_ids": []any{1}},
-			}}},
+			{"call_4", "save_storyboard", map[string]any{
+				"title": "EP01 分镜",
+				"brief": "视觉基调:雨夜冷蓝,霓虹点暖\n场景与空间坐标:巷口,林小满站位画面左三分之一\n音效总纲:底层雨声/中层远处车流/顶层雷鸣",
+				"cuts": []any{
+					map[string]any{"shot": "远", "lines": "城市空镜", "camera_moves": []any{"推"}, "character_ids": []any{1}},
+				},
+			}},
 		}),
 		relayTextRound(t, "第 1 集剧本与分镜已落图。"),
 	}
@@ -325,6 +335,10 @@ func TestAgentStreamPipelineToolsFullChain(t *testing.T) {
 	cuts, _ := sbPayload["cuts"].([]any)
 	if len(cuts) != 1 {
 		t.Fatalf("storyboard cuts = %v", sbPayload["cuts"])
+	}
+	// brief 全片基调随草案透传(73 号票),前端按 brief 键落板。
+	if sbPayload["brief"] == "" || !strings.Contains(sbPayload["brief"].(string), "音效总纲") {
+		t.Errorf("storyboard brief = %v, want the passed-through tone text", sbPayload["brief"])
 	}
 	cut := cuts[0].(map[string]any)
 	if cut["asset_id"].(float64) != 0 || cut["shot"] != "远" {
