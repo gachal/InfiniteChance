@@ -1,18 +1,23 @@
 <script setup lang="ts">
 // 分组节点卡(72 号票,第十三种节点类型):组织装饰非内容节点 —— 半透明
 // 填充 + 描边 + 标题栏。不渲染把手/NodePorts(不作任何连线端点);标题栏
-// 常驻左上(双击内联改名,单击留给拖动/选中),选中时右侧浮出色板 + 解组;
-// 四角 resize 手柄只改用户设定尺寸(成员不动),拖动/点击语义由 vue-flow
-// 原生节点拖拽承担(点框空白处拖动 = 整组移动,成员位移由编辑器结算)。
-// 层级压底与选中提升的免疫在全局 style.css(.vue-flow__node-group)。
+// 常驻左上,可发起整组拖动(vue-flow 原生节点拖拽)也承担双击改名 ——
+// 两者共存由缺省 nodeDragThreshold: 1 保证(原位点击/双击位移不足阈值,
+// d3-drag 不触发)。标题栏因此不挂 nodrag(挂了会被 noDragClassName 过滤,
+// 标题栏拖不动,72 号票评审 C5);真正交互的子元素(改名输入、色板、解组
+// 钮、resize 手柄)保留 nodrag。选中时标题栏右侧浮出色板 + 解组;四角
+// resize 手柄只改用户设定尺寸(成员不动)。层级压底与选中提升的免疫在
+// 全局 style.css(.vue-flow__node-group)。
 import { computed, ref } from 'vue'
 
 import type { GroupNodeData } from '../../graph'
 import {
   GROUP_DEFAULT_TITLE,
   GROUP_PALETTE,
+  GROUP_RESIZE_CORNERS,
   groupColorOrDefault,
   type GroupColorToken,
+  type GroupResizeCorner,
 } from '../../canvasGroup'
 
 const props = defineProps<{
@@ -38,9 +43,6 @@ const emit = defineEmits<{
   resizeEnd: []
   ungroup: []
 }>()
-
-type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se'
-const RESIZE_CORNERS: GroupResizeCorner[] = ['nw', 'ne', 'sw', 'se']
 
 const title = computed(() => (props.data.title?.trim() || GROUP_DEFAULT_TITLE))
 const color = computed(() => groupColorOrDefault(props.data.color))
@@ -73,7 +75,6 @@ function cancelRename(): void {
 // ---- 四角 resize(票 D4)----
 
 interface ResizeGesture {
-  corner: GroupResizeCorner
   startX: number
   startY: number
 }
@@ -95,7 +96,7 @@ function onResizeUp(): void {
 }
 
 function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
-  gesture = { corner, startX: event.clientX, startY: event.clientY }
+  gesture = { startX: event.clientX, startY: event.clientY }
   emit('resizeStart', corner)
   window.addEventListener('mousemove', onResizeMove)
   window.addEventListener('mouseup', onResizeUp)
@@ -108,14 +109,17 @@ function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
     :class="[`tone-${color}`, { 'will-join': willJoin }]"
     :style="{ width: `${width}px`, height: `${height}px` }"
   >
-    <div class="group-titlebar nodrag">
+    <!-- 标题栏不挂 nodrag:拖它 = 拖组(票 C5);双击改名与拖动共存由
+         nodeDragThreshold: 1 保证(原位双击不触发拖拽)。 -->
+    <div class="group-titlebar">
       <template v-if="!renaming">
         <span
           class="group-title"
           :title="`${title}(双击改名)`"
           @dblclick.stop.prevent="startRename"
         >{{ title }}</span>
-        <!-- 选中浮出操作钮(票 E3):色板 + 解组;改名中收起,别和输入框打架。 -->
+        <!-- 选中浮出操作钮(票 E3):色板 + 解组;改名中收起,别和输入框
+             打架。nodrag + mousedown.stop 双保险:交互钮不发起组拖动。 -->
         <span
           v-if="selected"
           class="group-actions"
@@ -123,7 +127,7 @@ function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
           <button
             v-for="c in GROUP_PALETTE"
             :key="c"
-            class="group-swatch"
+            class="group-swatch nodrag"
             :class="[`tone-${c}`, { current: c === color }]"
             type="button"
             :title="`组色:${c}`"
@@ -132,7 +136,7 @@ function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
             @click.stop="emit('colorChange', c)"
           />
           <button
-            class="group-ungroup"
+            class="group-ungroup nodrag"
             type="button"
             title="解组:删除组框,成员原地保留"
             @mousedown.stop
@@ -145,7 +149,7 @@ function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
       <input
         v-else
         v-model="renameDraft"
-        class="group-rename"
+        class="group-rename nodrag"
         type="text"
         aria-label="分组名称"
         @mousedown.stop
@@ -157,7 +161,7 @@ function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
       >
     </div>
     <span
-      v-for="c in RESIZE_CORNERS"
+      v-for="c in GROUP_RESIZE_CORNERS"
       :key="c"
       class="group-resize nodrag"
       :class="`group-resize-${c}`"
@@ -229,7 +233,8 @@ function startResize(corner: GroupResizeCorner, event: MouseEvent): void {
   box-shadow: 0 0 0 2px rgba(var(--tone-rgb), 0.3);
 }
 
-/* 标题栏:常驻左上小牌,拖它 = 拖组(vue-flow 原生拖拽,不再自拦截)。 */
+/* 标题栏:常驻左上小牌。不挂 nodrag —— 拖它 = 拖组(vue-flow 原生节点
+   拖拽,nodeDragThreshold: 1 让原位双击改名与拖动共存)。 */
 .group-titlebar {
   position: absolute;
   top: -1px;
