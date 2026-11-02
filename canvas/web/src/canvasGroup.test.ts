@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  changedOnly,
   clampUserGroupSize,
   defaultGroupData,
   groupColorOrDefault,
   groupForLandedNode,
   groupFrameSize,
+  groupIdsToUnselect,
   GROUP_MIN_HEIGHT,
   GROUP_MIN_WIDTH,
   GROUP_PADDING,
@@ -13,7 +15,6 @@ import {
   mergeGroupMembers,
   nodeCenter,
   planCreateGroupSelection,
-  planUngroup,
   pruneGroupsAfterRemoval,
   removeGroupMembers,
   resolveDragMembership,
@@ -123,16 +124,54 @@ describe('成组合并(72 号票 B1/E5)', () => {
     expect(removeGroupMembers(['a', 'b', 'c'], ['b'])).toEqual(['a', 'c'])
     expect(removeGroupMembers(['a'], ['zzz'])).toEqual(['a'])
   })
+
+  it('changedOnly:三个计划函数共用的 diff 收口,逐位比较(换序也算变化)', () => {
+    const origin: GroupMembership[] = [
+      { id: 'g1', memberIds: ['a', 'b'] },
+      { id: 'g2', memberIds: [] },
+    ]
+    // 无变化整组不回传;换序(长度同、位不同)算变化。
+    expect(changedOnly(origin, [
+      { id: 'g1', memberIds: ['b', 'a'] },
+      { id: 'g2', memberIds: [] },
+    ])).toEqual([{ id: 'g1', memberIds: ['b', 'a'] }])
+    // 新增与摘除都命中。
+    expect(changedOnly(origin, [
+      { id: 'g1', memberIds: ['a', 'b', 'c'] },
+      { id: 'g2', memberIds: [] },
+    ])).toEqual([{ id: 'g1', memberIds: ['a', 'b', 'c'] }])
+    // origin 中不存在的组视为有变化。
+    expect(changedOnly(origin, [{ id: 'g9', memberIds: ['x'] }])).toEqual([{ id: 'g9', memberIds: ['x'] }])
+    // 全无变化:空数组。
+    expect(changedOnly(origin, origin.map((g) => ({ ...g, memberIds: [...g.memberIds] })))).toEqual([])
+  })
+})
+
+describe('选区的组过滤口径(72 号票 E1)', () => {
+  const selected = [
+    { id: 'n1', isGroup: false },
+    { id: 'g1', isGroup: true },
+    { id: 'n2', isGroup: false },
+  ]
+
+  it('框选结果恒无组:只扫中单个组也要摘', () => {
+    expect(groupIdsToUnselect(selected, 'boxSelect')).toEqual(['g1'])
+    expect(groupIdsToUnselect([{ id: 'g1', isGroup: true }], 'boxSelect')).toEqual(['g1'])
+    expect(groupIdsToUnselect([{ id: 'n1', isGroup: false }], 'boxSelect')).toEqual([])
+  })
+
+  it('修饰键点选(Shift 框选键 / ⌘·Ctrl 多选键)不含组', () => {
+    expect(groupIdsToUnselect(selected, 'modifierClick')).toEqual(['g1'])
+    expect(groupIdsToUnselect([{ id: 'g1', isGroup: true }], 'modifierClick')).toEqual(['g1'])
+  })
+
+  it('纯单击点选单选保留组(组只走点选)', () => {
+    expect(groupIdsToUnselect(selected, 'plainClick')).toEqual([])
+    expect(groupIdsToUnselect([{ id: 'g1', isGroup: true }], 'plainClick')).toEqual([])
+  })
 })
 
 describe('解组与悬空清理(72 号票 A3/E2)', () => {
-  it('解组 = 删组节点 + 成员原地保留(成员 data 本就不带组侧字段)', () => {
-    const plan = planUngroup({ id: 'g1', memberIds: ['a', 'b'] })
-    expect(plan.removedGroupId).toBe('g1')
-    // 成员清单只是被交还调用方(节点原样留在画布),没有任何成员侧改动。
-    expect(plan.memberIds).toEqual(['a', 'b'])
-  })
-
   it('成员删除时各组摘除悬空 id,只回传有变化的组', () => {
     const groups: GroupMembership[] = [
       { id: 'g1', memberIds: ['a', 'b'] },
@@ -152,31 +191,69 @@ describe('解组与悬空清理(72 号票 A3/E2)', () => {
   })
 })
 
-describe('框尺寸:max 合并 / expand / 回落 / resize(72 号票 D1-D4)', () => {
-  it('实际尺寸 = max(用户尺寸, 成员包围盒 + 24px 内边距)', () => {
-    // 包围盒 400x300,加双侧 padding 48 → 448x348 > 用户 300x200。
-    expect(groupFrameSize({ w: 300, h: 200 }, [box(0, 0, 400, 300)])).toEqual({
-      width: 400 + GROUP_PADDING * 2,
-      height: 300 + GROUP_PADDING * 2,
+describe('框尺寸:组原点锚定的 max 合并 / expand / 回落 / resize(72 号票 D1-D2)', () => {
+  it('实际尺寸 = max(用户尺寸, 成员右/下缘 + 24px 内边距 − 组原点)', () => {
+    // 原点对齐盒:成员右/下缘 400x300,+24(右/下单侧内边距)→ 424x324
+    // > 用户 300x200;左/上缘无内边距(框锚在组原点,见下条用例)。
+    expect(groupFrameSize({ w: 300, h: 200 }, [box(0, 0, 400, 300)], { x: 0, y: 0 })).toEqual({
+      width: 400 + GROUP_PADDING,
+      height: 300 + GROUP_PADDING,
     })
     // 用户尺寸更大:原样保留。
-    expect(groupFrameSize({ w: 800, h: 600 }, [box(0, 0, 200, 100)])).toEqual({ width: 800, height: 600 })
+    expect(groupFrameSize({ w: 800, h: 600 }, [box(0, 0, 200, 100)], { x: 0, y: 0 })).toEqual({ width: 800, height: 600 })
+  })
+
+  it('偏移组(评审反例):成员在组原点右下深处,框保证包住', () => {
+    // 组(0,0) 用户 260x160,成员 280x180 @(100,50):右缘 380 + 24 = 404,
+    // 下缘 230 + 24 = 254 —— 框必须 ≥ 404x254 才包得住,旧实现(并集宽高
+    // + 双侧 padding = 328x228)会漏出成员右下角。
+    expect(groupFrameSize({ w: 260, h: 160 }, [box(100, 50, 280, 180)], { x: 0, y: 0 })).toEqual({
+      width: 404,
+      height: 254,
+    })
+  })
+
+  it('偏移组:原点非零,尺寸按「右缘 − 组x」锚定不按并集宽', () => {
+    // 组原点 (500,400),成员 @ (560,470) 200x100:宽 = 760+24−500 = 284
+    // > 用户 260,高 = 570+24−400 = 194 > 用户 160。
+    expect(groupFrameSize({ w: 260, h: 160 }, [box(560, 470, 200, 100)], { x: 500, y: 400 })).toEqual({
+      width: 284,
+      height: 194,
+    })
+  })
+
+  it('左/上缘越界不回推原点:框锚在组原点向右下生长(视觉口径兜底)', () => {
+    // 成员整体在组原点左上方:右/下缘 +24 − 原点为负,用户尺寸(≥最小
+    // 占位)兜住;左/上缘轻微越界由「框是视觉不是归属判据」兜底,不回推。
+    expect(groupFrameSize({ w: 260, h: 160 }, [box(50, 20, 100, 60)], { x: 200, y: 100 })).toEqual({
+      width: 260,
+      height: 160,
+    })
   })
 
   it('成员入组撑破自动扩张(expand),多成员取并集', () => {
-    const size = groupFrameSize({ w: 260, h: 160 }, [box(0, 0), box(600, 400)])
-    expect(size.width).toBe(600 + 200 + GROUP_PADDING * 2)
-    expect(size.height).toBe(400 + 100 + GROUP_PADDING * 2)
+    const size = groupFrameSize({ w: 260, h: 160 }, [box(0, 0), box(600, 400)], { x: 0, y: 0 })
+    expect(size.width).toBe(600 + 200 + GROUP_PADDING)
+    expect(size.height).toBe(400 + 100 + GROUP_PADDING)
   })
 
-  it('移出/删除成员后回落剩余包围盒;清空回落用户尺寸(空组保留)', () => {
-    // 剩余成员更小:回落到用户尺寸(不低于最小占位)。
-    const afterLeave = groupFrameSize({ w: 300, h: 200 }, [box(10, 10, 100, 50)])
+  it('回落同样偏移锚定:expand 后成员移出/删除,按剩余成员右/下缘回落', () => {
+    const origin = { x: 100, y: 80 }
+    // expand 态:远成员把框撑到 (500+24−100)x(350+24−80) = 424x294。
+    const expanded = groupFrameSize({ w: 300, h: 200 }, [box(150, 120, 40, 30), box(400, 300, 100, 50)], origin)
+    expect(expanded).toEqual({ width: 424, height: 294 })
+    // 移出远成员后回落:剩余成员更小,右/下缘 +24 − 原点 < 用户尺寸 →
+    // 回落用户 300x200(不是按剩余包围盒宽高另起)。
+    const afterLeave = groupFrameSize({ w: 300, h: 200 }, [box(150, 120, 40, 30)], origin)
     expect(afterLeave).toEqual({ width: 300, height: 200 })
+    // 剩余成员仍在右下撑破时,回落值也按原点锚定:右缘 560+24−100 = 484,
+    // 下缘 470+24−80 = 414。
+    const stillOverflow = groupFrameSize({ w: 300, h: 200 }, [box(400, 300, 160, 170)], origin)
+    expect(stillOverflow).toEqual({ width: 484, height: 414 })
     // 成员清空:回落用户画的大小。
-    expect(groupFrameSize({ w: 500, h: 400 }, [])).toEqual({ width: 500, height: 400 })
+    expect(groupFrameSize({ w: 500, h: 400 }, [], origin)).toEqual({ width: 500, height: 400 })
     // 用户尺寸未设定(编程创建):落最小占位 260x160。
-    expect(groupFrameSize({}, [])).toEqual({ width: GROUP_MIN_WIDTH, height: GROUP_MIN_HEIGHT })
+    expect(groupFrameSize({}, [], origin)).toEqual({ width: GROUP_MIN_WIDTH, height: GROUP_MIN_HEIGHT })
   })
 
   it('resize 只改用户尺寸:下限夹紧,不影响成员(成员盒子原样进出)', () => {
@@ -185,9 +262,9 @@ describe('框尺寸:max 合并 / expand / 回落 / resize(72 号票 D1-D4)', () 
     // 用户尺寸即便被夹小(= 最小占位),成员盒子也只是被框罩住,位置与
     // 尺寸零改动。
     const members = [box(0, 0, 400, 300)]
-    const size = groupFrameSize({ w: GROUP_MIN_WIDTH, h: GROUP_MIN_HEIGHT }, members)
+    const size = groupFrameSize({ w: GROUP_MIN_WIDTH, h: GROUP_MIN_HEIGHT }, members, { x: 0, y: 0 })
     expect(members[0]).toEqual(box(0, 0, 400, 300))
-    expect(size.width).toBe(400 + GROUP_PADDING * 2)
+    expect(size.width).toBe(400 + GROUP_PADDING)
   })
 
   it('unionMemberBounds 空列表为 null,多成员取并集', () => {

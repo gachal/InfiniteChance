@@ -9,8 +9,8 @@
  * - 归属模型 = 显式成员 + 自动进出,判定锚点恒为节点包围盒中心
  *   (拖入加入 / 拖出脱离 / 跨组换组 / 落点入组四处同一锚点),
  *   框是视觉不是归属判据;
- * - 框实际尺寸 = max(用户设定尺寸, 成员包围盒 + 内边距 24px),
- *   用户尺寸存组 data(w/h,「装饰尺寸不入库」惯例的显式例外);
+ * - 框实际尺寸 = 组原点锚定的 max(用户设定尺寸, 成员包围盒 + 内边距
+ *   24px),用户尺寸存组 data(w/h,「装饰尺寸不入库」惯例的显式例外);
  * - 组不吸纳组、不嵌套;组与组可视觉重叠(后画的框在上)。
  */
 
@@ -41,6 +41,13 @@ export const NOMINAL_NODE_HEIGHT = 180
 export const GROUP_PALETTE = ['sky', 'teal', 'violet', 'pink', 'orange', 'gold', 'success', 'red-signal'] as const
 
 export type GroupColorToken = (typeof GROUP_PALETTE)[number]
+
+/** resize 手柄四角(票 D4):GroupNode 渲染手柄、编辑器结算尺寸,共用此
+ * 形 —— 两处曾各写一份字面量,收口在此防漂移。 */
+export type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se'
+
+/** 四角枚举(渲染 v-for 顺序)。 */
+export const GROUP_RESIZE_CORNERS: GroupResizeCorner[] = ['nw', 'ne', 'sw', 'se']
 
 export interface Point {
   x: number
@@ -132,6 +139,21 @@ export function removeGroupMembers(existing: string[], removed: Iterable<string>
   return existing.filter((id) => !gone.has(id))
 }
 
+/** 只回传 memberIds 有变化的组(成组 / 删除清理 / 拖动结算三个计划函数
+ * 共用的 diff 收口):next 与 origin 同 id 逐位比较 —— 长度不同或任一位
+ * 不同即有变化;origin 中不存在的组视为有变化。成员清单顺序有语义(既有
+ * 序在前、新增追加),逐位比较不会漏掉纯换序。 */
+export function changedOnly(origin: GroupMembership[], next: GroupMembership[]): GroupMembership[] {
+  const before = new Map(origin.map((g) => [g.id, g.memberIds]))
+  return next.filter((g) => {
+    const prev = before.get(g.id)
+    if (prev === undefined) {
+      return true
+    }
+    return prev.length !== g.memberIds.length || prev.some((id, i) => g.memberIds[i] !== id)
+  })
+}
+
 /** 框选成组的成员计划(票 B1):所选节点进新组(memberIds,组节点 id
  * 一律排除 —— 组不进框选结果也不被误并入);各旧组摘除所选成员(跨组
  * 换组的旧组侧),只回传有变化的组。 */
@@ -141,17 +163,11 @@ export function planCreateGroupSelection(
 ): { memberIds: string[]; updatedGroups: GroupMembership[] } {
   const groupIds = new Set(groups.map((g) => g.id))
   const memberIds = mergeGroupMembers([], selectedIds.filter((id) => !groupIds.has(id)))
-  const updatedGroups = groups
-    .map((g) => ({ id: g.id, memberIds: removeGroupMembers(g.memberIds, memberIds) }))
-    .filter((g, i) => g.memberIds.length !== groups[i].memberIds.length)
+  const updatedGroups = changedOnly(
+    groups,
+    groups.map((g) => ({ id: g.id, memberIds: removeGroupMembers(g.memberIds, memberIds) })),
+  )
   return { memberIds, updatedGroups }
-}
-
-/** 解组计划(票 E2:删组 = 解组,成员原地保留):返回要删的组节点 id 与
- * 被释放的成员 id 清单 —— 成员节点与其 data 零改动,清单仅供调用方提示/
- * 断言,不产生任何成员侧写入。 */
-export function planUngroup(group: GroupMembership): { removedGroupId: string; memberIds: string[] } {
-  return { removedGroupId: group.id, memberIds: [...group.memberIds] }
 }
 
 /** 节点删除后的组侧悬空清理(票 A3):各组摘除被删 id;被删清单里的组
@@ -162,13 +178,12 @@ export function pruneGroupsAfterRemoval(
   removedIds: Iterable<string>,
 ): GroupMembership[] {
   const removed = new Set(removedIds)
-  return groups
-    .filter((g) => !removed.has(g.id))
-    .map((g) => ({ id: g.id, memberIds: g.memberIds.filter((id) => !removed.has(id)) }))
-    .filter((g) => {
-      const origin = groups.find((o) => o.id === g.id)
-      return origin !== undefined && origin.memberIds.length !== g.memberIds.length
-    })
+  return changedOnly(
+    groups,
+    groups
+      .filter((g) => !removed.has(g.id))
+      .map((g) => ({ id: g.id, memberIds: g.memberIds.filter((id) => !removed.has(id)) })),
+  )
 }
 
 /** 用户设定尺寸夹紧:不低于空组最小占位(resize 手柄与编程创建同规)。 */
@@ -199,18 +214,26 @@ export function unionMemberBounds(members: NodeBox[]): {
   return { minX, minY, maxX, maxY }
 }
 
-/** 框实际尺寸(票 D1):max(用户设定尺寸, 成员包围盒 + 内边距 24px)。
+/** 框实际尺寸(票 D1):组原点锚定的 max(用户设定尺寸, 成员包围盒 +
+ * 内边距 24px)—— 宽 = max(用户w, 最右成员右缘 + 24 − 组x),高同构。
  * 成员清空回落用户尺寸(空组保留);用户尺寸未设定落最小占位;成员撑破
- * 自动扩张、移出/删除后按剩余成员回落 —— 同一函数三态(入参即现状)。 */
-export function groupFrameSize(user: GroupUserSize, members: NodeBox[]): { width: number; height: number } {
+ * 自动扩张、移出/删除后按剩余成员回落 —— 同一函数三态(入参即现状)。
+ * 口径:框锚在组原点向右下生长,成员越出原点左/上方时不回推原点 ——
+ * 左/上缘轻微越界由「框是视觉不是归属判据」兜底(票 A4),归属判定只认
+ * 节点包围盒中心,不读框。 */
+export function groupFrameSize(
+  user: GroupUserSize,
+  members: NodeBox[],
+  origin: Point,
+): { width: number; height: number } {
   const userSize = clampUserGroupSize(user.w ?? GROUP_MIN_WIDTH, user.h ?? GROUP_MIN_HEIGHT)
   const bounds = unionMemberBounds(members)
   if (!bounds) {
     return userSize
   }
   return {
-    width: Math.max(userSize.width, bounds.maxX - bounds.minX + GROUP_PADDING * 2),
-    height: Math.max(userSize.height, bounds.maxY - bounds.minY + GROUP_PADDING * 2),
+    width: Math.max(userSize.width, bounds.maxX + GROUP_PADDING - origin.x),
+    height: Math.max(userSize.height, bounds.maxY + GROUP_PADDING - origin.y),
   }
 }
 
@@ -271,17 +294,31 @@ export function resolveDragMembership(
       }
     }
   }
-  const groupUpdates = memberships
-    .map((g) => ({ id: g.id, memberIds: lists.get(g.id) ?? g.memberIds }))
-    .filter((g, i) => {
-      const origin = memberships[i]
-      return (
-        origin === undefined ||
-        origin.memberIds.length !== g.memberIds.length ||
-        origin.memberIds.some((id, j) => g.memberIds[j] !== id)
-      )
-    })
+  const groupUpdates = changedOnly(
+    memberships,
+    memberships.map((g) => ({ id: g.id, memberIds: lists.get(g.id) ?? g.memberIds })),
+  )
   return { assignments, groupUpdates }
+}
+
+/** 选中集合的组过滤来源(票 E1)。vue-flow 1.48.2 实证:框选键 =
+ * selectionKeyCode(缺省 Shift,pane 拖动,终局发 selectionEnd);多选键
+ * = multiSelectionKeyCode(mac ⌘ / 其余 Ctrl,点选走 handleNodeClick,且
+ * nodeClick 事件在内部更新选中之后发出,可按修饰位摘除抵消)。两条多选
+ * 路径的框选结果/多选集合都恒不含组,纯单击单选保留组(组只走点选)。 */
+export type SelectionSource = 'boxSelect' | 'modifierClick' | 'plainClick'
+
+/** 给定选中集合与来源,返回要摘除的组节点 id(票 E1):框选与修饰键点选
+ * 恒无组 —— 无论选中个数(框选只扫中单个组时选中数 = 1,也要摘);纯
+ * 单击单选放行。isGroup 由调用方注入(本模块不依赖类型归一运行时)。 */
+export function groupIdsToUnselect(
+  selected: { id: string; isGroup: boolean }[],
+  source: SelectionSource,
+): string[] {
+  if (source === 'plainClick') {
+    return []
+  }
+  return selected.filter((n) => n.isGroup).map((n) => n.id)
 }
 
 /** 组 data 形状再导出:编辑器/组件从此处或 graph.ts 引入均可(同构)。 */
