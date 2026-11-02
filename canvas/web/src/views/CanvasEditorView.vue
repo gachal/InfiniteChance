@@ -9,7 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
-import { VueFlow, useVueFlow, type Connection, type Edge, type GraphNode } from '@vue-flow/core'
+import { VueFlow, useVueFlow, type Connection, type Edge, type GraphNode, type NodeChange } from '@vue-flow/core'
 
 import {
   ApiError,
@@ -56,9 +56,11 @@ import {
   type DragMembershipPlan,
   groupForLandedNode,
   groupFrameSize,
+  groupIdsToUnselect,
   type GroupColorToken,
   type GroupFrame,
   type GroupMembership,
+  type GroupResizeCorner,
   GROUP_MIN_HEIGHT,
   GROUP_MIN_WIDTH,
   GROUP_PADDING,
@@ -69,6 +71,7 @@ import {
   planCreateGroupSelection,
   pruneGroupsAfterRemoval,
   resolveDragMembership,
+  type SelectionSource,
   unionMemberBounds,
 } from '../canvasGroup'
 import {
@@ -195,8 +198,8 @@ const {
   onNodeDrag,
   onNodeDragStart,
   onNodeDragStop,
-  onNodesChange,
   onPaneClick,
+  onSelectionEnd,
   removeNodes,
   removeSelectedNodes,
   screenToFlowCoordinate,
@@ -2921,9 +2924,14 @@ const previewAnchor = computed(() => {
 // 连接态下点击节点只表达连线意图:暂关选区(elements-selectable),点击
 // 经 onNodeClick 进状态机;点空白经 onPaneClick 取消(vue-flow 自带的
 // 清空选区与其不冲突)。框选/拖动节点手势保持原样,不与连接态抢语义。
-onNodeClick(({ node }) => {
+// 非连接态的修饰键点组在这里摘除(票 E1,见上方选区过滤三机制)。
+onNodeClick(({ event, node }) => {
   if (connection.pending.value) {
     connection.clickNode(node.id)
+    return
+  }
+  if (isGroupNode(node) && (event.shiftKey || event.metaKey || event.ctrlKey)) {
+    stripGroupsBySource([node], 'modifierClick')
   }
 })
 onPaneClick(() => {
@@ -3091,17 +3099,26 @@ function snapshot() {
 // 尺寸/选中态变更不改变持久化文档,不触发保存。删除给出可撤销提示
 // (38 号票评审:误删零恢复的焦虑由撤销栈兜底,提示把这条路告诉用户);
 // 删除同时做组侧悬空清理(72 号票:成员删则各组摘除其 id,组删只删组
-// 节点、成员原地保留)。
-onNodesChange((changes) => {
+// 节点、成员原地保留 —— 删组 = 解组,提示按「已解组」口径,票 E2)。
+// 本 handler 挂在 <VueFlow> 的 @nodes-change 模板事件上:vue-flow 1.48.2
+// 的事件钩子先跑 emitter 再跑 listeners(默认变更 applier 是 listener),
+// 到达时删除尚未应用、findNode 还能读到被删节点 —— 组删除得以就地识别
+// 为解组;useVueFlow 的 onNodesChange hook 在 applier 之后,那时节点已
+// 从 store 移除,识别不了。
+function onFlowNodesChange(changes: NodeChange[]): void {
   const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id)
   if (removals.length > 0) {
     pruneDanglingGroupMembers(removals)
-    showNotice('已删除节点,⌘Z / Ctrl+Z 可撤销')
+    if (removals.some((id) => isGroupNode(findNode(id)))) {
+      showNotice('已解组,成员原地保留,⌘Z / Ctrl+Z 可撤销')
+    } else {
+      showNotice('已删除节点,⌘Z / Ctrl+Z 可撤销')
+    }
   }
   if (changes.some((c) => c.type === 'add' || c.type === 'remove' || c.type === 'position')) {
     markChanged()
   }
-})
+}
 onEdgesChange((changes) => {
   if (changes.some((c) => c.type === 'add' || c.type === 'remove')) {
     markChanged()
@@ -3132,8 +3149,9 @@ const draggingNodeIds = ref<Set<string>>(new Set())
 /** 拖动中「松手将加入」的组 id 集合(实时高亮,票 C2)。 */
 const hoverJoinGroupIds = ref<Set<string>>(new Set())
 
-/** 逐组渲染尺寸:groupFrameSize(用户 data.w/h, 成员包围盒+内边距)。
- * 成员盒子用实时 position + dimensions(未量出按近似值回落)。 */
+/** 逐组渲染尺寸:groupFrameSize(用户 data.w/h, 成员包围盒+内边距,
+ * 组原点锚定 —— 框从组 position 向右下生长包住成员)。成员盒子用实时
+ * position + dimensions(未量出按近似值回落)。 */
 const groupFrameSizes = computed<Record<string, { width: number; height: number }>>(() => {
   const dragging = draggingNodeIds.value
   const sizes: Record<string, { width: number; height: number }> = {}
@@ -3158,7 +3176,7 @@ const groupFrameSizes = computed<Record<string, { width: number; height: number 
         height: m.dimensions?.height ?? NOMINAL_NODE_HEIGHT,
       })
     }
-    sizes[node.id] = groupFrameSize(data, members)
+    sizes[node.id] = groupFrameSize(data, members, { x: node.position.x, y: node.position.y })
   }
   return sizes
 })
@@ -3221,18 +3239,35 @@ function pruneDanglingGroupMembers(removedIds: string[]): void {
   }
 }
 
-// 组不参与框选与多选(票 E1):选中集合多于一个且含组时摘除组 —— Shift
-// 框选与 ⌘/Shift 点选两条路径都过这里;点选单选(单独选中组)放行。
+// 组不参与框选与多选(票 E1),三条机制分来源收口(口径见 canvasGroup
+// 的 groupIdsToUnselect 注释,vue-flow 1.48.2 dist 实证):
+// - 多选集合(选中数 > 1,⌘/Ctrl 点选与框选拖动途中都汇到这里)恒摘组;
+// - 框选终局(selectionEnd):框选结果恒无组 —— 只扫中单个组时选中数
+//   = 1,watch 兜不住,必须在这里摘;
+// - 修饰键点选(click 事件的 shiftKey/metaKey/ctrlKey 修饰位):vue-flow
+//   内部 handleNodeClick 先更新选中再发 nodeClick,这里摘除即抵消;
+// - 纯单击点选单选放行(组只走点选,票 E1)。
 // 不用 selectable:false:那会连点选一起关掉(vue-flow isSelectable 门控
 // 点选与框选共用)。
-watch(getSelectedNodes, (selected) => {
-  if (selected.length < 2) {
+function stripGroupsBySource(selected: GraphNode[], source: SelectionSource): void {
+  const ids = groupIdsToUnselect(
+    selected.map((n) => ({ id: n.id, isGroup: isGroupNode(n) })),
+    source,
+  )
+  if (ids.length === 0) {
     return
   }
-  const groups = selected.filter((n) => isGroupNode(n))
-  if (groups.length > 0) {
-    removeSelectedNodes(groups)
+  removeSelectedNodes(selected.filter((n) => ids.includes(n.id)))
+}
+
+watch(getSelectedNodes, (selected) => {
+  if (selected.length > 1) {
+    stripGroupsBySource(selected, 'modifierClick')
   }
+})
+
+onSelectionEnd(() => {
+  stripGroupsBySource(getSelectedNodes.value, 'boxSelect')
 })
 
 // 拖动三钩:起点记组节点位移基线(整组移动用)与拖动集合;拖动中逐帧
@@ -3366,8 +3401,8 @@ function groupSelectedNodes(): void {
 }
 
 /** 解组(票 E2):删组 = 解组,成员原地保留 —— removeNodes 走 vue-flow
- * 删除(组无边可连带),remove 变更事件在 onNodesChange 收口提示与
- * markChanged;成员 data 本就不带组侧字段,零改动。 */
+ * 删除(组无边可连带),remove 变更事件在 @nodes-change(见 onFlowNodesChange)
+ * 收口「已解组」提示与 markChanged;成员 data 本就不带组侧字段,零改动。 */
 function ungroupNode(groupId: string): void {
   if (!isGroupNode(findNode(groupId))) {
     return
@@ -3387,9 +3422,8 @@ function onGroupColorChange(groupId: string, color: GroupColorToken): void {
   markChanged()
 }
 
-// ---- 四角 resize(票 D4):只改用户设定尺寸,成员不动 ----
-
-type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se'
+// ---- 四角 resize(票 D4):只改用户设定尺寸,成员不动(GroupResizeCorner
+// 与 GroupNode 同源 canvasGroup,防双份手抄漂移)----
 
 let groupResizeActive: { id: string; corner: GroupResizeCorner } | null = null
 const groupResizeStarts = new Map<string, { x: number; y: number; w: number; h: number }>()
@@ -4081,6 +4115,7 @@ function backToList(): void {
         :max-zoom="2"
         :nodes-connectable="false"
         :elements-selectable="!connecting && !groupDrawActive"
+        @nodes-change="onFlowNodesChange"
       >
         <Background :gap="24" />
         <!-- 缩放/回正控件与小地图(38 号票评审:画布变大后回全景不再只能
