@@ -165,7 +165,7 @@ export function pruneGroupsAfterRemoval(
   return groups
     .filter((g) => !removed.has(g.id))
     .map((g) => ({ id: g.id, memberIds: g.memberIds.filter((id) => !removed.has(id)) }))
-    .filter((g, i) => {
+    .filter((g) => {
       const origin = groups.find((o) => o.id === g.id)
       return origin !== undefined && origin.memberIds.length !== g.memberIds.length
     })

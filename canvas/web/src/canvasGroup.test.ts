@@ -182,9 +182,10 @@ describe('框尺寸:max 合并 / expand / 回落 / resize(72 号票 D1-D4)', () 
   it('resize 只改用户尺寸:下限夹紧,不影响成员(成员盒子原样进出)', () => {
     expect(clampUserGroupSize(100, 100)).toEqual({ width: GROUP_MIN_WIDTH, height: GROUP_MIN_HEIGHT })
     expect(clampUserGroupSize(640, 420)).toEqual({ width: 640, height: 420 })
-    // 用户尺寸即便被夹小,成员盒子也只是被框罩住,位置与尺寸零改动。
+    // 用户尺寸即便被夹小(= 最小占位),成员盒子也只是被框罩住,位置与
+    // 尺寸零改动。
     const members = [box(0, 0, 400, 300)]
-    const size = groupFrameSize(clampUserGroupSize(100, 100), members)
+    const size = groupFrameSize({ w: GROUP_MIN_WIDTH, h: GROUP_MIN_HEIGHT }, members)
     expect(members[0]).toEqual(box(0, 0, 400, 300))
     expect(size.width).toBe(400 + GROUP_PADDING * 2)
   })
