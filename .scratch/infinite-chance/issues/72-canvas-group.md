@@ -1,7 +1,7 @@
 # 72 画布分组(canvas group)(2026-11-02 grilling 定案)
 
 Type: feat
-Status: defined(2026-11-02 grill-with-docs 定案,Q1–Q14 两轮全按推荐;尚未实现。纯前端 canvas/web,网关、canvas/server、packages/api、任何表零改动)
+Status: implemented(2026-11-02 grill-with-docs 定案,Q1–Q14 两轮全按推荐;已实现(2026-11-02,feat/72-canvas-group)。纯前端 canvas/web,网关、canvas/server、packages/api、任何表零改动)。**口径注记**:①框尺寸=组原点锚定(max(用户尺寸,最右/最下成员缘+24−组原点)),左/上缘轻微越界由「框是视觉不是归属判据」兜底;②框选恒过滤组走 `selectionEnd` 终局摘组、修饰键点选摘组走 `onNodeClick` 修饰位(vue-flow 1.48.2 dist 实证:nodeClick 在内部选中更新之后发出),纯单击单选保留组;③组压底=纯 CSS `.vue-flow__node-group{z-index:-1!important}`(免疫 reload/undo 丢 props 与选中 +1000),minimap 走 node-class 隐藏;④落点自动入组在四个票列入口外同形接了 insertAudioAsset 与灯箱截帧(C4「等」字口径);⑤解组提示按「已解组」口径,靠模板 `@nodes-change`(先于默认 applier)在删除时就地识别组。遗留:浏览器人工点验清单未做(无运行栈环境)。
 
 ## Question
 
