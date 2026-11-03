@@ -3053,7 +3053,8 @@ onPaneClick(() => {
 
 // ---- 右键上下文菜单(76 号票)----
 // 右键画布空白处弹出取代底部工具栏的四段菜单;右键位置即新节点落点
-// (条目执行时按 contextMenu 锚点落位,级联从该锚点起算)。节点/连线
+// (条目执行时 client 锚点换算 flow 坐标后落位,级联在 flow 空间从该
+// 锚点起算)。节点/连线
 // 右键仅抑制浏览器默认菜单、不弹任何东西(节点右键动作留待另票);
 // typing target(节点内输入框/文本域)内右键保留原生菜单(复制粘贴)。
 // 画框模式激活期间 pane 被 overlay 劫持,右键不弹菜单(画框优先)。
@@ -3809,9 +3810,11 @@ function viewportCenterPosition(): { x: number; y: number } {
 }
 
 /** 落一个新节点。anchor 是可选的屏幕(client)坐标锚点:76 号票右键
- * 菜单的落点语义「右键位置即新节点落点」—— 锚点经 cascadeAnchor 级联
- * 后 screenToFlowCoordinate 换算成图坐标;不传(素材/记录插入、
- * 直通生成等既有调用方)仍落视口中心,行为不变。 */
+ * 菜单的落点语义「右键位置即新节点落点」—— 锚点先经
+ * screenToFlowCoordinate 换算成 flow 图坐标,级联在 **flow 空间**从该
+ * 锚点起算(与视口中心路径的 newNodeAnchor 语义一致:缩放≠1 时 flow
+ * 步长恒为 48px,屏幕步长随缩放);不传(素材/记录插入、直通生成等
+ * 既有调用方)仍落视口中心,行为不变。 */
 function addNode(
   type: CanvasNodeType,
   dataPatch?: Partial<AudioNodeData>,
@@ -3824,7 +3827,7 @@ function addNode(
       id,
       type,
       position: anchor
-        ? screenToFlowCoordinate(cascadeAnchor(anchor, toObject().nodes.length))
+        ? cascadeAnchor(screenToFlowCoordinate(anchor), toObject().nodes.length)
         : viewportCenterPosition(),
       // 61 号票:入口可携带初始创作意图(音效入口带 source:'sfx'),
       // 浅合并进 initialData —— 其余入口不传,行为不变。
