@@ -353,144 +353,209 @@ onMounted(refresh)
         </button>
       </div>
 
-      <p
-        v-if="error"
-        class="panel-error"
-        role="alert"
-      >
-        {{ error }}
-      </p>
-      <p
-        v-else-if="loading && assets.length === 0"
-        class="panel-empty"
-      >
-        加载素材…
-      </p>
-      <p
-        v-else-if="visibleAssets.length === 0"
-        class="panel-empty"
-      >
-        {{ emptyText }}
-      </p>
-
-      <ul class="asset-list">
-        <li
-          v-for="a in visibleAssets"
-          :key="a.id"
-          class="asset-card"
-          :class="{ selected: isSelected(a) }"
-          :title="isSelected(a) ? '取消选择' : '选为参考'"
-          @click="onPick(a)"
+      <div class="picker-scroll">
+        <p
+          v-if="error"
+          class="panel-error"
+          role="alert"
         >
-          <img
-            v-if="a.kind === 'image'"
-            :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
-            class="thumb"
-            loading="lazy"
-            alt="素材缩略图"
-            @error="thumbs.onThumbError(a.content_url)"
-          >
-          <!-- 音频没有缩略图:给试听条占缩略位(素材面板同款);点击不触发
-               卡片的选择/取消。 -->
-          <audio
-            v-else-if="a.kind === 'audio'"
-            :src="a.content_url"
-            class="audio-thumb"
-            controls
-            preload="none"
-            @click.stop
-          />
-          <video
-            v-else
-            :src="a.content_url"
-            class="thumb"
-            muted
-            preload="metadata"
-          />
-          <div class="meta">
-            <span class="kind-tag">{{ kindLabel(a.kind) }}</span>
-            <span
-              class="prompt"
-              :title="a.prompt"
-            >{{ a.prompt || '(无提示词)' }}</span>
-          </div>
-          <span
-            v-if="isSelected(a)"
-            class="picked"
-          >✓</span>
-        </li>
-      </ul>
+          {{ error }}
+        </p>
+        <p
+          v-else-if="loading && assets.length === 0"
+          class="panel-empty"
+        >
+          加载素材…
+        </p>
+        <p
+          v-else-if="visibleAssets.length === 0"
+          class="panel-empty"
+        >
+          {{ emptyText }}
+        </p>
 
-      <button
-        v-if="hasMore()"
-        type="button"
-        class="more"
-        :disabled="loading"
-        @click="loadMore"
-      >
-        {{ loading ? '加载中…' : '加载更多' }}
-      </button>
+        <ul class="asset-list">
+          <li
+            v-for="a in visibleAssets"
+            :key="a.id"
+            class="asset-card"
+            :class="{ selected: isSelected(a) }"
+            :title="isSelected(a) ? '取消选择' : '选为参考'"
+            @click="onPick(a)"
+          >
+            <img
+              v-if="a.kind === 'image'"
+              :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
+              class="thumb"
+              loading="lazy"
+              alt="素材缩略图"
+              @error="thumbs.onThumbError(a.content_url)"
+            >
+            <!-- 音频没有缩略图:给试听条占缩略位(素材面板同款);点击不触发
+                 卡片的选择/取消。 -->
+            <audio
+              v-else-if="a.kind === 'audio'"
+              :src="a.content_url"
+              class="audio-thumb"
+              controls
+              preload="none"
+              @click.stop
+            />
+            <video
+              v-else
+              :src="a.content_url"
+              class="thumb"
+              muted
+              preload="metadata"
+            />
+            <div class="meta">
+              <span class="kind-tag">{{ kindLabel(a.kind) }}</span>
+              <span
+                class="prompt"
+                :title="a.prompt"
+              >{{ a.prompt || '(无提示词)' }}</span>
+            </div>
+            <span
+              v-if="isSelected(a)"
+              class="picked"
+            >✓</span>
+          </li>
+        </ul>
+
+        <button
+          v-if="hasMore()"
+          type="button"
+          class="more"
+          :disabled="loading"
+          @click="loadMore"
+        >
+          {{ loading ? '加载中…' : '加载更多' }}
+        </button>
+      </div>
     </template>
 
     <!-- 资产视图(51/65 号票):角色 → 变体两级、场景/道具 → 图一级的
          设定图分组,点选与普通素材同款 toggle(载荷 = asset_id + 内容寻址),
          71 号票起额外携带元素标注(角色带所在变体)。 -->
     <template v-else>
-      <p
-        v-if="libraryError"
-        class="panel-error"
-        role="alert"
-      >
-        {{ libraryError }}
-      </p>
-      <p
-        v-else-if="libraryLoading"
-        class="panel-empty"
-      >
-        加载{{ VIEW_LABELS[view] }}…
-      </p>
-      <p
-        v-else-if="view === 'character' ? characters.length === 0 : libraryEntities.length === 0"
-        class="panel-empty"
-      >
-        {{ libraryEmptyText }}
-      </p>
-      <template v-else-if="view === 'character'">
-        <section
-          v-for="c in characters"
-          :key="c.id"
-          class="character-group"
+      <div class="picker-scroll">
+        <p
+          v-if="libraryError"
+          class="panel-error"
+          role="alert"
         >
-          <h4 class="character-name">
-            {{ c.name }}
-            <span
-              v-if="c.alias"
-              class="character-alias"
-            >{{ c.alias }}</span>
-          </h4>
-          <div
-            v-for="v in c.variants"
-            :key="v.id"
-            class="variant-group"
+          {{ libraryError }}
+        </p>
+        <p
+          v-else-if="libraryLoading"
+          class="panel-empty"
+        >
+          加载{{ VIEW_LABELS[view] }}…
+        </p>
+        <p
+          v-else-if="view === 'character' ? characters.length === 0 : libraryEntities.length === 0"
+          class="panel-empty"
+        >
+          {{ libraryEmptyText }}
+        </p>
+        <template v-else-if="view === 'character'">
+          <section
+            v-for="c in characters"
+            :key="c.id"
+            class="character-group"
           >
-            <p class="variant-name">
-              {{ v.name }}
+            <h4 class="character-name">
+              {{ c.name }}
               <span
-                v-if="v.note"
-                class="variant-note"
-              >{{ v.note }}</span>
-            </p>
+                v-if="c.alias"
+                class="character-alias"
+              >{{ c.alias }}</span>
+            </h4>
+            <div
+              v-for="v in c.variants"
+              :key="v.id"
+              class="variant-group"
+            >
+              <p class="variant-name">
+                {{ v.name }}
+                <span
+                  v-if="v.note"
+                  class="variant-note"
+                >{{ v.note }}</span>
+              </p>
+              <ul
+                v-if="v.images.length > 0"
+                class="asset-list"
+              >
+                <li
+                  v-for="img in orderedVariantImages(v)"
+                  :key="img.id"
+                  class="asset-card"
+                  :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
+                  :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
+                  @click="onPickLibraryAsset(img.asset_id, characterElement(c.id, v.id))"
+                >
+                  <span
+                    v-if="brokenLibraryAssets.has(img.asset_id)"
+                    class="character-unavailable"
+                  >
+                    素材不可用
+                  </span>
+                  <img
+                    v-else
+                    :src="thumbs.displayURL(characterImageContentURL(img.asset_id), characterImageThumbURL(img.asset_id))"
+                    class="thumb"
+                    loading="lazy"
+                    alt="设定图"
+                    @error="onLibraryThumbError(img.asset_id)"
+                  >
+                  <div class="meta">
+                    <span
+                      class="kind-tag"
+                      :class="{ 'view-label': isViewLabel(img.label) }"
+                    >{{ img.label || '设定图' }}</span>
+                  </div>
+                  <span
+                    v-if="isLibraryAssetSelected(img.asset_id)"
+                    class="picked"
+                  >✓</span>
+                </li>
+              </ul>
+              <p
+                v-else
+                class="variant-empty"
+              >
+                该变体还没有设定图
+              </p>
+            </div>
+          </section>
+        </template>
+        <!-- 场景/道具(65 号票):实体 → 图一级(无造型变体,变体语义用
+             label 表达),主资产置前的展示序。 -->
+        <template v-else>
+          <section
+            v-for="e in libraryEntities"
+            :key="e.id"
+            class="character-group"
+          >
+            <h4 class="character-name">
+              {{ e.name }}
+              <span
+                v-if="e.alias"
+                class="character-alias"
+              >{{ e.alias }}</span>
+            </h4>
             <ul
-              v-if="v.images.length > 0"
+              v-if="e.images.length > 0"
               class="asset-list"
             >
               <li
-                v-for="img in orderedVariantImages(v)"
+                v-for="img in orderedImages(libraryViewKind, e.images)"
                 :key="img.id"
                 class="asset-card"
                 :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
                 :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
-                @click="onPickLibraryAsset(img.asset_id, characterElement(c.id, v.id))"
+                @click="onPickLibraryAsset(img.asset_id, libraryElement(e))"
               >
                 <span
                   v-if="brokenLibraryAssets.has(img.asset_id)"
@@ -509,7 +574,7 @@ onMounted(refresh)
                 <div class="meta">
                   <span
                     class="kind-tag"
-                    :class="{ 'view-label': isViewLabel(img.label) }"
+                    :class="{ 'view-label': isPrimaryImg(img.label) }"
                   >{{ img.label || '设定图' }}</span>
                 </div>
                 <span
@@ -522,72 +587,11 @@ onMounted(refresh)
               v-else
               class="variant-empty"
             >
-              该变体还没有设定图
+              该{{ VIEW_LABELS[view] }}还没有设定图
             </p>
-          </div>
-        </section>
-      </template>
-      <!-- 场景/道具(65 号票):实体 → 图一级(无造型变体,变体语义用
-           label 表达),主资产置前的展示序。 -->
-      <template v-else>
-        <section
-          v-for="e in libraryEntities"
-          :key="e.id"
-          class="character-group"
-        >
-          <h4 class="character-name">
-            {{ e.name }}
-            <span
-              v-if="e.alias"
-              class="character-alias"
-            >{{ e.alias }}</span>
-          </h4>
-          <ul
-            v-if="e.images.length > 0"
-            class="asset-list"
-          >
-            <li
-              v-for="img in orderedImages(libraryViewKind, e.images)"
-              :key="img.id"
-              class="asset-card"
-              :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
-              :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
-              @click="onPickLibraryAsset(img.asset_id, libraryElement(e))"
-            >
-              <span
-                v-if="brokenLibraryAssets.has(img.asset_id)"
-                class="character-unavailable"
-              >
-                素材不可用
-              </span>
-              <img
-                v-else
-                :src="thumbs.displayURL(characterImageContentURL(img.asset_id), characterImageThumbURL(img.asset_id))"
-                class="thumb"
-                loading="lazy"
-                alt="设定图"
-                @error="onLibraryThumbError(img.asset_id)"
-              >
-              <div class="meta">
-                <span
-                  class="kind-tag"
-                  :class="{ 'view-label': isPrimaryImg(img.label) }"
-                >{{ img.label || '设定图' }}</span>
-              </div>
-              <span
-                v-if="isLibraryAssetSelected(img.asset_id)"
-                class="picked"
-              >✓</span>
-            </li>
-          </ul>
-          <p
-            v-else
-            class="variant-empty"
-          >
-            该{{ VIEW_LABELS[view] }}还没有设定图
-          </p>
-        </section>
-      </template>
+          </section>
+        </template>
+      </div>
     </template>
   </aside>
 </template>
@@ -607,8 +611,30 @@ onMounted(refresh)
   border-left: 1px solid var(--line-control);
   box-shadow: var(--shadow-slide);
   z-index: var(--z-side-panel);
-  overflow-y: auto;
+  /* 75 号票:面板自身不再滚动,滚动下沉到列表区(.picker-scroll),
+     头部/tab/筛选行固定可见。 */
+  overflow: hidden;
   animation: panel-in var(--dur-slow) var(--ease);
+}
+
+/* 75 号票:标题、说明、tab 与筛选行固定,不随列表滚走。 */
+.panel-head,
+.panel-hint,
+.view-switch,
+.scope-filter,
+.kind-filter {
+  flex-shrink: 0;
+}
+
+/* 75 号票:列表独立滚动区 —— 卡片网格与「加载更多」跟随内容滚动,
+   不吸底;内部 flex 列沿用面板原 gap,保持行距不变。 */
+.picker-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-md);
 }
 
 .panel-head {
