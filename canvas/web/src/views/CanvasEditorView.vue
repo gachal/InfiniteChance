@@ -4,7 +4,7 @@
 // 节点)、节点旁 + 按钮的两击连线(30 号票)、整图防抖自动保存与版本冲突
 // 处理(09 号票);文生图任务编排的客户端侧(10 号票):生成动作 → 结果
 // 节点先落库再提交 → 轮询任务 → 产物写回节点。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -100,12 +100,15 @@ import {
   composerVideoRefs,
   composeSize,
   defaultVideoRefRole,
+  dropNodeDraft,
   durationRangeFor,
   isReferenceRole,
   isRelayableRef,
   MAX_COMPOSER_REFS,
   mediaSyncPatch,
+  nodeDraftFor,
   parseDurationInput,
+  patchNodeDraft,
   resultNodeData,
   taskUrlFor,
   videoRefFromAsset,
@@ -113,6 +116,7 @@ import {
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
   type ComposerElement,
+  type ComposerNodeDraft,
   type ComposerRef,
   type VideoComposerRef,
   type VideoRefKind,
@@ -295,6 +299,8 @@ function applyGraphSnapshot(s: ReturnType<typeof snapshot>): void {
   applyingSnapshot = true
   setNodes(s.nodes.map((n) => ({ ...n })))
   setEdges(s.edges.map((e) => ({ ...e })) as unknown as Edge[])
+  // 74 号票:redo 回放的删除不经 nodes-change,草稿键在这里对账。
+  pruneNodeDrafts()
   void nextTick().finally(() => {
     applyingSnapshot = false
   })
@@ -607,36 +613,34 @@ const wrapEl = ref<HTMLDivElement | null>(null)
 const topbarRef = ref<InstanceType<typeof CanvasTopbar> | null>(null)
 
 // 模式:选中视频节点时锁定视频生成,选中图片节点默认图片模式、可切视频
-// (切过去时节点产物自动进参考条、默认角色「首帧」)。两套草稿按模式独立
-// 存放,互不清空(ADR 0002)。
+// (切过去时节点产物自动进参考条、默认角色「首帧」)。两模式各一套草稿,
+// 互不清空(ADR 0002);提示词与上传参考条自 74 号票起按「节点 × 模式」存
+// (见下方「节点草稿」段),参数留全局 sticky。
 const composerMode = ref<'image' | 'video'>('image')
 
-// 图片模式草稿:提示词/模型/比例/分辨率不随选中切换清空;比例 × 分辨率
-// 在发送时经 composeSize 组合成 size 串(双自动 = 不传);透明背景开关
-// (37 号票)同款独立草稿,默认关、发送时折成 background 参数。
-const composerPrompt = ref('')
+// 图片模式 sticky 参数(74 号票定案 2):模型/比例/分辨率/透明背景/带 IP 风格
+// 不随选中切换、按模式全局保留上次使用值 —— 新建节点沿用,与节点无关。
+// 比例 × 分辨率在发送时经 composeSize 组合成 size 串(双自动 = 不传);透明
+// 背景开关(37 号票)默认关、发送时折成 background 参数。
 const composerModel = ref('')
 const composerRatio = ref('')
 const composerResolution = ref('')
 const composerTransparent = ref(false)
-// 「带 IP 风格」开关(69 号票):与透明背景同款独立草稿、默认关,图片与视频
-// 两模式各存一份;发送时经 styledSendPrompt 把风格段拼在提示词前部。
+// 「带 IP 风格」开关(69 号票):与透明背景同款、默认关,图片与视频两模式各
+// 存一份;发送时经 styledSendPrompt 把风格段拼在提示词前部。
 const composerWithStyle = ref(false)
-// 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
-const uploadedRefs = ref<ComposerRef[]>([])
 // 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
 // 一变(切到别的图)即复位。
 const detachedFromSelection = ref(false)
 const refUploading = ref(false)
 
-// 视频模式草稿(24 号票):提示词/模型/时长/分辨率/比例/参考条独立一套。
-const videoPrompt = ref('')
+// 视频模式 sticky 参数(24 号票;74 号票同款口径):模型/时长/比例/分辨率/带
+// IP 风格按模式全局保留上次使用值。
 const videoModel = ref('')
 const videoDuration = ref('')
 const videoRatio = ref('')
 const videoResolution = ref('')
 const videoWithStyle = ref(false)
-const uploadedVideoRefs = ref<VideoComposerRef[]>([])
 const detachedVideoFromSelection = ref(false)
 
 /** 对话框的上下文 = 最近选中的图片或视频节点(多选时取数组末位);空 =
@@ -659,6 +663,57 @@ watch(
     composerMode.value = composerModeLocked.value ? 'video' : 'image'
   },
 )
+
+// ---- 节点草稿(74 号票):提示词 + 上传参考条按「节点 × 模式」存 ----
+//
+// 两张会话内存 Map(image/video 各一张,按 nodeId 键),不落 localStorage/
+// 服务端。选中哪个节点就显示哪个节点的草稿:A 写一半切 B 再切回,各自未发
+// 送的编辑都在。工具栏新建节点无草稿 → 回落 data.prompt(无则空)+ 空上传
+// 条,参数沿用上面的 sticky 值;存量旧节点同规(回落到卡片上展示的提示词,
+// 产物 chip 由 composerRefs 从 data.url 派生)。首次编辑即「接管」为该节点
+// 草稿(patchNodeDraft 把回落值一并物化),此后草稿优先于 data;发送成功不
+// 清草稿(27 号票),键位从模式改为节点。直通入口(cut→画面/视频、设定图、
+// 角色登场)先 addSelectedNodes 再同步写这四个 computed,composerNode 同步
+// 重算指向新节点,整条覆盖的就是它的草稿。删除节点由 onFlowNodesChange 按
+// id 清键、整图回放(undo/redo、服务器图覆盖)由 pruneNodeDrafts 对账。
+// shallowReactive:每次写都整体替换草稿对象,不需要深层代理。
+const imageDrafts = shallowReactive(new Map<string, ComposerNodeDraft<ComposerRef>>())
+const videoDrafts = shallowReactive(new Map<string, ComposerNodeDraft<VideoComposerRef>>())
+const composerNodeId = computed(() => composerNode.value?.id ?? '')
+const composerNodeData = computed(() => composerNode.value?.data as MediaNodeData | undefined)
+
+const composerPrompt = computed<string>({
+  get: () => nodeDraftFor(imageDrafts, composerNodeId.value, composerNodeData.value).prompt,
+  set: (prompt) => patchNodeDraft(imageDrafts, composerNodeId.value, composerNodeData.value, { prompt }),
+})
+// 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
+const uploadedRefs = computed<ComposerRef[]>({
+  get: () => nodeDraftFor(imageDrafts, composerNodeId.value, composerNodeData.value).refs,
+  set: (refs) => patchNodeDraft(imageDrafts, composerNodeId.value, composerNodeData.value, { refs }),
+})
+const videoPrompt = computed<string>({
+  get: () => nodeDraftFor(videoDrafts, composerNodeId.value, composerNodeData.value).prompt,
+  set: (prompt) => patchNodeDraft(videoDrafts, composerNodeId.value, composerNodeData.value, { prompt }),
+})
+const uploadedVideoRefs = computed<VideoComposerRef[]>({
+  get: () => nodeDraftFor(videoDrafts, composerNodeId.value, composerNodeData.value).refs,
+  set: (refs) => patchNodeDraft(videoDrafts, composerNodeId.value, composerNodeData.value, { refs }),
+})
+
+/** 整图回放(undo/redo、服务器图覆盖)不经 nodes-change,这里按现存节点对账:
+ * 图里已不存在的节点,其草稿一并清掉(74 号票定案 6,防 Map 泄漏)。 */
+function pruneNodeDrafts(): void {
+  for (const id of [...imageDrafts.keys()]) {
+    if (!findNode(id)) {
+      dropNodeDraft(imageDrafts, id)
+    }
+  }
+  for (const id of [...videoDrafts.keys()]) {
+    if (!findNode(id)) {
+      dropNodeDraft(videoDrafts, id)
+    }
+  }
+}
 
 watch(
   () => imageModels.value,
@@ -3121,6 +3176,11 @@ function onFlowNodesChange(changes: NodeChange[]): void {
   const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id)
   if (removals.length > 0) {
     pruneDanglingGroupMembers(removals)
+    // 74 号票:被删节点的 composer 草稿(两模式)随行清键,防 Map 泄漏。
+    for (const id of removals) {
+      dropNodeDraft(imageDrafts, id)
+      dropNodeDraft(videoDrafts, id)
+    }
     if (removals.some((id) => isGroupNode(findNode(id)))) {
       showNotice('已解组,成员原地保留,⌘Z / Ctrl+Z 可撤销')
     } else {
@@ -3938,6 +3998,8 @@ async function applyServerGraph(detail: CanvasDetail): Promise<void> {
   canvasIPName.value = detail.ip_name
   setNodes(normalizeNodes(detail))
   setEdges(detail.graph.edges as unknown as Edge[])
+  // 74 号票:冲突重载以服务器图为权威,本地未保存的节点消失 → 草稿对账清键。
+  pruneNodeDrafts()
   await nextTick()
   // 水合触发的同步变更事件先落地,再认版本,避免把加载当成编辑。
   autosave.setVersion(detail.version)
