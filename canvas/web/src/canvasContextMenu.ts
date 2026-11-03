@@ -29,7 +29,8 @@ export interface ContextMenuItem {
   id: string
   /** 纯文字文案,不带「+」前缀。 */
   label: string
-  /** 悬停提示,沿用原工具栏按钮 title 的语义说明。 */
+  /** 悬停提示:仅音效一条随迁原工具栏,其余按「落一个<菜单文案>节点」
+   * 生成(76 号票新造,非历史随迁)。 */
   title?: string
   /** 配色 tone:沿用原工具栏按钮的彩色语言,组件按 tone 取 CSS 色对。 */
   tone: string
@@ -46,14 +47,17 @@ export interface ContextMenuSection {
  * 中性称谓,58 号票起的 ADD_LABELS 例外原样随迁)。 */
 const AUDIO_LABEL = '配乐'
 
-/** 原工具栏按钮的 title 提示(58 号票积累的语义说明原样随迁);键是
- * 条目 id(音效不是节点类型,是 audio 节点的第二入口)。 */
+/** 条目 title 覆盖表:仅音效一条随迁自原工具栏按钮(58 号票积累的语义
+ * 说明,原样保留);键是条目 id(音效不是节点类型,是 audio 节点的第二
+ * 入口)。其余条目的 title 由 nodeItem 按菜单文案生成,不走这张表。 */
 const ADD_TITLES: Record<string, string> = {
   sfx: '落一个音效创作节点(≤30 秒短音频,按秒计费)',
 }
 
 /** 落节点条目工厂:文案 = NODE_TYPE_LABEL(audio 例外「配乐」,音效第二
- * 入口显式传「音效」);带 dataPatch 的入口 id 取意图标记本身。 */
+ * 入口显式传「音效」);title 与文案同源生成 —— audio 条目实际落的也是
+ * audio 节点,但菜单语义是「配乐」,title 从文案不从类型(名实一致,
+ * 不写「落一个音频节点」);带 dataPatch 的入口 id 取意图标记本身。 */
 function nodeItem(
   nodeType: CanvasNodeType,
   tone: string,
@@ -61,10 +65,11 @@ function nodeItem(
   label?: string,
 ): ContextMenuItem {
   const id = dataPatch?.source ? String(dataPatch.source) : nodeType
+  const text = label ?? (nodeType === 'audio' ? AUDIO_LABEL : NODE_TYPE_LABEL[nodeType])
   return {
     id,
-    label: label ?? (nodeType === 'audio' ? AUDIO_LABEL : NODE_TYPE_LABEL[nodeType]),
-    title: ADD_TITLES[nodeType] ?? `落一个${NODE_TYPE_LABEL[nodeType]}节点`,
+    label: text,
+    title: ADD_TITLES[nodeType] ?? `落一个${text}节点`,
     tone,
     command: dataPatch ? { kind: 'add-node', nodeType, dataPatch } : { kind: 'add-node', nodeType },
   }
