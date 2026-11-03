@@ -691,37 +691,42 @@ const videoDrafts = shallowReactive(new Map<string, ComposerNodeDraft<VideoCompo
 const composerNodeId = computed(() => composerNode.value?.id ?? '')
 const composerNodeData = computed(() => composerNode.value?.data as MediaNodeData | undefined)
 
-const composerPrompt = computed<string>({
-  get: () => nodeDraftFor(imageDrafts, composerNodeId.value, composerNodeData.value).prompt,
-  set: (prompt) => patchNodeDraft(imageDrafts, composerNodeId.value, composerNodeData.value, { prompt }),
-})
+/** 节点草稿单字段的读写访问器工厂(标准轴 DRY):四个同形可写 computed
+ * (两模式 × prompt/refs)收成一个工厂 —— 读 = 当前选中节点在该模式
+ * Map 下的草稿字段,写 = patchNodeDraft 接管后覆盖该字段。 */
+function draftPart<R, K extends keyof ComposerNodeDraft<R>>(
+  drafts: Map<string, ComposerNodeDraft<R>>,
+  key: K,
+) {
+  return computed<ComposerNodeDraft<R>[K]>({
+    get: () => nodeDraftFor(drafts, composerNodeId.value, composerNodeData.value)[key],
+    set: (value) =>
+      patchNodeDraft(drafts, composerNodeId.value, composerNodeData.value, {
+        [key]: value,
+      } as Partial<ComposerNodeDraft<R>>),
+  })
+}
+
+const composerPrompt = draftPart(imageDrafts, 'prompt')
 // 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
-const uploadedRefs = computed<ComposerRef[]>({
-  get: () => nodeDraftFor(imageDrafts, composerNodeId.value, composerNodeData.value).refs,
-  set: (refs) => patchNodeDraft(imageDrafts, composerNodeId.value, composerNodeData.value, { refs }),
-})
-const videoPrompt = computed<string>({
-  get: () => nodeDraftFor(videoDrafts, composerNodeId.value, composerNodeData.value).prompt,
-  set: (prompt) => patchNodeDraft(videoDrafts, composerNodeId.value, composerNodeData.value, { prompt }),
-})
-const uploadedVideoRefs = computed<VideoComposerRef[]>({
-  get: () => nodeDraftFor(videoDrafts, composerNodeId.value, composerNodeData.value).refs,
-  set: (refs) => patchNodeDraft(videoDrafts, composerNodeId.value, composerNodeData.value, { refs }),
-})
+const uploadedRefs = draftPart(imageDrafts, 'refs')
+const videoPrompt = draftPart(videoDrafts, 'prompt')
+const uploadedVideoRefs = draftPart(videoDrafts, 'refs')
+
+/** 单张草稿 Map 的对账循环:图里已不存在的节点清键(两模式共用)。 */
+function pruneDraftMap<R>(drafts: Map<string, ComposerNodeDraft<R>>): void {
+  for (const id of [...drafts.keys()]) {
+    if (!findNode(id)) {
+      dropNodeDraft(drafts, id)
+    }
+  }
+}
 
 /** 整图回放(undo/redo、服务器图覆盖)不经 nodes-change,这里按现存节点对账:
  * 图里已不存在的节点,其草稿一并清掉(74 号票定案 6,防 Map 泄漏)。 */
 function pruneNodeDrafts(): void {
-  for (const id of [...imageDrafts.keys()]) {
-    if (!findNode(id)) {
-      dropNodeDraft(imageDrafts, id)
-    }
-  }
-  for (const id of [...videoDrafts.keys()]) {
-    if (!findNode(id)) {
-      dropNodeDraft(videoDrafts, id)
-    }
-  }
+  pruneDraftMap(imageDrafts)
+  pruneDraftMap(videoDrafts)
 }
 
 watch(
