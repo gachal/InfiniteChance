@@ -52,7 +52,7 @@ const BOUNDARY_NOTES: string[] = [
 /** 键位速查(与 CanvasEditorView/左下提示行同一口径,38 号票纪律)。 */
 const GLOBAL_KEYS: HelpKeyEntry[] = [
   { keys: '?', label: '打开/关闭本帮助' },
-  { keys: 'Esc', label: '逐层退出(栈顶先收:灯箱 → 帮助 → 面板 → 编辑层)' },
+  { keys: 'Esc', label: '逐层退出(栈顶先收:灯箱 → 右键菜单 → 帮助 → 面板 → 编辑层)' },
   { keys: 'Enter', label: '生成对话框内直接发送' },
   { keys: 'Shift+Enter', label: '对话框内换行' },
   { keys: 'F', label: '画布回全景' },
