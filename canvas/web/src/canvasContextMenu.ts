@@ -46,8 +46,9 @@ export interface ContextMenuSection {
  * 中性称谓,58 号票起的 ADD_LABELS 例外原样随迁)。 */
 const AUDIO_LABEL = '配乐'
 
-/** 原工具栏按钮的 title 提示(58 号票积累的语义说明原样随迁)。 */
-const ADD_TITLES: Partial<Record<CanvasNodeType, string>> = {
+/** 原工具栏按钮的 title 提示(58 号票积累的语义说明原样随迁);键是
+ * 条目 id(音效不是节点类型,是 audio 节点的第二入口)。 */
+const ADD_TITLES: Record<string, string> = {
   sfx: '落一个音效创作节点(≤30 秒短音频,按秒计费)',
 }
 
