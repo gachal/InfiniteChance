@@ -533,3 +533,58 @@ export function audioSyncPatch(
   }
   return patch
 }
+
+// ---- 节点草稿(74 号票):composer 草稿按节点 × 模式隔离 ----
+
+/** 一个节点在某模式下的 composer 草稿:提示词 + 本会话上传的参考条。
+ * 模型/比例/分辨率/透明背景/带 IP 风格/时长**不在这里** —— 它们是按模式
+ * sticky 的全局偏好,新建节点沿用上次值(74 号票定案 2)。产物 chip 也不在
+ * 这里:它由选中节点的 data.url 派生(composerRefs / videoComposerRefs),
+ * 不是草稿。R = ComposerRef(图片模式)或 VideoComposerRef(视频模式)。 */
+export interface ComposerNodeDraft<R> {
+  prompt: string
+  refs: R[]
+}
+
+/** 无草稿节点的回落草稿(74 号票定案 3):提示词取 node.data.prompt
+ * (27 号票落板的「上次实际发送」,与卡片展示一致),无则空;上传条空。
+ * 工具栏「+图片/+视频」新建节点只带 {url:'', note:''},天然回落成空草稿。 */
+function fallbackNodeDraft<R>(data: MediaNodeData | undefined): ComposerNodeDraft<R> {
+  return { prompt: data?.prompt ?? '', refs: [] }
+}
+
+/** 读某节点在该模式下的草稿:有则原样,无则回落。两模式各一张 Map、都按
+ * nodeId 键(= 「节点 × 模式」),调用方按 composerMode 选 Map。 */
+export function nodeDraftFor<R>(
+  drafts: Map<string, ComposerNodeDraft<R>>,
+  nodeId: string,
+  data: MediaNodeData | undefined,
+): ComposerNodeDraft<R> {
+  return drafts.get(nodeId) ?? fallbackNodeDraft(data)
+}
+
+/** 写某节点草稿的一部分(74 号票定案 3「选中即接管」):无草稿先按回落
+ * 接管、再覆盖传入字段 —— 用户先传参考图再碰提示词时,回落的 data.prompt
+ * 随接管一并进草稿,不会在第一次上传后消失。接管后草稿优先于 data:用户
+ * 清空的提示词不会从 data.prompt 弹回,任务事后回填 prompt 也不覆盖。
+ * 原地写 Map(调用方持 shallowReactive Map,set 即触发重算);nodeId 为空
+ * (未选中节点)时不写 —— 否则会落一个 '' 键,「未选中」读到的就是它。 */
+export function patchNodeDraft<R>(
+  drafts: Map<string, ComposerNodeDraft<R>>,
+  nodeId: string,
+  data: MediaNodeData | undefined,
+  patch: Partial<ComposerNodeDraft<R>>,
+): void {
+  if (nodeId === '') {
+    return
+  }
+  drafts.set(nodeId, { ...nodeDraftFor(drafts, nodeId, data), ...patch })
+}
+
+/** 删除节点时清理其草稿键(74 号票定案 6),防 Map 随会话泄漏;两模式各
+ * 调一次。删不存在的键无害 —— 非媒体节点、从未接管过的节点都走这里。
+ * ⌘Z 撤销删除后节点带着落板的 data.prompt 回来,按回落显示;未发送的编辑
+ * 与上传条随删除作废(草稿持久化 out of scope)。 */
+export function dropNodeDraft<R>(drafts: Map<string, ComposerNodeDraft<R>>, nodeId: string): void {
+  drafts.delete(nodeId)
+}

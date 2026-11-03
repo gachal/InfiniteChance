@@ -9,12 +9,15 @@ import {
   composerVideoRefs,
   composeSize,
   defaultVideoRefRole,
+  dropNodeDraft,
   durationRangeFor,
   isReferenceRole,
   isRelayableRef,
   MAX_COMPOSER_REFS,
   mediaSyncPatch,
+  nodeDraftFor,
   parseDurationInput,
+  patchNodeDraft,
   resolutionPresetsFor,
   resultNodeData,
   RATIO_PRESETS,
@@ -27,6 +30,7 @@ import {
   videoPlaceholder,
   withVideoRefRole,
   type ComposerElement,
+  type ComposerNodeDraft,
   type ComposerRef,
   type TaskForNodeSync,
   type VideoComposerRef,
@@ -580,5 +584,112 @@ describe('videoRefFromAsset(47 号票素材库挑选)', () => {
     expect(videoRefFromAsset({ id: 4, kind: 'audio', content_url: '/api/assets/4/content' }, list).role).toBe(
       'reference_audio',
     )
+  })
+})
+
+// ---- 节点草稿(74 号票):composer 草稿按节点 × 模式隔离 ----
+
+describe('nodeDraftFor(74 号票存量/无草稿节点回落)', () => {
+  it('falls back to the node prompt that was actually sent, with an empty upload strip', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    // 存量旧节点:从未有过草稿,输入框回落到卡片上展示的 data.prompt;
+    // 产物 chip 由 composerRefs 从 data.url 派生,不进草稿的上传条。
+    expect(nodeDraftFor(drafts, 'image-1', { url: '/api/assets/9/content', note: '', prompt: '夜色下的港口' })).toEqual({
+      prompt: '夜色下的港口',
+      refs: [],
+    })
+  })
+
+  it('falls back to an empty draft when the node carries no prompt (toolbar-created or legacy)', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    // 工具栏「+图片/+视频」新建节点只带 {url:'', note:''};27 号票前的旧产物
+    // 也没有 prompt —— 两者都回落成空草稿。toEqual 钉住形状:草稿只有
+    // prompt + refs,模型/比例/分辨率/透明/带风格/时长不入节点草稿(留在
+    // 全局 sticky)。
+    expect(nodeDraftFor(drafts, 'image-2', { url: '', note: '' })).toEqual({ prompt: '', refs: [] })
+    expect(nodeDraftFor(drafts, 'image-3', undefined)).toEqual({ prompt: '', refs: [] })
+  })
+})
+
+describe('patchNodeDraft(74 号票选中即接管)', () => {
+  const legacy = { url: '/api/assets/9/content', note: '', prompt: '夜色下的港口' }
+
+  it('takes over a legacy node: the first edit materialises the fallback plus the patch', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    // 用户先上传一张参考图、还没碰提示词 —— 接管时回落的 data.prompt 必须
+    // 一并进草稿,否则输入框里的「夜色下的港口」会在第一次上传后消失。
+    patchNodeDraft(drafts, 'image-1', legacy, { refs: [{ url: '/api/assets/5/content', asset_id: 5 }] })
+    expect(nodeDraftFor(drafts, 'image-1', legacy)).toEqual({
+      prompt: '夜色下的港口',
+      refs: [{ url: '/api/assets/5/content', asset_id: 5 }],
+    })
+    // 再改提示词:只换 prompt,参考条原样。
+    patchNodeDraft(drafts, 'image-1', legacy, { prompt: '黎明时的港口' })
+    expect(nodeDraftFor(drafts, 'image-1', legacy)).toEqual({
+      prompt: '黎明时的港口',
+      refs: [{ url: '/api/assets/5/content', asset_id: 5 }],
+    })
+  })
+
+  it('once taken over, the draft wins over whatever the node data says afterwards', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', legacy, { prompt: '' })
+    // 用户把提示词清空了:切走再切回不得从 data.prompt 弹回「夜色下的港口」。
+    expect(nodeDraftFor(drafts, 'image-1', legacy).prompt).toBe('')
+    // 节点 data 事后变化(任务回填 prompt)也不覆盖已接管的草稿。
+    expect(nodeDraftFor(drafts, 'image-1', { ...legacy, prompt: '回填的提示词' }).prompt).toBe('')
+  })
+
+  it('keeps every other node untouched: A 写一半切 B 切回,各自草稿保留', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-A', undefined, { prompt: '写了一半' })
+    patchNodeDraft(drafts, 'image-B', undefined, { prompt: 'B 的草稿' })
+    expect(nodeDraftFor(drafts, 'image-A', undefined).prompt).toBe('写了一半')
+    expect(nodeDraftFor(drafts, 'image-B', undefined).prompt).toBe('B 的草稿')
+    // 从未碰过的 C 仍按自己的 data 回落,不吃别家残留。
+    expect(nodeDraftFor(drafts, 'image-C', { url: '', note: '', prompt: 'C 卡片上的' })).toEqual({
+      prompt: 'C 卡片上的',
+      refs: [],
+    })
+  })
+
+  it('refuses to write when no node is selected (empty id): nothing to take over', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    // 对话框只在选中节点时存在,但直通入口/防御路径可能在无选中时写草稿:
+    // 不得落一个 '' 键 —— 否则「未选中」读到的就是这份无主草稿。
+    patchNodeDraft(drafts, '', undefined, { prompt: '无主草稿' })
+    expect(drafts.size).toBe(0)
+    expect(nodeDraftFor(drafts, '', undefined)).toEqual({ prompt: '', refs: [] })
+  })
+
+  it('image and video drafts of the same node live in separate maps (节点 × 模式)', () => {
+    const imageDrafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    const videoDrafts = new Map<string, ComposerNodeDraft<VideoComposerRef>>()
+    // 图片节点上切到视频模式写提示词,不影响同一节点的图片模式草稿。
+    patchNodeDraft(imageDrafts, 'image-1', undefined, { prompt: '生图提示词' })
+    patchNodeDraft(videoDrafts, 'image-1', undefined, {
+      prompt: '让画面动起来',
+      refs: [{ url: '/api/assets/9/content', kind: 'image', role: 'first_frame' }],
+    })
+    expect(nodeDraftFor(imageDrafts, 'image-1', undefined)).toEqual({ prompt: '生图提示词', refs: [] })
+    expect(nodeDraftFor(videoDrafts, 'image-1', undefined).prompt).toBe('让画面动起来')
+    expect(nodeDraftFor(videoDrafts, 'image-1', undefined).refs).toHaveLength(1)
+  })
+})
+
+describe('dropNodeDraft(74 号票删除节点清草稿键)', () => {
+  it('forgets the node draft so a later read falls back and the map does not leak', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', undefined, { prompt: '将被删除' })
+    patchNodeDraft(drafts, 'image-2', undefined, { prompt: '留下' })
+    dropNodeDraft(drafts, 'image-1')
+    expect(drafts.has('image-1')).toBe(false)
+    // ⌘Z 撤销删除后节点带着 data.prompt 回来:草稿已清,按回落显示落板的
+    // 提示词(未发送的编辑与上传条随删除作废,持久化另票)。
+    expect(nodeDraftFor(drafts, 'image-1', { url: '', note: '', prompt: '卡片上的' }).prompt).toBe('卡片上的')
+    // 别家不受影响;删不存在的键也无害(非媒体节点、从未接管过的节点)。
+    expect(nodeDraftFor(drafts, 'image-2', undefined).prompt).toBe('留下')
+    dropNodeDraft(drafts, 'never-existed')
+    expect(drafts.size).toBe(1)
   })
 })
