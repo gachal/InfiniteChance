@@ -24,6 +24,24 @@ export type ContextMenuCommand =
   | { kind: 'upload' }
   | { kind: 'help' }
 
+/** 条目配色 tone 的合法值(76 号票评审收字面量联合:拼错编译期报错,
+ * 不再是裸 string)。组件按 tone 拼成 `tone-${tone}` 类名取 CSS 色对,
+ * 值集与 CanvasContextMenu.vue 的 .tone-* 样式类一一对应。 */
+export type ContextMenuItemTone =
+  | 'accent'
+  | 'success'
+  | 'amber'
+  | 'pink'
+  | 'teal'
+  | 'teal-light'
+  | 'violet'
+  | 'violet-strong'
+  | 'orange'
+  | 'sky'
+  | 'red'
+  | 'gold'
+  | 'neutral'
+
 export interface ContextMenuItem {
   /** 全局唯一 id(组件 :key 与可读性)。 */
   id: string
@@ -33,7 +51,7 @@ export interface ContextMenuItem {
    * 生成(76 号票新造,非历史随迁)。 */
   title?: string
   /** 配色 tone:沿用原工具栏按钮的彩色语言,组件按 tone 取 CSS 色对。 */
-  tone: string
+  tone: ContextMenuItemTone
   command: ContextMenuCommand
 }
 
@@ -60,7 +78,7 @@ const ADD_TITLES: Record<string, string> = {
  * 不写「落一个音频节点」);带 dataPatch 的入口 id 取意图标记本身。 */
 function nodeItem(
   nodeType: CanvasNodeType,
-  tone: string,
+  tone: ContextMenuItemTone,
   dataPatch?: Partial<AudioNodeData>,
   label?: string,
 ): ContextMenuItem {
