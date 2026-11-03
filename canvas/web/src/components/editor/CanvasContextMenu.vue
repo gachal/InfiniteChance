@@ -9,8 +9,11 @@
 // 双重处理,帮助浮层同款纪律)/ 画布平移缩放(视图侧 onMoveStart 收)
 // / 点任一条目(执行即关)。贴边翻转在挂载后按实际尺寸交
 // clampMenuPosition 钳制(贴底向上弹、贴右向左收)。上传隐藏 file input
-// 自 CanvasToolbar 随迁(18 号票链路语义不变,change 原样上抛)。
-// 触屏/长按不做(票·定案 5,产品口径 PC 主力)。
+// **不住本组件**(76 号票评审:菜单一关组件即卸载,挂在组件里的 input
+// 会让 change 发在脱附元素上,Chrome 可收但 Wails WebView 有风险)——
+// input 提升到 CanvasEditorView 持久层,本组件的上传条目只经 select
+// 命令触发视图的 triggerUpload,「点条目即关」体感不变、落档链路
+// (onUploadChange)零变化。触屏/长按不做(票·定案 5,产品口径 PC 主力)。
 import { onMounted, ref } from 'vue'
 
 import {
@@ -31,8 +34,6 @@ const emit = defineEmits<{
   /** 点任一条目:执行即关 —— 视图按 command.kind 分发行为,并收起菜单。 */
   select: [item: ContextMenuItem]
   close: []
-  /** 上传文件选择器的 change 原样上抛(语义不变)。 */
-  uploadChange: [event: Event]
 }>()
 
 // 贴边翻转:先按右键点渲染,挂载后量实际菜单尺寸再钳制。菜单尺寸由
@@ -52,17 +53,12 @@ onMounted(() => {
   )
 })
 
-const uploadInput = ref<HTMLInputElement | null>(null)
-
-/** 点任一条目:上抛命令并即关。上传条目随后触发隐藏 file input ——
- * emit('close') 让视图收起菜单,但组件在本同步帧内仍在 DOM,
- * click() 的原生文件对话框不受下一帧卸载影响。 */
+/** 点任一条目:上抛命令并即关。上传条目不在此触发 file input —— 隐藏
+ * input 住视图持久层(见上方注释),视图侧按 select 命令触发,本组件
+ * 卸载与否不影响文件选择器。 */
 function onPick(item: ContextMenuItem): void {
   emit('select', item)
   emit('close')
-  if (item.command.kind === 'upload') {
-    uploadInput.value?.click()
-  }
 }
 </script>
 
@@ -100,14 +96,6 @@ function onPick(item: ContextMenuItem): void {
             {{ item.label }}
           </button>
         </section>
-        <!-- 18 号票上传链随迁:change 原样上抛,落档语义不变。 -->
-        <input
-          ref="uploadInput"
-          class="ctx-upload-input"
-          type="file"
-          accept="image/*,video/*"
-          @change="emit('uploadChange', $event)"
-        >
       </nav>
     </div>
   </Teleport>
@@ -263,9 +251,5 @@ function onPick(item: ContextMenuItem): void {
 .tone-neutral {
   background: rgba(var(--estimate-ink-rgb), 0.14);
   color: var(--estimate-ink);
-}
-
-.ctx-upload-input {
-  display: none;
 }
 </style>

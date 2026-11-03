@@ -3089,9 +3089,19 @@ onMoveStart(() => {
   closeContextMenu()
 })
 
+/** 上传链防脱附(76 号票评审,机制选型:持久层方案):隐藏 file input
+ * 住本视图常驻模板(菜单一关组件即卸载,挂组件里会让 change 发在脱附
+ * 元素上,Wails WebView 有风险),change 处理沿用 onUploadChange 原链
+ * 零变化;菜单条目经 select 命令走到这里再触发,emit 链同步、仍在同一次
+ * 用户手势内,原生文件对话框照常弹出。 */
+const uploadInputEl = ref<HTMLInputElement | null>(null)
+
+function triggerUpload(): void {
+  uploadInputEl.value?.click()
+}
+
 /** 菜单条目分发:落节点带右键锚点(右键位置即落点);分组进画框模式;
- * 素材库/生成记录/帮助保持既有 toggle 语义;上传由组件内 file input 的
- * change 走 onUploadChange,这里无需动作。 */
+ * 素材库/生成记录/帮助保持既有 toggle 语义;上传触发持久层 file input。 */
 function onContextMenuSelect(item: ContextMenuItem): void {
   const c = item.command
   if (c.kind === 'add-node') {
@@ -3112,6 +3122,7 @@ function onContextMenuSelect(item: ContextMenuItem): void {
     return
   }
   if (c.kind === 'upload') {
+    triggerUpload()
     return
   }
   helpOpen.value = !helpOpen.value
@@ -4785,8 +4796,17 @@ function backToList(): void {
         :uploading="uploading"
         @select="onContextMenuSelect"
         @close="closeContextMenu"
-        @upload-change="onUploadChange"
       />
+      <!-- 76 号票评审:上传链防脱附 —— 隐藏 file input 住本持久层(原
+           CanvasToolbar/菜单组件内聚版会随宿主卸载脱附),change 直接
+           走 onUploadChange,落档语义不变。 -->
+      <input
+        ref="uploadInputEl"
+        class="upload-input"
+        type="file"
+        accept="image/*,video/*"
+        @change="onUploadChange"
+      >
     </div>
 
     <!-- 76 号票:底部工具栏退场,左下快捷键提示行保留(位置不动)。 -->
@@ -4881,5 +4901,11 @@ function backToList(): void {
   border-radius: var(--r-xl);
   background: rgba(var(--accent-rgb), 0.08);
   pointer-events: none;
+}
+
+/* 76 号票评审:上传隐藏 file input 住持久层,视觉不可见即可(原
+   CanvasToolbar .upload-input 同款)。 */
+.upload-input {
+  display: none;
 }
 </style>
