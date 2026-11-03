@@ -72,24 +72,31 @@ const ADD_TITLES: Record<string, string> = {
   sfx: '落一个音效创作节点(≤30 秒短音频,按秒计费)',
 }
 
+/** 落节点条目工厂入参(76 号票评审收对象参数:调用点按名传参,相邻两
+ * 个 boolean/同型位置参数不再有传错位的可能)。 */
+interface NodeItemInput {
+  /** 落哪种节点;音效第二入口同落 audio,靠 data.source 区分意图。 */
+  type: CanvasNodeType
+  tone: ContextMenuItemTone
+  /** 初始创作意图(61 号票:音效入口带 source:'sfx')。 */
+  data?: Partial<AudioNodeData>
+  /** 菜单文案覆盖;缺省按类型取 NODE_TYPE_LABEL(audio 例外「配乐」)。 */
+  label?: string
+}
+
 /** 落节点条目工厂:文案 = NODE_TYPE_LABEL(audio 例外「配乐」,音效第二
  * 入口显式传「音效」);title 与文案同源生成 —— audio 条目实际落的也是
  * audio 节点,但菜单语义是「配乐」,title 从文案不从类型(名实一致,
- * 不写「落一个音频节点」);带 dataPatch 的入口 id 取意图标记本身。 */
-function nodeItem(
-  nodeType: CanvasNodeType,
-  tone: ContextMenuItemTone,
-  dataPatch?: Partial<AudioNodeData>,
-  label?: string,
-): ContextMenuItem {
-  const id = dataPatch?.source ? String(dataPatch.source) : nodeType
-  const text = label ?? (nodeType === 'audio' ? AUDIO_LABEL : NODE_TYPE_LABEL[nodeType])
+ * 不写「落一个音频节点」);带 data 的入口 id 取意图标记本身。 */
+function nodeItem({ type, tone, data, label }: NodeItemInput): ContextMenuItem {
+  const id = data?.source ? String(data.source) : type
+  const text = label ?? (type === 'audio' ? AUDIO_LABEL : NODE_TYPE_LABEL[type])
   return {
     id,
     label: text,
-    title: ADD_TITLES[nodeType] ?? `落一个${text}节点`,
+    title: ADD_TITLES[type] ?? `落一个${text}节点`,
     tone,
-    command: dataPatch ? { kind: 'add-node', nodeType, dataPatch } : { kind: 'add-node', nodeType },
+    command: data ? { kind: 'add-node', nodeType: type, dataPatch: data } : { kind: 'add-node', nodeType: type },
   }
 }
 
@@ -104,24 +111,24 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
     items: [
       // 53 号票序:agent/image/video/previz + 52/57/60/61 号票四音频与
       // 角色入口(配乐在音色后、音效压轴,原工具栏顺序原样随迁)。
-      nodeItem('agent', 'accent'),
-      nodeItem('image', 'success'),
-      nodeItem('video', 'amber'),
-      nodeItem('previz', 'pink'),
-      nodeItem('character', 'teal'),
-      nodeItem('voice', 'teal-light'),
-      nodeItem('audio', 'violet'),
-      nodeItem('audio', 'violet-strong', { source: 'sfx' }, '音效'),
+      nodeItem({ type: 'agent', tone: 'accent' }),
+      nodeItem({ type: 'image', tone: 'success' }),
+      nodeItem({ type: 'video', tone: 'amber' }),
+      nodeItem({ type: 'previz', tone: 'pink' }),
+      nodeItem({ type: 'character', tone: 'teal' }),
+      nodeItem({ type: 'voice', tone: 'teal-light' }),
+      nodeItem({ type: 'audio', tone: 'violet' }),
+      nodeItem({ type: 'audio', tone: 'violet-strong', data: { source: 'sfx' }, label: '音效' }),
     ],
   },
   {
     id: 'plan',
     label: '规划',
     items: [
-      nodeItem('storyboard', 'orange'),
-      nodeItem('name', 'sky'),
-      nodeItem('level', 'red'),
-      nodeItem('script', 'gold'),
+      nodeItem({ type: 'storyboard', tone: 'orange' }),
+      nodeItem({ type: 'name', tone: 'sky' }),
+      nodeItem({ type: 'level', tone: 'red' }),
+      nodeItem({ type: 'script', tone: 'gold' }),
     ],
   },
   {
