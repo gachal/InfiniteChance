@@ -4,7 +4,7 @@
 // 节点)、节点旁 + 按钮的两击连线(30 号票)、整图防抖自动保存与版本冲突
 // 处理(09 号票);文生图任务编排的客户端侧(10 号票):生成动作 → 结果
 // 节点先落库再提交 → 轮询任务 → 产物写回节点。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -93,19 +93,24 @@ import { legalEdgeLabels } from '../connection'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import {
   appendComposerRef,
+  appendNodeDraftRef,
   appendVideoRef,
   audioSyncPatch,
+  carryNodeDraft,
   composerImageUrls,
   composerRefFromAsset,
   composerVideoRefs,
   composeSize,
   defaultVideoRefRole,
+  dropNodeDraft,
   durationRangeFor,
   isReferenceRole,
   isRelayableRef,
   MAX_COMPOSER_REFS,
   mediaSyncPatch,
+  nodeDraftFor,
   parseDurationInput,
+  patchNodeDraft,
   resultNodeData,
   taskUrlFor,
   videoRefFromAsset,
@@ -113,6 +118,7 @@ import {
   VIDEO_ROLE_CAPS,
   withVideoRefRole,
   type ComposerElement,
+  type ComposerNodeDraft,
   type ComposerRef,
   type VideoComposerRef,
   type VideoRefKind,
@@ -295,6 +301,8 @@ function applyGraphSnapshot(s: ReturnType<typeof snapshot>): void {
   applyingSnapshot = true
   setNodes(s.nodes.map((n) => ({ ...n })))
   setEdges(s.edges.map((e) => ({ ...e })) as unknown as Edge[])
+  // 74 号票:redo 回放的删除不经 nodes-change,草稿键在这里对账。
+  pruneNodeDrafts()
   void nextTick().finally(() => {
     applyingSnapshot = false
   })
@@ -589,6 +597,13 @@ async function submitImageTask(payload: {
       ...(payload.imageUrls && payload.imageUrls.length > 0 ? { image_urls: payload.imageUrls } : {}),
     })
     taskSync.track(task)
+    // 发送成功随迁(74 号票,2026-11-03 用户裁决):产物节点自动选中后
+    // composer 显示严格不变 —— 来源节点图片模式草稿(prompt+refs)整体
+    // 复制给产物节点草稿键,迁「成功时刻」最新值;此后编辑只落产物节点,
+    // 不回写来源。来源等待期被删 → 草稿键已清,无草稿可迁,回落自然生效。
+    if (!fillsSource) {
+      carryNodeDraft(imageDrafts, source.id, targetNodeId)
+    }
     // 设定图锚定预约在发送成功后冻结(label = 发送时所选类型):任务成功
     // 在 syncTaskToCanvas 兑现,结果节点被删即作废(同 cutFramePending)。
     if (payload.sheet) {
@@ -607,36 +622,34 @@ const wrapEl = ref<HTMLDivElement | null>(null)
 const topbarRef = ref<InstanceType<typeof CanvasTopbar> | null>(null)
 
 // 模式:选中视频节点时锁定视频生成,选中图片节点默认图片模式、可切视频
-// (切过去时节点产物自动进参考条、默认角色「首帧」)。两套草稿按模式独立
-// 存放,互不清空(ADR 0002)。
+// (切过去时节点产物自动进参考条、默认角色「首帧」)。两模式各一套草稿,
+// 互不清空(ADR 0002);提示词与上传参考条自 74 号票起按「节点 × 模式」存
+// (见下方「节点草稿」段),参数留全局 sticky。
 const composerMode = ref<'image' | 'video'>('image')
 
-// 图片模式草稿:提示词/模型/比例/分辨率不随选中切换清空;比例 × 分辨率
-// 在发送时经 composeSize 组合成 size 串(双自动 = 不传);透明背景开关
-// (37 号票)同款独立草稿,默认关、发送时折成 background 参数。
-const composerPrompt = ref('')
+// 图片模式 sticky 参数(74 号票定案 2):模型/比例/分辨率/透明背景/带 IP 风格
+// 不随选中切换、按模式全局保留上次使用值 —— 新建节点沿用,与节点无关。
+// 比例 × 分辨率在发送时经 composeSize 组合成 size 串(双自动 = 不传);透明
+// 背景开关(37 号票)默认关、发送时折成 background 参数。
 const composerModel = ref('')
 const composerRatio = ref('')
 const composerResolution = ref('')
 const composerTransparent = ref(false)
-// 「带 IP 风格」开关(69 号票):与透明背景同款独立草稿、默认关,图片与视频
-// 两模式各存一份;发送时经 styledSendPrompt 把风格段拼在提示词前部。
+// 「带 IP 风格」开关(69 号票):与透明背景同款、默认关,图片与视频两模式各
+// 存一份;发送时经 styledSendPrompt 把风格段拼在提示词前部。
 const composerWithStyle = ref(false)
-// 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
-const uploadedRefs = ref<ComposerRef[]>([])
 // 选中节点的产物 chip 可被用户移除: detachment 只针对当前选中,选中
 // 一变(切到别的图)即复位。
 const detachedFromSelection = ref(false)
 const refUploading = ref(false)
 
-// 视频模式草稿(24 号票):提示词/模型/时长/分辨率/比例/参考条独立一套。
-const videoPrompt = ref('')
+// 视频模式 sticky 参数(24 号票;74 号票同款口径):模型/时长/比例/分辨率/带
+// IP 风格按模式全局保留上次使用值。
 const videoModel = ref('')
 const videoDuration = ref('')
 const videoRatio = ref('')
 const videoResolution = ref('')
 const videoWithStyle = ref(false)
-const uploadedVideoRefs = ref<VideoComposerRef[]>([])
 const detachedVideoFromSelection = ref(false)
 
 /** 对话框的上下文 = 最近选中的图片或视频节点(多选时取数组末位);空 =
@@ -659,6 +672,62 @@ watch(
     composerMode.value = composerModeLocked.value ? 'video' : 'image'
   },
 )
+
+// ---- 节点草稿(74 号票):提示词 + 上传参考条按「节点 × 模式」存 ----
+//
+// 两张会话内存 Map(image/video 各一张,按 nodeId 键),不落 localStorage/
+// 服务端。选中哪个节点就显示哪个节点的草稿:A 写一半切 B 再切回,各自未发
+// 送的编辑都在。工具栏新建节点无草稿 → 回落 data.prompt(无则空)+ 空上传
+// 条,参数沿用上面的 sticky 值;存量旧节点同规(回落到卡片上展示的提示词,
+// 产物 chip 由 composerRefs 从 data.url 派生)。首次编辑即「接管」为该节点
+// 草稿(patchNodeDraft 把回落值一并物化),此后草稿优先于 data;发送成功不
+// 清草稿(27 号票),键位从模式改为节点。直通入口(cut→画面/视频、设定图、
+// 角色登场)先 addSelectedNodes 再同步写这四个 computed,composerNode 同步
+// 重算指向新节点,整条覆盖的就是它的草稿。删除节点由 onFlowNodesChange 按
+// id 清键、整图回放(undo/redo、服务器图覆盖)由 pruneNodeDrafts 对账。
+// shallowReactive:每次写都整体替换草稿对象,不需要深层代理。
+const imageDrafts = shallowReactive(new Map<string, ComposerNodeDraft<ComposerRef>>())
+const videoDrafts = shallowReactive(new Map<string, ComposerNodeDraft<VideoComposerRef>>())
+const composerNodeId = computed(() => composerNode.value?.id ?? '')
+const composerNodeData = computed(() => composerNode.value?.data as MediaNodeData | undefined)
+
+/** 节点草稿单字段的读写访问器工厂(标准轴 DRY):四个同形可写 computed
+ * (两模式 × prompt/refs)收成一个工厂 —— 读 = 当前选中节点在该模式
+ * Map 下的草稿字段,写 = patchNodeDraft 接管后覆盖该字段。 */
+function draftPart<R, K extends keyof ComposerNodeDraft<R>>(
+  drafts: Map<string, ComposerNodeDraft<R>>,
+  key: K,
+) {
+  return computed<ComposerNodeDraft<R>[K]>({
+    get: () => nodeDraftFor(drafts, composerNodeId.value, composerNodeData.value)[key],
+    set: (value) =>
+      patchNodeDraft(drafts, composerNodeId.value, composerNodeData.value, {
+        [key]: value,
+      } as Partial<ComposerNodeDraft<R>>),
+  })
+}
+
+const composerPrompt = draftPart(imageDrafts, 'prompt')
+// 本会话上传的参考图(素材引用);选中节点产物作为 chips 由下方归并。
+const uploadedRefs = draftPart(imageDrafts, 'refs')
+const videoPrompt = draftPart(videoDrafts, 'prompt')
+const uploadedVideoRefs = draftPart(videoDrafts, 'refs')
+
+/** 单张草稿 Map 的对账循环:图里已不存在的节点清键(两模式共用)。 */
+function pruneDraftMap<R>(drafts: Map<string, ComposerNodeDraft<R>>): void {
+  for (const id of [...drafts.keys()]) {
+    if (!findNode(id)) {
+      dropNodeDraft(drafts, id)
+    }
+  }
+}
+
+/** 整图回放(undo/redo、服务器图覆盖)不经 nodes-change,这里按现存节点对账:
+ * 图里已不存在的节点,其草稿一并清掉(74 号票定案 6,防 Map 泄漏)。 */
+function pruneNodeDrafts(): void {
+  pruneDraftMap(imageDrafts)
+  pruneDraftMap(videoDrafts)
+}
 
 watch(
   () => imageModels.value,
@@ -821,7 +890,9 @@ function onSetVideoRefRole(index: number, role: VideoRefRole): void {
 }
 
 /** 参考图上传(图片模式):复用 18 号票素材入库,内容寻址引用进列表(与
- * 素材面板插入同语义),顺带获得转存与跨画布复用。 */
+ * 素材面板插入同语义),顺带获得转存与跨画布复用。归属时点(74 号票定案
+ * 6):条目落「上传发起时选中节点」的草稿,await 之前捕获节点 id;完成时
+ * 该节点已被删 → 静默跳过(无家可归属),不被完成时的选中节点收编。 */
 async function onComposerUpload(file: File): Promise<void> {
   if (refUploading.value) {
     return
@@ -830,11 +901,22 @@ async function onComposerUpload(file: File): Promise<void> {
     await onComposerUploadVideo(file)
     return
   }
+  const nodeId = composerNodeId.value
   refUploading.value = true
   generateError.value = ''
   try {
     const a = await client.uploadAsset(file, 'image', uploadIPId.value)
-    uploadedRefs.value = appendComposerRef(uploadedRefs.value, { url: a.content_url, asset_id: a.id })
+    const node = findNode(nodeId)
+    if (!node) {
+      return
+    }
+    appendNodeDraftRef(
+      imageDrafts,
+      nodeId,
+      node.data as MediaNodeData | undefined,
+      { url: a.content_url, asset_id: a.id },
+      appendComposerRef,
+    )
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
   } finally {
@@ -883,7 +965,9 @@ function videoRefCapBlocked(refs: VideoComposerRef[], kind: VideoRefKind): strin
  * 图片在首帧空缺时默认首帧,否则参考图;视频/音频角色固定)。上传前先按
  * 「默认角色能否收下」预检(42 号票:含参考条目合计 ≤9 的总量守卫),该
  * 条目必被拒时直接报错不传字节,免得上传成素材却在参考条上拒收(留下
- * 孤儿素材行)。 */
+ * 孤儿素材行)。归属时点(74 号票定案 6):与图片模式同款 —— 发起时捕获
+ * 节点 id,默认角色也按发起时该节点的参考条快照(refs)定;完成时节点
+ * 已删则静默跳过。 */
 async function onComposerUploadVideo(file: File): Promise<void> {
   if (refUploading.value) {
     return
@@ -895,16 +979,22 @@ async function onComposerUploadVideo(file: File): Promise<void> {
     generateError.value = blocked
     return
   }
+  const nodeId = composerNodeId.value
   refUploading.value = true
   generateError.value = ''
   try {
     const a = await client.uploadAsset(file, kind, uploadIPId.value)
-    uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, {
-      url: a.content_url,
-      kind,
-      role: defaultVideoRefRole(refs, kind),
-      asset_id: a.id,
-    })
+    const node = findNode(nodeId)
+    if (!node) {
+      return
+    }
+    appendNodeDraftRef(
+      videoDrafts,
+      nodeId,
+      node.data as MediaNodeData | undefined,
+      { url: a.content_url, kind, role: defaultVideoRefRole(refs, kind), asset_id: a.id },
+      appendVideoRef,
+    )
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
   } finally {
@@ -1245,6 +1335,12 @@ async function submitVideoTask(payload: {
         : {}),
     })
     taskSync.track(task)
+    // 发送成功随迁(74 号票,2026-11-03 用户裁决):与图片模式同款 ——
+    // 视频模式草稿从来源节点整体复制给产物节点,composer 显示严格不变;
+    // image 发送迁 image Map、video 发送迁 video Map,两轨不串。
+    if (!fillsSource) {
+      carryNodeDraft(videoDrafts, source.id, targetNodeId)
+    }
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
   } finally {
@@ -3121,6 +3217,11 @@ function onFlowNodesChange(changes: NodeChange[]): void {
   const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id)
   if (removals.length > 0) {
     pruneDanglingGroupMembers(removals)
+    // 74 号票:被删节点的 composer 草稿(两模式)随行清键,防 Map 泄漏。
+    for (const id of removals) {
+      dropNodeDraft(imageDrafts, id)
+      dropNodeDraft(videoDrafts, id)
+    }
     if (removals.some((id) => isGroupNode(findNode(id)))) {
       showNotice('已解组,成员原地保留,⌘Z / Ctrl+Z 可撤销')
     } else {
@@ -3938,6 +4039,8 @@ async function applyServerGraph(detail: CanvasDetail): Promise<void> {
   canvasIPName.value = detail.ip_name
   setNodes(normalizeNodes(detail))
   setEdges(detail.graph.edges as unknown as Edge[])
+  // 74 号票:冲突重载以服务器图为权威,本地未保存的节点消失 → 草稿对账清键。
+  pruneNodeDrafts()
   await nextTick()
   // 水合触发的同步变更事件先落地,再认版本,避免把加载当成编辑。
   autosave.setVersion(detail.version)
