@@ -1,7 +1,7 @@
 # 75 挑选参考素材面板头部固定、列表独立滚动(2026-11-03 grill-with-docs 定案)
 
 Type: fix
-Status: approved(2026-11-03 grill-with-docs 定案,Q3 一题定范围,与 74 号票同批切票;待实现)
+Status: implemented(2026-11-03 定案当日 implement-spec 落 feat/74-75-composer-draft-picker-header;502 测试全绿;遗留浏览器点验)。**口径注记**:错误/空态/加载态行随列表滚动,固定面严格限票定五行(panel-head/panel-hint/view-switch/scope-filter/kind-filter)。
 
 ## Question
 

@@ -1,7 +1,7 @@
 # 74 composer 草稿按节点独立(2026-11-03 grill-with-docs 定案)
 
 Type: feat
-Status: approved(2026-11-03 grill-with-docs 定案,Q1–Q5 两轮全收敛,与 75 号票同批切票;待实现)
+Status: implemented(2026-11-03 定案当日 implement-spec 落 feat/74-75-composer-draft-picker-header;双轴评审 + 用户裁决修复轮收口,518 测试全绿;遗留浏览器点验)。**口径注记**:见文末「实现增补(2026-11-03)」——①发送成功产物节点随迁来源草稿、composer 显示严格不变(用户裁决);②「选中即接管」实现为首次编辑物化(避免任务回填后输入框停旧快照);③上传参考归属 = 上传发起时选中节点。
 
 ## Question
 
