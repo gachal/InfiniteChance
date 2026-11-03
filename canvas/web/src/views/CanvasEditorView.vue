@@ -3105,8 +3105,9 @@ function triggerUpload(): void {
 function onContextMenuSelect(item: ContextMenuItem): void {
   const c = item.command
   if (c.kind === 'add-node') {
-    // 菜单已被点外/平移收起时(理论到不了这里)退回视口中心落位。
-    addNode(c.nodeType, c.dataPatch, contextMenu.value ?? undefined)
+    // 菜单组件 select 先于 close 上抛,此刻菜单必还开着、右键锚点必在
+    // (onPick 内两连 emit 同步执行,close 的置空在本函数返回后才发生)。
+    addNode(c.nodeType, c.dataPatch, contextMenu.value!)
     return
   }
   if (c.kind === 'group-draw') {
