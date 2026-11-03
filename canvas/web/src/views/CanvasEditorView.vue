@@ -149,13 +149,14 @@ import { isHelpToggleKey } from '../canvasHelp'
 import { isTypingTargetEl } from '../keyboardGuard'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
-import { newNodeAnchor } from '../placement'
+import { cascadeAnchor, newNodeAnchor } from '../placement'
 import { useComposerPlacement } from '../composables/useComposerPlacement'
 import { useEditorToast } from '../composables/useEditorToast'
 import CanvasTopbar from '../components/editor/CanvasTopbar.vue'
 import EditorAlerts from '../components/editor/EditorAlerts.vue'
-import CanvasToolbar from '../components/editor/CanvasToolbar.vue'
+import CanvasContextMenu from '../components/editor/CanvasContextMenu.vue'
 import EditorToast from '../components/editor/EditorToast.vue'
+import type { ContextMenuItem } from '../canvasContextMenu'
 import AssetPanel from '../components/AssetPanel.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
 import AssetPicker from '../components/AssetPicker.vue'
@@ -200,11 +201,15 @@ const {
   nodes: flowNodes,
   onConnect,
   onEdgesChange,
+  onEdgeContextMenu,
+  onMoveStart,
   onNodeClick,
+  onNodeContextMenu,
   onNodeDrag,
   onNodeDragStart,
   onNodeDragStop,
   onPaneClick,
+  onPaneContextMenu,
   onSelectionEnd,
   removeNodes,
   removeSelectedNodes,
@@ -3046,6 +3051,71 @@ onPaneClick(() => {
   connection.cancel()
 })
 
+// ---- 右键上下文菜单(76 号票)----
+// 右键画布空白处弹出取代底部工具栏的四段菜单;右键位置即新节点落点
+// (条目执行时按 contextMenu 锚点落位,级联从该锚点起算)。节点/连线
+// 右键仅抑制浏览器默认菜单、不弹任何东西(节点右键动作留待另票);
+// typing target(节点内输入框/文本域)内右键保留原生菜单(复制粘贴)。
+// 画框模式激活期间 pane 被 overlay 劫持,右键不弹菜单(画框优先)。
+
+const contextMenu = ref<{ x: number; y: number } | null>(null)
+
+function closeContextMenu(): void {
+  contextMenu.value = null
+}
+
+onPaneContextMenu((event) => {
+  if (groupDrawActive.value) {
+    return
+  }
+  event.preventDefault()
+  contextMenu.value = { x: event.clientX, y: event.clientY }
+})
+
+onNodeContextMenu(({ event }) => {
+  if (isTypingTargetEl(event.target as HTMLElement | null)) {
+    return
+  }
+  event.preventDefault()
+})
+
+onEdgeContextMenu(({ event }) => {
+  event.preventDefault()
+})
+
+// 画布平移/缩放即关(move 事件族的起点;F 回全景等程序化视口变更同样触发)。
+onMoveStart(() => {
+  closeContextMenu()
+})
+
+/** 菜单条目分发:落节点带右键锚点(右键位置即落点);分组进画框模式;
+ * 素材库/生成记录/帮助保持既有 toggle 语义;上传由组件内 file input 的
+ * change 走 onUploadChange,这里无需动作。 */
+function onContextMenuSelect(item: ContextMenuItem): void {
+  const c = item.command
+  if (c.kind === 'add-node') {
+    // 菜单已被点外/平移收起时(理论到不了这里)退回视口中心落位。
+    addNode(c.nodeType, c.dataPatch, contextMenu.value ?? undefined)
+    return
+  }
+  if (c.kind === 'group-draw') {
+    toggleGroupDraw()
+    return
+  }
+  if (c.kind === 'toggle-asset') {
+    toggleAssetPanel()
+    return
+  }
+  if (c.kind === 'toggle-records') {
+    toggleRecordsPanel()
+    return
+  }
+  if (c.kind === 'upload') {
+    return
+  }
+  helpOpen.value = !helpOpen.value
+}
+
 /** 预连线跟随:画布区屏幕坐标(与预连线 overlay 同一坐标系)。 */
 function onCanvasMouseMove(e: MouseEvent): void {
   if (!connection.pending.value) {
@@ -3070,6 +3140,12 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     if (lightbox.value) {
       return // 灯箱自己处理 Esc(33 号票),这里不叠加动作。
+    }
+    // 76 号票:右键菜单是最新开的临时浮层,后开先关 —— 它开着时全视口
+    // 垫挡住一切画布交互,天然处于浮层栈顶。
+    if (contextMenu.value) {
+      closeContextMenu()
+      return
     }
     if (helpOpen.value) {
       helpOpen.value = false // 帮助浮层是栈顶浮层,先收(68 号票)。
@@ -3732,14 +3808,24 @@ function viewportCenterPosition(): { x: number; y: number } {
   return screenToFlowCoordinate(newNodeAnchor(rect, count))
 }
 
-function addNode(type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>): void {
+/** 落一个新节点。anchor 是可选的屏幕(client)坐标锚点:76 号票右键
+ * 菜单的落点语义「右键位置即新节点落点」—— 锚点经 cascadeAnchor 级联
+ * 后 screenToFlowCoordinate 换算成图坐标;不传(素材/记录插入、
+ * 直通生成等既有调用方)仍落视口中心,行为不变。 */
+function addNode(
+  type: CanvasNodeType,
+  dataPatch?: Partial<AudioNodeData>,
+  anchor?: { x: number; y: number },
+): void {
   nodeSeq += 1
   const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([
     {
       id,
       type,
-      position: viewportCenterPosition(),
+      position: anchor
+        ? screenToFlowCoordinate(cascadeAnchor(anchor, toObject().nodes.length))
+        : viewportCenterPosition(),
       // 61 号票:入口可携带初始创作意图(音效入口带 source:'sfx'),
       // 浅合并进 initialData —— 其余入口不传,行为不变。
       data: { ...initialData(type), ...dataPatch } as CanvasNodeData,
@@ -4173,10 +4259,10 @@ onBeforeUnmount(() => {
   taskSync.stop()
 })
 
-/** 工具栏添加按钮的两组(53 号票,ADR 0005 组织下沉):「创作」= 媒介
- * 生产节点(analysis 仍仅由动作创建,不经面板);「规划」= 规划工件
- * 节点(絵コンテ + ネーム + 关卡,54/55 号票)。纯展示分组,无语义
- * 过滤 —— 全节点全画布可用(53 号票 A 段)。 */
+/** 右键上下文菜单的添加两组(53 号票定案随迁到菜单,ADR 0005 组织下沉):
+ * 「创作」= 媒介生产节点(analysis 仍仅由动作创建,不经菜单);「规划」
+ * = 规划工件节点(絵コンテ + ネーム + 关卡 + 剧本)。纯展示分组,无
+ * 语义过滤 —— 全节点全画布可用(53 号票 A 段)。 */
 function backToList(): void {
   // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
   if (canvasIPID.value > 0) {
@@ -4488,6 +4574,7 @@ function backToList(): void {
         v-if="groupDrawActive"
         class="group-draw-layer"
         @mousedown.prevent="onGroupDrawMouseDown"
+        @contextmenu.prevent
       >
         <div
           v-if="groupDrawRect"
@@ -4685,20 +4772,24 @@ function backToList(): void {
         v-if="helpOpen"
         @close="helpOpen = false"
       />
+      <!-- 76 号票:右键上下文菜单,编辑器级单实例(Teleport 到 body);
+           Esc 由上方全局栈收(栈顶先收),平移缩放经 onMoveStart 收,
+           组件自身只管点外即关、条目执行即关与贴边翻转。 -->
+      <CanvasContextMenu
+        v-if="contextMenu"
+        :x="contextMenu.x"
+        :y="contextMenu.y"
+        :uploading="uploading"
+        @select="onContextMenuSelect"
+        @close="closeContextMenu"
+        @upload-change="onUploadChange"
+      />
     </div>
 
-    <CanvasToolbar
-      :asset-panel-open="assetPanelOpen"
-      :records-panel-open="recordsPanelOpen"
-      :uploading="uploading"
-      :group-draw-active="groupDrawActive"
-      @add="addNode"
-      @toggle-asset="toggleAssetPanel"
-      @toggle-records="toggleRecordsPanel"
-      @upload-change="onUploadChange"
-      @toggle-help="helpOpen = !helpOpen"
-      @draw-group="toggleGroupDraw"
-    />
+    <!-- 76 号票:底部工具栏退场,左下快捷键提示行保留(位置不动)。 -->
+    <footer class="hintbar">
+      <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;⌘G 框选成组;Enter 在对话框直接发送;? 画布帮助。</span>
+    </footer>
   </div>
 </template>
 
@@ -4709,8 +4800,28 @@ function backToList(): void {
   height: 100vh;
 }
 
-/* 顶栏/横幅/工具栏/轻提示样式已随组件拆分迁出(58 号票阶段一):
-   CanvasTopbar / EditorAlerts / CanvasToolbar / EditorToast。 */
+/* 顶栏/横幅/轻提示样式已随组件拆分迁出(58 号票阶段一):
+   CanvasTopbar / EditorAlerts / EditorToast;底部工具栏 76 号票退场,
+   左下快捷键提示行(.hintbar)保留原 toolbar 的 hint 段形态。 */
+
+/* 快捷键提示行:原 toolbar 的位置与省略行为原样保留(底部整行、左对
+   齐,窄窗单行省略把空间让回画布)。 */
+.hintbar {
+  display: flex;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-section);
+  background: rgba(var(--surface-panel-rgb), 0.9);
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .canvas-wrap {
   position: relative;

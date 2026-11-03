@@ -37,7 +37,7 @@ export const NOMINAL_NODE_HEIGHT = 180
 
 /** 组色板(票 E3:6-8 预设半透明色)。存 style.css 的 rgb 三元组 token
  * 名而非 hex —— 主题换色跟随,渲染层按 `rgba(var(--<token>-rgb), α)` 取色
- * (CanvasToolbar 的 .add-* 同配方)。顺序即色板展示序,第一色为缺省。 */
+ * (右键菜单条目的 tone 同配方)。顺序即色板展示序,第一色为缺省。 */
 export const GROUP_PALETTE = ['sky', 'teal', 'violet', 'pink', 'orange', 'gold', 'success', 'red-signal'] as const
 
 export type GroupColorToken = (typeof GROUP_PALETTE)[number]
