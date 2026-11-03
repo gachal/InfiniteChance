@@ -548,7 +548,7 @@ export interface ComposerNodeDraft<R> {
 
 /** 无草稿节点的回落草稿(74 号票定案 3):提示词取 node.data.prompt
  * (27 号票落板的「上次实际发送」,与卡片展示一致),无则空;上传条空。
- * 工具栏「+图片/+视频」新建节点只带 {url:'', note:''},天然回落成空草稿。 */
+ * 右键菜单「图片/视频」条目新建节点只带 {url:'', note:''},天然回落成空草稿。 */
 function fallbackNodeDraft<R>(data: MediaNodeData | undefined): ComposerNodeDraft<R> {
   return { prompt: data?.prompt ?? '', refs: [] }
 }

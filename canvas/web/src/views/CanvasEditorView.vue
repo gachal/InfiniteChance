@@ -149,13 +149,14 @@ import { isHelpToggleKey } from '../canvasHelp'
 import { isTypingTargetEl } from '../keyboardGuard'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
-import { newNodeAnchor } from '../placement'
+import { cascadeAnchor, newNodeAnchor } from '../placement'
 import { useComposerPlacement } from '../composables/useComposerPlacement'
 import { useEditorToast } from '../composables/useEditorToast'
 import CanvasTopbar from '../components/editor/CanvasTopbar.vue'
 import EditorAlerts from '../components/editor/EditorAlerts.vue'
-import CanvasToolbar from '../components/editor/CanvasToolbar.vue'
+import CanvasContextMenu from '../components/editor/CanvasContextMenu.vue'
 import EditorToast from '../components/editor/EditorToast.vue'
+import type { ContextMenuItem } from '../canvasContextMenu'
 import AssetPanel from '../components/AssetPanel.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
 import AssetPicker from '../components/AssetPicker.vue'
@@ -200,11 +201,15 @@ const {
   nodes: flowNodes,
   onConnect,
   onEdgesChange,
+  onEdgeContextMenu,
+  onMoveStart,
   onNodeClick,
+  onNodeContextMenu,
   onNodeDrag,
   onNodeDragStart,
   onNodeDragStop,
   onPaneClick,
+  onPaneContextMenu,
   onSelectionEnd,
   removeNodes,
   removeSelectedNodes,
@@ -524,7 +529,7 @@ const cancelingNode = ref('')
 /** 图片任务的统一提交路径(10 号票纪律;21 号票起对话框发送走这里):结果节点与连线先入图并立即落库(autosave flush 跳过防抖),再
  * 提交任务 —— 浏览器随后关闭,任务与节点都在服务端/图里,重开不丢。
  * 21 号票修订:source 是空占位图片节点(无产物、无任务绑定)时直接作
- * 为结果节点填入 —— 工具栏添加的图片节点即从零生成的锚点,不再新建;
+ * 为结果节点填入 —— 右键菜单添加的图片节点即从零生成的锚点,不再新建;
  * 有产物或任务历史的节点,结果落其右侧新节点并连线(自动选中,参考条
  * 切到新产物,迭代链连续)。imageUrls 非空 = 图生图(服务端按有无参考
  * 分流 generations/edits)。27 号票:两条落点都把 prompt/model 写进结果
@@ -677,7 +682,7 @@ watch(
 //
 // 两张会话内存 Map(image/video 各一张,按 nodeId 键),不落 localStorage/
 // 服务端。选中哪个节点就显示哪个节点的草稿:A 写一半切 B 再切回,各自未发
-// 送的编辑都在。工具栏新建节点无草稿 → 回落 data.prompt(无则空)+ 空上传
+// 送的编辑都在。右键菜单新建节点无草稿 → 回落 data.prompt(无则空)+ 空上传
 // 条,参数沿用上面的 sticky 值;存量旧节点同规(回落到卡片上展示的提示词,
 // 产物 chip 由 composerRefs 从 data.url 派生)。首次编辑即「接管」为该节点
 // 草稿(patchNodeDraft 把回落值一并物化),此后草稿优先于 data;发送成功不
@@ -783,7 +788,7 @@ const videoComposerRefs = computed<VideoComposerRef[]>(() => {
 })
 
 /** 对话框只在选中图片/视频节点时存在(21 号票修订:打开画布即常驻底部
- * 中央的形态已按用户反馈移除);工具栏添加节点并选中它,对话框随之出现
+ * 中央的形态已按用户反馈移除);右键菜单添加节点并选中它,对话框随之出现
  * —— 空视频占位节点即纯文生视频的锚点。目录拉取失败或未配价时对话框
  * 保留但禁用并说明原因(38 号票评审,替换旧的「无模型即隐藏」)。 */
 const composerVisible = computed(() => composerNode.value !== null)
@@ -1266,7 +1271,7 @@ async function onCancelVideo(nodeId: string): Promise<void> {
 
 /** 视频任务的统一提交路径(24 号票对话框视频模式;发送落点与图片模式
  * 同款纪律):结果视频节点与连线先入图并立即落库(autosave flush 跳过
- * 防抖),再提交任务。空视频占位锚点(工具栏「+视频」,无产物、无任务
+ * 防抖),再提交任务。空视频占位锚点(右键菜单「视频」,无产物、无任务
  * 绑定)发送直接填入本节点 —— 纯文生视频由此落脚;有产物或任务绑定的
  * 视频节点发送落右侧新视频节点并连线(自动选中,参考条随之切换);图片
  * 节点上切视频模式发送恒落新视频节点(图片锚点装不下视频产物,连线表达
@@ -1596,7 +1601,7 @@ async function submitMusicTask(nodeId: string): Promise<void> {
 }
 
 // 音效节点创作态的提交路径(61 号票):kind=sfx 任务绑本节点,秒数与描述
-// 已随表单变更落节点(source:'sfx' 是工具栏「音效」入口的创作意图标记,
+// 已随表单变更落节点(source:'sfx' 是「音效」入口的创作意图标记,
 // audioSyncPatch 对账时不覆盖);照配乐先例先 markChanged + flush 再提交,
 // 防抖窗口里的表单编辑必须先落图;产物由 audioSyncPatch 按 sfx 对账
 // (prompt/model/seconds 回填),节点从表单态翻产物态。
@@ -1908,7 +1913,7 @@ const AGENT_LAYOUT_ROWS = 4
 
 /** Agent 产物的落位锚:首个产物取当前选中节点右侧(产物与工作对象相邻,
  * 与 dropFrameNode 的落图习惯一致;偏移 420 ≥ Agent 卡加宽后的 380,选中
- * Agent 节点发起生成也不叠卡),无选中落视口中心(与工具栏 addNode 同规);
+ * Agent 节点发起生成也不叠卡),无选中落视口中心(与右键菜单落节点同规);
  * 此后本次发送内的产物不再跟随选中,统一从该锚点网格步进。 */
 function agentProducedPosition(): { x: number; y: number } {
   if (agentLayout == null) {
@@ -3046,6 +3051,84 @@ onPaneClick(() => {
   connection.cancel()
 })
 
+// ---- 右键上下文菜单(76 号票)----
+// 右键画布空白处弹出取代底部工具栏的四段菜单;右键位置即新节点落点
+// (条目执行时 client 锚点换算 flow 坐标后落位,级联在 flow 空间从该
+// 锚点起算)。节点/连线
+// 右键仅抑制浏览器默认菜单、不弹任何东西(节点右键动作留待另票);
+// typing target(节点内输入框/文本域)内右键保留原生菜单(复制粘贴)。
+// 画框模式激活期间 pane 被 overlay 劫持,右键不弹菜单(画框优先)。
+
+const contextMenu = ref<{ x: number; y: number } | null>(null)
+
+function closeContextMenu(): void {
+  contextMenu.value = null
+}
+
+onPaneContextMenu((event) => {
+  if (groupDrawActive.value) {
+    return
+  }
+  event.preventDefault()
+  contextMenu.value = { x: event.clientX, y: event.clientY }
+})
+
+onNodeContextMenu(({ event }) => {
+  if (isTypingTargetEl(event.target as HTMLElement | null)) {
+    return
+  }
+  event.preventDefault()
+})
+
+onEdgeContextMenu(({ event }) => {
+  event.preventDefault()
+})
+
+// 画布平移/缩放即关(move 事件族的起点;F 回全景等程序化视口变更同样触发)。
+onMoveStart(() => {
+  closeContextMenu()
+})
+
+/** 上传链防脱附(76 号票评审,机制选型:持久层方案):隐藏 file input
+ * 住本视图常驻模板(菜单一关组件即卸载,挂组件里会让 change 发在脱附
+ * 元素上,Wails WebView 有风险),change 处理沿用 onUploadChange 原链
+ * 零变化;菜单条目经 select 命令走到这里再触发,emit 链同步、仍在同一次
+ * 用户手势内,原生文件对话框照常弹出。 */
+const uploadInputEl = ref<HTMLInputElement | null>(null)
+
+function triggerUpload(): void {
+  uploadInputEl.value?.click()
+}
+
+/** 菜单条目分发:落节点带右键锚点(右键位置即落点);分组进画框模式;
+ * 素材库/生成记录/帮助保持既有 toggle 语义;上传触发持久层 file input。 */
+function onContextMenuSelect(item: ContextMenuItem): void {
+  const c = item.command
+  if (c.kind === 'add-node') {
+    // 菜单组件 select 先于 close 上抛,此刻菜单必还开着、右键锚点必在
+    // (onPick 内两连 emit 同步执行,close 的置空在本函数返回后才发生)。
+    addNode(c.nodeType, c.dataPatch, contextMenu.value!)
+    return
+  }
+  if (c.kind === 'group-draw') {
+    toggleGroupDraw()
+    return
+  }
+  if (c.kind === 'toggle-asset') {
+    toggleAssetPanel()
+    return
+  }
+  if (c.kind === 'toggle-records') {
+    toggleRecordsPanel()
+    return
+  }
+  if (c.kind === 'upload') {
+    triggerUpload()
+    return
+  }
+  helpOpen.value = !helpOpen.value
+}
+
 /** 预连线跟随:画布区屏幕坐标(与预连线 overlay 同一坐标系)。 */
 function onCanvasMouseMove(e: MouseEvent): void {
   if (!connection.pending.value) {
@@ -3070,6 +3153,12 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     if (lightbox.value) {
       return // 灯箱自己处理 Esc(33 号票),这里不叠加动作。
+    }
+    // 76 号票:右键菜单是最新开的临时浮层,后开先关 —— 它开着时全视口
+    // 垫挡住一切画布交互,天然处于浮层栈顶。
+    if (contextMenu.value) {
+      closeContextMenu()
+      return
     }
     if (helpOpen.value) {
       helpOpen.value = false // 帮助浮层是栈顶浮层,先收(68 号票)。
@@ -3600,7 +3689,7 @@ function onGroupResizeEnd(groupId: string): void {
 }
 
 // ---- 落点自动入组(票 C4)----
-// 四个落点入口(工具栏添加 / 素材插入 / 直通生成 / Agent 产物)尾部各调
+// 四个落点入口(右键菜单添加 / 素材插入 / 直通生成 / Agent 产物)尾部各调
 // 一次:落点中心在组框内即成成员(跨组换组同款结算);组节点不被吸纳;
 // 任务产物回写位置不变,不走这里。
 
@@ -3623,8 +3712,8 @@ function adoptLandedNode(nodeId: string): void {
 }
 
 // ---- 画框模式(票 B2)----
-// 工具栏「分组」按钮进入:劫持画布区拖动画出矩形,单次生效(画完即退),
-// Esc 或再点按钮取消 —— 两击连线的「按钮激活态一次性交互」同构范式
+// 右键菜单「分组」条目进入:劫持画布区拖动画出矩形,单次生效(画完即退),
+// Esc 取消 —— 两击连线的「激活态一次性交互」同构范式
 // (useConnection):激活期暂关选区,overlay 层受理指针。矩形两端 client
 // 坐标经 screenToFlowCoordinate 换算成图坐标(入参是 client 坐标,勿先
 // 减容器 rect);画出的矩形 = 空组的用户设定尺寸(不吸纳框内已有节点)。
@@ -3732,14 +3821,26 @@ function viewportCenterPosition(): { x: number; y: number } {
   return screenToFlowCoordinate(newNodeAnchor(rect, count))
 }
 
-function addNode(type: CanvasNodeType, dataPatch?: Partial<AudioNodeData>): void {
+/** 落一个新节点。anchor 是可选的屏幕(client)坐标锚点:76 号票右键
+ * 菜单的落点语义「右键位置即新节点落点」—— 锚点先经
+ * screenToFlowCoordinate 换算成 flow 图坐标,级联在 **flow 空间**从该
+ * 锚点起算(与视口中心路径的 newNodeAnchor 语义一致:缩放≠1 时 flow
+ * 步长恒为 48px,屏幕步长随缩放);不传(素材/记录插入、直通生成等
+ * 既有调用方)仍落视口中心,行为不变。 */
+function addNode(
+  type: CanvasNodeType,
+  dataPatch?: Partial<AudioNodeData>,
+  anchor?: { x: number; y: number },
+): void {
   nodeSeq += 1
   const id = `${type}-${Date.now()}-${nodeSeq}`
   addNodes([
     {
       id,
       type,
-      position: viewportCenterPosition(),
+      position: anchor
+        ? cascadeAnchor(screenToFlowCoordinate(anchor), toObject().nodes.length)
+        : viewportCenterPosition(),
       // 61 号票:入口可携带初始创作意图(音效入口带 source:'sfx'),
       // 浅合并进 initialData —— 其余入口不传,行为不变。
       data: { ...initialData(type), ...dataPatch } as CanvasNodeData,
@@ -3868,7 +3969,7 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
 const assetPanelOpen = ref(false)
 const recordsPanelOpen = ref(false)
 
-// 帮助浮层(68 号票):工具栏「?」按钮 / 快捷键「?」开,Esc 栈顶先收;
+// 帮助浮层(68 号票):右键菜单「帮助」条目 / 快捷键「?」开,Esc 栈顶先收;
 // 开关不进右缘面板互斥组(它是居中模态,遮罩本身挡住画布交互)。
 const helpOpen = ref(false)
 
@@ -3988,7 +4089,7 @@ function uploadKindOf(file: File): 'image' | 'video' {
   return /\.(mp4|m4v|webm|mov|avi)$/i.test(file.name) ? 'video' : 'image'
 }
 
-/** 工具栏「上传」:本机文件进素材库,成功后落媒体节点 —— 与素材面板插
+/** 右键菜单「上传」:本机文件进素材库,成功后落媒体节点 —— 与素材面板插
  * 入同一语义(asset_id + 内容寻址),节点先上图,自动保存收尾。 */
 async function onUploadChange(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
@@ -4173,10 +4274,10 @@ onBeforeUnmount(() => {
   taskSync.stop()
 })
 
-/** 工具栏添加按钮的两组(53 号票,ADR 0005 组织下沉):「创作」= 媒介
- * 生产节点(analysis 仍仅由动作创建,不经面板);「规划」= 规划工件
- * 节点(絵コンテ + ネーム + 关卡,54/55 号票)。纯展示分组,无语义
- * 过滤 —— 全节点全画布可用(53 号票 A 段)。 */
+/** 右键上下文菜单的添加两组(53 号票定案随迁到菜单,ADR 0005 组织下沉):
+ * 「创作」= 媒介生产节点(analysis 仍仅由动作创建,不经菜单);「规划」
+ * = 规划工件节点(絵コンテ + ネーム + 关卡 + 剧本)。纯展示分组,无
+ * 语义过滤 —— 全节点全画布可用(53 号票 A 段)。 */
 function backToList(): void {
   // 面包屑的 IP 段是主出口;ip_id=0(防御态)兜底回 IP 层。
   if (canvasIPID.value > 0) {
@@ -4488,6 +4589,7 @@ function backToList(): void {
         v-if="groupDrawActive"
         class="group-draw-layer"
         @mousedown.prevent="onGroupDrawMouseDown"
+        @contextmenu.prevent
       >
         <div
           v-if="groupDrawRect"
@@ -4685,20 +4787,33 @@ function backToList(): void {
         v-if="helpOpen"
         @close="helpOpen = false"
       />
+      <!-- 76 号票:右键上下文菜单,编辑器级单实例(Teleport 到 body);
+           Esc 由上方全局栈收(栈顶先收),平移缩放经 onMoveStart 收,
+           组件自身只管点外即关、条目执行即关与贴边翻转。 -->
+      <CanvasContextMenu
+        v-if="contextMenu"
+        :x="contextMenu.x"
+        :y="contextMenu.y"
+        :uploading="uploading"
+        @select="onContextMenuSelect"
+        @close="closeContextMenu"
+      />
+      <!-- 76 号票评审:上传链防脱附 —— 隐藏 file input 住本持久层(原
+           CanvasToolbar/菜单组件内聚版会随宿主卸载脱附),change 直接
+           走 onUploadChange,落档语义不变。 -->
+      <input
+        ref="uploadInputEl"
+        class="upload-input"
+        type="file"
+        accept="image/*,video/*"
+        @change="onUploadChange"
+      >
     </div>
 
-    <CanvasToolbar
-      :asset-panel-open="assetPanelOpen"
-      :records-panel-open="recordsPanelOpen"
-      :uploading="uploading"
-      :group-draw-active="groupDrawActive"
-      @add="addNode"
-      @toggle-asset="toggleAssetPanel"
-      @toggle-records="toggleRecordsPanel"
-      @upload-change="onUploadChange"
-      @toggle-help="helpOpen = !helpOpen"
-      @draw-group="toggleGroupDraw"
-    />
+    <!-- 76 号票:底部工具栏退场,左下快捷键提示行保留(位置不动)。 -->
+    <footer class="hintbar">
+      <span class="hint">+ 号连线(左接上游、右连下游);F 回全景;⌘Z 撤销;⌘G 框选成组;Enter 在对话框直接发送;? 画布帮助。</span>
+    </footer>
   </div>
 </template>
 
@@ -4709,8 +4824,28 @@ function backToList(): void {
   height: 100vh;
 }
 
-/* 顶栏/横幅/工具栏/轻提示样式已随组件拆分迁出(58 号票阶段一):
-   CanvasTopbar / EditorAlerts / CanvasToolbar / EditorToast。 */
+/* 顶栏/横幅/轻提示样式已随组件拆分迁出(58 号票阶段一):
+   CanvasTopbar / EditorAlerts / EditorToast;底部工具栏 76 号票退场,
+   左下快捷键提示行(.hintbar)保留原 toolbar 的 hint 段形态。 */
+
+/* 快捷键提示行:原 toolbar 的位置与省略行为原样保留(底部整行、左对
+   齐,窄窗单行省略把空间让回画布)。 */
+.hintbar {
+  display: flex;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-section);
+  background: rgba(var(--surface-panel-rgb), 0.9);
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .canvas-wrap {
   position: relative;
@@ -4767,5 +4902,11 @@ function backToList(): void {
   border-radius: var(--r-xl);
   background: rgba(var(--accent-rgb), 0.08);
   pointer-events: none;
+}
+
+/* 76 号票评审:上传隐藏 file input 住持久层,视觉不可见即可(原
+   CanvasToolbar .upload-input 同款)。 */
+.upload-input {
+  display: none;
 }
 </style>

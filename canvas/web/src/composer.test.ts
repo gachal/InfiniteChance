@@ -602,9 +602,9 @@ describe('nodeDraftFor(74 号票存量/无草稿节点回落)', () => {
     })
   })
 
-  it('falls back to an empty draft when the node carries no prompt (toolbar-created or legacy)', () => {
+  it('falls back to an empty draft when the node carries no prompt (menu-created or legacy)', () => {
     const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
-    // 工具栏「+图片/+视频」新建节点只带 {url:'', note:''};27 号票前的旧产物
+    // 右键菜单「图片/视频」条目新建节点只带 {url:'', note:''};27 号票前的旧产物
     // 也没有 prompt —— 两者都回落成空草稿。toEqual 钉住形状:草稿只有
     // prompt + refs,模型/比例/分辨率/透明/带风格/时长不入节点草稿(留在
     // 全局 sticky)。
