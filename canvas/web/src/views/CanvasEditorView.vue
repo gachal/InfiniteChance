@@ -93,8 +93,10 @@ import { legalEdgeLabels } from '../connection'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import {
   appendComposerRef,
+  appendNodeDraftRef,
   appendVideoRef,
   audioSyncPatch,
+  carryNodeDraft,
   composerImageUrls,
   composerRefFromAsset,
   composerVideoRefs,
@@ -595,6 +597,13 @@ async function submitImageTask(payload: {
       ...(payload.imageUrls && payload.imageUrls.length > 0 ? { image_urls: payload.imageUrls } : {}),
     })
     taskSync.track(task)
+    // 发送成功随迁(74 号票,2026-11-03 用户裁决):产物节点自动选中后
+    // composer 显示严格不变 —— 来源节点图片模式草稿(prompt+refs)整体
+    // 复制给产物节点草稿键,迁「成功时刻」最新值;此后编辑只落产物节点,
+    // 不回写来源。来源等待期被删 → 草稿键已清,无草稿可迁,回落自然生效。
+    if (!fillsSource) {
+      carryNodeDraft(imageDrafts, source.id, targetNodeId)
+    }
     // 设定图锚定预约在发送成功后冻结(label = 发送时所选类型):任务成功
     // 在 syncTaskToCanvas 兑现,结果节点被删即作废(同 cutFramePending)。
     if (payload.sheet) {
@@ -876,7 +885,9 @@ function onSetVideoRefRole(index: number, role: VideoRefRole): void {
 }
 
 /** 参考图上传(图片模式):复用 18 号票素材入库,内容寻址引用进列表(与
- * 素材面板插入同语义),顺带获得转存与跨画布复用。 */
+ * 素材面板插入同语义),顺带获得转存与跨画布复用。归属时点(74 号票定案
+ * 6):条目落「上传发起时选中节点」的草稿,await 之前捕获节点 id;完成时
+ * 该节点已被删 → 静默跳过(无家可归属),不被完成时的选中节点收编。 */
 async function onComposerUpload(file: File): Promise<void> {
   if (refUploading.value) {
     return
@@ -885,11 +896,22 @@ async function onComposerUpload(file: File): Promise<void> {
     await onComposerUploadVideo(file)
     return
   }
+  const nodeId = composerNodeId.value
   refUploading.value = true
   generateError.value = ''
   try {
     const a = await client.uploadAsset(file, 'image', uploadIPId.value)
-    uploadedRefs.value = appendComposerRef(uploadedRefs.value, { url: a.content_url, asset_id: a.id })
+    const node = findNode(nodeId)
+    if (!node) {
+      return
+    }
+    appendNodeDraftRef(
+      imageDrafts,
+      nodeId,
+      node.data as MediaNodeData | undefined,
+      { url: a.content_url, asset_id: a.id },
+      appendComposerRef,
+    )
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
   } finally {
@@ -938,7 +960,9 @@ function videoRefCapBlocked(refs: VideoComposerRef[], kind: VideoRefKind): strin
  * 图片在首帧空缺时默认首帧,否则参考图;视频/音频角色固定)。上传前先按
  * 「默认角色能否收下」预检(42 号票:含参考条目合计 ≤9 的总量守卫),该
  * 条目必被拒时直接报错不传字节,免得上传成素材却在参考条上拒收(留下
- * 孤儿素材行)。 */
+ * 孤儿素材行)。归属时点(74 号票定案 6):与图片模式同款 —— 发起时捕获
+ * 节点 id,默认角色也按发起时该节点的参考条快照(refs)定;完成时节点
+ * 已删则静默跳过。 */
 async function onComposerUploadVideo(file: File): Promise<void> {
   if (refUploading.value) {
     return
@@ -950,16 +974,22 @@ async function onComposerUploadVideo(file: File): Promise<void> {
     generateError.value = blocked
     return
   }
+  const nodeId = composerNodeId.value
   refUploading.value = true
   generateError.value = ''
   try {
     const a = await client.uploadAsset(file, kind, uploadIPId.value)
-    uploadedVideoRefs.value = appendVideoRef(uploadedVideoRefs.value, {
-      url: a.content_url,
-      kind,
-      role: defaultVideoRefRole(refs, kind),
-      asset_id: a.id,
-    })
+    const node = findNode(nodeId)
+    if (!node) {
+      return
+    }
+    appendNodeDraftRef(
+      videoDrafts,
+      nodeId,
+      node.data as MediaNodeData | undefined,
+      { url: a.content_url, kind, role: defaultVideoRefRole(refs, kind), asset_id: a.id },
+      appendVideoRef,
+    )
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '上传失败,请稍后再试'
   } finally {
@@ -1300,6 +1330,12 @@ async function submitVideoTask(payload: {
         : {}),
     })
     taskSync.track(task)
+    // 发送成功随迁(74 号票,2026-11-03 用户裁决):与图片模式同款 ——
+    // 视频模式草稿从来源节点整体复制给产物节点,composer 显示严格不变;
+    // image 发送迁 image Map、video 发送迁 video Map,两轨不串。
+    if (!fillsSource) {
+      carryNodeDraft(videoDrafts, source.id, targetNodeId)
+    }
   } catch (e) {
     generateError.value = e instanceof ApiError ? e.message : '生成任务提交失败,请稍后再试'
   } finally {

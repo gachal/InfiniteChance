@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   appendComposerRef,
+  appendNodeDraftRef,
   appendVideoRef,
   audioSyncPatch,
+  carryNodeDraft,
   composerImageUrls,
   composerRefFromAsset,
   composerVideoRefs,
@@ -690,6 +692,119 @@ describe('dropNodeDraft(74 号票删除节点清草稿键)', () => {
     // 别家不受影响;删不存在的键也无害(非媒体节点、从未接管过的节点)。
     expect(nodeDraftFor(drafts, 'image-2', undefined).prompt).toBe('留下')
     dropNodeDraft(drafts, 'never-existed')
+    expect(drafts.size).toBe(1)
+  })
+})
+
+describe('carryNodeDraft(74 号票发送成功随迁,2026-11-03 用户裁决)', () => {
+  it('copies the source draft wholesale onto the product node key at success time', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', undefined, {
+      prompt: '夜色下的港口',
+      refs: [{ url: '/api/assets/5/content', asset_id: 5 }],
+    })
+    // 产物节点自动选中时随迁:composer 显示与发送前完全一致(prompt + refs
+    // 整体复制,不再显示落板合成文 + 空参考条)。
+    carryNodeDraft(drafts, 'image-1', 'image-2')
+    expect(nodeDraftFor(drafts, 'image-2', undefined)).toEqual({
+      prompt: '夜色下的港口',
+      refs: [{ url: '/api/assets/5/content', asset_id: 5 }],
+    })
+    // 此后编辑只落产物节点草稿,不回写来源。
+    patchNodeDraft(drafts, 'image-2', undefined, { prompt: '黎明时的港口' })
+    expect(nodeDraftFor(drafts, 'image-1', undefined).prompt).toBe('夜色下的港口')
+  })
+
+  it('carries the latest source state: waiting-period edits migrate at success', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', undefined, { prompt: '初稿' })
+    // 用户在等待期继续改来源草稿(点回来源节点再编辑),随迁取「成功时刻」
+    // 的最新值 —— 在 carry 调用前再写一次即模拟该时序。
+    patchNodeDraft(drafts, 'image-1', undefined, { prompt: '等待期的改稿' })
+    carryNodeDraft(drafts, 'image-1', 'image-2')
+    expect(nodeDraftFor(drafts, 'image-2', undefined).prompt).toBe('等待期的改稿')
+  })
+
+  it('does not materialise a draft when the source has none', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    // 来源节点在等待期被删(草稿键已清)或从未接管过:无草稿可迁,不产出
+    // 草稿 —— 产物节点走回落路径(落板的合成文)。
+    carryNodeDraft(drafts, 'image-1', 'image-2')
+    expect(drafts.size).toBe(0)
+    expect(nodeDraftFor(drafts, 'image-2', undefined)).toEqual({ prompt: '', refs: [] })
+  })
+
+  it('refuses an empty target id: no orphan key for the unselected state', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', undefined, { prompt: '有主草稿' })
+    carryNodeDraft(drafts, 'image-1', '')
+    expect(drafts.size).toBe(1)
+    expect(drafts.has('')).toBe(false)
+  })
+
+  it('image and video maps migrate separately (勿串)', () => {
+    const imageDrafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    const videoDrafts = new Map<string, ComposerNodeDraft<VideoComposerRef>>()
+    patchNodeDraft(imageDrafts, 'image-1', undefined, { prompt: '生图草稿' })
+    patchNodeDraft(videoDrafts, 'image-1', undefined, {
+      prompt: '让画面动起来',
+      refs: [{ url: '/api/assets/9/content', kind: 'image', role: 'first_frame' }],
+    })
+    // image 发送迁 image Map、video 发送迁 video Map:各自调各自 Map 即天然
+    // 分轨,这里钉住同键不同 Map 互不污染。
+    carryNodeDraft(imageDrafts, 'image-1', 'image-2')
+    carryNodeDraft(videoDrafts, 'image-1', 'video-1')
+    expect(nodeDraftFor(imageDrafts, 'image-2', undefined).prompt).toBe('生图草稿')
+    expect(nodeDraftFor(imageDrafts, 'video-1', undefined)).toEqual({ prompt: '', refs: [] })
+    expect(nodeDraftFor(videoDrafts, 'video-1', undefined).refs).toHaveLength(1)
+    expect(nodeDraftFor(videoDrafts, 'image-2', undefined)).toEqual({ prompt: '', refs: [] })
+  })
+})
+
+describe('appendNodeDraftRef(74 号票定案 6:上传参考归属 = 上传发起时选中节点)', () => {
+  it('appends onto the captured node draft, not whoever is selected at completion', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', undefined, { prompt: '写了一半' })
+    // 上传发起时选中 image-1,上传完成时选中已切到 image-2:条目仍落 image-1。
+    const ok = appendNodeDraftRef(
+      drafts,
+      'image-1',
+      undefined,
+      { url: '/api/assets/7/content', asset_id: 7 },
+      appendComposerRef,
+    )
+    expect(ok).toBe(true)
+    expect(nodeDraftFor(drafts, 'image-1', undefined).refs).toEqual([
+      { url: '/api/assets/7/content', asset_id: 7 },
+    ])
+    expect(nodeDraftFor(drafts, 'image-1', undefined).prompt).toBe('写了一半')
+    // image-2 从未收到条目。
+    expect(nodeDraftFor(drafts, 'image-2', undefined).refs).toEqual([])
+  })
+
+  it('materialises the fallback takeover when the captured node had no draft yet', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    const legacy = { url: '/api/assets/9/content', note: '', prompt: '卡片上的' }
+    // 从未碰过草稿的存量节点:上传即接管,回落的 data.prompt 一并物化。
+    appendNodeDraftRef(drafts, 'image-1', legacy, { url: '/api/assets/7/content', asset_id: 7 }, appendComposerRef)
+    expect(nodeDraftFor(drafts, 'image-1', legacy)).toEqual({
+      prompt: '卡片上的',
+      refs: [{ url: '/api/assets/7/content', asset_id: 7 }],
+    })
+  })
+
+  it('rejects through the absorb discipline and refuses an empty node id', () => {
+    const drafts = new Map<string, ComposerNodeDraft<ComposerRef>>()
+    patchNodeDraft(drafts, 'image-1', undefined, {
+      refs: [{ url: '/api/assets/7/content', asset_id: 7 }],
+    })
+    // 去重/形状纪律仍归收编函数:重复 URL 整条拒收,不落键不改草稿。
+    const dup = appendNodeDraftRef(drafts, 'image-1', undefined, { url: '/api/assets/7/content', asset_id: 7 }, appendComposerRef)
+    expect(dup).toBe(false)
+    expect(nodeDraftFor(drafts, 'image-1', undefined).refs).toHaveLength(1)
+    // 空 id(未选中)= 无家可归属。
+    const orphan = appendNodeDraftRef(drafts, '', undefined, { url: '/api/assets/8/content' }, appendComposerRef)
+    expect(orphan).toBe(false)
     expect(drafts.size).toBe(1)
   })
 })

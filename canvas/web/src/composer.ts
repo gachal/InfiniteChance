@@ -588,3 +588,54 @@ export function patchNodeDraft<R>(
 export function dropNodeDraft<R>(drafts: Map<string, ComposerNodeDraft<R>>, nodeId: string): void {
   drafts.delete(nodeId)
 }
+
+/** 发送成功随迁(74 号票,2026-11-03 用户裁决):把来源节点该模式草稿
+ * (prompt + refs)整体复制给产物节点草稿键 —— 产物节点自动选中时
+ * composer 显示与发送前完全一致,不再显示落板合成文 + 空参考条;此后编辑
+ * 只落产物节点草稿,不回写来源。调用时机 = 任务提交成功后(「成功时刻」
+ * 的最新值:等待期用户改了来源草稿,随迁的就是改后值);image 发送迁
+ * image Map、video 发送迁 video Map,调用方按模式给 Map 即天然分轨。
+ * 来源无草稿(等待期被删、从未接管过)不产出草稿,产物节点自然走回落;
+ * 目标 id 为空(未选中)不落键,防 '' 孤儿键。refs 数组浅拷贝:两条草稿
+ * 的数组从此各自演进,条目对象本就按不可变纪律对待(append 系与
+ * withVideoRefRole 均返回新数组/新对象)。 */
+export function carryNodeDraft<R>(
+  drafts: Map<string, ComposerNodeDraft<R>>,
+  fromId: string,
+  toId: string,
+): void {
+  if (toId === '') {
+    return
+  }
+  const from = drafts.get(fromId)
+  if (!from) {
+    return
+  }
+  drafts.set(toId, { prompt: from.prompt, refs: [...from.refs] })
+}
+
+/** 上传参考归属(74 号票定案 6):参考条条目落「上传发起时选中节点」的
+ * 草稿键,与上传完成时谁被选中无关 —— await 期间切节点不再归错家。接管
+ * 语义与 patchNodeDraft 同款(存量节点首次上传即物化回落值);条目仍过
+ * 传入收编函数的上限/去重纪律(图片 appendComposerRef、视频
+ * appendVideoRef),被拒整条不落。返回是否落键;空 id 返回 false。「节点
+ * 等待期被删」的存在性判定是视图层关切(findNode),由调用方先静默跳过,
+ * 本函数不管。 */
+export function appendNodeDraftRef<R>(
+  drafts: Map<string, ComposerNodeDraft<R>>,
+  nodeId: string,
+  data: MediaNodeData | undefined,
+  ref: R,
+  absorb: (list: R[], ref: R) => R[],
+): boolean {
+  if (nodeId === '') {
+    return false
+  }
+  const current = nodeDraftFor(drafts, nodeId, data)
+  const next = absorb(current.refs, ref)
+  if (next === current.refs) {
+    return false
+  }
+  patchNodeDraft(drafts, nodeId, data, { refs: next })
+  return true
+}
