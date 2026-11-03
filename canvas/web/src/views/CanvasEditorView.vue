@@ -529,7 +529,7 @@ const cancelingNode = ref('')
 /** 图片任务的统一提交路径(10 号票纪律;21 号票起对话框发送走这里):结果节点与连线先入图并立即落库(autosave flush 跳过防抖),再
  * 提交任务 —— 浏览器随后关闭,任务与节点都在服务端/图里,重开不丢。
  * 21 号票修订:source 是空占位图片节点(无产物、无任务绑定)时直接作
- * 为结果节点填入 —— 工具栏添加的图片节点即从零生成的锚点,不再新建;
+ * 为结果节点填入 —— 右键菜单添加的图片节点即从零生成的锚点,不再新建;
  * 有产物或任务历史的节点,结果落其右侧新节点并连线(自动选中,参考条
  * 切到新产物,迭代链连续)。imageUrls 非空 = 图生图(服务端按有无参考
  * 分流 generations/edits)。27 号票:两条落点都把 prompt/model 写进结果
@@ -682,7 +682,7 @@ watch(
 //
 // 两张会话内存 Map(image/video 各一张,按 nodeId 键),不落 localStorage/
 // 服务端。选中哪个节点就显示哪个节点的草稿:A 写一半切 B 再切回,各自未发
-// 送的编辑都在。工具栏新建节点无草稿 → 回落 data.prompt(无则空)+ 空上传
+// 送的编辑都在。右键菜单新建节点无草稿 → 回落 data.prompt(无则空)+ 空上传
 // 条,参数沿用上面的 sticky 值;存量旧节点同规(回落到卡片上展示的提示词,
 // 产物 chip 由 composerRefs 从 data.url 派生)。首次编辑即「接管」为该节点
 // 草稿(patchNodeDraft 把回落值一并物化),此后草稿优先于 data;发送成功不
@@ -788,7 +788,7 @@ const videoComposerRefs = computed<VideoComposerRef[]>(() => {
 })
 
 /** 对话框只在选中图片/视频节点时存在(21 号票修订:打开画布即常驻底部
- * 中央的形态已按用户反馈移除);工具栏添加节点并选中它,对话框随之出现
+ * 中央的形态已按用户反馈移除);右键菜单添加节点并选中它,对话框随之出现
  * —— 空视频占位节点即纯文生视频的锚点。目录拉取失败或未配价时对话框
  * 保留但禁用并说明原因(38 号票评审,替换旧的「无模型即隐藏」)。 */
 const composerVisible = computed(() => composerNode.value !== null)
@@ -1271,7 +1271,7 @@ async function onCancelVideo(nodeId: string): Promise<void> {
 
 /** 视频任务的统一提交路径(24 号票对话框视频模式;发送落点与图片模式
  * 同款纪律):结果视频节点与连线先入图并立即落库(autosave flush 跳过
- * 防抖),再提交任务。空视频占位锚点(工具栏「+视频」,无产物、无任务
+ * 防抖),再提交任务。空视频占位锚点(右键菜单「视频」,无产物、无任务
  * 绑定)发送直接填入本节点 —— 纯文生视频由此落脚;有产物或任务绑定的
  * 视频节点发送落右侧新视频节点并连线(自动选中,参考条随之切换);图片
  * 节点上切视频模式发送恒落新视频节点(图片锚点装不下视频产物,连线表达
@@ -1601,7 +1601,7 @@ async function submitMusicTask(nodeId: string): Promise<void> {
 }
 
 // 音效节点创作态的提交路径(61 号票):kind=sfx 任务绑本节点,秒数与描述
-// 已随表单变更落节点(source:'sfx' 是工具栏「音效」入口的创作意图标记,
+// 已随表单变更落节点(source:'sfx' 是「音效」入口的创作意图标记,
 // audioSyncPatch 对账时不覆盖);照配乐先例先 markChanged + flush 再提交,
 // 防抖窗口里的表单编辑必须先落图;产物由 audioSyncPatch 按 sfx 对账
 // (prompt/model/seconds 回填),节点从表单态翻产物态。
@@ -1913,7 +1913,7 @@ const AGENT_LAYOUT_ROWS = 4
 
 /** Agent 产物的落位锚:首个产物取当前选中节点右侧(产物与工作对象相邻,
  * 与 dropFrameNode 的落图习惯一致;偏移 420 ≥ Agent 卡加宽后的 380,选中
- * Agent 节点发起生成也不叠卡),无选中落视口中心(与工具栏 addNode 同规);
+ * Agent 节点发起生成也不叠卡),无选中落视口中心(与右键菜单落节点同规);
  * 此后本次发送内的产物不再跟随选中,统一从该锚点网格步进。 */
 function agentProducedPosition(): { x: number; y: number } {
   if (agentLayout == null) {
@@ -3688,7 +3688,7 @@ function onGroupResizeEnd(groupId: string): void {
 }
 
 // ---- 落点自动入组(票 C4)----
-// 四个落点入口(工具栏添加 / 素材插入 / 直通生成 / Agent 产物)尾部各调
+// 四个落点入口(右键菜单添加 / 素材插入 / 直通生成 / Agent 产物)尾部各调
 // 一次:落点中心在组框内即成成员(跨组换组同款结算);组节点不被吸纳;
 // 任务产物回写位置不变,不走这里。
 
@@ -3711,8 +3711,8 @@ function adoptLandedNode(nodeId: string): void {
 }
 
 // ---- 画框模式(票 B2)----
-// 工具栏「分组」按钮进入:劫持画布区拖动画出矩形,单次生效(画完即退),
-// Esc 或再点按钮取消 —— 两击连线的「按钮激活态一次性交互」同构范式
+// 右键菜单「分组」条目进入:劫持画布区拖动画出矩形,单次生效(画完即退),
+// Esc 取消 —— 两击连线的「激活态一次性交互」同构范式
 // (useConnection):激活期暂关选区,overlay 层受理指针。矩形两端 client
 // 坐标经 screenToFlowCoordinate 换算成图坐标(入参是 client 坐标,勿先
 // 减容器 rect);画出的矩形 = 空组的用户设定尺寸(不吸纳框内已有节点)。
@@ -3968,7 +3968,7 @@ async function onLightboxCapture(blob: Blob, seconds: number): Promise<void> {
 const assetPanelOpen = ref(false)
 const recordsPanelOpen = ref(false)
 
-// 帮助浮层(68 号票):工具栏「?」按钮 / 快捷键「?」开,Esc 栈顶先收;
+// 帮助浮层(68 号票):右键菜单「帮助」条目 / 快捷键「?」开,Esc 栈顶先收;
 // 开关不进右缘面板互斥组(它是居中模态,遮罩本身挡住画布交互)。
 const helpOpen = ref(false)
 
@@ -4088,7 +4088,7 @@ function uploadKindOf(file: File): 'image' | 'video' {
   return /\.(mp4|m4v|webm|mov|avi)$/i.test(file.name) ? 'video' : 'image'
 }
 
-/** 工具栏「上传」:本机文件进素材库,成功后落媒体节点 —— 与素材面板插
+/** 右键菜单「上传」:本机文件进素材库,成功后落媒体节点 —— 与素材面板插
  * 入同一语义(asset_id + 内容寻址),节点先上图,自动保存收尾。 */
 async function onUploadChange(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
