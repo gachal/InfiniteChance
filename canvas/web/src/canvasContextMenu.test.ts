@@ -164,14 +164,17 @@ describe('clampFlyoutPosition 飞出贴边钳制(77 号票定案 4)', () => {
   })
 
   it('纵向贴底:顶部对齐入口会让飞出溢出下缘,钳到视口下缘 - margin - 飞出高', () => {
-    expect(clampFlyoutPosition({ x: 200, y: 800 }, size, viewport)).toEqual({
+    expect(clampFlyoutPosition({ x: 200, y: 800, flipX: 40 }, size, viewport)).toEqual({
       x: 200,
       y: 900 - 8 - 340,
     })
   })
 
   it('纵向贴顶:入口顶高于 margin 时钳到 margin', () => {
-    expect(clampFlyoutPosition({ x: 200, y: 3 }, size, viewport)).toEqual({ x: 200, y: 8 })
+    expect(clampFlyoutPosition({ x: 200, y: 3, flipX: 40 }, size, viewport)).toEqual({
+      x: 200,
+      y: 8,
+    })
   })
 
   it('贴右缘同时贴底:横向翻左、纵向钳底,两轴独立', () => {
@@ -182,9 +185,8 @@ describe('clampFlyoutPosition 飞出贴边钳制(77 号票定案 4)', () => {
   })
 
   it('飞出比视口还高:纵向钳到 margin(不抛错、不出负、不溢出)', () => {
-    expect(clampFlyoutPosition({ x: 200, y: 400 }, { width: 160, height: 1200 }, viewport)).toEqual({
-      x: 200,
-      y: 8,
-    })
+    expect(
+      clampFlyoutPosition({ x: 200, y: 400, flipX: 40 }, { width: 160, height: 1200 }, viewport),
+    ).toEqual({ x: 200, y: 8 })
   })
 })
