@@ -1,7 +1,7 @@
 # 77 右键菜单二级化:分区入口 + hover 飞出子菜单(2026-11-04 grill-with-docs 定案)
 
 Type: feat
-Status: defined(2026-11-04 grilling 六问全按推荐定案)
+Status: implemented(2026-11-04 定案当日 implement-spec 落 feat/77-context-menu-flyout)
 
 ## Question
 
@@ -36,4 +36,14 @@ Status: defined(2026-11-04 grilling 六问全按推荐定案)
 - 点一级分区入口本身:菜单不关、无任何动作;移出菜单 + 飞出整体范围飞出收起;
 - 菜单贴右缘时飞出翻左侧不溢出视口;一级菜单贴边钳制照旧;Esc 一次关整个菜单(飞出不是独立层);点外关、平移缩放关;
 - 上传中 upload 条目在飞出内仍禁用;`make test` / `make lint` / `make build` 全绿;
+- **遗留点验**:浏览器手点 hover 全流程 + Wails 桌面壳实测(hover 飞出在 WebView 的行为)。
+
+## 落地注记(2026-11-04 implement-spec 同日实现)
+
+- **分支与提交**:`feat/77-context-menu-flyout`(基于 main 顶点 e2b12c0):票面入册 b4f39a5 → 实现三提交 d0ba287(数据层二级化 + `clampFlyoutPosition` 纯函数)/ 36f6906(两层渲染 + hover 态)/ 4f04f7f(帮助词条随迁)→ 评审修复轮 a6c1341(邻接不变量钉测)+ ca3c42d(样式与单轴钳制去重)。
+- **验证**:`make test` 547 测试全绿(其中 `canvasContextMenu.test.ts` 26 条:两层结构重钉 + 一级钳制照旧 + 飞出钳制 7 用例 + 邻接不变量 3 场景)/ `make lint` / `make build`(含 vue-tsc)三连全绿;MySQL 集成测试实跑非 skip。
+- **实现裁量**(评审备查,实质满足):①飞出横向锚取**菜单外缘**而非入口按钮右缘(按钮内缩在 padding 里,贴按钮右缘会盖住 ▸ 箭头列;翻左侧贴菜单左缘允许 ≤9px padding 条重叠保无缝);②`ContextMenuSection` 形状保持 `{id,label,items}`,label 语义升为一级入口文案、items 即飞出(测试钉形状 + 票禁徽标/预览,演化走语义与文档);③「移出即收」取立即收 + `relatedTarget` 守卫(仍落任一面板内不收),不用关闭延迟定时器,守定案 3「无延迟/即收」字面;④入口 hover/展开态 `is-open` 高亮按级联菜单惯例补齐。
+- **邻接不变量**(评审疑点收口):纵钳数学保证钳后飞出顶 ≤ 入口顶、下缘不低于被同 margin 钳制的菜单底,飞出纵向跨度必覆盖入口行,指针跨缝不会先离开飞出被收;该不变量已写纯函数测试钉死(不钳位/贴底钳位/翻左三场景,变异验证测试非空)。
+- **hover 边界**:一级菜单与飞出共用 `onPanelLeave`,`mouseleave` 以 `relatedTarget` 判定去向;分区间移动不触发面板 mouseleave,自然自动切换。
+- **评审收口**:面板 CSS 11 条同形声明合并 `.ctx-menu, .ctx-flyout` 共享选择器(只合并不改值);提取私有 `clampAxis` 单轴钳制(`clampMenuPosition` 两轴与 `clampFlyoutPosition` 纵向共用,导出面与行为逐字节不变);删 `openSection` 同值判等冗余守卫。
 - **遗留点验**:浏览器手点 hover 全流程 + Wails 桌面壳实测(hover 飞出在 WebView 的行为)。
