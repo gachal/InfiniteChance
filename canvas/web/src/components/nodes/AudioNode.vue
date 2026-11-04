@@ -1,17 +1,20 @@
 <script setup lang="ts">
 // 音频节点(57 号票,第十一种节点类型;60 号票增配乐创作态;62 号票增
-// 人声歌曲开关;61 号票增音效创作态)四种形态 ——
-// · 创作态(右键菜单「配乐」/「音效」落的空节点):内联表单(配乐 = 「人声
-//   歌曲」开关 + 开关开才显示的歌词多行框 + 模型下拉 + 风格描述 + 按次
-//   预估价 + 提交;音效 = 按 source==='sfx' 分叉的模型下拉(¥/秒)+ 描述 +
-//   秒数 1–30 + 按秒预估),与音色节点同款范式,不进生成对话框;提交 =
-//   kind=music / kind=sfx 的 canvas_task 绑本节点,表单事实随整图 JSON
-//   持久化。
+// 人声歌曲开关;61 号票增音效创作态;78 号票增翻唱创作态)五种形态 ——
+// · 创作态(右键菜单「配乐」/「音效」/「翻唱」落的空节点):内联表单
+//   (配乐 = 「人声歌曲」开关 + 开关开才显示的歌词多行框 + 模型下拉 +
+//   风格描述 + 按次预估价 + 提交;音效 = 按 source==='sfx' 分叉的模型下拉
+//   (¥/秒)+ 描述 + 秒数 1–30 + 按秒预估;翻唱 = 按 source==='cover'
+//   分叉的参考音频 chip(必填恰好 1 条,上传 + 素材库挑选双入口)+ 演绎
+//   描述 + 歌词选填(带「英→中」翻译按钮)+ 模型下拉 + 按次预估),与
+//   音色节点同款范式,不进生成对话框;提交 = kind=music / kind=sfx 的
+//   canvas_task 绑本节点,表单事实随整图 JSON 持久化。
 // · 在途/失败:状态徽章(排队/生成中)+ 失败原因 + 原地重试。
 // · 产物:内联 <audio controls> + 元数据区(27 号票产物-元数据配对,
-//   台词摘录或配乐/歌曲/音效描述按 source 判别)。素材面板/生成记录插入行
-//   (无任务)与台词合成产物走同款产物卡面。
-// 只渲染左把手(voice → audio 合成来源边;配乐不作任何边的源),无灯箱。
+//   台词摘录或配乐/歌曲/音效/翻唱描述按 source 判别)。素材面板/生成记录
+//   插入行(无任务)与台词合成产物走同款产物卡面。
+// 只渲染左把手(voice → audio 合成来源边;音频生成不作任何边的源),无
+// 灯箱。
 import { computed, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 
@@ -19,7 +22,7 @@ import type { CanvasTask, ModelPriceSummary } from '@infinitechance/api'
 
 import type { AudioNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
-import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateMusicForm, type MusicFormInput } from '../../music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm, type CoverFormInput, type MusicFormInput } from '../../music'
 import { estimateSfxCNY, MAX_SFX_TEXT_RUNES, SFX_MAX_SECONDS, SFX_MIN_SECONDS, validateSfxForm, type SfxFormInput } from '../../sfx'
 import { assetContentURL } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
@@ -34,7 +37,8 @@ const props = defineProps<{
   task?: CanvasTask | null
   /** 重试请求在途时禁用重试按钮。 */
   retrying: boolean
-  /** /music-models 目录:按次配乐模型与价格(配乐创作态表单下拉 + 预估)。 */
+  /** /music-models 目录:按次配乐模型与价格(配乐/翻唱创作态表单下拉 +
+   * 预估;翻唱列全量目录、不做 cover 过滤)。 */
   musicModels: string[]
   musicPrices: Record<string, ModelPriceSummary>
   /** 配乐提交请求在途(编辑器级,禁提交按钮)。 */
@@ -44,6 +48,12 @@ const props = defineProps<{
   sfxPrices: Record<string, ModelPriceSummary>
   /** 音效提交请求在途(编辑器级,禁提交按钮)。 */
   sfxSubmitting?: boolean
+  /** 翻唱提交请求在途(编辑器级,禁提交按钮)。 */
+  coverSubmitting?: boolean
+  /** 参考音频上传在途(编辑器级,禁上传按钮)。 */
+  coverRefUploading?: boolean
+  /** 「英→中」翻译请求在途(编辑器级,禁翻译按钮)。 */
+  translating?: boolean
   /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
   connectState?: ConnectState
 }>()
@@ -54,17 +64,26 @@ const emit = defineEmits<{
   'form-change': [patch: Partial<AudioNodeData>]
   /** 创作态提交(以当前 data 为准;校验在节点侧,提示本地展示)。 */
   submit: []
+  /** 翻唱参考音频:本机上传(kind=audio 经 /api/assets/upload 入库)。 */
+  'ref-file': [file: File]
+  /** 翻唱参考音频:素材库挑选(AssetPicker audio 过滤)。 */
+  'pick-ref': []
+  /** 「英→中」翻译(歌词框非空才可用;结果由编辑器回填替换歌词框)。 */
+  translate: []
   /** 左 + 接上游(voice → audio 合成来源)。 */
   'connect-start': [side: ConnectSide]
 }>()
 
 const status = computed(() => props.task?.status)
-// 创作态 = 没有产物、没有任务,右键菜单「配乐/音效」条目落下的空节点。
+// 创作态 = 没有产物、没有任务,右键菜单「配乐/音效/翻唱」条目落下的空节点。
 const creating = computed(
   () => !(props.data.asset_id > 0) && !status.value,
 )
 // 音效创作态分叉(61 号票):工具栏「音效」入口落 source:'sfx'。
 const sfxMode = computed(() => props.data.source === 'sfx')
+// 翻唱创作态分叉(78 号票):「翻唱」入口落 source:'cover'(创作意图
+// 标记兼产物来源,composer 对账不覆盖)。
+const coverMode = computed(() => props.data.source === 'cover')
 
 /** 元数据摘录(卡面一行):配乐/歌曲/音效显描述,台词显摘录,完整内容进
  * MediaPrompt 配对区。 */
@@ -131,11 +150,71 @@ const formInput = computed<MusicFormInput>(() => ({
   lyrics: songMode.value ? props.data.lyrics ?? '' : '',
 }))
 
-const canSubmit = computed(() =>
-  sfxMode.value
+const canSubmit = computed(() => {
+  if (coverMode.value) {
+    return validateCoverForm(coverFormInput.value) === null
+  }
+  return sfxMode.value
     ? validateSfxForm(sfxFormInput.value) === null
-    : validateMusicForm(formInput.value) === null,
+    : validateMusicForm(formInput.value) === null
+})
+
+// ---- 翻唱创作态(78 号票):参考 chip + 演绎描述 + 歌词(可翻译)+ 模型 ----
+
+const refAssetId = computed(() => props.data.ref_asset_id ?? 0)
+
+const coverFormInput = computed<CoverFormInput>(() => ({
+  refAssetId: refAssetId.value,
+  prompt: props.data.prompt ?? '',
+  model: props.data.model ?? '',
+  lyrics: props.data.lyrics ?? '',
+}))
+
+const selectedCoverPrice = computed(() => {
+  const m = props.data.model
+  return m ? props.musicPrices[m] : undefined
+})
+
+const coverEstimate = computed(() => {
+  const cny = estimateMusicCNY(selectedCoverPrice.value)
+  if (cny !== null) {
+    return `一次 ${fmtCNY(cny)}(整曲)`
+  }
+  return '按次计费,以管理端配价为准'
+})
+
+const lyricsRunesCover = computed(() => [...(props.data.lyrics ?? '')].length)
+const lyricsEmpty = computed(() => (props.data.lyrics ?? '').trim() === '')
+
+// cover 创作态的模型缺省 list[0](78 号票:目录全量不过滤,缺省首项)——
+// 目录就位且节点尚未选模型时落一次,用户改选后不再动。
+watch(
+  () => [coverMode.value, props.musicModels] as const,
+  ([isCover, models]) => {
+    if (isCover && !(props.data.model ?? '') && models.length > 0) {
+      emit('form-change', { model: models[0]! })
+    }
+  },
+  { immediate: true },
 )
+
+function onRefFile(file: File): void {
+  if (props.coverRefUploading) {
+    return
+  }
+  emit('ref-file', file)
+}
+
+// 本机上传的隐藏 file input(57 号票克隆样本同款链)。
+const refInput = ref<HTMLInputElement | null>(null)
+
+function pickRefFile(): void {
+  refInput.value?.click()
+}
+
+function clearRef(): void {
+  emit('form-change', { ref_asset_id: 0 })
+}
 
 // ---- 音效创作态(61 号票):描述 + 模型(¥/秒)+ 秒数 1–30 ----
 
@@ -161,9 +240,11 @@ const sfxEstimate = computed(() => {
 })
 
 function submitForm(): void {
-  const invalid = sfxMode.value
-    ? validateSfxForm(sfxFormInput.value)
-    : validateMusicForm(formInput.value)
+  const invalid = coverMode.value
+    ? validateCoverForm(coverFormInput.value)
+    : sfxMode.value
+      ? validateSfxForm(sfxFormInput.value)
+      : validateMusicForm(formInput.value)
   if (invalid) {
     formError.value = invalid
     return
@@ -254,6 +335,134 @@ function submitForm(): void {
           @click="submitForm"
         >
           {{ sfxSubmitting ? '提交中…' : '生成音效' }}
+        </button>
+      </div>
+    </template>
+
+    <!-- 翻唱创作态(78 号票):参考音频 chip 必填恰好 1 条(本机上传 +
+         素材库挑选双入口,57 号票克隆样本 chip 范式;不做大小/时长守卫),
+         演绎描述必填、歌词选填(带「英→中」翻译按钮,空框禁用)、模型
+         下拉列全量 /music-models 目录、按次预估。 -->
+    <template v-else-if="creating && coverMode">
+      <div class="sample">
+        <template v-if="refAssetId > 0">
+          <span
+            class="chip"
+            title="已选参考音频(翻唱以它为旋律/编曲基底)"
+          >
+            参考音频 · 素材 #{{ refAssetId }}
+            <button
+              class="chip-x"
+              type="button"
+              aria-label="移除参考音频"
+              @click="clearRef"
+            >×</button>
+          </span>
+        </template>
+        <template v-else>
+          <button
+            class="action"
+            type="button"
+            :disabled="coverRefUploading"
+            @click="pickRefFile"
+          >
+            {{ coverRefUploading ? '上传中…' : '本机上传' }}
+          </button>
+          <button
+            class="action"
+            type="button"
+            @click="emit('pick-ref')"
+          >
+            素材库挑选
+          </button>
+          <input
+            class="sample-file"
+            type="file"
+            accept="audio/*"
+            aria-label="参考音频文件"
+            @change="(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) onRefFile(f); (e.target as HTMLInputElement).value = '' }"
+          >
+        </template>
+      </div>
+      <textarea
+        class="field"
+        rows="3"
+        :value="data.prompt"
+        :maxlength="MAX_MUSIC_PROMPT_RUNES"
+        placeholder="演绎/风格描述:唱腔、编曲走向、情绪……(≤2000 字)"
+        aria-label="翻唱演绎描述"
+        @input="emit('form-change', { prompt: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div class="rune-count">
+        {{ promptRunes }}/{{ MAX_MUSIC_PROMPT_RUNES }}
+      </div>
+      <div class="lyrics-head">
+        <span class="lyrics-label">歌词(选填)</span>
+        <button
+          class="action translate"
+          type="button"
+          :disabled="lyricsEmpty || translating"
+          :title="lyricsEmpty ? '先填入原歌词,再一键翻成中文' : '调翻译端点把歌词翻成中文,结果替换歌词框'"
+          @click="emit('translate')"
+        >
+          {{ translating ? '翻译中…' : '英→中' }}
+        </button>
+      </div>
+      <textarea
+        class="field"
+        rows="4"
+        :value="data.lyrics"
+        :maxlength="MAX_LYRICS_CHARS"
+        placeholder="歌词(选填,≤3500 字;留空将由模型自动写词、非原曲歌词)"
+        aria-label="翻唱歌词"
+        @input="emit('form-change', { lyrics: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div class="rune-count">
+        {{ lyricsRunesCover }}/{{ MAX_LYRICS_CHARS }}
+      </div>
+      <select
+        class="field"
+        :value="data.model ?? ''"
+        aria-label="翻唱模型"
+        @change="emit('form-change', { model: ($event.target as HTMLSelectElement).value })"
+      >
+        <option
+          value=""
+          disabled
+        >
+          选择翻唱模型
+        </option>
+        <option
+          v-for="m in musicModels"
+          :key="m"
+          :value="m"
+        >
+          {{ m }}<template v-if="musicPrices[m]?.cny_per_call != null">
+            · {{ fmtCNY(musicPrices[m].cny_per_call!) }}/次
+          </template>
+        </option>
+      </select>
+      <p
+        v-if="formError"
+        class="form-error"
+        role="alert"
+      >
+        {{ formError }}
+      </p>
+      <div class="form-foot">
+        <span
+          class="estimate"
+          :title="selectedCoverPrice ? undefined : '模型目录未带价,以管理端配价为准'"
+        >
+          {{ coverEstimate }}
+        </span>
+        <button
+          class="action primary"
+          type="button"
+          :disabled="!canSubmit || coverSubmitting"
+          @click="submitForm"
+        >
+          {{ coverSubmitting ? '提交中…' : '生成翻唱' }}
         </button>
       </div>
     </template>
@@ -494,6 +703,63 @@ select.field option {
 .seconds-row small {
   color: var(--text-faint);
   font-size: var(--fs-micro);
+}
+
+/* 翻唱参考 chip(78 号票,57 号票克隆样本 chip 同款范式):按钮行 /
+ * chip 行 + 隐藏 file input。 */
+.sample {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--r-pill);
+  background: rgba(var(--violet-rgb), 0.14);
+  color: var(--violet);
+  padding: 4px 8px 4px 10px;
+  font-size: var(--fs-micro);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.chip-x {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--fs-label);
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.sample-file {
+  display: none;
+}
+
+/* 「英→中」翻译按钮行(78 号票):标签与按钮同行,按钮靠右。 */
+.lyrics-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: -2px;
+}
+
+.lyrics-label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--violet);
+}
+
+.action.translate {
+  background: var(--wash-fill);
+  color: var(--estimate-ink);
+  padding: 4px 10px;
 }
 
 /* 「人声歌曲」开关(62 号票):一行开关 + 随行小注。 */

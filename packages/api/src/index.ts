@@ -540,6 +540,10 @@ export interface CanvasTask {
    * source:'song'。 */
   lyrics: string
   instrumental: boolean
+  /** kind=music 的翻唱参考(78 号票):提交时服务端已解析的厂商可达地址;
+   * 其余 kind 与普通音乐/歌曲任务恒空串。素材 id 不在任务行 —— 编辑器
+   * 的 ref_asset_id(节点 data)才是显示与溯源的锚。 */
+  audio_ref: string
   created_at: string
   updated_at: string
 }
@@ -590,6 +594,10 @@ export interface CreateCanvasTaskInput {
    * prompt 仍是风格描述(1–2000 字)。 */
   instrumental?: boolean
   lyrics?: string
+  /** kind=music 的翻唱参考(78 号票):可选单串,厂商 http(s) 地址或素材
+   * 内容寻址路径(/api/assets/{id}/content,服务端解出真实地址落行);
+   * data: 内联拒绝;缺省不传 = 普通音乐/歌曲任务(62 号票行为不变)。 */
+  audio_ref?: string
 }
 
 /** 音色创建任务的表单(57 号票)。 */
@@ -872,6 +880,18 @@ export interface AnalyzeInput {
 
 /** 画布分析的响应:结构化分镜 markdown,由编辑器写入分析节点。 */
 export interface AnalyzeResult {
+  text: string
+}
+
+/** 一键翻译歌词(78 号票)的请求体:text 是原歌词(1–3500 字),model 是
+ * token 轨聊天模型;同步聊天调用,不进 canvas_tasks。 */
+export interface TranslateLyricsInput {
+  text: string
+  model: string
+}
+
+/** 一键翻译歌词的响应:中文译文,编辑器回填替换歌词框(人工可再改)。 */
+export interface TranslateLyricsResult {
   text: string
 }
 
@@ -1864,6 +1884,16 @@ export class ApiClient {
    * 图片,同步返回结构化分镜 markdown;文本由编辑器写入分析节点。 */
   analyzeMedia(canvasId: number, input: AnalyzeInput): Promise<AnalyzeResult> {
     return this.request<AnalyzeResult>(`/canvases/${canvasId}/analyze`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 一键翻译歌词(78 号票):canvas/server 经网关聊天接口把歌词翻成中文
+   * (逐行对齐、音节贴近保可唱、保留结构标记),同步返回译文;token 轨
+   * 计费,来源标记 gen=lyrics-translate;译文由编辑器回填歌词框。 */
+  translateLyrics(canvasId: number, input: TranslateLyricsInput): Promise<TranslateLyricsResult> {
+    return this.request<TranslateLyricsResult>(`/canvases/${canvasId}/translate-lyrics`, {
       method: 'POST',
       body: input,
     })

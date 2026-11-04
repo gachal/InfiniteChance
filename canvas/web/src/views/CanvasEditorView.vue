@@ -1636,12 +1636,15 @@ async function submitSfxTask(nodeId: string): Promise<void> {
   }
 }
 
-/** 音频节点创作态提交的分发(61 号票):source='sfx' 走音效链,其余(配
- * 乐/歌曲)走配乐链 —— 节点侧表单已按 source 分叉,这里同款分流。 */
+/** 音频节点创作态提交的分发(61 号票;78 号票增翻唱):source='sfx' 走
+ * 音效链、source='cover' 走翻唱链,其余(配乐/歌曲)走配乐链 —— 节点侧
+ * 表单已按 source 分叉,这里同款分流。 */
 function submitAudioTask(nodeId: string): void {
   const data = findNode(nodeId)?.data as AudioNodeData | undefined
   if (data?.source === 'sfx') {
     void submitSfxTask(nodeId)
+  } else if (data?.source === 'cover') {
+    void submitCoverTask(nodeId)
   } else {
     void submitMusicTask(nodeId)
   }
@@ -1703,6 +1706,132 @@ function onVoicePickToggle(nodeId: string, a: AssetRecord): void {
   const next = data.sample_asset_id === a.id ? 0 : a.id
   updateNodeData(nodeId, { sample_asset_id: next } satisfies Partial<VoiceNodeData>)
   markChanged()
+}
+
+// 翻唱节点创作态的提交路径(78 号票):kind=music 任务绑本节点,参考
+// 音频按 ref_asset_id 拼素材内容寻址路径随请求上送(服务端解出真实地址
+// 落任务行,素材 id 不进任务行);翻唱恒人声(instrumental:false —— 翻唱
+// 是演唱,歌词留空即模型自动写词),表单事实已随整图 JSON 持久化;照配
+// 乐先例先 markChanged + flush 再提交,产物由 audioSyncPatch 按 cover 对账
+// (prompt/model/lyrics 回填,source:'cover' 不覆盖)。
+const coverSubmitting = ref(false)
+
+async function submitCoverTask(nodeId: string): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as AudioNodeData | undefined
+  if (!node || !data || coverSubmitting.value) {
+    return
+  }
+  coverSubmitting.value = true
+  try {
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const refAssetId = data.ref_asset_id ?? 0
+    const lyrics = (data.lyrics ?? '').trim()
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'music',
+      prompt: data.prompt ?? '',
+      model: data.model ?? '',
+      instrumental: false,
+      ...(refAssetId > 0 ? { audio_ref: `/api/assets/${refAssetId}/content` } : {}),
+      ...(lyrics !== '' ? { lyrics: data.lyrics ?? '' } : {}),
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '翻唱任务提交失败,请稍后再试')
+  } finally {
+    coverSubmitting.value = false
+  }
+}
+
+// 翻唱参考音频:本机上传 kind=audio 入素材库(服务端魔数裁决),成功回写
+// ref_asset_id;失败轻提示,节点侧表单保持可再选。
+const coverRefUploading = ref(false)
+
+async function onCoverRefFile(nodeId: string, file: File): Promise<void> {
+  if (coverRefUploading.value) {
+    return
+  }
+  coverRefUploading.value = true
+  try {
+    const a = await client.uploadAsset(file, 'audio', uploadIPId.value)
+    updateNodeData(nodeId, { ref_asset_id: a.id } satisfies Partial<AudioNodeData>)
+    markChanged()
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '参考音频上传失败,请稍后再试')
+  } finally {
+    coverRefUploading.value = false
+  }
+}
+
+// 翻唱参考音频的素材库挑选面板(音频过滤,与音色样本挑选同范式;互斥
+// 纪律一致:开时关其他面板)。
+const coverPickerNodeId = ref('')
+const coverPickerNode = computed(() =>
+  coverPickerNodeId.value ? findNode(coverPickerNodeId.value) ?? null : null,
+)
+const coverPickerSelectedIds = computed<number[]>(() => {
+  const data = coverPickerNode.value?.data as AudioNodeData | undefined
+  const id = data?.ref_asset_id ?? 0
+  return id > 0 ? [id] : []
+})
+
+function openCoverPicker(nodeId: string): void {
+  coverPickerNodeId.value = nodeId
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+  composerPickerOpen.value = false
+  historyNodeId.value = ''
+  pickerNodeId.value = ''
+  levelPickerNodeId.value = ''
+  voicePickerNodeId.value = ''
+}
+
+function closeCoverPicker(): void {
+  coverPickerNodeId.value = ''
+}
+
+function onCoverPickToggle(nodeId: string, a: AssetRecord): void {
+  if (a.kind !== 'audio') {
+    return
+  }
+  const data = findNode(nodeId)?.data as AudioNodeData | undefined
+  if (!data) {
+    return
+  }
+  // 恰好 1 条:点选即绑、再点取消(换选 = 点新的一条)。
+  const next = data.ref_asset_id === a.id ? 0 : a.id
+  updateNodeData(nodeId, { ref_asset_id: next } satisfies Partial<AudioNodeData>)
+  markChanged()
+}
+
+// 「英→中」翻译(78 号票确认式):调翻译端点,译文回填替换歌词框,人工
+// 可再改;空框禁用(按钮侧),这里再挡一道。模型取 /prompt-models 目录
+// 首项(token 轨聊天模型目录,翻译与生成提示词同族计费)。
+const translatingNodeId = ref('')
+
+async function onCoverTranslate(nodeId: string): Promise<void> {
+  const data = findNode(nodeId)?.data as AudioNodeData | undefined
+  const text = (data?.lyrics ?? '').trim()
+  const model = promptModels.value[0] ?? ''
+  if (!data || text === '' || model === '' || translatingNodeId.value !== '') {
+    return
+  }
+  translatingNodeId.value = nodeId
+  try {
+    const result = await client.translateLyrics(canvasId, { text: data.lyrics ?? '', model })
+    updateNodeData(nodeId, { lyrics: result.text } satisfies Partial<AudioNodeData>)
+    markChanged()
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '歌词翻译失败,请稍后再试')
+  } finally {
+    translatingNodeId.value = ''
+  }
 }
 
 // 台词合成(消费闭环):先落右侧音频节点 + voice→audio 边并入图(生图
@@ -4538,10 +4667,16 @@ function backToList(): void {
             :sfx-models="sfxModels"
             :sfx-prices="sfxPrices"
             :sfx-submitting="sfxSubmitting"
+            :cover-submitting="coverSubmitting"
+            :cover-ref-uploading="coverRefUploading"
+            :translating="translatingNodeId === nodeProps.id"
             :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @form-change="onMusicFormChange(nodeProps.id, $event)"
             @submit="submitAudioTask(nodeProps.id)"
+            @ref-file="onCoverRefFile(nodeProps.id, $event)"
+            @pick-ref="openCoverPicker(nodeProps.id)"
+            @translate="onCoverTranslate(nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
@@ -4710,6 +4845,19 @@ function backToList(): void {
         :ip-id="canvasIPID || undefined"
         @toggle="onVoicePickToggle(voicePickerNode.id, $event)"
         @close="closeVoicePicker"
+      />
+      <!-- 78 号票:翻唱参考音频的挑选面板(白名单仅音频),点选即绑、
+           再点取消(恰好 1 条);不做大小/时长守卫(上游裁决 4xx 透出)。 -->
+      <AssetPicker
+        v-else-if="coverPickerNode"
+        :key="`cover-picker-${coverPickerNode.id}`"
+        title="挑选参考音频"
+        :kind-whitelist="['audio']"
+        hint="点选挂为翻唱参考(恰好 1 条),再点取消;以它为旋律/编曲基底重新演唱。"
+        :selected-asset-ids="coverPickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
+        @toggle="onCoverPickToggle(coverPickerNode.id, $event)"
+        @close="closeCoverPicker"
       />
       <!-- 40 号票:预演台全屏编辑层(Teleport 到 body),场景改动走同一条
            scene-change 落盘链;渲染帧大图经编辑器级灯箱打开(灯箱入口收进

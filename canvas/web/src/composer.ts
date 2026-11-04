@@ -448,14 +448,17 @@ export function mediaSyncPatch(
 }
 
 /** 终态生成任务对音频节点数据的对账补丁(57 号票 tts;60 号票 music;62
- * 号票 song;61 号票 sfx):asset_id 回填(展示层按 id 拼内容寻址路径,音
- * 频节点不落 url)、来源判别 source 按 kind 落(tts/music/sfx;song 与
- * sfx 是提交时的创作意图标记,已带不覆盖)、元数据按来源配对 —— 台词
- * text 与 chars(服务端计费字符数,任务行 voice_spec 带出)归 tts,风格
- * 描述 prompt 归 music/song,歌词 lyrics 从任务行回填(62 号票),秒数
- * seconds 归 sfx(61 号票,复用 video 的任务行秒数列);model 几种生成来
- * 源都补写(27 号票产物-元数据配对)。节点已带的字段不覆盖;无可写内容
- * 返回 null(调用方据此不落盘)。 */
+ * 号票 song;61 号票 sfx;78 号票 cover):asset_id 回填(展示层按 id 拼
+ * 内容寻址路径,音频节点不落 url)、来源判别 source 按 kind 落(tts/
+ * music/sfx;song 与 sfx 与 cover 是提交时的创作意图标记,已带不覆盖 ——
+ * cover 走 music 分支,产物节点上的 'cover' 原样保留)、元数据按来源配对
+ * —— 台词 text 与 chars(服务端计费字符数,任务行 voice_spec 带出)归
+ * tts,风格描述 prompt 归 music/song/cover,歌词 lyrics 从任务行回填
+ * (62 号票先例,cover 同款),秒数 seconds 归 sfx(61 号票,复用 video
+ * 的任务行秒数列);model 几种生成来源都补写(27 号票产物-元数据配对)。
+ * 参考素材引用 ref_asset_id 是创作事实不是产物,对账不写(节点 data 持有,
+ * 发送时上送)。节点已带的字段不覆盖;无可写内容返回 null(调用方据此
+ * 不落盘)。 */
 export interface AudioNodeSyncPatch {
   asset_id: number
   source?: 'tts' | 'music' | 'sfx'
@@ -481,7 +484,8 @@ export function audioSyncPatch(
   }
   if (isMusic) {
     // music 的 source 只补空缺(60 号票前的旧节点):'song' 是提交时的创作
-    // 意图标记(62 号票),已带的 'music'/'song' 都不覆盖。
+    // 意图标记(62 号票),'cover' 是翻唱的(78 号票),已带的
+    // 'music'/'song'/'cover' 都不覆盖。
     if ((data.source ?? '') === '') {
       patch.source = 'music'
     }

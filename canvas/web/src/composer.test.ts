@@ -470,6 +470,30 @@ describe('audioSyncPatch(57 号票音频节点回填;60 号票 source 判别与�
     })
   })
 
+  it('keeps source:cover and backfills the metadata pair on a cover task (78 号票)', () => {
+    const task = makeTask({
+      kind: 'music', asset_id: 18, prompt: 'city pop cover',
+      model: 'vod-minimax-music-3.0-cover', lyrics: '夜色在大道上慢慢降落',
+    })
+    // 'cover' 是「翻唱」入口的创作意图标记(78 号票),走 music 分支只补
+    // 空缺 —— 产物节点上的 'cover' 原样保留;prompt/model/lyrics 按产物-
+    // 元数据配对回填,ref_asset_id 是创作事实、对账不写。
+    expect(
+      audioSyncPatch(task, {
+        asset_id: 0, source: 'cover', prompt: 'city pop cover',
+        model: 'vod-minimax-music-3.0-cover', ref_asset_id: 8,
+      }),
+    ).toEqual({
+      asset_id: 18,
+      lyrics: '夜色在大道上慢慢降落',
+    })
+    // 歌词留空(上游自动写词)的翻唱:任务行 lyrics 也空,不落 0 值。
+    const autoLyrics = makeTask({ kind: 'music', asset_id: 18, prompt: 'p', model: 'm', lyrics: '' })
+    expect(
+      audioSyncPatch(autoLyrics, { asset_id: 0, source: 'cover', prompt: 'p', model: 'm', ref_asset_id: 8 }),
+    ).toEqual({ asset_id: 18 })
+  })
+
   it('backfills lyrics from the task row onto a fresh music node', () => {
     const task = makeTask({ kind: 'music', asset_id: 12, prompt: 'p', model: 'm', lyrics: 'L' })
     expect(audioSyncPatch(task, { asset_id: 0 })).toEqual({

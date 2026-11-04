@@ -9,9 +9,10 @@
  *
  * 口径(76·定案 3 + 77·定案 1/2):条目纯文字沿用 NODE_TYPE_LABEL(唯一
  * 例外 audio 的菜单语义是「配乐」,音效是 audio 节点带 source:'sfx' 的
- * 第二入口),不带「+」前缀、不引入图标库;彩色 tone 语言完整保留在飞出
- * 内条目上,一级分区入口中性灰。面板组保持既有 toggle/打开语义,不做
- * 开启态标记 —— 组件也不感知面板开关状态。
+ * 第二入口、翻唱是带 source:'cover' 的第三入口,78 号票),不带「+」
+ * 前缀、不引入图标库;彩色 tone 语言完整保留在飞出内条目上,一级分区
+ * 入口中性灰。面板组保持既有 toggle/打开语义,不做开启态标记 —— 组件
+ * 也不感知面板开关状态。
  */
 
 import { NODE_TYPE_LABEL, type AudioNodeData, type CanvasNodeType } from './graph'
@@ -74,10 +75,12 @@ export interface ContextMenuSection {
 const AUDIO_LABEL = '配乐'
 
 /** 条目 title 覆盖表:仅音效一条随迁自原工具栏按钮(58 号票积累的语义
- * 说明,原样保留);键是条目 id(音效不是节点类型,是 audio 节点的第二
- * 入口)。其余条目的 title 由 nodeItem 按菜单文案生成,不走这张表。 */
+ * 说明,原样保留);键是条目 id(音效/翻唱不是节点类型,是 audio 节点的
+ * 第二、第三入口)。其余条目的 title 由 nodeItem 按菜单文案生成,不走
+ * 这张表。 */
 const ADD_TITLES: Record<string, string> = {
   sfx: '落一个音效创作节点(≤30 秒短音频,按秒计费)',
+  cover: '落一个翻唱创作节点(以参考原曲为基底,换语言重新演唱)',
 }
 
 /** 落节点条目工厂入参(76 号票评审收对象参数:调用点按名传参,相邻两
@@ -109,7 +112,8 @@ function nodeItem({ type, tone, data, label }: NodeItemInput): ContextMenuItem {
 }
 
 /**
- * 菜单四段(票·定案 3):创作 8 钮 / 规划 4 钮 / 组织分组 / 面板 4 入口。
+ * 菜单四段(票·定案 3):创作 9 钮 / 规划 4 钮 / 组织分组 / 面板 4 入口
+ * (78 号票起创作段 8 → 9:翻唱是与配乐/音效并列的第三音频入口)。
  * 顺序即渲染序;测试按本常量钉住条目集。
  */
 export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
@@ -118,7 +122,8 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
     label: '创作',
     items: [
       // 53 号票序:agent/image/video/previz + 52/57/60/61 号票四音频与
-      // 角色入口(配乐在音色后、音效压轴,原工具栏顺序原样随迁)。
+      // 角色入口(配乐在音色后、音效压轴,原工具栏顺序原样随迁);
+      // 78 号票的翻唱是第三音频入口,随音效之后。
       nodeItem({ type: 'agent', tone: 'accent' }),
       nodeItem({ type: 'image', tone: 'success' }),
       nodeItem({ type: 'video', tone: 'amber' }),
@@ -127,6 +132,7 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
       nodeItem({ type: 'voice', tone: 'teal-light' }),
       nodeItem({ type: 'audio', tone: 'violet' }),
       nodeItem({ type: 'audio', tone: 'violet-strong', data: { source: 'sfx' }, label: '音效' }),
+      nodeItem({ type: 'audio', tone: 'gold', data: { source: 'cover' }, label: '翻唱' }),
     ],
   },
   {
