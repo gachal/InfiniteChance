@@ -1667,7 +1667,8 @@ func TestTranslateLyricsValidation(t *testing.T) {
 	}
 }
 
-func TestAnalyzeSendsVideoToGatewayAndReturnsText(t *testing.T) {	env := newHandlerEnv(t, nil)
+func TestAnalyzeSendsVideoToGatewayAndReturnsText(t *testing.T) {
+	env := newHandlerEnv(t, nil)
 
 	res, raw := env.do(t, http.MethodPost, "/canvases/7/analyze", map[string]any{
 		"node_id":    "video-1-1",

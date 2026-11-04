@@ -295,7 +295,8 @@ func TestSQLiteWorkerMusicResubmitKeepsCoverRef(t *testing.T) {
 // 预查暂态失败(网络抖动)不重提:进续查循环,第二次查询拿到成功照样
 // 收尾 —— 提交即计费,查询没成功就重提是双倍账(code review 修正的
 // 回归用例)。
-func TestSQLiteWorkerMusicResumeRetriesPollWithoutResubmit(t *testing.T) {	store, _, _ := newSQLiteVoiceWorld(t)
+func TestSQLiteWorkerMusicResumeRetriesPollWithoutResubmit(t *testing.T) {
+	store, _, _ := newSQLiteVoiceWorld(t)
 	gateway := &stubGateway{
 		musicPollFn: func(call int) (canvastask.MusicPoll, error) {
 			if call == 1 {

@@ -86,7 +86,7 @@ export function validateCoverForm(form: CoverFormInput): string | null {
     return `风格描述最多 ${MAX_MUSIC_PROMPT_RUNES} 个字符`
   }
   if (form.model.trim() === '') {
-    return '请选择配乐模型'
+    return '请选择翻唱模型'
   }
   const lyrics = form.lyrics ?? ''
   if ([...lyrics].length > MAX_LYRICS_CHARS) {

@@ -237,7 +237,8 @@ func TestSQLiteCanvasTaskAudioRefRoundTrip(t *testing.T) {
 // TestSQLiteCanvasTaskIPTaskRoundTrip 覆盖 70 号票的无画布任务形状:
 // canvas_id=0 + ip_id=N 的任务行落库回读,ListByIP 按归属列出、
 // ListByCanvas 不见(生成记录面板按画布查、天然不见此类任务的定案)。
-func TestSQLiteCanvasTaskIPTaskRoundTrip(t *testing.T) {	s := newSQLiteStore(t)
+func TestSQLiteCanvasTaskIPTaskRoundTrip(t *testing.T) {
+	s := newSQLiteStore(t)
 	ctx := context.Background()
 
 	id, err := NewID()

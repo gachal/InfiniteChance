@@ -1819,7 +1819,13 @@ async function onCoverTranslate(nodeId: string): Promise<void> {
   const data = findNode(nodeId)?.data as AudioNodeData | undefined
   const text = (data?.lyrics ?? '').trim()
   const model = promptModels.value[0] ?? ''
-  if (!data || text === '' || model === '' || translatingNodeId.value !== '') {
+  if (!data || text === '' || translatingNodeId.value !== '') {
+    return
+  }
+  // 模型目录为空是环境异常,显式反馈而非静默吞掉;空歌词框仍按「空框
+  // 禁用」语义静默(按钮侧已禁用,这里只是兜底)。
+  if (model === '') {
+    showNotice('暂无可用聊天模型,请先在管理台配置提示词模型')
     return
   }
   translatingNodeId.value = nodeId

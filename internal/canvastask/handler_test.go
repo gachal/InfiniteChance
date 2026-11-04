@@ -687,7 +687,8 @@ func containsID(ids []int64, want int64) bool {
 // 61 号票音效提交:kind=sfx 落 queued 任务(描述进 prompt 列、seconds 复用
 // video 的既有列,不加列);按秒轨预检 —— 未配价与轨道错位(call/character)
 // 的提交当场 400,不让注定失败的任务进队列。seconds 域 1–30 与网关同源。
-func TestHandlerCreateSfxTask(t *testing.T) {	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+func TestHandlerCreateSfxTask(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
 
 	w := env.postTask(t, `{"node_id":"audio-1","kind":"sfx","prompt":"雷声轰鸣,由远及近","model":"vid-m","seconds":5}`)
 	if w.Code != http.StatusCreated {

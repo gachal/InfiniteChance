@@ -52,7 +52,7 @@ describe('validateCoverForm(78 号票翻唱表单)', () => {
 
   it('rejects empty prompt/model and over-long prompt, mirroring the music form', () => {
     expect(validateCoverForm({ refAssetId: 8, prompt: '   ', model: 'm' })).toBe('风格描述不能为空')
-    expect(validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: '' })).toBe('请选择配乐模型')
+    expect(validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: '' })).toBe('请选择翻唱模型')
     expect(
       validateCoverForm({ refAssetId: 8, prompt: '雨'.repeat(MAX_MUSIC_PROMPT_RUNES + 1), model: 'm' }),
     ).toBe(`风格描述最多 ${MAX_MUSIC_PROMPT_RUNES} 个字符`)
