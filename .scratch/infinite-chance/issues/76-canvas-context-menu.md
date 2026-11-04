@@ -52,3 +52,5 @@ Status: implemented(2026-11-03 定案当日 implement-spec 落 feat/76-canvas-co
 - **Esc 退栈实测序**:`onGlobalKeydown` 内为 灯箱 → 右键菜单 → 帮助 → 面板 → 编辑层(菜单开着时全视口垫挡住画布交互,天然栈顶先收);`canvasHelp.ts` 键位速查按此序回写。
 - **z-index**:`--z-context-menu: 40`(面板/抽屉之上、全屏编辑层之下),style.css 档位表增档。
 - **评审收口**:`ContextMenuItemTone` 13 值字面量联合(与 `.tone-*` CSS 类一一对应)、`nodeItem` 对象参数、条目 title 生成与菜单文案同源(`落一个${text}节点`,sfx 保留旧工具栏原 title 随迁)。
+
+> **指向注记(2026-11-04)**:定案 3 的「四段平铺单层」菜单形态已被 **77 号票**(分区入口 + hover 飞出子菜单二级化)取代;本票其余定案(落点/关闭语义/节点右键/画框优先等)继续有效,由 77 号票原样引用。

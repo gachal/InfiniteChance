@@ -1,15 +1,17 @@
 /**
- * 画布右键上下文菜单(76 号票)的零依赖条目定义:菜单 = 四段分组 →
- * 条目数组,内容即数据 —— 条目集、文案、命令、配色 tone、悬停提示全部
- * 住在这里,渲染组件(CanvasContextMenu.vue)只 import 常量与类型、
- * 不含任何条目字面量(循 canvasHelp.ts 的「内容模块」范式,改条目只动
- * 本文件)。canvasContextMenu.test.ts 按票钉住条目集与分组结构。
+ * 画布右键上下文菜单的零依赖条目定义(76 号票落、77 号票二级化):菜单
+ * = 两级结构 —— 一级是分区入口(ContextMenuSection 的 label,纯文字),
+ * hover 展开二级飞出条目(items),内容即数据 —— 条目集、文案、命令、
+ * 配色 tone、悬停提示全部住在这里,渲染组件(CanvasContextMenu.vue)只
+ * import 常量与类型、不含任何条目字面量(循 canvasHelp.ts 的「内容模块」
+ * 范式,改条目只动本文件)。canvasContextMenu.test.ts 按票钉住两层结构
+ * 与条目集。
  *
- * 口径(票·定案 3):条目纯文字沿用 NODE_TYPE_LABEL(唯一例外 audio 的
- * 菜单语义是「配乐」,音效是 audio 节点带 source:'sfx' 的第二入口),
- * 不带「+」前缀、不引入图标库;配色沿用原工具栏按钮的彩色语言(tone
- * 字段承载,组件按 tone 取 CSS 色对)。面板组保持既有 toggle/打开语义,
- * 不做开启态标记 —— 组件也不感知面板开关状态。
+ * 口径(76·定案 3 + 77·定案 1/2):条目纯文字沿用 NODE_TYPE_LABEL(唯一
+ * 例外 audio 的菜单语义是「配乐」,音效是 audio 节点带 source:'sfx' 的
+ * 第二入口),不带「+」前缀、不引入图标库;彩色 tone 语言完整保留在飞出
+ * 内条目上,一级分区入口中性灰。面板组保持既有 toggle/打开语义,不做
+ * 开启态标记 —— 组件也不感知面板开关状态。
  */
 
 import { NODE_TYPE_LABEL, type AudioNodeData, type CanvasNodeType } from './graph'
@@ -55,9 +57,15 @@ export interface ContextMenuItem {
   command: ContextMenuCommand
 }
 
+/** 分区 id 字面量联合(组件 hover 态按它记录当前展开的分区)。 */
+export type ContextMenuSectionId = 'create' | 'plan' | 'organize' | 'panels'
+
+/** 一级分区入口(77 号票二级化):label 即一级菜单行文案,hover 展开
+ * items 飞出;顺序即一级渲染序,测试按本常量钉住两层结构。 */
 export interface ContextMenuSection {
-  id: 'create' | 'plan' | 'organize' | 'panels'
+  id: ContextMenuSectionId
   label: string
+  /** 二级飞出条目(76 号票条目集原样随迁,只是从平铺改为飞出展示)。 */
   items: ContextMenuItem[]
 }
 
@@ -185,6 +193,13 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
 /** 菜单外缘与视口的安全边距(px)。 */
 const VIEWPORT_MARGIN = 8
 
+/** 单轴钳制(私有):值钳进 [margin, 视口该侧边距内上界],比视口还大
+ * 时钳到 margin(不溢出不出负)。clampMenuPosition 两轴与
+ * clampFlyoutPosition 纵向共用。 */
+function clampAxis(value: number, size: number, viewportSize: number, margin: number): number {
+  return Math.max(margin, Math.min(value, viewportSize - margin - size))
+}
+
 /**
  * 贴边翻转钳制(票·定案 5):右键点默认即菜单左上角;贴底向上弹、贴右
  * 向左收(min/max 钳制,两轴独立),贴左上钳到安全边距;菜单比视口还
@@ -197,7 +212,37 @@ export function clampMenuPosition(
   margin = VIEWPORT_MARGIN,
 ): { x: number; y: number } {
   return {
-    x: Math.max(margin, Math.min(point.x, viewport.width - margin - size.width)),
-    y: Math.max(margin, Math.min(point.y, viewport.height - margin - size.height)),
+    x: clampAxis(point.x, size.width, viewport.width, margin),
+    y: clampAxis(point.y, size.height, viewport.height, margin),
+  }
+}
+
+/** 飞出定位锚(77 号票定案 4):x/y = 飞出左上角的期望落点(一级菜单
+ * 右缘、顶部与分区入口对齐);flipX = 贴视口右缘翻左时飞出右缘贴靠的
+ * x(一级菜单左缘)。 */
+export interface FlyoutAnchor {
+  x: number
+  y: number
+  flipX: number
+}
+
+/**
+ * 飞出贴边钳制(77 号票定案 4):飞出默认贴一级菜单右缘(x/y 即期望
+ * 落点,顶部与分区入口对齐);期望落点会越过视口右缘时整体翻到菜单
+ * 左侧(右缘贴 flipX),翻左仍放不下钳到 margin(超窄视口退化,不出
+ * 负);纵向不管在哪侧都钳进视口(顶部对齐入口后按飞出自身高度钳底,
+ * 贴顶钳到 margin,比视口还高钳到 margin)。纯函数,组件在飞出挂载/
+ * 分区切换后量实际尺寸再调它 —— 思路与 clampMenuPosition 一致。
+ */
+export function clampFlyoutPosition(
+  anchor: FlyoutAnchor,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+  margin = VIEWPORT_MARGIN,
+): { x: number; y: number } {
+  const overflowsRight = anchor.x + size.width > viewport.width - margin
+  return {
+    x: overflowsRight ? Math.max(margin, anchor.flipX - size.width) : Math.max(margin, anchor.x),
+    y: clampAxis(anchor.y, size.height, viewport.height, margin),
   }
 }
