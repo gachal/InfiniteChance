@@ -686,8 +686,9 @@ type vodMusicRequest struct {
 	Lyrics       string `json:"lyrics"`
 	// AudioRef 是翻唱参考(78 号票):网关已解出上游可拉取的 http(s)
 	// 地址(直连调用方的素材内容寻址路径在 prepareMusic 就地改写)。非空
-	// 时提交体带 AudioInfos([{AudioUrl:…}] —— 官方数据结构页的单字段形状;
-	// 真 key 打样若证实 VOD 域需 Type+Url 结构,在此单点改);空串 = 不带
+	// 时提交体带 AudioInfos([{Type:"Url",Url:…}] —— VOD 域
+	// AigcAudioReferenceAudioInfo 的 Type+Url 结构,真 key 打样已定形;
+	// AudioUrl 是 MPS 域形状,VOD 判 UnknownParameter);空串 = 不带
 	// 键,提交体与 62 号票形态逐字节一致。
 	AudioRef string `json:"audio_ref"`
 }
@@ -764,10 +765,13 @@ func (a *vodAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payloa
 		audioReq["AdditionalParameters"] = extra
 	}
 	// 78 号票翻唱参考:AudioInfos 聚合的参考音频通路(MPS 官方文档明文
-	// 「MiniMaxMusic的翻唱功能使用 AudioInfos」)。非空才带键 —— 无 audio_ref
-	// 的提交体逐字节不变(60/62 号票既有行为零改动)。
+	// 「MiniMaxMusic的翻唱功能使用 AudioInfos」)。VOD 域元素是
+	// AigcAudioReferenceAudioInfo 的 Type+Url 结构(Type=Url 走外网可访问
+	// 地址),单字段 AudioUrl 是 MPS 域形状 —— 真 key 打样回
+	// UnknownParameter(AudioInfos.0.AudioUrl)后单点改定。非空才带键
+	// —— 无 audio_ref 的提交体逐字节不变(60/62 号票既有行为零改动)。
 	if ref := strings.TrimSpace(req.AudioRef); ref != "" {
-		audioReq["AudioInfos"] = []map[string]any{{"AudioUrl": ref}}
+		audioReq["AudioInfos"] = []map[string]any{{"Type": "Url", "Url": ref}}
 	}
 	if v, ok := vodView(ch); ok && v.subAppID != 0 {
 		audioReq["SubAppId"] = v.subAppID

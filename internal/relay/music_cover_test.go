@@ -39,7 +39,7 @@ func (e *relayEnv) wireCoverResolution(t *testing.T) {
 }
 
 // cover 提交端到端:audio_ref http(s) → VOD 收到 AudioInfos
-// [{AudioUrl:…}];对照面不带 audio_ref 的提交体不含 AudioInfos 键。
+// [{Type:"Url",Url:…}];对照面不带 audio_ref 的提交体不含 AudioInfos 键。
 func TestRelayVODMusicCoverCarriesAudioInfos(t *testing.T) {
 	env := newRelayEnv(t, nil)
 	vendor := newFakeVODVendor(t)
@@ -54,7 +54,7 @@ func TestRelayVODMusicCoverCarriesAudioInfos(t *testing.T) {
 	}
 	body := vendor.lastSubmitBody()
 	for _, want := range []string{
-		`"AudioInfos":[{"AudioUrl":"https://assets.example/original.mp3"}]`,
+		`"AudioInfos":[{"Type":"Url","Url":"https://assets.example/original.mp3"}]`,
 		`"AdditionalParameters":"{\"is_instrumental\":false,\"lyrics\":\"夜色慢慢降落\"}"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -115,7 +115,7 @@ func TestRelayMusicAudioRefGuards(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("http(s) audio_ref status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"AudioUrl":"https://assets.example/original.mp3"`) {
+	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"Url":"https://assets.example/original.mp3"`) {
 		t.Errorf("http(s) audio_ref body = %s, want the verbatim address", body)
 	}
 }
@@ -138,7 +138,7 @@ func TestRelayMusicAudioRefResolvesContentPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("content-path submit status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"AudioUrl":"https://cdn.example/uploads/20261104/abc.mp3"`) {
+	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"Url":"https://cdn.example/uploads/20261104/abc.mp3"`) {
 		t.Errorf("content-path body = %s, want the resolved public address", body)
 	}
 	if strings.Contains(vendor.lastSubmitBody(), "/api/assets/") {
@@ -152,7 +152,7 @@ func TestRelayMusicAudioRefResolvesContentPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("vendor-url fallback status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"AudioUrl":"https://vendor.example/song-master.mp3"`) {
+	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"Url":"https://vendor.example/song-master.mp3"`) {
 		t.Errorf("fallback body = %s, want the vendor address", body)
 	}
 

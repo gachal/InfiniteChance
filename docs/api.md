@@ -304,7 +304,9 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
 # —— 厂商 http(s) 地址或素材内容寻址路径(/api/assets/{id}/content,网关
 # 经素材表解出真实地址,要求素材行 kind=audio;data: 内联 400);缺省不传
 # = 现状行为逐字节不变。audio_ref 非空时 VOD adaptor 把它译成提交体的
-# AudioInfos([{AudioUrl:…}],聚合的参考音频通路);audio_ref 打到 MPS 侧
+# AudioInfos([{Type:"Url",Url:…}],聚合的参考音频通路;VOD 域
+# AigcAudioReferenceAudioInfo 结构,单字段 AudioUrl 是 MPS 域形状、上游判
+# UnknownParameter);audio_ref 打到 MPS 侧
 # 模型(非 vod- 前缀公开名映射在 tencent-mps 渠道)→ 请求级 400
 # invalid_request_error(不换道、不记熔断账、预扣原退),文案指路 cover 系
 # 公开名 —— 参考是翻唱的身份所在,不静默丢参考。audio_ref 只随请求上送,

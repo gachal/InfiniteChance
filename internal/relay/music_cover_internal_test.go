@@ -1,10 +1,12 @@
 package relay
 
 // 78 号票(歌曲翻唱)adaptor 层单元测试:vod 族 MusicSubmit 在 audio_ref
-// 非空时提交体带 AudioInfos([{AudioUrl:…}],官方数据结构页形状)、空时不带
-// 键(60/62 号票提交体逐字节不变);mps 族 MusicSubmit 检测到 audio_ref
-// 即按请求级失败拒绝(errAudioRefUnsupported —— 不换道、不记熔断账的
-// 400 invalid_request_error 由 relay 归一面落,这里只钉 adaptor 的拒绝)。
+// 非空时提交体带 AudioInfos([{Type:"Url",Url:…}],VOD 域
+// AigcAudioReferenceAudioInfo 结构;单字段 AudioUrl 是 MPS 域形状)、空时
+// 不带键(60/62 号票提交体逐字节不变);mps 族 MusicSubmit 检测到
+// audio_ref 即按请求级失败拒绝(errAudioRefUnsupported —— 不换道、不记
+// 熔断账的 400 invalid_request_error 由 relay 归一面落,这里只钉 adaptor
+// 的拒绝)。
 
 import (
 	"context"
@@ -16,7 +18,7 @@ import (
 )
 
 // vod 翻唱参考:audio_ref 非空 → CreateAigcAudioTask 带 AudioInfos 单条
-// AudioUrl;模型串拆分与 OutputConfig 与 62 号票形态一致。
+// Type+Url;模型串拆分与 OutputConfig 与 62 号票形态一致。
 func TestVODAdaptorMusicSubmitCarriesAudioInfos(t *testing.T) {
 	stub, srv := newVODStub(t)
 	a := fastVODAdaptor(srv.URL)
@@ -48,11 +50,11 @@ func TestVODAdaptorMusicSubmitCarriesAudioInfos(t *testing.T) {
 	if len(submit.AudioInfos) != 1 {
 		t.Fatalf("AudioInfos = %v, want exactly one entry", submit.AudioInfos)
 	}
-	if submit.AudioInfos[0]["AudioUrl"] != "https://assets.example/original.mp3" {
-		t.Fatalf("AudioUrl = %v, want the resolved reference address", submit.AudioInfos[0]["AudioUrl"])
+	if submit.AudioInfos[0]["Url"] != "https://assets.example/original.mp3" {
+		t.Fatalf("Url = %v, want the resolved reference address", submit.AudioInfos[0]["Url"])
 	}
-	if _, hasType := submit.AudioInfos[0]["Type"]; hasType {
-		t.Fatalf("AudioInfos[0] carries a Type key; the official data-structure page shape is AudioUrl-only")
+	if submit.AudioInfos[0]["Type"] != "Url" {
+		t.Fatalf("Type = %v, want \"Url\" (VOD AigcAudioReferenceAudioInfo shape)", submit.AudioInfos[0]["Type"])
 	}
 	if submit.ModelName != "MiniMaxMusic" {
 		t.Fatalf("ModelName = %q", submit.ModelName)
