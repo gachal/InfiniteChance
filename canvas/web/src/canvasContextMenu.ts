@@ -193,6 +193,13 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
 /** 菜单外缘与视口的安全边距(px)。 */
 const VIEWPORT_MARGIN = 8
 
+/** 单轴钳制(私有):值钳进 [margin, 视口该侧边距内上界],比视口还大
+ * 时钳到 margin(不溢出不出负)。clampMenuPosition 两轴与
+ * clampFlyoutPosition 纵向共用。 */
+function clampAxis(value: number, size: number, viewportSize: number, margin: number): number {
+  return Math.max(margin, Math.min(value, viewportSize - margin - size))
+}
+
 /**
  * 贴边翻转钳制(票·定案 5):右键点默认即菜单左上角;贴底向上弹、贴右
  * 向左收(min/max 钳制,两轴独立),贴左上钳到安全边距;菜单比视口还
@@ -205,8 +212,8 @@ export function clampMenuPosition(
   margin = VIEWPORT_MARGIN,
 ): { x: number; y: number } {
   return {
-    x: Math.max(margin, Math.min(point.x, viewport.width - margin - size.width)),
-    y: Math.max(margin, Math.min(point.y, viewport.height - margin - size.height)),
+    x: clampAxis(point.x, size.width, viewport.width, margin),
+    y: clampAxis(point.y, size.height, viewport.height, margin),
   }
 }
 
@@ -236,6 +243,6 @@ export function clampFlyoutPosition(
   const overflowsRight = anchor.x + size.width > viewport.width - margin
   return {
     x: overflowsRight ? Math.max(margin, anchor.flipX - size.width) : Math.max(margin, anchor.x),
-    y: Math.max(margin, Math.min(anchor.y, viewport.height - margin - size.height)),
+    y: clampAxis(anchor.y, size.height, viewport.height, margin),
   }
 }
