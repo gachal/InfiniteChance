@@ -757,7 +757,7 @@ func TestRelayVoiceQueryAndDeleteNoBilling(t *testing.T) {
 func TestRelayAudioModelsCatalog(t *testing.T) {
 	env := newRelayEnv(t, nil)
 	audio := env.seedAudioChannel(t, "bailian-audio", "https://audio.example")
-	env.seedSpeechPrice(t)   // testTTSModel 字符轨
+	env.seedSpeechPrice(t)     // testTTSModel 字符轨
 	env.seedEnrollmentPrice(t) // voice-enrollment 次轨 → 不进合成目录
 	// 图片模型:在 audio 渠道映射之外,不进目录。
 	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
@@ -769,8 +769,8 @@ func TestRelayAudioModelsCatalog(t *testing.T) {
 	// 停用的 audio 渠道:映射不进目录。
 	if _, err := env.stores.channels.Create(context.Background(), channel.Channel{
 		Name: "disabled-audio", Type: channel.TypeDashScope,
-		ModelMap:      map[string]string{"off-model": "off-model"},
-		Capabilities:  []channel.Capability{channel.CapAudio}, Enabled: false,
+		ModelMap:     map[string]string{"off-model": "off-model"},
+		Capabilities: []channel.Capability{channel.CapAudio}, Enabled: false,
 	}); err != nil {
 		t.Fatalf("seed disabled channel: %v", err)
 	}
@@ -784,7 +784,7 @@ func TestRelayAudioModelsCatalog(t *testing.T) {
 		t.Fatalf("status = %d body %s, want 200", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Models []string                       `json:"models"`
+		Models []string                        `json:"models"`
 		Prices map[string]pricing.PriceSummary `json:"prices"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
