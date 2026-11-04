@@ -277,7 +277,7 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   }'
 ```
 
-### 3.9 配乐 / 歌曲(异步两面:提交 → 轮询,无取消;60 号票;62 号票歌曲)
+### 3.9 配乐 / 歌曲 / 翻唱(异步两面:提交 → 轮询,无取消;60 号票;62 号票歌曲;78 号票翻唱)
 
 ```bash
 # 配乐统一说明:契约照 /v1/videos 的两面(受理回任务句柄、轮询五态),
@@ -299,6 +299,16 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
 # 翻译 is_instrumental + lyrics,Mureka 只透传 lyrics。已知边界:MPS 侧模型
 # (非 vod- 前缀)收到 instrumental:false + lyrics 会静默产出纯音乐(MPS
 # adaptor 写死 is_instrumental:true),选型以 vod- 前缀为准。
+#
+# 78 号票翻唱参数面(同一提交端点):audio_ref(可选单串,翻唱参考音频)
+# —— 厂商 http(s) 地址或素材内容寻址路径(/api/assets/{id}/content,网关
+# 经素材表解出真实地址,要求素材行 kind=audio;data: 内联 400);缺省不传
+# = 现状行为逐字节不变。audio_ref 非空时 VOD adaptor 把它译成提交体的
+# AudioInfos([{AudioUrl:…}],聚合的参考音频通路);audio_ref 打到 MPS 侧
+# 模型(非 vod- 前缀公开名映射在 tencent-mps 渠道)→ 请求级 400
+# invalid_request_error(不换道、不记熔断账、预扣原退),文案指路 cover 系
+# 公开名 —— 参考是翻唱的身份所在,不静默丢参考。audio_ref 只随请求上送,
+# 不落网关任务行(music_tasks 零迁移)。
 
 # 提交配乐任务(风格描述 1-2000 字,对齐 MPS Prompt 上限)
 curl -X POST $GATEWAY/v1/audio/music \
@@ -334,6 +344,30 @@ curl $GATEWAY/v1/audio/music/tasks/mt_1a2b… -H "Authorization: Bearer $GWKEY"
 # → {"id":"mt_1a2b…","status":"succeeded","model":"minimax-music",
 #    "created_at":1767000000,"audio":{"url":"https://music-xxx.cos.ap-guangzhou…/a.mp3"}}
 #   失败时 {"status":"failed","error":{"message":"…厂商原因…"}}
+
+# 提交翻唱任务(78 号票:audio_ref 携带参考原曲;公开名 vod-minimax-music-
+# 3.0-cover 独立于普通歌曲名,模型映射 MiniMaxMusic 3.0;翻唱恒人声,
+# lyrics 选填 —— 留空由模型自动写词、非原曲歌词)
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "vod-minimax-music-3.0-cover",
+    "prompt": "city pop cover, 女声, 轻快",
+    "instrumental": false,
+    "audio_ref": "https://assets.example/original-song.mp3"
+  }'
+# → {"id":"mt_5e6f…","status":"queued","model":"vod-minimax-music-3.0-cover","created_at":1767000000}
+#   audio_ref 也可带素材内容寻址路径(网关解出真实地址后上游拿到的恒是
+#   可拉取地址):"audio_ref":"/api/assets/8/content"
+
+# 参考误落 MPS 侧模型:请求级 400,不换道不记熔断账、预扣原退
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"minimax-music","prompt":"cover","audio_ref":"https://assets.example/original-song.mp3"}'
+# → 400 {"error":{"code":"invalid_request_error","type":"invalid_request_error",
+#    "message":"当前模型不支持参考翻唱,请选择 cover 系公开模型(如
+#    vod-minimax-music-3.0-cover)"}}
+#   audio_ref 为 data: 内联 URI 同码拒绝(12 号票契约)。
 
 # 配乐模型目录:启用 + music 能力渠道的映射并集 ∩ 按次轨配价,价格随行
 # PriceSummary;/v1/audio/models(TTS 字符轨)不受影响。画布服务的
@@ -703,6 +737,18 @@ curl -X POST $CANVAS/canvases/1/analyze -H "Authorization: Bearer $TOKEN" \
   -d '{"node_id":"n_i1","media_url":"/assets/3/content","media_kind":"image",
        "model":"qwen-vl-max"}'
 # → {"text":"..."}
+
+# 一键翻译歌词(78 号票,翻唱表单的英→中按钮):text 1–3500 字(与 music
+# 歌词上限同源)、model 须 token 轨配价(否则 400 model_not_priced);
+# 同步聊天调用(与「生成提示词」同族),token 轨计费,来源标记
+# gen=lyrics-translate;不进 canvas_tasks、不进生成记录面板。服务端固定
+# 指令:翻成中文、逐行对齐、音节数贴近原文保可唱性、保留 [Verse]/[Chorus]
+# 等结构标记;译文由编辑器回填歌词框,人工可再改(发送仍走人工确认)。
+curl -X POST $CANVAS/canvases/1/translate-lyrics -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"[Verse]\nNight falls slowly on the avenue\n[Chorus]\nRun through the neon rain",
+       "model":"gpt-4o"}'
+# → {"text":"[Verse]\n夜色在大道上慢慢降落\n[Chorus]\n奔过霓虹雨幕"}
 ```
 
 ### 5.4 模型与技能目录(编辑器下拉/浮层用)

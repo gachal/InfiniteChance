@@ -28,6 +28,7 @@ function task(overrides: Partial<CanvasTask>): CanvasTask {
     chars: 0,
     lyrics: '',
     instrumental: true,
+    audio_ref: '',
     created_at: '2026-09-03T12:00:00Z',
     updated_at: '2026-09-03T12:00:00Z',
     ...overrides,

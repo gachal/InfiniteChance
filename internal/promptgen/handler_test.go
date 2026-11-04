@@ -1583,6 +1583,90 @@ func TestReverseSurfacesGatewayFailureAsUpstreamError(t *testing.T) {
 
 // ---- analyze(17 号票)----
 
+// 78 号票一键翻译:POST /canvases/:id/translate-lyrics —— {text, model} 进,
+// 走同步聊天(GenerateChat,与「生成提示词」同族)出 {text};固定翻译指令
+// 与歌词同行上送,来源标记 gen=lyrics-translate(无 node 分量 —— 翻译是
+// 表单动作,不绑节点、不进 canvas_tasks、不进生成记录面板)。
+func TestTranslateLyricsSendsTextToGatewayAndReturnsText(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+
+	lyrics := "[Verse]\nNight falls slowly on the avenue\n[Chorus]\nRun through the neon rain"
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/translate-lyrics", map[string]any{
+		"text":  lyrics,
+		"model": "chat-m",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.StatusCode, raw)
+	}
+	var got struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if got.Text != "a neon cyberpunk city at dusk" {
+		t.Errorf("text = %q, want the gateway answer echoed", got.Text)
+	}
+
+	gateway := env.params.gateway.(*stubGateway)
+	if len(gateway.requests) != 1 {
+		t.Fatalf("gateway calls = %d, want 1", len(gateway.requests))
+	}
+	req := gateway.requests[0]
+	if req.Model != "chat-m" {
+		t.Errorf("model = %q", req.Model)
+	}
+	if req.VideoURL != "" || req.ImageURL != "" {
+		t.Errorf("media parts = %q/%q, want none (纯文本翻译)", req.VideoURL, req.ImageURL)
+	}
+	if !strings.Contains(req.Content, "逐行对齐") || !strings.Contains(req.Content, "音节") ||
+		!strings.Contains(req.Content, "[Verse]") {
+		t.Errorf("content = %q, want the fixed translation brief (逐行对齐/音节/结构标记)", req.Content)
+	}
+	if !strings.Contains(req.Content, lyrics) {
+		t.Errorf("content = %q, want the lyrics riding with the instruction", req.Content)
+	}
+	if req.Source != "canvas=7 gen=lyrics-translate" {
+		t.Errorf("source = %q, want the lyrics-translate mark without a node component", req.Source)
+	}
+}
+
+func TestTranslateLyricsValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"空 text", map[string]any{"text": "   ", "model": "chat-m"}},
+		{"缺 model", map[string]any{"text": "Night falls"}},
+		{"模型未配价", map[string]any{"text": "Night falls", "model": "nope"}},
+		{"模型非 token 轨", map[string]any{"text": "Night falls", "model": "img-m"}},
+		{"未知画布", map[string]any{"text": "Night falls", "model": "chat-m"}},
+		{"超长 text", map[string]any{"text": strings.Repeat("雨", 3501), "model": "chat-m"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newHandlerEnv(t, nil)
+			path := "/canvases/7/translate-lyrics"
+			if tc.name == "未知画布" {
+				path = "/canvases/99/translate-lyrics"
+			}
+			res, _ := env.do(t, http.MethodPost, path, tc.body)
+			if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 400/404; body = %s", res.StatusCode, res.Body)
+			}
+		})
+	}
+
+	// model_not_priced 的机器码要稳定,前端按它提示。
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodPost, "/canvases/7/translate-lyrics", map[string]any{
+		"text": "Night falls", "model": "img-m",
+	})
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(raw, "model_not_priced") {
+		t.Fatalf("status = %d body = %s, want 400 model_not_priced", res.StatusCode, raw)
+	}
+}
+
 func TestAnalyzeSendsVideoToGatewayAndReturnsText(t *testing.T) {
 	env := newHandlerEnv(t, nil)
 

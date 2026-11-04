@@ -139,10 +139,15 @@ func mpsRefusal(message string) *UpstreamResponse {
 }
 
 // musicSubmitBody is the gateway submit body's adaptor slice — model 已经
-// 换成上游 "ModelName ModelVersion" 串,prompt 是风格描述。
+// 换成上游 "ModelName ModelVersion" 串,prompt 是风格描述。AudioRef 是
+// 78 号票的翻唱参考:MPS 族没有参考音频通路(写死 is_instrumental:true,
+// 60 号票「MPS 不动」定案),检测到非空即按请求级失败显式拒绝 ——
+// 参考是翻唱的身份所在,静默丢参考是产物级错误,62 号票歌词静默降级
+// 边界在翻唱场景不可接受(78 号票定案 6)。
 type musicSubmitBody struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model    string `json:"model"`
+	Prompt   string `json:"prompt"`
+	AudioRef string `json:"audio_ref"`
 }
 
 // mpsAdditionalParameters renders the per-model fixed extras: 纯音乐物种
@@ -164,6 +169,13 @@ func (a *mpsAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payloa
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: mpsErrorBody("tencent mps: request body is not a valid JSON object")}, nil
+	}
+	// 78 号票定案 6:带参考的请求打到 MPS 族 = 配置错位(同名模型映射在
+	// 无参考通路的渠道),按请求级失败拒绝 —— sentinel 错误由
+	// CreateMusicGeneration 归为不换道、不记熔断账的 400
+	// invalid_request_error,不静默丢参考。
+	if strings.TrimSpace(req.AudioRef) != "" {
+		return nil, errAudioRefUnsupported
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {

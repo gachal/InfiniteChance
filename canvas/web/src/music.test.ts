@@ -1,12 +1,12 @@
 /**
  * music.ts 的纯逻辑单测(60 号票):表单校验与按次预估价;62 号票追加
- * 歌曲开关(纯音乐互斥)与歌词上限。
+ * 歌曲开关(纯音乐互斥)与歌词上限;78 号票追加翻唱表单校验。
  */
 import { describe, expect, it } from 'vitest'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
 
-import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateMusicForm } from './music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm } from './music'
 
 describe('validateMusicForm(60 号票配乐表单)', () => {
   it('rejects empty prompt/model and over-long prompt', () => {
@@ -40,6 +40,35 @@ describe('validateMusicForm(62 号票歌曲开关与歌词)', () => {
     expect(validateMusicForm({ prompt: 'p', model: 'm', instrumental: false, lyrics: '夜色慢慢降落' })).toBeNull()
     // 60 号票既有形状(两字段)不受扰:instrumental 缺省 = 纯音乐。
     expect(validateMusicForm({ prompt: 'p', model: 'm' })).toBeNull()
+  })
+})
+
+describe('validateCoverForm(78 号票翻唱表单)', () => {
+  it('rejects a missing reference audio (参考是翻唱的身份所在,必填恰好 1 条)', () => {
+    expect(validateCoverForm({ refAssetId: 0, prompt: 'p', model: 'm' })).toBe(
+      '请先选择参考音频(必填,恰好 1 条)',
+    )
+  })
+
+  it('rejects empty prompt/model and over-long prompt, mirroring the music form', () => {
+    expect(validateCoverForm({ refAssetId: 8, prompt: '   ', model: 'm' })).toBe('风格描述不能为空')
+    expect(validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: '' })).toBe('请选择翻唱模型')
+    expect(
+      validateCoverForm({ refAssetId: 8, prompt: '雨'.repeat(MAX_MUSIC_PROMPT_RUNES + 1), model: 'm' }),
+    ).toBe(`风格描述最多 ${MAX_MUSIC_PROMPT_RUNES} 个字符`)
+  })
+
+  it('rejects over-long lyrics', () => {
+    expect(
+      validateCoverForm({ refAssetId: 8, prompt: 'p', model: 'm', lyrics: '雨'.repeat(MAX_LYRICS_CHARS + 1) }),
+    ).toBe(`歌词最多 ${MAX_LYRICS_CHARS} 个字符`)
+  })
+
+  it('accepts a full cover form with or without lyrics (空 = 上游自动写词)', () => {
+    expect(validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: 'vod-minimax-music-3.0-cover' })).toBeNull()
+    expect(
+      validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: 'm', lyrics: '夜色慢慢降落' }),
+    ).toBeNull()
   })
 })
 

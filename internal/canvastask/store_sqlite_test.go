@@ -195,6 +195,45 @@ func mustTaskID(t *testing.T) string {
 	return id
 }
 
+// TestSQLiteCanvasTaskAudioRefRoundTrip 覆盖 78 号票的翻唱参考列:
+// audio_ref(提交时已解析的地址)保真往返;普通音乐/歌曲任务空串落 NULL、
+// 读回空串(存量行零迁移的既有语义)。
+func TestSQLiteCanvasTaskAudioRefRoundTrip(t *testing.T) {
+	s := newSQLiteStore(t)
+	ctx := context.Background()
+
+	cover, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 1, NodeID: "audio-cover", Kind: KindMusic,
+		Prompt: "city pop cover", Model: "vod-minimax-music-3.0-cover",
+		Lyrics: "夜色慢慢降落", AudioRef: "https://cdn.example/uploads/20261104/abc.mp3",
+	})
+	if err != nil {
+		t.Fatalf("Create cover: %v", err)
+	}
+	got, err := s.Get(ctx, cover.ID)
+	if err != nil {
+		t.Fatalf("Get cover: %v", err)
+	}
+	if got.AudioRef != "https://cdn.example/uploads/20261104/abc.mp3" {
+		t.Fatalf("audio_ref = %q, want the resolved address verbatim", got.AudioRef)
+	}
+
+	plain, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 1, NodeID: "audio-bgm", Kind: KindMusic,
+		Prompt: "纯音乐", Model: "bgm-m",
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = s.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.AudioRef != "" {
+		t.Errorf("plain audio_ref = %q, want empty(普通音乐/歌曲任务)", got.AudioRef)
+	}
+}
+
 // TestSQLiteCanvasTaskIPTaskRoundTrip 覆盖 70 号票的无画布任务形状:
 // canvas_id=0 + ip_id=N 的任务行落库回读,ListByIP 按归属列出、
 // ListByCanvas 不见(生成记录面板按画布查、天然不见此类任务的定案)。

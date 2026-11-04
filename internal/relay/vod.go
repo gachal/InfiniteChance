@@ -676,12 +676,20 @@ func (a *vodAdaptor) VideosCancel(ctx context.Context, ch channel.Channel, upstr
 // model 已被 relay 换成上游 "ModelName ModelVersion" 串;instrumental 缺省
 // true(60 号票纯音乐调用零改动),lyrics 与 instrumental:false 同行即人声
 // 歌曲。MPS adaptor 的 musicSubmitBody 只解 model/prompt,这两个字段打到
-// tencent-mps 渠道会被静默忽略(instrumental 写死 true,62 号票文档边界)。
+// tencent-mps 渠道会被静默忽略(instrumental 写死 true,62 号票文档边界);
+// audio_ref 打到 MPS 渠道则被 adaptor 显式拒绝(errAudioRefUnsupported,
+// 78 号票定案 6 —— 参考是身份所在,静默丢是产物级错误)。
 type vodMusicRequest struct {
 	Model        string `json:"model"`
 	Prompt       string `json:"prompt"`
 	Instrumental *bool  `json:"instrumental"`
 	Lyrics       string `json:"lyrics"`
+	// AudioRef 是翻唱参考(78 号票):网关已解出上游可拉取的 http(s)
+	// 地址(直连调用方的素材内容寻址路径在 prepareMusic 就地改写)。非空
+	// 时提交体带 AudioInfos([{AudioUrl:…}] —— 官方数据结构页的单字段形状;
+	// 真 key 打样若证实 VOD 域需 Type+Url 结构,在此单点改);空串 = 不带
+	// 键,提交体与 62 号票形态逐字节一致。
+	AudioRef string `json:"audio_ref"`
 }
 
 // vodMusicAdditionalParameters renders the per-model extras for VOD 文生音乐
@@ -754,6 +762,12 @@ func (a *vodAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payloa
 	}
 	if extra, ok := vodMusicAdditionalParameters(modelName, instrumental, req.Lyrics); ok {
 		audioReq["AdditionalParameters"] = extra
+	}
+	// 78 号票翻唱参考:AudioInfos 聚合的参考音频通路(MPS 官方文档明文
+	// 「MiniMaxMusic的翻唱功能使用 AudioInfos」)。非空才带键 —— 无 audio_ref
+	// 的提交体逐字节不变(60/62 号票既有行为零改动)。
+	if ref := strings.TrimSpace(req.AudioRef); ref != "" {
+		audioReq["AudioInfos"] = []map[string]any{{"AudioUrl": ref}}
 	}
 	if v, ok := vodView(ch); ok && v.subAppID != 0 {
 		audioReq["SubAppId"] = v.subAppID

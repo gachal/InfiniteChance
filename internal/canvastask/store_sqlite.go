@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	seconds        INTEGER NOT NULL DEFAULT 0,
 	lyrics         TEXT    NULL,
 	instrumental   INTEGER NOT NULL DEFAULT 1,
+	audio_ref      TEXT    NULL,
 	image_ref      TEXT    NULL,
 	image_refs     TEXT    NULL,
 	video_refs     TEXT    NULL,
@@ -85,6 +86,10 @@ var sqliteMigrations = []struct{ column, ddl string }{
 	// 70 号票的无画布任务:ip_id 缺省 0 = 画布任务,存量行不回填,与
 	// MySQL 侧同一条幂等 ALTER 路。
 	{"ip_id", "ALTER TABLE canvas_tasks ADD COLUMN ip_id INTEGER NOT NULL DEFAULT 0"},
+	// 78 号票的翻唱参考:NULL = 普通音乐/歌曲任务,存量行零迁移(SQLite
+	// 加列先于索引建 —— EnsureSchema 的 ALTER 循环在两条索引之后,列已在
+	// 建表 DDL 内,存量库走迁移,与 62 号票同序)。
+	{"audio_ref", "ALTER TABLE canvas_tasks ADD COLUMN audio_ref TEXT NULL"},
 }
 
 // EnsureSchema creates the canvas_tasks table and its indexes when missing,
@@ -138,10 +143,10 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.Lyrics, t.Instrumental, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status, now, now)
 	if err != nil {
 		return Task{}, err
@@ -627,11 +632,11 @@ func (s *SQLiteStore) ResetForRetry(ctx context.Context, id string, canvasID int
 // 读出转回 time.Time,保持与 MySQL 版相同的 Go 返回类型。
 func scanSQLiteTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics, audioRef sql.NullString
 	var createdAt, updatedAt string
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &createdAt, &updatedAt); err != nil {
 		return Task{}, err
 	}
@@ -644,6 +649,7 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	t.VideoRefs = decodeVideoRefs(videoRefs.String)
 	t.VoiceSpec = decodeVoiceSpec(voiceSpec.String)
 	t.Lyrics = lyrics.String
+	t.AudioRef = audioRef.String
 	var err error
 	if t.CreatedAt, err = sqlitedb.ParseTime(createdAt); err != nil {
 		return Task{}, err

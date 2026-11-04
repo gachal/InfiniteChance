@@ -15,9 +15,9 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
     expect(CONTEXT_MENU_SECTIONS.map((s) => s.label)).toEqual(['创作', '规划', '组织', '面板'])
   })
 
-  it('飞出条目规模:创作 8 / 规划 4 / 组织 1 / 面板 4(共 17,76 号票条目集原样随迁)', () => {
-    expect(CONTEXT_MENU_SECTIONS.map((s) => s.items.length)).toEqual([8, 4, 1, 4])
-    expect(flatItems.length).toBe(17)
+  it('飞出条目规模:创作 9 / 规划 4 / 组织 1 / 面板 4(共 18;76 号票 17 条原样随迁,78 号票创作段增翻唱)', () => {
+    expect(CONTEXT_MENU_SECTIONS.map((s) => s.items.length)).toEqual([9, 4, 1, 4])
+    expect(flatItems.length).toBe(18)
   })
 
   it('每个分区入口的飞出条目非空(空飞出 = 死入口)', () => {
@@ -26,7 +26,7 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
     }
   })
 
-  it('创作飞出条目集与序:Agent/图片/视频/预演台/角色/音色/配乐/音效(音效在配乐后)', () => {
+  it('创作飞出条目集与序:Agent/图片/视频/预演台/角色/音色/配乐/音效/翻唱(音效在配乐后、翻唱压轴,78 号票第三音频入口)', () => {
     const create = CONTEXT_MENU_SECTIONS[0]!
     expect(create.items.map((i) => i.id)).toEqual([
       'agent',
@@ -37,6 +37,7 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
       'voice',
       'audio',
       'sfx',
+      'cover',
     ])
     expect(create.items.map((i) => i.label)).toEqual([
       'Agent',
@@ -47,6 +48,7 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
       '音色',
       '配乐',
       '音效',
+      '翻唱',
     ])
   })
 
@@ -83,6 +85,13 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
     const sfx = create.items.find((i) => i.id === 'sfx')!
     expect(audio.command).toEqual({ kind: 'add-node', nodeType: 'audio' })
     expect(sfx.command).toEqual({ kind: 'add-node', nodeType: 'audio', dataPatch: { source: 'sfx' } })
+  })
+
+  it('翻唱命令 = audio 节点带 source:cover(78 号票:第三音频入口,创作意图标记)', () => {
+    const create = CONTEXT_MENU_SECTIONS[0]!
+    const cover = create.items.find((i) => i.id === 'cover')!
+    expect(cover.command).toEqual({ kind: 'add-node', nodeType: 'audio', dataPatch: { source: 'cover' } })
+    expect(cover.title).toContain('翻唱')
   })
 
   it('全部飞出条目不带「+」前缀、文案非空且各带 tone 配色与 title 提示', () => {
