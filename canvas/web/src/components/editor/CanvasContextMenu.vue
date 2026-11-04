@@ -108,9 +108,8 @@ function openSection(section: ContextMenuSection, event: MouseEvent): void {
   flyoutAnchor.value = { x: menuRect.right, y: entryRect.top, flipX: menuRect.left }
   // 未钳制的锚先顶一帧(与一级菜单同款节奏),量到尺寸后钳位纠正。
   flyoutPos.value = { x: flyoutAnchor.value.x, y: flyoutAnchor.value.y }
-  if (activeSectionId.value !== section.id) {
-    activeSectionId.value = section.id
-  }
+  // ref 同值赋值不触发响应(Object.is 判等),无需同值守卫。
+  activeSectionId.value = section.id
   void positionFlyout()
 }
 
@@ -205,22 +204,11 @@ function onPick(item: ContextMenuItem): void {
   z-index: var(--z-context-menu);
 }
 
-/* 暗色小面板:卡片底 + 控制线描边 + 对话框影(帮助浮层同族质感)。 */
-.ctx-menu {
-  position: fixed;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 148px;
-  padding: 8px;
-  background: var(--bg-navy);
-  border: 1px solid var(--line-control);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-dialog);
-  animation: ctx-in var(--dur-fast) var(--ease);
-}
-
-/* 二级飞出:与一级菜单同族面板质感;位置由 clampFlyoutPosition 钳定。 */
+/* 两块面板共用的暗色小面板质感:卡片底 + 控制线描边 + 对话框影(帮助
+   浮层同族)。一级菜单与二级飞出当前声明完全一致,合并为共享选择器;
+   两面板日后出现差异时,差异声明写进各自的选择器块。飞出位置由
+   clampFlyoutPosition 钳定。 */
+.ctx-menu,
 .ctx-flyout {
   position: fixed;
   display: flex;
