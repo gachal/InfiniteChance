@@ -141,12 +141,14 @@ type Handlers struct {
 //	POST /:id/agent/stream           — 同请求体,Agent 工具循环 SSE(63 号票)
 //	POST /:id/reverse-prompt         — {node_id?, video_url, model} → text
 //	POST /:id/analyze                — {node_id?, media_url, media_kind, model} → text
+//	POST /:id/translate-lyrics       — {text, model} → text(78 号票翻唱歌词英→中)
 func RegisterRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/:id/generate-prompt", h.Generate)
 	group.POST("/:id/generate-prompt/stream", h.GenerateStream)
 	group.POST("/:id/agent/stream", h.AgentStream)
 	group.POST("/:id/reverse-prompt", h.Reverse)
 	group.POST("/:id/analyze", h.Analyze)
+	group.POST("/:id/translate-lyrics", h.TranslateLyrics)
 }
 
 type generateInput struct {
@@ -842,6 +844,86 @@ func (h *Handlers) Analyze(c *gin.Context) {
 		req.ImageURL = mediaURL
 	}
 	result, err := h.Gateway.GenerateChat(c.Request.Context(), req)
+	if err != nil {
+		log.Printf("promptgen: %s %s: gateway: %v", c.Request.Method, c.Request.URL.Path, err)
+		apierr.Write(c, http.StatusBadGateway, "upstream_error", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"text": result.Content})
+}
+
+// maxTranslateLyricsRunes 是翻译歌词的上限(78 号票,与 canvastask 的
+// maxMusicLyricsRunes 同源 —— 翻译的输入就是 music 歌词框的内容,同宽才
+// 不会出现表单能装、端点拒收的缝)。
+const maxTranslateLyricsRunes = 3500
+
+// translateLyricsInput is one 翻译请求(78 号票):text 是原歌词(1–3500
+// runes),model 是 token 轨聊天模型(调用与「生成提示词」同族,网关零
+// 改动)。
+type translateLyricsInput struct {
+	Text  string `json:"text"`
+	Model string `json:"model"`
+}
+
+// translateLyricsInstruction is the fixed translation brief (78 号票,17 号
+// 票分析指令先例,固定常量无模板依赖 —— 可配置的翻译模板同样需要模板
+// 系统):翻成中文、逐行对齐原词、音节数尽量贴近以保可唱性、保留
+// [Verse]/[Chorus] 等结构标记。输出语言恒中文(78 号票:翻译方向固定)。
+const translateLyricsInstruction = "请把下面的歌词翻译成中文,供歌曲翻唱(以原曲为参考音频重新演唱)使用。" +
+	"要求:逐行对齐原词,每行译文的音节数尽量贴近原文行,保证配上原曲旋律仍然可唱;" +
+	"保留 [Verse]、[Chorus]、[Bridge] 等结构标记与空行,不增删行;" +
+	"只输出翻译结果本身,不要任何解释、前缀或结语。"
+
+// TranslateLyrics translates the lyrics into Chinese for a cover(78 号票
+// 一键翻译):同步聊天调用而非画布任务 —— 与「生成提示词」同族,token
+// 轨计费,来源标记 gen=lyrics-translate;不进 canvas_tasks、不进生成记录
+// 面板。译文回到编辑器由它回填歌词框(替换原内容,人工可再改),发送仍
+// 走人工确认 —— 翻译是草稿辅助,不是自动改词链(确认式,不静默改词)。
+func (h *Handlers) TranslateLyrics(c *gin.Context) {
+	canvasID, ok := bindID(c)
+	if !ok {
+		return
+	}
+	if _, err := h.Canvases.Get(c.Request.Context(), canvasID); err != nil {
+		h.failCanvas(c, err)
+		return
+	}
+	if !h.requireGateway(c) {
+		return
+	}
+
+	var in translateLyricsInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		apierr.InvalidRequest(c, "请求体必须是 {text, model} JSON")
+		return
+	}
+	text := strings.TrimSpace(in.Text)
+	if text == "" {
+		apierr.InvalidRequest(c, "text 不能为空")
+		return
+	}
+	if n := utf8.RuneCountInString(text); n > maxTranslateLyricsRunes {
+		apierr.InvalidRequest(c, fmt.Sprintf("text 最多 %d 个字符", maxTranslateLyricsRunes))
+		return
+	}
+	model := strings.TrimSpace(in.Model)
+	if model == "" {
+		apierr.InvalidRequest(c, "model 不能为空")
+		return
+	}
+	if utf8.RuneCountInString(model) > pricing.ModelNameRunes {
+		apierr.InvalidRequest(c, "model 名最多 200 个字符")
+		return
+	}
+	if !h.chatModelPriced(c, model) {
+		return
+	}
+
+	result, err := h.Gateway.GenerateChat(c.Request.Context(), ChatRequest{
+		Model:   model,
+		Content: translateLyricsInstruction + "\n\n" + text,
+		Source:  canvasSource(canvasID, "", "lyrics-translate"),
+	})
 	if err != nil {
 		log.Printf("promptgen: %s %s: gateway: %v", c.Request.Method, c.Request.URL.Path, err)
 		apierr.Write(c, http.StatusBadGateway, "upstream_error", err.Error())
