@@ -975,7 +975,8 @@ func (w *Worker) runMusic(parent context.Context, t Task) {
 	// 歌曲事实(62 号票)随行重提:instrumental 与 lyrics 落任务列,恢复/
 	// 重试的全新提交原样携带 —— instrumental=false 不落库会把人声歌曲重提
 	// 成纯音乐。纯音乐行(60 号票缺省)显式带 instrumental=true,与网关
-	// 缺省同义。
+	// 缺省同义。翻唱参考(78 号票)同款纪律:audio_ref 列是提交时已解析
+	// 的地址,重提原样携带 —— 不带会把翻唱重提成了无参考的普通生成。
 	instrumental := t.Instrumental
 	ref, err := w.gateway.SubmitMusic(ctx, MusicRequest{
 		Model:        t.Model,
@@ -983,6 +984,7 @@ func (w *Worker) runMusic(parent context.Context, t Task) {
 		Source:       source,
 		Lyrics:       t.Lyrics,
 		Instrumental: &instrumental,
+		AudioRef:     t.AudioRef,
 	})
 	if err != nil {
 		w.fail(bookkeeping, t.ID, err.Error())

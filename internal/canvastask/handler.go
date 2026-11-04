@@ -175,6 +175,7 @@ type createInput struct {
 	Seconds      *int64       `json:"seconds"`
 	Lyrics       string       `json:"lyrics"`
 	Instrumental *bool        `json:"instrumental"`
+	AudioRef     string       `json:"audio_ref"`
 	ImageURL     string       `json:"image_url"`
 	ImageURLs    []string     `json:"image_urls"`
 	VideoRefs    []videoRefIn `json:"video_refs"`
@@ -660,6 +661,76 @@ func (h *Handlers) resolveMediaURL(ctx context.Context, ref string) (addr, asset
 		return "", "", 0, errImageAssetNoURL
 	}
 	return a.URL, a.Kind, a.ID, nil
+}
+
+// 翻唱参考(audio_ref,78 号票)的失败形状:引用形状不对/超长/无地址/
+// data: 内联是 400,素材不存在是 404,kind 不符是 400 —— 与参考图同族,
+// 文案按「参考音频」落。
+var (
+	errAudioRefInline    = errors.New("内联 data: URI 不受支持,请使用带 http(s) 地址的音频素材或素材内容寻址路径")
+	errAudioRefMalformed = errors.New("audio_ref 必须是 http(s) 地址或 /api/assets/{id}/content 内容寻址路径")
+	errAudioRefTooLong   = errors.New("audio_ref 地址最多 4096 个字符")
+	errAudioRefMissing   = errors.New("参考音频素材不存在或已被删除")
+	errAudioRefKind      = errors.New("参考音频必须是音频素材(kind=audio)")
+	errAudioRefNoURL     = errors.New("该素材没有可用的 http(s) 地址,无法作为参考音频")
+)
+
+// resolveAudioRef maps the cover form's reference onto the address the
+// vendor fetches(78 号票):http(s) 原样透传(素材身份无从查证,声明面
+// 由上游裁决);素材内容寻址路径经素材表按 18 号票顺序解出(自有存储
+// 公网地址优先、厂商原址约 24h 回落)并要求 kind=audio,解出即 touch
+// (47 号票「校验通过才算」);data: 拒(12 号票契约)。返回值恒为可落
+// 任务行的已解析地址 —— 行自足,worker 重提复用行内地址不再二次解引用、
+// 不重复计。
+func (h *Handlers) resolveAudioRef(ctx context.Context, ref string) (string, error) {
+	if strings.HasPrefix(ref, "data:") {
+		return "", errAudioRefInline
+	}
+	addr, assetKind, assetID, err := h.resolveMediaURL(ctx, ref)
+	if err != nil {
+		// resolveMediaURL 的形状哨兵是参考图文案;翻唱入口按自己的词表
+		// 重映射(判定相同、文案归位)。
+		switch {
+		case errors.Is(err, errImageRefMalformed):
+			return "", errAudioRefMalformed
+		case errors.Is(err, errImageRefInline):
+			return "", errAudioRefInline
+		case errors.Is(err, errImageAssetMissing):
+			return "", errAudioRefMissing
+		case errors.Is(err, errImageAssetNoURL):
+			return "", errAudioRefNoURL
+		default:
+			return "", err
+		}
+	}
+	if utf8.RuneCountInString(addr) > maxImageRefRunes {
+		return "", errAudioRefTooLong
+	}
+	if assetKind != "" && assetKind != asset.KindAudio {
+		return "", errAudioRefKind
+	}
+	if assetID > 0 {
+		h.touchAsset(ctx, assetID)
+	}
+	return addr, nil
+}
+
+// failAudioRef maps resolveAudioRef's sentinels onto their wire responses
+// (与 failImageRef 同族:形状/超长/无地址/内联/kind 不符 400,素材缺失
+// 404,其余按存储故障收尾)。
+func (h *Handlers) failAudioRef(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errAudioRefMissing):
+		apierr.NotFound(c, err.Error())
+	case errors.Is(err, errAudioRefInline),
+		errors.Is(err, errAudioRefMalformed),
+		errors.Is(err, errAudioRefTooLong),
+		errors.Is(err, errAudioRefKind),
+		errors.Is(err, errAudioRefNoURL):
+		apierr.InvalidRequest(c, err.Error())
+	default:
+		h.failStore(c, err)
+	}
 }
 
 // touchAsset 记录一次「素材被服务端解引用」(47 号票):排序信号而非一致性
@@ -1160,14 +1231,20 @@ const maxMusicPromptRunes = 2000
 // maxMusicLyricsRunes 同源);改一边要同步另一边。
 const maxMusicLyricsRunes = 3500
 
-// createMusicTask lands one 配乐/歌曲 task (60/62 号票):prompt 是风格
-// 描述(1–2000 字,对齐 MPS Prompt 上限)、model 须按次配价(预检照
+// createMusicTask lands one 配乐/歌曲/翻唱 task (60/62/78 号票):prompt 是
+// 风格描述(1–2000 字,对齐 MPS Prompt 上限)、model 须按次配价(预检照
 // createVoiceTask 先例 —— 注定失败的提交在落行前拒绝);62 号票追加歌曲
 // 事实:instrumental(缺省 true)与 lyrics(≤3500),纯音乐显式携带歌词
-// 400(与网关 /v1/audio/music 同款互斥校验);music-models 目录命中由前端
-// 下拉与网关调度两端裁(canvas 不持有渠道维度,与 voice/tts 同款)。
-// 产物是 kind=audio 素材行,事实落任务行的 prompt/model/lyrics/
-// instrumental 列。
+// 400(与网关 /v1/audio/music 同款互斥校验);78 号票追加翻唱参考
+// audio_ref(可选单串,非空即服务端解引用 —— 素材内容寻址要求素材行
+// kind=audio 并解出厂商可达地址落行,http(s) 直通,data: 拒;解引用成功
+// touch last_used,47 号票「服务端解引用即算」),行内落已解析地址保持
+// 「提交时解析、行自足」纪律(24 号票 video_refs 先例),素材 id 不进
+// 任务行(音频节点 data 持有 ref_asset_id 供显示与溯源);music-models
+// 目录命中由前端下拉与网关调度两端裁(canvas 不持有渠道维度,与
+// voice/tts 同款)。产物是 kind=audio 素材行,事实落任务行的
+// prompt/model/lyrics/instrumental/audio_ref 列(kind 仍为 music,cover
+// 由前端 source:'cover' 与 audio_ref 列区分)。
 func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string, in createInput) {
 	prompt := strings.TrimSpace(in.Prompt)
 	if n := utf8.RuneCountInString(prompt); n < 1 {
@@ -1188,6 +1265,18 @@ func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string
 	if instrumental && strings.TrimSpace(in.Lyrics) != "" {
 		apierr.InvalidRequest(c, "纯音乐(instrumental=true)不能携带歌词;请关闭人声开关或清空歌词")
 		return
+	}
+	// 78 号票翻唱参考:可选,非空即服务端解引用后落行(空 = 普通音乐/
+	// 歌曲任务,提交形状与 62 号票逐字段一致)。解析失败按请求形状 400/
+	// 404 拒收,不落注定失败的任务行。
+	audioRef := ""
+	if ref := strings.TrimSpace(in.AudioRef); ref != "" {
+		addr, err := h.resolveAudioRef(c.Request.Context(), ref)
+		if err != nil {
+			h.failAudioRef(c, err)
+			return
+		}
+		audioRef = addr
 	}
 	model := strings.TrimSpace(in.Model)
 	if model == "" {
@@ -1219,7 +1308,7 @@ func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string
 
 	h.submitTask(c, canvasID, nodeID, Task{
 		Kind: KindMusic, Prompt: prompt, Model: model,
-		Lyrics: in.Lyrics, Instrumental: instrumental,
+		Lyrics: in.Lyrics, Instrumental: instrumental, AudioRef: audioRef,
 	})
 }
 

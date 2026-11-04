@@ -192,7 +192,10 @@ func NewID() (string, error) {
 // 开关(instrumental=false = 人声歌曲)。列缺省 1(纯音乐)—— 60 号票
 // 存量行与老客户端提交的既有语义零迁移;worker 重提/恢复路径必须原样重提
 // 这对事实,否则失败重试会把人声歌曲重提成纯音乐(instrumental 列补全的
-// 存在理由,集成方对票面的补全)。
+// 存在理由,集成方对票面的补全)。AudioRef (78 号票) 是翻唱的参考音频
+// ——提交时已解析的厂商可达地址(素材内容寻址就地解引用,行自足,重试
+// 不再二次解引用;参考素材 id 不进任务行,音频节点 data 持有 ref_asset_id
+// 供显示与溯源)。
 type Task struct {
 	ID           string
 	CanvasID     int64
@@ -207,6 +210,7 @@ type Task struct {
 	Seconds      int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);sfx: 音效时长(1–30,61 号票复用 video 的列);image/music/tts 恒 0
 	Lyrics       string     // music: 歌词原文(62 号票歌曲);空 = 未携带(纯音乐或模型自动写词)
 	Instrumental bool       // music: true = 纯音乐(缺省,60 号票);false = 人声歌曲(62 号票);其余 kind 不读
+	AudioRef     string     // music: 翻唱参考的已解析地址(78 号票);空 = 普通音乐/歌曲任务
 	ImageRef     string     // video: 图生视频的单串参考图(12 号票旧形态)
 	VideoRefs    []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频
 	ImageRefs    []string   // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图

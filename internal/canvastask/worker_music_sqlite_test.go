@@ -66,6 +66,26 @@ func seedSongTask(t *testing.T, store *canvastask.SQLiteStore, prompt, model, ly
 	return task
 }
 
+// seedCoverTask 落一个翻唱任务行(78 号票):instrumental=false、歌词与
+// 已解析的 audio_ref 随行 —— 生产路径是 createMusicTask 的提交(素材寻址
+// 在提交时就地解引用),这里直接建行等价。
+func seedCoverTask(t *testing.T, store *canvastask.SQLiteStore, prompt, model, lyrics, audioRef string) canvastask.Task {
+	t.Helper()
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.Create(context.Background(), canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "audio-cover", Kind: canvastask.KindMusic,
+		Prompt: prompt, Model: model, Lyrics: lyrics, Instrumental: false,
+		AudioRef: audioRef,
+	})
+	if err != nil {
+		t.Fatalf("seed cover task: %v", err)
+	}
+	return task
+}
+
 // 快乐路径:提交受理 → 句柄落行 → 轮询至 succeeded → kind=audio 素材行
 // (prompt 随行)与任务终态同事务;网关任务句柄在任务行上。
 func TestSQLiteWorkerMusicHappyPath(t *testing.T) {
@@ -219,11 +239,63 @@ func TestSQLiteWorkerMusicResubmitKeepsSongFacts(t *testing.T) {
 	}
 }
 
+// 78 号票:翻唱参考(audio_ref,提交时已解析的地址)落行,重提路径原样
+// 重提 —— 句柄已终态失败触发的全新提交必须带上参考,否则失败重试会把
+// 翻唱重提成了无参考的普通生成(62 号票 instrumental 纪律的翻唱版)。
+func TestSQLiteWorkerMusicResubmitKeepsCoverRef(t *testing.T) {
+	store, _, _ := newSQLiteVoiceWorld(t)
+	var resubmitted []canvastask.MusicRequest
+	gateway := &stubGateway{
+		musicSubmitFn: func(_ context.Context, req canvastask.MusicRequest) (canvastask.MusicSubmitResult, error) {
+			resubmitted = append(resubmitted, req)
+			return canvastask.MusicSubmitResult{TaskID: "mt_remote_cover"}, nil
+		},
+		musicPollFn: func(call int) (canvastask.MusicPoll, error) {
+			// 第一拍:旧句柄终态失败 → 触发全新提交;此后新句柄直接成功。
+			if call == 1 {
+				return canvastask.MusicPoll{Status: "failed", Error: "旧句柄已失败"}, nil
+			}
+			return canvastask.MusicPoll{Status: "succeeded", AudioURL: "https://cos.example/cover.mp3"}, nil
+		},
+	}
+
+	const resolvedRef = "https://cdn.example/uploads/20261104/abc.mp3"
+	task := seedCoverTask(t, store, "city pop cover", "vod-minimax-music-3.0-cover", "夜色慢慢降落", resolvedRef)
+	if _, err := store.Claim(context.Background()); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, ok, err := store.AttachRemote(context.Background(), task.ID, "mt_remote_old"); err != nil || !ok {
+		t.Fatalf("attach remote = ok %v err %v, want attached", ok, err)
+	}
+	if n, err := store.RequeueRunning(context.Background()); err != nil || n != 1 {
+		t.Fatalf("requeue = %d err %v, want the task back in queue", n, err)
+	}
+
+	runSQLiteWorker(t, newSQLiteMusicWorker(store, gateway))
+	final := awaitSQLiteTask(t, store, task.ID)
+
+	if final.Status != canvastask.StatusSucceeded || final.AssetID <= 0 {
+		t.Fatalf("task = %s (%q) asset %d, want succeeded with asset", final.Status, final.Error, final.AssetID)
+	}
+	if len(resubmitted) != 1 {
+		t.Fatalf("submits = %d, want 1 (stale handle terminal → fresh submit)", len(resubmitted))
+	}
+	req := resubmitted[0]
+	if req.AudioRef != resolvedRef {
+		t.Fatalf("resubmit audio_ref = %q, want the row's resolved address carried verbatim", req.AudioRef)
+	}
+	if req.Lyrics != "夜色慢慢降落" || req.Instrumental == nil || *req.Instrumental {
+		t.Errorf("resubmit request = %+v, want the song facts carried too", req)
+	}
+	if final.RemoteTaskID != "mt_remote_cover" {
+		t.Errorf("remote_task_id = %q, want the fresh handle", final.RemoteTaskID)
+	}
+}
+
 // 预查暂态失败(网络抖动)不重提:进续查循环,第二次查询拿到成功照样
 // 收尾 —— 提交即计费,查询没成功就重提是双倍账(code review 修正的
 // 回归用例)。
-func TestSQLiteWorkerMusicResumeRetriesPollWithoutResubmit(t *testing.T) {
-	store, _, _ := newSQLiteVoiceWorld(t)
+func TestSQLiteWorkerMusicResumeRetriesPollWithoutResubmit(t *testing.T) {	store, _, _ := newSQLiteVoiceWorld(t)
 	gateway := &stubGateway{
 		musicPollFn: func(call int) (canvastask.MusicPoll, error) {
 			if call == 1 {

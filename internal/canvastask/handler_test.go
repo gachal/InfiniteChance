@@ -584,11 +584,110 @@ func TestHandlerCreateMusicTaskSongGuards(t *testing.T) {
 	}
 }
 
+// 78 号票翻唱提交:kind=music 收可选 audio_ref —— 素材内容寻址要求素材行
+// kind=audio 并解出厂商可达地址落行(「提交时解析、行自足」,素材 id 不进
+// 任务行),http(s) 直通(素材身份无从查证,不 touch),data: 拒;解引用
+// 成功 touch last_used(47 号票「服务端解引用即算」)。kind 仍为 music,
+// 翻唱由前端 source:'cover' 与任务行 audio_ref 列区分。
+func TestHandlerCreateMusicTaskCoverAudioRef(t *testing.T) {
+	assets := &fakeAssets{override: map[int64]asset.Asset{
+		8:  {ID: 8, Kind: asset.KindAudio, ObjectKey: "uploads/20261104/abc.mp3"},
+		9:  {ID: 9, Kind: asset.KindVideo, URL: "https://vendor.example/clip.mp4"},
+		10: {ID: 10, Kind: asset.KindAudio, URL: "data:audio/mpeg;base64,AAAA"},
+	}}
+	env := newHandlerEnvWith(&okGateway{url: "https://audio.example/ok.mp3"}, assets, "https://cdn.example")
+
+	// 内容寻址:解出自有存储公网地址落行(18 号票顺序),解出即 touch。
+	w := env.postTask(t, `{"node_id":"audio-cover","kind":"music","prompt":"city pop cover","model":"bgm-m","instrumental":false,"audio_ref":"/api/assets/8/content"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("content-path status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored, ok := env.tasks.tasks[resp.Task.ID]
+	if !ok {
+		t.Fatalf("task %s not stored", resp.Task.ID)
+	}
+	if stored.AudioRef != "https://cdn.example/uploads/20261104/abc.mp3" {
+		t.Fatalf("audio_ref = %q, want the resolved public address on the row", stored.AudioRef)
+	}
+	if !containsID(assets.touched, 8) {
+		t.Errorf("touched = %v, want 8 (解引用即算)", assets.touched)
+	}
+
+	// http(s) 直通:原样落行,素材身份无从查证、不 touch。
+	before := len(assets.touched)
+	w = env.postTask(t, `{"node_id":"audio-cover2","kind":"music","prompt":"cover","model":"bgm-m","instrumental":false,"audio_ref":"https://vendor.example/original.mp3"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("http(s) status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if stored, ok := env.tasks.tasks[resp.Task.ID]; !ok || stored.AudioRef != "https://vendor.example/original.mp3" {
+		t.Fatalf("stored = %+v ok=%v, want the verbatim http(s) address", stored, ok)
+	}
+	if len(assets.touched) != before {
+		t.Errorf("touched grew to %v, want no touch for a bare http(s) ref", assets.touched)
+	}
+
+	// 形状守卫:data: 拒、素材缺失 404、种类不符 400、形状不对 400 ——
+	// 全部不落任务行。
+	guards := []struct {
+		name string
+		code int
+		ref  string
+	}{
+		{"data: 内联", http.StatusBadRequest, "data:audio/mpeg;base64,AAAA"},
+		{"素材缺失", http.StatusNotFound, "/api/assets/999999/content"},
+		{"种类不符", http.StatusBadRequest, "/api/assets/9/content"},
+		{"形状不对", http.StatusBadRequest, "/uploads/loose-file.mp3"},
+		{"b64 素材行", http.StatusBadRequest, "/api/assets/10/content"},
+	}
+	for _, tc := range guards {
+		body := `{"node_id":"n","kind":"music","prompt":"p","model":"bgm-m","audio_ref":"` + tc.ref + `"}`
+		if w := env.postTask(t, body); w.Code != tc.code {
+			t.Errorf("%s: status = %d body %s, want %d", tc.name, w.Code, w.Body.String(), tc.code)
+		}
+	}
+	for _, task := range env.tasks.all() {
+		if task.AudioRef != "" && !strings.HasPrefix(task.AudioRef, "https://") {
+			t.Errorf("task %s audio_ref = %q, want only resolved rows", task.ID, task.AudioRef)
+		}
+	}
+
+	// 缺省不传:audio_ref 空串落行(普通音乐/歌曲任务形状不变)。
+	w = env.postTask(t, `{"node_id":"audio-bgm","kind":"music","prompt":"纯音乐","model":"bgm-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("plain status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if stored, ok := env.tasks.tasks[resp.Task.ID]; !ok || stored.AudioRef != "" {
+		t.Fatalf("plain stored = %+v ok=%v, want empty audio_ref", stored, ok)
+	}
+}
+
+func containsID(ids []int64, want int64) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
 // 61 号票音效提交:kind=sfx 落 queued 任务(描述进 prompt 列、seconds 复用
 // video 的既有列,不加列);按秒轨预检 —— 未配价与轨道错位(call/character)
 // 的提交当场 400,不让注定失败的任务进队列。seconds 域 1–30 与网关同源。
-func TestHandlerCreateSfxTask(t *testing.T) {
-	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+func TestHandlerCreateSfxTask(t *testing.T) {	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
 
 	w := env.postTask(t, `{"node_id":"audio-1","kind":"sfx","prompt":"雷声轰鸣,由远及近","model":"vid-m","seconds":5}`)
 	if w.Code != http.StatusCreated {

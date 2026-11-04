@@ -17,17 +17,20 @@ import (
 	"github.com/gachal/InfiniteChance/internal/pricing"
 )
 
-// MusicRequest is one 配乐/歌曲 submit:Prompt 是风格描述(≤2000 字,网关与
-// MPS 的契约上限),Model 是公开模型名(调度换道由网关裁决,不钉渠道);
-// Instrumental/Lyrics 是 62 号票的歌曲事实 —— Instrumental 为 nil 时网关按
-// 缺省 true(纯音乐,60 号票行为不变),false 即人声歌曲;Lyrics 非空才带
-// (网关互斥校验:instrumental=true 携带歌词 400)。
+// MusicRequest is one 配乐/歌曲/翻唱 submit:Prompt 是风格描述(≤2000 字,
+// 网关与 MPS 的契约上限),Model 是公开模型名(调度换道由网关裁决,不钉
+// 渠道);Instrumental/Lyrics 是 62 号票的歌曲事实 —— Instrumental 为 nil
+// 时网关按缺省 true(纯音乐,60 号票行为不变),false 即人声歌曲;Lyrics
+// 非空才带(网关互斥校验:instrumental=true 携带歌词 400);AudioRef 是
+// 78 号票的翻唱参考 —— 任务行里的已解析厂商可达地址,非空才带(网关
+// vod adaptor 译成 AudioInfos;缺省不传与 60/62 号票提交体逐字节一致)。
 type MusicRequest struct {
 	Model        string
 	Prompt       string
 	Source       string
 	Lyrics       string
 	Instrumental *bool
+	AudioRef     string
 }
 
 // MusicSubmitResult carries the gateway's task handle (mt_…): the worker
@@ -64,7 +67,8 @@ func (c *Client) SubmitMusic(ctx context.Context, req MusicRequest) (MusicSubmit
 		Prompt       string `json:"prompt"`
 		Lyrics       string `json:"lyrics,omitempty"`
 		Instrumental *bool  `json:"instrumental,omitempty"`
-	}{Model: req.Model, Prompt: req.Prompt, Lyrics: req.Lyrics, Instrumental: req.Instrumental})
+		AudioRef     string `json:"audio_ref,omitempty"`
+	}{Model: req.Model, Prompt: req.Prompt, Lyrics: req.Lyrics, Instrumental: req.Instrumental, AudioRef: req.AudioRef})
 	if err != nil {
 		return MusicSubmitResult{}, err
 	}

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	seconds        BIGINT       NOT NULL DEFAULT 0,
 	lyrics         MEDIUMTEXT   NULL,
 	instrumental   TINYINT      NOT NULL DEFAULT 1,
+	audio_ref      MEDIUMTEXT   NULL,
 	image_ref      MEDIUMTEXT   NULL,
 	image_refs     MEDIUMTEXT   NULL,
 	video_refs     MEDIUMTEXT   NULL,
@@ -73,6 +74,8 @@ var migrations = []struct{ column, ddl string }{
 	// 70 号票的无画布任务:ip_id 缺省 0 = 画布任务,存量行不回填(归属
 	// 照旧查画布),只有 canvas_id=0 的任务行消费本列。
 	{"ip_id", "ALTER TABLE canvas_tasks ADD COLUMN ip_id BIGINT UNSIGNED NOT NULL DEFAULT 0"},
+	// 78 号票的翻唱参考:NULL = 普通音乐/歌曲任务,存量行零迁移。
+	{"audio_ref", "ALTER TABLE canvas_tasks ADD COLUMN audio_ref MEDIUMTEXT NULL"},
 }
 
 // EnsureSchema creates the canvas_tasks table when missing and widens an
@@ -102,7 +105,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 }
 
 const taskColumns = `id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds,
-	lyrics, instrumental, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
+	lyrics, instrumental, audio_ref, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
 	remote_task_id, voice_spec, created_at, updated_at`
 
 func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
@@ -110,10 +113,10 @@ func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, image_ref, image_refs, video_refs, voice_spec, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, image_ref, image_refs, video_refs, voice_spec, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.Lyrics, t.Instrumental, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status)
 	if err != nil {
 		return Task{}, err
@@ -612,10 +615,10 @@ type rowScanner interface {
 
 func scanTask(row rowScanner) (Task, error) {
 	var t Task
-	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics sql.NullString
+	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics, audioRef sql.NullString
 	var assetID sql.NullInt64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}
@@ -628,5 +631,6 @@ func scanTask(row rowScanner) (Task, error) {
 	t.VideoRefs = decodeVideoRefs(videoRefs.String)
 	t.VoiceSpec = decodeVoiceSpec(voiceSpec.String)
 	t.Lyrics = lyrics.String
+	t.AudioRef = audioRef.String
 	return t, nil
 }
