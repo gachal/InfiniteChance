@@ -95,15 +95,20 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 	if s.Storage != nil && s.Assets != nil {
 		persist = &relay.ImagePersist{Cloud: s.Storage, Assets: s.Assets}
 	}
+	// 翻唱参考(78 号票)的内容寻址解引用:素材行查询与 settings 驱动的
+	// 自有存储公网地址解析(18 号票顺序),与画布侧同一提供者形状。
+	publicBase := settings.PublicBaseURL(s.Settings)
 	relay.RegisterRoutes(v1, &relay.Handlers{
-		Channels:   s.Channels,
-		Keys:       s.Keys,
-		Prices:     s.Prices,
-		Usage:      s.UsageLogs,
-		Tasks:      s.VideoTasks,
-		MusicTasks: s.MusicTasks,
-		CacheTTL:   relay.DefaultCacheTTL,
-		Persist:    persist,
+		Channels:      s.Channels,
+		Keys:          s.Keys,
+		Prices:        s.Prices,
+		Usage:         s.UsageLogs,
+		Tasks:         s.VideoTasks,
+		MusicTasks:    s.MusicTasks,
+		CacheTTL:      relay.DefaultCacheTTL,
+		Persist:       persist,
+		Assets:        s.Assets,
+		PublicBaseURL: publicBase,
 	})
 }
 

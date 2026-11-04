@@ -11,6 +11,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/apikey"
+	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
@@ -45,6 +46,12 @@ type Handlers struct {
 	// bucket and rewrites them to the durable public address (23 号票
 	// relay_persist)。nil = 未装配,行为与透传现状一致。
 	Persist *ImagePersist
+	// Assets 与 PublicBaseURL 支撑翻唱参考(78 号票)audio_ref 的内容寻址
+	// 解引用:素材行查询与自有存储公网地址解析(18 号票顺序)。两者任一
+	// 为 nil = 未装配,内容寻址形状以 400 说明(http(s) 与 data: 判定
+	// 不受影响);网关侧不做 last_used touch(canvas 侧职责)。
+	Assets        asset.Store
+	PublicBaseURL func(ctx context.Context) string
 
 	cache *relayCache
 }

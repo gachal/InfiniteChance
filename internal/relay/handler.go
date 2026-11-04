@@ -544,6 +544,17 @@ func (r *failoverRunner) failed(at attempt, f upstreamFailure, more bool) bool {
 	return false
 }
 
+// requestRefused closes out a request-shaped refusal detected at the
+// adaptor seam(78 号票定案 6:audio_ref 打到无参考通路的渠道族):不换道
+// (请求就此终局,哪怕后面还有候选)、不记熔断账(渠道放回探测位)、
+// 预扣原封退回、不留用量行(model_not_priced 等预拨号拒绝同构);客户端
+// 拿 400 invalid_request_error,错误文案由 sentinel 携带。
+func (r *failoverRunner) requestRefused(at attempt, reason error) {
+	r.breaker.Release(at.ch.ID)
+	r.h.adjustBalance(r.billing, r.p.key.ID, r.p.reserved, apikey.ReasonRefund)
+	apierr.OpenAI(r.c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, reason.Error())
+}
+
 // exhausted closes out a request that ran out of candidates. Two shapes:
 // some upstream was really dialed and only the remaining candidates turned
 // out to be circuit-open — then the last real failure is the deciding
@@ -696,15 +707,22 @@ func (h *Handlers) reserveFailed(c *gin.Context, key apikey.Key, err error) {
 // back. Other fields survive as raw JSON; re-marshalling may reorder keys
 // but never alters values (高级字段透传).
 func rewriteModel(body []byte, model string) ([]byte, error) {
+	return rewriteJSONStringField(body, "model", model)
+}
+
+// rewriteJSONStringField replaces one string field of a JSON object body,
+// leaving other fields as raw JSON (rewriteModel 的单字段泛形;78 号票
+// audio_ref 的内容寻址改写走同一手法 —— 只换值,其余高级字段保形透传).
+func rewriteJSONStringField(body []byte, field, value string) ([]byte, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(model)
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
 	}
-	fields["model"] = raw
+	fields[field] = raw
 	return json.Marshal(fields)
 }
 

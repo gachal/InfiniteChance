@@ -31,6 +31,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/apikey"
+	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
@@ -51,14 +52,35 @@ const maxMusicLyricsRunes = 3500
 // musicRequest is the submit body's gateway slice —— 60 号票两字段,62 号票
 // 追加 instrumental(bool 指针,缺省 true —— 纯音乐,60 号票既有调用完全
 // 兼容)与 lyrics(可选字符串,人声歌曲的歌词;instrumental:false 且不带
-// lyrics = 模型自动写词)。没有尺寸/秒数/参考维度(配乐没有可表达的参数
-// 面;参考翻唱是上游 cover 模式,显式 out of scope)。
+// lyrics = 模型自动写词)。78 号票追加 audio_ref(可选单串,翻唱参考:
+// 厂商 http(s) 地址或素材内容寻址路径,服务端解出真实地址;缺省不传 =
+// 现状行为逐字节不变)—— audio_ref 只随请求上送,不落网关任务行
+// (music_tasks 零迁移,与 lyrics 同待遇)。
 type musicRequest struct {
 	Model        string `json:"model"`
 	Prompt       string `json:"prompt"`
 	Instrumental *bool  `json:"instrumental"`
 	Lyrics       string `json:"lyrics"`
+	AudioRef     string `json:"audio_ref"`
 }
+
+// errAudioRefUnsupported is the adaptor-seam refusal for a cover reference
+// aimed at a channel family without a reference-audio path(78 号票定案 6:
+// mps 族 MusicSubmit 检测到 audio_ref 非空即拒)—— CreateMusicGeneration
+// 归为请求级失败:不换道、不记熔断账、预扣原退,客户端答 400
+// invalid_request_error(model_not_priced 同构先例)。错误文案即用户可见
+// 指引,按票面原文落(指路 cover 系公开名)。
+var errAudioRefUnsupported = errors.New("当前模型不支持参考翻唱,请选择 cover 系公开模型(如 vod-minimax-music-3.0-cover)")
+
+// maxAudioRefRunes bounds the optional cover reference address(78 号票:
+// URL 长度上限对齐既有 runes 上限 —— 与 /v1/videos 的 maxImageURLRunes
+// 同值同源)。
+const maxAudioRefRunes = maxImageURLRunes
+
+// assetContentPrefixes 是素材内容寻址路径的两种形状(网关侧 /assets 与
+// 画布代理面 /api/assets 同指一张素材表),78 号票 audio_ref 的解引用
+// 输入照两者接受。
+var assetContentPrefixes = []string{"/api/assets/", "/assets/"}
 
 // musicTaskJSON is the external task object: submit answers it fresh from
 // the store, poll answers the stored row. 产物地址挂 audio.url 嵌套对象
@@ -127,6 +149,12 @@ func (h *Handlers) CreateMusicGeneration(c *gin.Context) {
 		}
 
 		upstream, err := h.adaptorFor(at.ch).MusicSubmit(ctx, at.ch, at.payload)
+		if errors.Is(err, errAudioRefUnsupported) {
+			// 78 号票:参考翻唱打到无参考通路的渠道族(mps 族)—— 请求级
+			// 失败:不换道、不记熔断账、预扣原退,文案指路 cover 公开名。
+			run.requestRefused(at, err)
+			return
+		}
 		if err == nil && upstream.OK {
 			vendorID, perr := parseMusicSubmit(upstream.Body)
 			if perr == nil {
@@ -210,6 +238,25 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 		return nil
 	}
 
+	// 78 号票翻唱参考:可选单串,空 = 未携带(现状行为逐字节不变)。
+	// http(s) 原样透传;素材内容寻址路径经素材表解出真实地址并改写请求体
+	// (adaptor 拿到的恒是上游可拉取的地址);data: 内联与其余形状在调度
+	// 与预扣之前 400(data URI 进不了网关媒体契约,12 号票)。
+	if ref := strings.TrimSpace(req.AudioRef); ref != "" {
+		resolved, ok := h.resolveAudioRef(c, ctx, ref)
+		if !ok {
+			return nil
+		}
+		if resolved != req.AudioRef {
+			rewritten, rerr := rewriteJSONStringField(raw, "audio_ref", resolved)
+			if rerr != nil {
+				apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "The request body is not a valid JSON object.")
+				return nil
+			}
+			raw = rewritten
+		}
+	}
+
 	channels, err := h.listChannels(ctx)
 	if err != nil {
 		h.failInternal(c, err)
@@ -267,6 +314,77 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 		candidates: candidates,
 		source:     SourceFrom(c),
 	}
+}
+
+// resolveAudioRef judges one audio_ref value(78 号票):厂商 http(s) 地址
+// 原样透传;素材内容寻址路径经素材表按 18 号票顺序解出(自有存储公网
+// 地址优先、厂商原址回落),要求素材行 kind=audio;data: 内联与其余形状
+// 拒绝(已答客户端,ok=false)。网关侧不做 last_used touch(47 号票的
+// 「解引用即算」由持有素材身份的 canvas 侧承担;网关解引用只服务直连
+// 调用方的地址改写)。Assets 未装配时内容寻址形状以 400 说明,http(s)
+// 与 data: 判定不受影响。
+func (h *Handlers) resolveAudioRef(c *gin.Context, ctx context.Context, ref string) (string, bool) {
+	refuse := func(msg string) (string, bool) {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, msg)
+		return "", false
+	}
+	if strings.HasPrefix(ref, "data:") {
+		return refuse("The 'audio_ref' parameter must be an http(s) URL the vendor can fetch or an asset content path (inline data: URIs are not supported).")
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		if len([]rune(ref)) > maxAudioRefRunes {
+			return refuse("The 'audio_ref' parameter is too long.")
+		}
+		return ref, true
+	}
+	var rest string
+	matched := false
+	for _, prefix := range assetContentPrefixes {
+		if after, ok := strings.CutPrefix(ref, prefix); ok {
+			rest, matched = after, true
+			break
+		}
+	}
+	if !matched || !strings.HasSuffix(rest, "/content") {
+		return refuse("The 'audio_ref' parameter must be an http(s) URL the vendor can fetch or an asset content path (/api/assets/{id}/content).")
+	}
+	id, perr := strconv.ParseInt(strings.TrimSuffix(rest, "/content"), 10, 64)
+	if perr != nil || id < 1 {
+		return refuse("The 'audio_ref' parameter must be an http(s) URL the vendor can fetch or an asset content path (/api/assets/{id}/content).")
+	}
+	if h.Assets == nil {
+		return refuse("The 'audio_ref' content path cannot be resolved: no asset store is wired into this gateway.")
+	}
+	a, err := h.Assets.Get(ctx, id)
+	if errors.Is(err, asset.ErrNotFound) {
+		return refuse("The asset referenced by 'audio_ref' does not exist.")
+	}
+	if err != nil {
+		h.failInternal(c, err)
+		return "", false
+	}
+	if a.Kind != asset.KindAudio {
+		return refuse("The asset referenced by 'audio_ref' is not an audio asset (kind=audio).")
+	}
+	var addr string
+	if h.PublicBaseURL != nil {
+		if base := strings.TrimSpace(h.PublicBaseURL(ctx)); base != "" {
+			if public, ok := asset.PublicAddress(a, base); ok {
+				addr = public
+			}
+		}
+	}
+	if addr == "" {
+		if strings.HasPrefix(a.URL, "http://") || strings.HasPrefix(a.URL, "https://") {
+			addr = a.URL
+		} else {
+			return refuse("The asset referenced by 'audio_ref' has no fetchable http(s) address.")
+		}
+	}
+	if len([]rune(addr)) > maxAudioRefRunes {
+		return refuse("The 'audio_ref' parameter is too long.")
+	}
+	return addr, true
 }
 
 // musicSubmitted pins the accepting channel: the task row is created queued
