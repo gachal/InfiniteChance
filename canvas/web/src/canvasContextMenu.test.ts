@@ -190,3 +190,98 @@ describe('clampFlyoutPosition 飞出贴边钳制(77 号票定案 4)', () => {
     ).toEqual({ x: 200, y: 8 })
   })
 })
+
+describe('飞出与悬停入口的邻接不变量(77 号票评审收口:纵钳后飞出仍覆盖入口行)', () => {
+  // 评审疑虑:纵向钳位后飞出与悬停入口几何不相邻,指针从入口横移跨缝
+  // 进飞出会先离开飞出范围被收。不变量:钳后飞出顶 ≤ 入口顶 且 飞出底
+  // ≥ 入口底(飞出纵向跨度覆盖入口行)。成立依据:纵钳只上移(顶不会
+  // 低于入口顶),而入口行住在一级菜单内、菜单被 clampMenuPosition 以
+  // 同一 margin 钳制(入口顶 ≥ margin、入口底 ≤ 菜单底 ≤ 视口下缘 -
+  // margin),贴底钳位时飞出下缘正好顶满视口下缘 - margin。
+  const viewport = { width: 1440, height: 900 }
+  const menuSize = { width: 160, height: 180 }
+  const flyoutSize = { width: 160, height: 348 }
+  const ENTRY_HEIGHT = 38
+
+  /** 入口行顶:y 从菜单顶按行高铺到贴菜单底(末行与菜单底齐平)。 */
+  function entryRows(menuTop: number): number[] {
+    const tops: number[] = []
+    for (let top = menuTop; top + ENTRY_HEIGHT <= menuTop + menuSize.height; top += ENTRY_HEIGHT) {
+      tops.push(top)
+    }
+    const flush = menuTop + menuSize.height - ENTRY_HEIGHT
+    if (tops[tops.length - 1] !== flush) {
+      tops.push(flush)
+    }
+    return tops
+  }
+
+  /** 组件装配还原(CanvasContextMenu.vue openSection):一级菜单先钳制
+   * 落位,飞出锚 = 菜单右缘 + 入口顶、flipX = 菜单左缘,再钳飞出。 */
+  function clampedFlyoutForEntry(input: { x: number; y: number }, entryTop: number) {
+    const menuPos = clampMenuPosition(input, menuSize, viewport)
+    return clampFlyoutPosition(
+      { x: menuPos.x + menuSize.width, y: entryTop, flipX: menuPos.x },
+      flyoutSize,
+      viewport,
+    )
+  }
+
+  /** 不变量主体:该场景下每个入口行,钳后飞出纵向跨度都覆盖入口行。 */
+  function expectFlyoutCoversEveryEntry(input: { x: number; y: number }): void {
+    const menuPos = clampMenuPosition(input, menuSize, viewport)
+    for (const entryTop of entryRows(menuPos.y)) {
+      const pos = clampedFlyoutForEntry(input, entryTop)
+      expect(pos.y, `入口行 y=${entryTop}:飞出顶低于入口顶`).toBeLessThanOrEqual(entryTop)
+      expect(
+        pos.y + flyoutSize.height,
+        `入口行 y=${entryTop}:飞出底高于入口底`,
+      ).toBeGreaterThanOrEqual(entryTop + ENTRY_HEIGHT)
+    }
+  }
+
+  it('不钳位:入口在视口上部、飞出放得下,飞出顶与入口顶精确对齐,跨度天然覆盖入口行', () => {
+    const input = { x: 200, y: 100 }
+    const menuPos = clampMenuPosition(input, menuSize, viewport)
+    expect(menuPos).toEqual({ x: 200, y: 100 })
+    // 全部入口行都不触发纵向钳制(最大飞出底 242+348=590 < 892)。
+    for (const entryTop of entryRows(menuPos.y)) {
+      expect(clampedFlyoutForEntry(input, entryTop).y).toBe(entryTop)
+    }
+    expectFlyoutCoversEveryEntry(input)
+  })
+
+  it('纵向钳位(贴底):入口贴近视口底、飞出高,钳后飞出顶不高于入口顶、下缘顶满视口下缘可用空间', () => {
+    const input = { x: 200, y: 800 }
+    const menuPos = clampMenuPosition(input, menuSize, viewport)
+    expect(menuPos.y).toBe(900 - 8 - 180) // 菜单自身贴底钳到 712
+    for (const entryTop of entryRows(menuPos.y)) {
+      const pos = clampedFlyoutForEntry(input, entryTop)
+      // 每行入口顶都低于钳制上界(712 > 892-348):飞出整体钳到下缘。
+      expect(pos.y).toBe(900 - 8 - 348)
+      // 钳制只上移:飞出顶仍不高于入口顶,入口与飞出之间无缝。
+      expect(pos.y).toBeLessThanOrEqual(entryTop)
+    }
+    // 贴底行的飞出下缘正好顶满「视口下缘 - margin」;一级菜单底被同一
+    // margin 钳在同一处,故入口行必落在飞出纵向跨度内。
+    const bottomRow = clampedFlyoutForEntry(input, menuPos.y + menuSize.height - ENTRY_HEIGHT)
+    expect(bottomRow.y + flyoutSize.height).toBe(900 - 8)
+    expectFlyoutCoversEveryEntry(input)
+  })
+
+  it('翻左形态:贴右缘翻到菜单左侧后右缘贴菜单左缘(横向相邻),纵向不变量照旧成立', () => {
+    const input = { x: 1300, y: 800 }
+    const menuPos = clampMenuPosition(input, menuSize, viewport)
+    expect(menuPos).toEqual({ x: 1440 - 8 - 160, y: 900 - 8 - 180 })
+    for (const entryTop of entryRows(menuPos.y)) {
+      const pos = clampedFlyoutForEntry(input, entryTop)
+      // 期望落点(菜单右缘 1272+160=1432)+飞出宽越过视口右缘:整体翻左。
+      expect(pos.x).toBe(menuPos.x - flyoutSize.width)
+      // 翻左后飞出右缘贴一级菜单左缘 —— 横向跨缝同样无缝。
+      expect(pos.x + flyoutSize.width).toBe(menuPos.x)
+      // 纵向与贴底场景同款钳制,邻接不变量照旧。
+      expect(pos.y).toBe(900 - 8 - 348)
+    }
+    expectFlyoutCoversEveryEntry(input)
+  })
+})
