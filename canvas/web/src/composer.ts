@@ -388,6 +388,9 @@ export interface TaskForNodeSync {
   chars?: number
   lyrics?: string
   seconds?: number
+  /** 旋律保持强度(80 号票):cover 任务实际发送的 cover_strength(0–1);
+   * 其余任务行缺省/NULL → undefined,回填时不物化 0 值。 */
+  cover_strength?: number
 }
 
 /** 任务产物地址:有素材引用一律走内容寻址路径(14 号票纪律,厂商临时
@@ -456,7 +459,9 @@ export function mediaSyncPatch(
  * (服务端计费字符数,任务行 voice_spec 带出)归 tts,风格描述 prompt 归
  * music/song/cover/relyric,歌词 lyrics 从任务行回填(62 号票先例,cover
  * 同款,relyric 的词恒带必回填),秒数 seconds 归 sfx(61 号票,复用
- * video 的任务行秒数列);model 几种生成来源都补写(27 号票产物-元数据
+ * video 的任务行秒数列),旋律保持强度 strength 归 cover 任务(80 号票:
+ * 任务行 cover_strength 补空缺,节点已带不覆盖,行内 NULL 不物化 0 值);
+ * model 几种生成来源都补写(27 号票产物-元数据
  * 配对)。参考素材引用 ref_asset_id 是创作事实不是产物,对账不写(节点
  * data 持有,发送时上送)。节点已带的字段不覆盖;无可写内容返回 null
  * (调用方据此不落盘)。 */
@@ -469,6 +474,7 @@ export interface AudioNodeSyncPatch {
   prompt?: string
   lyrics?: string
   seconds?: number
+  strength?: number
 }
 
 export function audioSyncPatch(
@@ -509,6 +515,13 @@ export function audioSyncPatch(
     if ((data.lyrics ?? '') === '' && (task.lyrics ?? '') !== '') {
       patch.lyrics = task.lyrics
     }
+    // 旋律保持强度回填(80 号票):任务行带 cover_strength(cover 任务
+    // 实际发送值)而节点未携带(79 号票旧产物重开画布)时补写 —— 创作
+    // 事实与产物回填同形;节点已带不覆盖(提交时表单物化为准),任务行
+    // NULL(未携带走上游缺省)不物化 0 值。
+    if ((data.strength ?? 0) === 0 && (task.cover_strength ?? 0) > 0) {
+      patch.strength = task.cover_strength
+    }
   } else if (isSfx) {
     if ((data.prompt ?? '') === '' && task.prompt !== '') {
       patch.prompt = task.prompt
@@ -532,7 +545,8 @@ export function audioSyncPatch(
     patch.prompt === undefined &&
     patch.lyrics === undefined &&
     patch.chars === undefined &&
-    patch.seconds === undefined
+    patch.seconds === undefined &&
+    patch.strength === undefined
   ) {
     return null
   }

@@ -544,6 +544,10 @@ export interface CanvasTask {
    * 其余 kind 与普通音乐/歌曲任务恒空串。素材 id 不在任务行 —— 编辑器
    * 的 ref_asset_id(节点 data)才是显示与溯源的锚。 */
   audio_ref: string
+  /** kind=music 的旋律保持强度(80 号票):cover 请求实际携带的
+   * cover_strength(0–1);未携带(走上游缺省)或其余 kind 为空。编辑器
+   * 据此补写音频节点的 strength 元数据(缺空缺才补,已带不覆盖)。 */
+  cover_strength?: number
   created_at: string
   updated_at: string
 }
@@ -603,6 +607,10 @@ export interface CreateCanvasTaskInput {
    * 79 号票起同曲换词恒带(audio_ref 非空 + lyrics 必填 = Song Edit
    * 语义,网关按渠道裁决落 mureka 或 400)。 */
   audio_ref?: string
+  /** kind=music 的旋律保持强度(80 号票):0–1 数值,越高越贴原曲旋律;
+   * 同曲换词恒显式送(缺省 0.55 也送 —— 数值型没有空串歧义),普通
+   * 音乐/歌曲任务不传;越界网关 400(invalid_request_error)。 */
+  cover_strength?: number
 }
 
 /** 音色创建任务的表单(57 号票)。 */

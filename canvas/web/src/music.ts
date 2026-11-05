@@ -4,7 +4,8 @@
  * 风格选填):创作表单校验与按次预估价。组件只做渲染与交互,这里集中可
  * 单测的判定 —— 与 voice.ts 同族。上限与服务端同源(internal/relay/
  * music.go 与 canvastask/handler.go 的 2000 字 prompt / 3500 字歌词),
- * 改一边要同步另一边。
+ * 改一边要同步另一边。80 号票追加同曲换词旋律保持强度(relyric 表单
+ * strength 字段与 RELYRIC_STRENGTH_* 滑杆参数常量)。
  */
 import type { ModelPriceSummary } from '@infinitechance/api'
 
@@ -102,20 +103,36 @@ export function validateCoverForm(form: CoverFormInput): string | null {
  * 后非空,≤3500;同曲换词按新词重唱,词是身份必需,无「自动写词」,
  * 与翻唱的选填歌词区分),prompt 是风格描述**选填**(非空时 1–2000
  * runes 照 music 上限;空 = 不送风格描述),model 是 /music-models 目录
- * 的公开模型名(全量不过滤,选非 mureka 名由网关 400 兜底)。 */
+ * 的公开模型名(全量不过滤,选非 mureka 名由网关 400 兜底),strength 是
+ * 旋律保持强度(80 号票,0–1 数值恒带 —— 组件侧以缺省常量兜底,提交
+ * payload 恒显式送 cover_strength)。 */
 export interface RelyricFormInput {
   refAssetId: number
   prompt: string
   model: string
   lyrics?: string
+  strength: number
 }
+
+/** 旋律保持强度滑杆参数(80 号票定案 5,组件与测试共用防手抄漂移):
+ * 越高越贴原曲旋律(重组自由度越低);0.3–0.9 取文档推荐起点带内、两端
+ * 防呆(过低 ≈ 没锁旋律、过高 ≈ 重组受限),步进 0.05,缺省 0.55。
+ * 范围校验交给滑杆钳制,校验函数只防 NaN 与超 0–1(数值型,无空串歧义)。 */
+export const RELYRIC_STRENGTH_MIN = 0.3
+export const RELYRIC_STRENGTH_MAX = 0.9
+export const RELYRIC_STRENGTH_STEP = 0.05
+export const RELYRIC_STRENGTH_DEFAULT = 0.55
 
 /** 首个校验错误的用户文案;null = 通过(文案与后端 400 同口径)。参考
  * 音频不做大小/时长守卫(79 号票定案 8 照 78 号票先例:硬守卫可能误拒,
- * 上游裁决 4xx 透出)。 */
+ * 上游裁决 4xx 透出);strength 只防 NaN/非有限值与超 0–1(80 号票,
+ * 越界网关 400 同口径)。 */
 export function validateRelyricForm(form: RelyricFormInput): string | null {
   if (!(form.refAssetId > 0)) {
     return '请先选择参考音频(必填,恰好 1 条)'
+  }
+  if (!Number.isFinite(form.strength) || form.strength < 0 || form.strength > 1) {
+    return '旋律保持强度不合法(应为 0–1 的数值)'
   }
   const prompt = form.prompt.trim()
   if (prompt !== '' && [...prompt].length > MAX_MUSIC_PROMPT_RUNES) {
