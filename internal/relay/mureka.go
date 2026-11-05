@@ -359,8 +359,15 @@ func sniffAudioDurationMS(b []byte) (int64, bool) {
 
 // mp3DurationMS walks MPEG Layer III frames and counts samples —— 每帧样本
 // 数对 CBR/VBR 恒定(1152@MPEG1 / 576@MPEG2、2.5),时长与帧码率无关;
-// padding 逐帧判。先剥 ID3v2 头,再锚首帧,后续帧任一解不动即放弃(伪
-// 同步/脏数据不猜)。返回整毫秒(整帧精度)。
+// padding 逐帧判。头部:以 ID3 起头按 ID3v2 syncsafe size 跳过标签再走帧
+// (ID3v2.0 §3:10 字节头 + 4×7bit 标签长)。尾部:剥离 ID3v1 尾标(ID3v1
+// spec:固定末 128 字节、"TAG" 开头)与 APEv2 尾标(APE spec:末 32 字节
+// "APETAGEX" 开头;items 在尾标之前、残余由下方容差兜底)—— 这些尾标都
+// 不动帧数据,合法参考曲常带,逐帧走到底撞上即放弃是过严。帧流中段仍
+// 严格(伪同步/脏数据不猜);唯一容差是尾部:已成功解析 ≥1 帧后,在剩余
+// <2KB 处遇坏字节按已计帧结算 —— 兜底 Lyrics3 等不识结构的歌词/杂项尾标
+// (长度常在几百字节到 2KB);一帧未成功不兜底,真脏数据照旧拒绝。返回
+// 整毫秒(整帧精度)。
 func mp3DurationMS(b []byte) (int64, bool) {
 	i := 0
 	if len(b) >= 10 && string(b[:3]) == "ID3" {
@@ -370,6 +377,14 @@ func mp3DurationMS(b []byte) (int64, bool) {
 		if i < 0 || i+4 > len(b) {
 			return 0, false
 		}
+	}
+	// 尾标剥离(见上注释):ID3v1 在最末,APE 尾标在 ID3v1 之前,两者可
+	// 共存,依序剥。
+	if n := len(b); n >= 128 && string(b[n-128:n-125]) == "TAG" {
+		b = b[:n-128]
+	}
+	if n := len(b); n >= 32 && string(b[n-32:n-24]) == "APETAGEX" {
+		b = b[:n-32]
 	}
 	// 锚首帧帧头(有 ID3 时它在标签后不远;无标签时从头找)。只认
 	// 0xFF Ex 同步 + Layer III。
@@ -388,22 +403,37 @@ func mp3DurationMS(b []byte) (int64, bool) {
 		return 0, false
 	}
 	frames := int64(0)
+	// tailGarbage 结算尾部杂标:位置 i 起剩余不足 2KB 且至少成功解析过
+	// 一帧 —— 帧流已足以计算曲长,尾部当文件尾(注释见函数头)。
+	tailGarbage := func() bool { return frames > 0 && len(b)-i < 2048 }
 	for i+4 <= len(b) {
 		if b[i] != 0xFF || b[i+1]&0xE0 != 0xE0 || b[i+1]&0x06 != 0x02 {
+			if tailGarbage() {
+				break // 尾部杂标(Lyrics3 等):按已计帧结算
+			}
 			return 0, false // 非同步字节或非 Layer III:流不干净,不猜
 		}
 		spf, bitrates, rates, ok := mp3FrameTables(b[i], b[i+1])
 		if !ok || spf != samplesPerFrame {
+			if tailGarbage() {
+				break
+			}
 			return 0, false // 版本漂移:流不干净,不猜
 		}
 		br := bitrates[b[i+2]>>4]
 		sr := rates[(b[i+2]>>2)&0x03]
 		if br == 0 || sr != sampleRate {
+			if tailGarbage() {
+				break
+			}
 			return 0, false // 采样率漂移或坏码率:不猜
 		}
 		pad := int64((b[i+2] >> 1) & 0x01)
 		size := int64(spf/8)*int64(br)*1000/int64(sr) + pad
 		if size < 24 {
+			if tailGarbage() {
+				break
+			}
 			return 0, false
 		}
 		frames++
