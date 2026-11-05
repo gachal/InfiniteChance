@@ -150,9 +150,18 @@ func (h *Handlers) CreateMusicGeneration(c *gin.Context) {
 		}
 
 		upstream, err := h.adaptorFor(at.ch).MusicSubmit(ctx, at.ch, at.payload)
-		if errors.Is(err, errAudioRefUnsupported) {
+		switch {
+		case errors.Is(err, errAudioRefUnsupported):
 			// 78 号票(真 key 打样反转):参考翻唱打到 VOD 族 —— 请求级
 			// 失败:不换道、不记熔断账、预扣原退,文案指路 tencent-mps 渠道。
+			run.requestRefused(at, err)
+			return
+		case errors.Is(err, errMurekaEditRequiresLyrics),
+			errors.Is(err, errMurekaEditRequiresAudioRef),
+			errors.Is(err, errMurekaUploadFailed):
+			// 79 号票同曲换词的三个请求级 sentinel(两个形状 + 上传链,
+			// 文案即客户端文案):同构 78 号票 —— 不换道、不记熔断账、
+			// 预扣原退、0 usage 行。
 			run.requestRefused(at, err)
 			return
 		}
