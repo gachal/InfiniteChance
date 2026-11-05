@@ -277,7 +277,7 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
   }'
 ```
 
-### 3.9 配乐 / 歌曲 / 翻唱(异步两面:提交 → 轮询,无取消;60 号票;62 号票歌曲;78 号票翻唱)
+### 3.9 配乐 / 歌曲 / 翻唱 / 同曲换词(异步两面:提交 → 轮询,无取消;60 号票;62 号票歌曲;78 号票翻唱;79 号票同曲换词)
 
 ```bash
 # 配乐统一说明:契约照 /v1/videos 的两面(受理回任务句柄、轮询五态),
@@ -312,6 +312,21 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
 # 收下 Type+Url 结构却不执行翻唱(参考被静默忽略),参考是翻唱的身份
 # 所在,不静默丢参考。audio_ref 只随请求上送,不落网关任务行(music_tasks
 # 零迁移)。
+#
+# 79 号票同曲换词参数面(同一提交端点):audio_ref + lyrics 必填 = 同曲
+# 换词请求(relyric 形状),落 **mureka 渠道**(Mureka 原生 API 的 Song
+# Edit,普通 HTTPS+Bearer,BaseURL 为裸域名 https://api.mureka.ai)即走
+# 同曲换词语义:adaptor 内下载参考 → Mureka 上传取文件 id → 提交
+# region-edit,选区固定全曲(edit_start=0、edit_end=参考时长毫秒,嗅探;
+# 一次提交 = 一次全曲 Edit = 一 call)。风格 prompt 选填(Edit 是否吃
+# prompt 未证实,非空透传、空则不带),2000 上限恒适用;instrumental
+# 须显式 false(缺省 true + 歌词会先被互斥校验 400)。三个请求级 400
+# invalid_request_error(不换道、不记熔断账、预扣原退、0 用量行):
+# lyrics 空(词是身份必需,Edit 无自动写词)、audio_ref 空(指路普通
+# 音乐公开名)、参考上传链失败(下载/上传/嗅探;参考是身份所在,不
+# 静默降级)。落 vod/mps 渠道的 audio_ref 请求语义不变(见上 78 号票);
+# promptless 的 relyric 形状仅当全部候选渠道都是 mureka 时受理(打到
+# vod/mps 照旧 prompt 必填 400,78 号票语义字节不变)。
 
 # 提交配乐任务(风格描述 1-2000 字,对齐 MPS Prompt 上限)
 curl -X POST $GATEWAY/v1/audio/music \
@@ -373,6 +388,44 @@ curl -X POST $GATEWAY/v1/audio/music \
 #    "message":"当前渠道族(VOD)不支持参考翻唱,请将 cover 系公开名配置在
 #    tencent-mps 渠道"}}
 #   audio_ref 为 data: 内联 URI 同码拒绝(12 号票契约)。
+
+# 提交同曲换词任务(79 号票:公开名 mureka-song-edit 须映射在 **mureka
+# 渠道** → 上游 Mureka Song Edit;audio_ref + lyrics 必填,instrumental
+# 显式 false,风格 prompt 选填 —— 下例透传,省略则不带该字段;选区固定
+# 全曲,一次提交 = 一 call)
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "mureka-song-edit",
+    "prompt": "city pop, 女声",
+    "instrumental": false,
+    "lyrics": "新词第一段\n新词第二段",
+    "audio_ref": "https://assets.example/original-song.mp3"
+  }'
+# → {"id":"mt_7g8h…","status":"queued","model":"mureka-song-edit","created_at":1767000000}
+#   audio_ref 同样可带素材内容寻址路径;promptless 合法(全部候选渠道是
+#   mureka 时):{"model":"mureka-song-edit","instrumental":false,
+#   "lyrics":"新词","audio_ref":"…"} 照常受理。
+
+# 同曲换词的两个 400 形状(均不拨上游、预扣原退、0 用量行):
+# ① 有参考无歌词(词是身份必需,Edit 无自动写词)
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"mureka-song-edit","prompt":"city pop","instrumental":false,"audio_ref":"https://assets.example/original-song.mp3"}'
+# → 400 {"error":{"code":"invalid_request_error","type":"invalid_request_error",
+#    "message":"mureka-song-edit 仅受理同曲换词:歌词必填(Edit 无自动写词,
+#    词是身份必需)"}}
+# ② 无参考的普通音乐请求(文案指路普通音乐公开名)
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{"model":"mureka-song-edit","prompt":"纯音乐","instrumental":true}'
+# → 400 {"error":{"code":"invalid_request_error","type":"invalid_request_error",
+#    "message":"mureka-song-edit 仅受理同曲换词(参考音频是身份必需);
+#    普通音乐请用其他公开名"}}
+#   参考上传链失败(下载/上传/时长嗅探)同码 400,文案带环节与原因
+#   ("mureka-song-edit 参考音频上传失败: …");任务查询形状与配乐/翻唱
+#   同款(GET /v1/audio/music/tasks/{id},成功带 audio.url,失败带
+#   error.message —— Mureka 原始状态词由 adaptor 翻译层归一)。
 
 # 配乐模型目录:启用 + music 能力渠道的映射并集 ∩ 按次轨配价,价格随行
 # PriceSummary;/v1/audio/models(TTS 字符轨)不受影响。画布服务的
