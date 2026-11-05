@@ -1,18 +1,21 @@
 <script setup lang="ts">
 // 音频节点(57 号票,第十一种节点类型;60 号票增配乐创作态;62 号票增
-// 人声歌曲开关;61 号票增音效创作态;78 号票增翻唱创作态)五种形态 ——
-// · 创作态(右键菜单「配乐」/「音效」/「翻唱」落的空节点):内联表单
-//   (配乐 = 「人声歌曲」开关 + 开关开才显示的歌词多行框 + 模型下拉 +
-//   风格描述 + 按次预估价 + 提交;音效 = 按 source==='sfx' 分叉的模型下拉
-//   (¥/秒)+ 描述 + 秒数 1–30 + 按秒预估;翻唱 = 按 source==='cover'
-//   分叉的参考音频 chip(必填恰好 1 条,上传 + 素材库挑选双入口)+ 演绎
-//   描述 + 歌词选填(带「英→中」翻译按钮)+ 模型下拉 + 按次预估),与
-//   音色节点同款范式,不进生成对话框;提交 = kind=music / kind=sfx 的
-//   canvas_task 绑本节点,表单事实随整图 JSON 持久化。
+// 人声歌曲开关;61 号票增音效创作态;78 号票增翻唱创作态;79 号票增同曲
+// 换词创作态)——
+// · 创作态(右键菜单「配乐」/「音效」/「翻唱」/「同曲换词」落的空节点):
+//   内联表单(配乐 = 「人声歌曲」开关 + 开关开才显示的歌词多行框 + 模型
+//   下拉 + 风格描述 + 按次预估价 + 提交;音效 = 按 source==='sfx' 分叉的
+//   模型下拉(¥/秒)+ 描述 + 秒数 1–30 + 按秒预估;翻唱 = 按
+//   source==='cover' 分叉的参考音频 chip(必填恰好 1 条,上传 + 素材库
+//   挑选双入口)+ 演绎描述 + 歌词选填(带「英→中」翻译按钮)+ 模型下拉
+//   + 按次预估;同曲换词 = 按 source==='relyric' 分叉的参考曲 chip(必填
+//   恰好 1 条)+ 风格描述选填 + 新歌词必填(带翻译按钮)+ 模型下拉 +
+//   按次预估),与音色节点同款范式,不进生成对话框;提交 = kind=music /
+//   kind=sfx 的 canvas_task 绑本节点,表单事实随整图 JSON 持久化。
 // · 在途/失败:状态徽章(排队/生成中)+ 失败原因 + 原地重试。
 // · 产物:内联 <audio controls> + 元数据区(27 号票产物-元数据配对,
-//   台词摘录或配乐/歌曲/音效/翻唱描述按 source 判别)。素材面板/生成记录
-//   插入行(无任务)与台词合成产物走同款产物卡面。
+//   台词摘录或配乐/歌曲/音效/翻唱/同曲换词描述按 source 判别)。素材面板/
+//   生成记录插入行(无任务)与台词合成产物走同款产物卡面。
 // 只渲染左把手(voice → audio 合成来源边;音频生成不作任何边的源),无
 // 灯箱。
 import { computed, ref, watch } from 'vue'
@@ -22,7 +25,7 @@ import type { CanvasTask, ModelPriceSummary } from '@infinitechance/api'
 
 import type { AudioNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
-import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm, type CoverFormInput, type MusicFormInput } from '../../music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm, validateRelyricForm, type CoverFormInput, type MusicFormInput, type RelyricFormInput } from '../../music'
 import { estimateSfxCNY, MAX_SFX_TEXT_RUNES, SFX_MAX_SECONDS, SFX_MIN_SECONDS, validateSfxForm, type SfxFormInput } from '../../sfx'
 import { assetContentURL } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
@@ -37,8 +40,8 @@ const props = defineProps<{
   task?: CanvasTask | null
   /** 重试请求在途时禁用重试按钮。 */
   retrying: boolean
-  /** /music-models 目录:按次配乐模型与价格(配乐/翻唱创作态表单下拉 +
-   * 预估;翻唱列全量目录、不做 cover 过滤)。 */
+  /** /music-models 目录:按次配乐模型与价格(配乐/翻唱/同曲换词创作态
+   * 表单下拉 + 预估;翻唱与同曲换词列全量目录、不做 cover/relyric 过滤)。 */
   musicModels: string[]
   musicPrices: Record<string, ModelPriceSummary>
   /** 配乐提交请求在途(编辑器级,禁提交按钮)。 */
@@ -50,9 +53,13 @@ const props = defineProps<{
   sfxSubmitting?: boolean
   /** 翻唱提交请求在途(编辑器级,禁提交按钮)。 */
   coverSubmitting?: boolean
-  /** 参考音频上传在途(编辑器级,禁上传按钮)。 */
+  /** 翻唱参考音频上传在途(编辑器级,禁上传按钮)。 */
   coverRefUploading?: boolean
-  /** 「英→中」翻译请求在途(编辑器级,禁翻译按钮)。 */
+  /** 同曲换词提交请求在途(编辑器级,禁提交按钮;79 号票克隆 cover 旗标)。 */
+  relyricSubmitting?: boolean
+  /** 同曲换词参考曲上传在途(编辑器级,禁上传按钮)。 */
+  relyricRefUploading?: boolean
+  /** 「英→中」翻译请求在途(编辑器级,禁翻译按钮;翻唱与同曲换词共用)。 */
   translating?: boolean
   /** 连接态展示态(30 号票):origin/valid/dimmed,缺省 = 正常渲染。 */
   connectState?: ConnectState
@@ -84,11 +91,16 @@ const sfxMode = computed(() => props.data.source === 'sfx')
 // 翻唱创作态分叉(78 号票):「翻唱」入口落 source:'cover'(创作意图
 // 标记兼产物来源,composer 对账不覆盖)。
 const coverMode = computed(() => props.data.source === 'cover')
+// 同曲换词创作态分叉(79 号票):「同曲换词」入口落 source:'relyric'
+// (创作意图标记兼产物来源,composer 对账不覆盖)。
+const relyricMode = computed(() => props.data.source === 'relyric')
 
-/** 元数据摘录(卡面一行):配乐/歌曲/音效显描述,台词显摘录,完整内容进
- * MediaPrompt 配对区。 */
+/** 元数据摘录(卡面一行):配乐/歌曲/音效/翻唱/同曲换词显描述,台词显
+ * 摘录,完整内容进 MediaPrompt 配对区(cover 是 78 号票漏加、79 号票随
+ * 迁补齐;漏加会让产物卡回退台词摘录形态)。 */
 const musicish = computed(() =>
-  props.data.source === 'music' || props.data.source === 'song' || props.data.source === 'sfx',
+  props.data.source === 'music' || props.data.source === 'song' || props.data.source === 'sfx'
+    || props.data.source === 'cover' || props.data.source === 'relyric',
 )
 const metaLine = computed(() => musicish.value ? (props.data.prompt ?? '') : (props.data.text ?? ''))
 const excerpt = computed(() => {
@@ -154,6 +166,9 @@ const canSubmit = computed(() => {
   if (coverMode.value) {
     return validateCoverForm(coverFormInput.value) === null
   }
+  if (relyricMode.value) {
+    return validateRelyricForm(relyricFormInput.value) === null
+  }
   return sfxMode.value
     ? validateSfxForm(sfxFormInput.value) === null
     : validateMusicForm(formInput.value) === null
@@ -186,12 +201,13 @@ const coverEstimate = computed(() => {
 const lyricsRunesCover = computed(() => [...(props.data.lyrics ?? '')].length)
 const lyricsEmpty = computed(() => (props.data.lyrics ?? '').trim() === '')
 
-// cover 创作态的模型缺省 list[0](78 号票:目录全量不过滤,缺省首项)——
-// 目录就位且节点尚未选模型时落一次,用户改选后不再动。
+// cover/relyric 创作态的模型缺省 list[0](78 号票:目录全量不过滤,缺省
+// 首项;79 号票同曲换词同款)—— 目录就位且节点尚未选模型时落一次,用户
+// 改选后不再动。
 watch(
-  () => [coverMode.value, props.musicModels] as const,
-  ([isCover, models]) => {
-    if (isCover && !(props.data.model ?? '') && models.length > 0) {
+  () => [(coverMode.value || relyricMode.value), props.musicModels] as const,
+  ([isRefMusicish, models]) => {
+    if (isRefMusicish && !(props.data.model ?? '') && models.length > 0) {
       emit('form-change', { model: models[0]! })
     }
   },
@@ -215,6 +231,30 @@ function pickRefFile(): void {
 function clearRef(): void {
   emit('form-change', { ref_asset_id: 0 })
 }
+
+// ---- 同曲换词创作态(79 号票):参考曲 chip + 风格选填 + 新歌词必填
+// (可翻译)+ 模型;参考 chip 与上传/挑选链与 cover 同形(refAssetId/
+// onRefFile/clearRef 按 ref_asset_id 操作,不分 source)。 ----
+
+const relyricFormInput = computed<RelyricFormInput>(() => ({
+  refAssetId: refAssetId.value,
+  prompt: props.data.prompt ?? '',
+  model: props.data.model ?? '',
+  lyrics: props.data.lyrics ?? '',
+}))
+
+const selectedRelyricPrice = computed(() => {
+  const m = props.data.model
+  return m ? props.musicPrices[m] : undefined
+})
+
+const relyricEstimate = computed(() => {
+  const cny = estimateMusicCNY(selectedRelyricPrice.value)
+  if (cny !== null) {
+    return `一次 ${fmtCNY(cny)}(整曲)`
+  }
+  return '按次计费,以管理端配价为准'
+})
 
 // ---- 音效创作态(61 号票):描述 + 模型(¥/秒)+ 秒数 1–30 ----
 
@@ -242,9 +282,11 @@ const sfxEstimate = computed(() => {
 function submitForm(): void {
   const invalid = coverMode.value
     ? validateCoverForm(coverFormInput.value)
-    : sfxMode.value
-      ? validateSfxForm(sfxFormInput.value)
-      : validateMusicForm(formInput.value)
+    : relyricMode.value
+      ? validateRelyricForm(relyricFormInput.value)
+      : sfxMode.value
+        ? validateSfxForm(sfxFormInput.value)
+        : validateMusicForm(formInput.value)
   if (invalid) {
     formError.value = invalid
     return
@@ -464,6 +506,136 @@ function submitForm(): void {
           @click="submitForm"
         >
           {{ coverSubmitting ? '提交中…' : '生成翻唱' }}
+        </button>
+      </div>
+    </template>
+
+    <!-- 同曲换词创作态(79 号票,cover 表单克隆分叉):参考曲 chip 必填
+         恰好 1 条(本机上传 + 素材库挑选双入口,以参考原曲锁定旋律;不做
+         大小/时长守卫,上游裁决 4xx 透出)、风格描述选填(空 = 不送)、
+         新歌词必填(词是身份必需,无「自动写词」;带「英→中」翻译按钮)、
+         模型下拉列全量 /music-models 目录、按次预估。 -->
+    <template v-else-if="creating && relyricMode">
+      <div class="sample">
+        <template v-if="refAssetId > 0">
+          <span
+            class="chip"
+            title="已选参考原曲(同曲换词以它锁定旋律,新歌词重唱)"
+          >
+            参考原曲 · 素材 #{{ refAssetId }}
+            <button
+              class="chip-x"
+              type="button"
+              aria-label="移除参考原曲"
+              @click="clearRef"
+            >×</button>
+          </span>
+        </template>
+        <template v-else>
+          <button
+            class="action"
+            type="button"
+            :disabled="relyricRefUploading"
+            @click="pickRefFile"
+          >
+            {{ relyricRefUploading ? '上传中…' : '本机上传' }}
+          </button>
+          <button
+            class="action"
+            type="button"
+            @click="emit('pick-ref')"
+          >
+            素材库挑选
+          </button>
+          <input
+            ref="refInput"
+            class="sample-file"
+            type="file"
+            accept="audio/*"
+            aria-label="参考原曲文件"
+            @change="(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) onRefFile(f); (e.target as HTMLInputElement).value = '' }"
+          >
+        </template>
+      </div>
+      <textarea
+        class="field"
+        rows="3"
+        :value="data.prompt"
+        :maxlength="MAX_MUSIC_PROMPT_RUNES"
+        placeholder="风格描述(选填):编曲走向、情绪、唱法……(≤2000 字;留空不送)"
+        aria-label="同曲换词风格描述"
+        @input="emit('form-change', { prompt: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div class="rune-count">
+        {{ promptRunes }}/{{ MAX_MUSIC_PROMPT_RUNES }}
+      </div>
+      <div class="lyrics-head">
+        <span class="lyrics-label">新歌词(必填)</span>
+        <button
+          class="action translate"
+          type="button"
+          :disabled="lyricsEmpty || translating"
+          :title="lyricsEmpty ? '先填入原歌词,再一键翻成中文' : '调翻译端点把歌词翻成中文,结果替换歌词框'"
+          @click="emit('translate')"
+        >
+          {{ translating ? '翻译中…' : '英→中' }}
+        </button>
+      </div>
+      <textarea
+        class="field"
+        rows="4"
+        :value="data.lyrics"
+        :maxlength="MAX_LYRICS_CHARS"
+        placeholder="新歌词(必填,≤3500 字;同曲换词按新词重唱原曲旋律,不留空)"
+        aria-label="同曲换词新歌词"
+        @input="emit('form-change', { lyrics: ($event.target as HTMLTextAreaElement).value })"
+      />
+      <div class="rune-count">
+        {{ lyricsRunes }}/{{ MAX_LYRICS_CHARS }}
+      </div>
+      <select
+        class="field"
+        :value="data.model ?? ''"
+        aria-label="同曲换词模型"
+        @change="emit('form-change', { model: ($event.target as HTMLSelectElement).value })"
+      >
+        <option
+          value=""
+          disabled
+        >
+          选择同曲换词模型
+        </option>
+        <option
+          v-for="m in musicModels"
+          :key="m"
+          :value="m"
+        >
+          {{ m }}<template v-if="musicPrices[m]?.cny_per_call != null">
+            · {{ fmtCNY(musicPrices[m].cny_per_call!) }}/次
+          </template>
+        </option>
+      </select>
+      <p
+        v-if="formError"
+        class="form-error"
+        role="alert"
+      >
+        {{ formError }}
+      </p>
+      <div class="form-foot">
+        <span
+          class="estimate"
+          :title="selectedRelyricPrice ? undefined : '模型目录未带价,以管理端配价为准'"
+        >
+          {{ relyricEstimate }}
+        </span>
+        <button
+          class="action primary"
+          type="button"
+          :disabled="!canSubmit || relyricSubmitting"
+          @click="submitForm"
+        >
+          {{ relyricSubmitting ? '提交中…' : '生成同曲换词' }}
         </button>
       </div>
     </template>

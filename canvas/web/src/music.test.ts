@@ -1,12 +1,13 @@
 /**
  * music.ts 的纯逻辑单测(60 号票):表单校验与按次预估价;62 号票追加
- * 歌曲开关(纯音乐互斥)与歌词上限;78 号票追加翻唱表单校验。
+ * 歌曲开关(纯音乐互斥)与歌词上限;78 号票追加翻唱表单校验;79 号票
+ * 追加同曲换词表单校验(词必填、风格选填)。
  */
 import { describe, expect, it } from 'vitest'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
 
-import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm } from './music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm, validateRelyricForm } from './music'
 
 describe('validateMusicForm(60 号票配乐表单)', () => {
   it('rejects empty prompt/model and over-long prompt', () => {
@@ -68,6 +69,45 @@ describe('validateCoverForm(78 号票翻唱表单)', () => {
     expect(validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: 'vod-minimax-music-3.0-cover' })).toBeNull()
     expect(
       validateCoverForm({ refAssetId: 8, prompt: 'city pop cover', model: 'm', lyrics: '夜色慢慢降落' }),
+    ).toBeNull()
+  })
+})
+
+describe('validateRelyricForm(79 号票同曲换词表单)', () => {
+  it('rejects a missing reference audio (参考曲是旋律锁定的身份所在,必填恰好 1 条)', () => {
+    expect(validateRelyricForm({ refAssetId: 0, prompt: '', model: 'm', lyrics: '新词' })).toBe(
+      '请先选择参考音频(必填,恰好 1 条)',
+    )
+  })
+
+  it('rejects empty lyrics (词是身份必需,无「自动写词」;与翻唱的选填歌词区分)', () => {
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '   ' })).toBe(
+      '新歌词不能为空',
+    )
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm' })).toBe('新歌词不能为空')
+  })
+
+  it('rejects over-long lyrics and over-long prompt', () => {
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '雨'.repeat(MAX_LYRICS_CHARS + 1) }),
+    ).toBe(`歌词最多 ${MAX_LYRICS_CHARS} 个字符`)
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '雨'.repeat(MAX_MUSIC_PROMPT_RUNES + 1), model: 'm', lyrics: '新词' }),
+    ).toBe(`风格描述最多 ${MAX_MUSIC_PROMPT_RUNES} 个字符`)
+  })
+
+  it('rejects a missing model', () => {
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: '', lyrics: '新词' })).toBe(
+      '请选择同曲换词模型',
+    )
+  })
+
+  it('accepts a full relyric form (prompt 选填,空串/空白即不送风格描述)', () => {
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'mureka-song-edit', lyrics: '  新词第一句  ' }),
+    ).toBeNull()
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '维持原曲编曲走向', model: 'mureka-song-edit', lyrics: '新词' }),
     ).toBeNull()
   })
 })
