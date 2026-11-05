@@ -160,6 +160,10 @@ func (a *murekaAdaptor) murekaCall(ctx context.Context, ch channel.Channel, meth
 
 // downloadReference fetches the resolved reference address inside the
 // independent download budget(murekaRefDownloadBudget;注释见常量)。
+// 体积上限显式失败而非静默截断:参考是身份所在,截断会让上传字节与
+// 嗅探时长俱短还不报错(产物级错误)。官方参考上限 mp3/m4a ≤10MB(文件头
+// 注释块 [官方]),网关取到 maxUpstreamBody(32MiB,对齐全体上游调用的
+// 读上限)即拒绝 —— 官方本会拒收,提前在下载环节报「参考音频过大」。
 func (a *murekaAdaptor) downloadReference(ctx context.Context, ref string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, murekaRefDownloadBudget)
 	defer cancel()
@@ -175,9 +179,17 @@ func (a *murekaAdaptor) downloadReference(ctx context.Context, ref string) ([]by
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("reference answered HTTP %d", resp.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBody))
+	// Content-Length 预检:上游自报体积超限直接拒绝,不白读。
+	if resp.ContentLength > maxUpstreamBody {
+		return nil, fmt.Errorf("reference audio too large (official cap: mp3/m4a ≤10MB; Content-Length %d exceeds the %d MiB fetch cap)", resp.ContentLength, maxUpstreamBody>>20)
+	}
+	// 读满上限再多探一字节:仍有多余字节 = 超限,显式失败。
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBody+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(raw) > maxUpstreamBody {
+		return nil, fmt.Errorf("reference audio too large (official cap: mp3/m4a ≤10MB; exceeds the %d MiB fetch cap)", maxUpstreamBody>>20)
 	}
 	if len(raw) == 0 {
 		return nil, errors.New("reference is empty")
