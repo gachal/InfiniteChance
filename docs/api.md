@@ -427,6 +427,39 @@ curl -X POST $GATEWAY/v1/audio/music \
 #   同款(GET /v1/audio/music/tasks/{id},成功带 audio.url,失败带
 #   error.message —— Mureka 原始状态词由 adaptor 翻译层归一)。
 
+# 提交同曲换词任务(80 号票 ACE-Step 通路:公开名 acestep-relyric 须映射在
+# **acestep 渠道**(自托管 Windows 侧 acestep-api,BaseURL 如
+# http://192.168.1.100:8001,api_key 可选)→ 上游 cover 任务(multipart:
+# task_type=cover + src_audio 文件 + lyrics;audio_cover_strength 携带才送)
+# audio_ref + lyrics 必填,instrumental 显式 false,风格 prompt 选填,
+# cover_strength 选填 float 0–1(缺省不传 = 上游缺省 1.0;画布表单缺省
+# 0.55 恒显式送);时长不传跟随参考曲;一次提交 = 一 call,call 轨 ¥0
+# (自托管无边际成本;未配价仍 model_not_priced 拒)。部署见
+# docs/acestep-deploy.md
+curl -X POST $GATEWAY/v1/audio/music \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "acestep-relyric",
+    "prompt": "city pop, 女声",
+    "instrumental": false,
+    "lyrics": "新词第一段\n新词第二段",
+    "audio_ref": "https://assets.example/original-song.mp3",
+    "cover_strength": 0.55
+  }'
+# → {"id":"mt_…","status":"queued","model":"acestep-relyric","created_at":…}
+#   promptless 豁免谓词 80 号票扩为类型集合:候选渠道全部 ∈ {mureka,
+#   acestep} 即合法({"model":"acestep-relyric","instrumental":false,
+#   "lyrics":"新词","audio_ref":"…"});缺词前置文案为两通路通用措辞。
+
+# acestep 通路同款 400 形状(均不拨上游、预扣原退、0 用量行;adaptor 内
+# 纵深防御,网关前置校验先行):歌词必填 / 缺参考指路普通音乐公开名 /
+# cover_strength 越界("cover_strength 需在 0 到 1 之间")。参考下载链
+# 失败同码 400("acestep cover 参考音频下载失败: …");上游 429(队列满)
+# 映射为可换道临时失败。任务查询形状与配乐/翻唱同款;产物地址由 adaptor
+# 把上游相对路径(/v1/audio?path=…)拼上渠道 BaseURL 成完整 URL,worker
+# 转存链零改动。
+
+
 # 配乐模型目录:启用 + music 能力渠道的映射并集 ∩ 按次轨配价,价格随行
 # PriceSummary;/v1/audio/models(TTS 字符轨)不受影响。画布服务的
 # /music-models(JWT)以服务级 key 代理本端点。
