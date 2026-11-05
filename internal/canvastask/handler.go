@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -139,7 +140,10 @@ type taskJSON struct {
 	// 其余 kind 恒为 空串/true(列缺省,无语义)。
 	Lyrics       string `json:"lyrics"`
 	Instrumental bool   `json:"instrumental"`
-	Status       Status `json:"status"`
+	// CoverStrength 是 80 号票的旋律保持强度:UI 回填同形(创作事实 +
+	// 产物回填配对);nil = 未携带,JSON 缺省 omitempty。
+	CoverStrength *float64 `json:"cover_strength,omitempty"`
+	Status        Status   `json:"status"`
 	Attempts     int64  `json:"attempts"`
 	Error        string `json:"error"`
 	AssetID      int64  `json:"asset_id"`
@@ -157,7 +161,7 @@ func toTaskJSON(t Task) taskJSON {
 		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, IPID: t.IPID, Kind: t.Kind,
 		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio,
 		Background: t.Background, Seconds: t.Seconds,
-		Lyrics: t.Lyrics, Instrumental: t.Instrumental,
+		Lyrics: t.Lyrics, Instrumental: t.Instrumental, CoverStrength: t.CoverStrength,
 		Status: t.Status, Attempts: t.Attempts, Error: t.Error, AssetID: t.AssetID,
 		ImageURL: t.ImageURL, VideoURL: t.VideoURL, Chars: t.VoiceSpec.Chars,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
@@ -175,12 +179,13 @@ type createInput struct {
 	Seconds      *int64       `json:"seconds"`
 	Lyrics       string       `json:"lyrics"`
 	Instrumental *bool        `json:"instrumental"`
-	AudioRef     string       `json:"audio_ref"`
-	ImageURL     string       `json:"image_url"`
-	ImageURLs    []string     `json:"image_urls"`
-	VideoRefs    []videoRefIn `json:"video_refs"`
-	Voice        *voiceIn     `json:"voice"`
-	Tts          *ttsIn       `json:"tts"`
+	AudioRef      string       `json:"audio_ref"`
+	CoverStrength *float64     `json:"cover_strength"`
+	ImageURL      string       `json:"image_url"`
+	ImageURLs     []string     `json:"image_urls"`
+	VideoRefs     []videoRefIn `json:"video_refs"`
+	Voice         *voiceIn     `json:"voice"`
+	Tts           *ttsIn       `json:"tts"`
 }
 
 // voiceIn is the kind=voice 提交的专属入参 (57 号票):创建表单的内联事实
@@ -1313,9 +1318,17 @@ func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string
 		return
 	}
 
+	// 80 号票旋律保持强度:可选闭域 [0,1],携带越界当场 400(不落注定
+	// 失败的任务行;负数、>1、NaN/Inf 都拒 —— 与网关 prepareMusic 同源
+	// 口径);nil = 未携带落 NULL,走上游缺省。
+	if in.CoverStrength != nil && coverStrengthOutOfRange(*in.CoverStrength) {
+		apierr.InvalidRequest(c, "cover_strength 需在 0 到 1 之间")
+		return
+	}
 	h.submitTask(c, canvasID, nodeID, Task{
 		Kind: KindMusic, Prompt: prompt, Model: model,
 		Lyrics: in.Lyrics, Instrumental: instrumental, AudioRef: audioRef,
+		CoverStrength: in.CoverStrength,
 	})
 }
 
@@ -1428,4 +1441,12 @@ func (h *Handlers) ListSfxModels(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"models": catalog.Models, "prices": catalog.Prices})
+}
+
+// coverStrengthOutOfRange reports whether one client-supplied cover_strength
+// is outside the closed [0,1] domain(80 号票:负数、>1、NaN/Inf 都拒;
+// 与 relay 侧同名 helper 同一判定,两边各自包内私有 —— 改一边要同步另一
+// 边,与 maxMusicLyricsRunes 同一条「两端同源」纪律)。
+func coverStrengthOutOfRange(v float64) bool {
+	return math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1
 }

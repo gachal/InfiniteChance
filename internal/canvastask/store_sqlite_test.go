@@ -287,3 +287,117 @@ func TestSQLiteCanvasTaskIPTaskRoundTrip(t *testing.T) {
 		t.Fatalf("ListByCanvas(1) = %+v, want empty(无画布任务不进任何画布列表)", byCanvas)
 	}
 }
+
+// TestSQLiteCanvasTaskCoverStrengthRoundTrip 覆盖 80 号票的旋律保持强度列:
+// cover_strength(闭域 [0,1] 的浮点)保真往返;未携带(nil)落 NULL、
+// 读回 nil(= 走上游缺省,存量行零迁移语义)。双方言 EnsureSchema 幂等
+// 复核随行(列已在建表 DDL 内,再跑一遍不得报错)。
+func TestSQLiteCanvasTaskCoverStrengthRoundTrip(t *testing.T) {
+	s := newSQLiteStore(t)
+	ctx := context.Background()
+
+	strength := 0.55
+	relyric, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 7, NodeID: "audio-relyric", Kind: KindMusic,
+		Prompt: "", Model: "acestep-relyric", Lyrics: "夜色慢慢降落", Instrumental: false,
+		AudioRef: "https://cdn.example/uploads/20261105/master.mp3", CoverStrength: &strength,
+	})
+	if err != nil {
+		t.Fatalf("Create relyric: %v", err)
+	}
+	got, err := s.Get(ctx, relyric.ID)
+	if err != nil {
+		t.Fatalf("Get relyric: %v", err)
+	}
+	if got.CoverStrength == nil || *got.CoverStrength != 0.55 {
+		t.Fatalf("cover_strength = %v, want 0.55 verbatim", got.CoverStrength)
+	}
+
+	plain, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 7, NodeID: "audio-bgm", Kind: KindMusic,
+		Prompt: "纯音乐", Model: "bgm-m",
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = s.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.CoverStrength != nil {
+		t.Errorf("plain cover_strength = %v, want nil(未携带走上游缺省)", got.CoverStrength)
+	}
+
+	// 幂等:再跑一遍 EnsureSchema 不得报错(列已存在)。
+	if err := s.EnsureSchema(ctx); err != nil {
+		t.Errorf("second EnsureSchema: %v", err)
+	}
+}
+
+// TestSQLiteCanvasTaskCoverStrengthMigratesOldTable 覆盖 80 号票的存量桌面
+// 库迁移:没有 cover_strength 列的旧表必须被 EnsureSchema 原地加列(48 号
+// 票教训的落点纪律照 78 号票 audio_ref 同款 —— 列在建表 DDL 内,新装库
+// 先于索引;存量库走迁移循环),加列后强度值可用。
+func TestSQLiteCanvasTaskCoverStrengthMigratesOldTable(t *testing.T) {
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ctx := context.Background()
+
+	// 旧形状:78 号票为止的表(没有 cover_strength)。
+	if _, err := db.ExecContext(ctx, `CREATE TABLE canvas_tasks (
+		id TEXT NOT NULL PRIMARY KEY,
+		canvas_id INTEGER NOT NULL,
+		node_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		model TEXT NOT NULL,
+		size TEXT NOT NULL DEFAULT '',
+		seconds INTEGER NOT NULL DEFAULT 0,
+		lyrics TEXT NULL,
+		instrumental INTEGER NOT NULL DEFAULT 1,
+		audio_ref TEXT NULL,
+		image_ref TEXT NULL,
+		image_refs TEXT NULL,
+		video_refs TEXT NULL,
+		status TEXT NOT NULL,
+		attempts INTEGER NOT NULL DEFAULT 0,
+		error TEXT NULL,
+		asset_id INTEGER NULL,
+		image_url TEXT NULL,
+		video_url TEXT NULL,
+		remote_task_id TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+		updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+	)`); err != nil {
+		t.Fatalf("create old table: %v", err)
+	}
+
+	assets := asset.NewSQLiteStore(db)
+	if err := assets.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSQLiteStore(db, assets)
+	if err := s.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema on old table: %v", err)
+	}
+
+	strength := 0.9
+	id, err := NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.Create(ctx, Task{
+		ID: id, CanvasID: 7, NodeID: "audio-relyric", Kind: KindMusic,
+		Prompt: "", Model: "acestep-relyric", CoverStrength: &strength,
+	})
+	if err != nil {
+		t.Fatalf("Create after migration: %v", err)
+	}
+	got, err := s.Get(ctx, task.ID)
+	if err != nil || got.CoverStrength == nil || *got.CoverStrength != 0.9 {
+		t.Fatalf("got = %+v err %v, want the strength back after migration", got, err)
+	}
+}

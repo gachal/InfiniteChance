@@ -150,13 +150,19 @@ var mpsAdaptorInstance = newMPSAdaptor()
 // Song Edit 面) — same shape: stateless apart from the pooled transport.
 var murekaAdaptorInstance = newMurekaAdaptor()
 
+// acestepAdaptorInstance is the shared acestep seam (80 号票,同曲换词通路
+// 二落的自托管 cover 面) — same shape: stateless apart from the pooled
+// transport.
+var acestepAdaptorInstance = newAcestepAdaptor()
+
 // adaptorFor returns the vendor seam serving one channel's type (20 号票起
 // 渠道类型不再只有 openai):注入的 Adaptor 仍是测试/单缝覆盖的赢家;
 // 生产分发按类型 —— OpenAI 兼容上游共用 OpenAI adaptor,tencent-vod 走
 // TC3 签名的 VOD adaptor,volcengine-ark 走 Ark 任务面 adaptor,minimax 走
 // MiniMax 原生视频任务面 adaptor,dashscope 走阿里云百炼 DashScope 任务面
 // adaptor,tencent-mps 走 TC3 签名的 MPS 音乐 adaptor,mureka 走原生 Song
-// Edit 任务面 adaptor,新厂商类型在这里各加一行。
+// Edit 任务面 adaptor,acestep 走自托管 cover 任务面 adaptor,新厂商类型
+// 在这里各加一行。
 func (h *Handlers) adaptorFor(ch channel.Channel) Adaptor {
 	if h.Adaptor != nil {
 		return h.Adaptor
@@ -178,6 +184,9 @@ func (h *Handlers) adaptorFor(ch channel.Channel) Adaptor {
 	}
 	if ch.Type == channel.TypeMureka {
 		return murekaAdaptorInstance
+	}
+	if ch.Type == channel.TypeAcestep {
+		return acestepAdaptorInstance
 	}
 	return NewOpenAIAdaptor()
 }

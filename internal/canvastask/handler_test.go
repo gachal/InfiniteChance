@@ -1533,3 +1533,72 @@ func TestHandlerCreateMusicTaskRelyricPromptExempt(t *testing.T) {
 		}
 	}
 }
+
+// 80 号票旋律保持强度提交:kind=music 收可选 cover_strength(闭域 [0,1])
+// —— 越界 400 不落行;合法值随行落列并进任务 JSON(UI 回填同形,80 号票
+// 定案 8 的配对扩展);缺省不传落 nil(走上游缺省)。relyric 形状上
+// cover_strength 与空 prompt 的豁免互不干扰。
+func TestHandlerCreateMusicTaskCoverStrength(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+
+	// 合法值落列并回显。
+	w := env.postTask(t, `{"node_id":"audio-relyric","kind":"music","model":"bgm-m","instrumental":false,"lyrics":"夜色慢慢降落","audio_ref":"https://vendor.example/original.mp3","cover_strength":0.55}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("submit status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID            string   `json:"id"`
+			CoverStrength *float64 `json:"cover_strength"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored, ok := env.tasks.tasks[resp.Task.ID]
+	if !ok {
+		t.Fatalf("task %s not stored", resp.Task.ID)
+	}
+	if stored.CoverStrength == nil || *stored.CoverStrength != 0.55 {
+		t.Fatalf("stored cover_strength = %v, want 0.55 on the row", stored.CoverStrength)
+	}
+	if resp.Task.CoverStrength == nil || *resp.Task.CoverStrength != 0.55 {
+		t.Fatalf("response cover_strength = %v, want 0.55 echoed for the UI 回填", resp.Task.CoverStrength)
+	}
+
+	// 越界(负数 / 大于 1)400 且不落行。
+	guards := []struct {
+		name  string
+		value string
+	}{
+		{"负数", "-0.1"},
+		{"大于 1", "1.1"},
+	}
+	for _, tc := range guards {
+		body := `{"node_id":"n","kind":"music","model":"bgm-m","prompt":"p","cover_strength":` + tc.value + `}`
+		if w := env.postTask(t, body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d body %s, want 400", tc.name, w.Code, w.Body.String())
+		}
+	}
+	if len(env.tasks.all()) != 1 {
+		t.Errorf("tasks = %d, want only the valid row (rejected submits land nothing)", len(env.tasks.all()))
+	}
+
+	// 缺省不传落 nil(普通音乐/歌曲任务形状不变)。
+	w = env.postTask(t, `{"node_id":"audio-bgm","kind":"music","prompt":"纯音乐","model":"bgm-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("plain status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var plainResp struct {
+		Task struct {
+			ID            string   `json:"id"`
+			CoverStrength *float64 `json:"cover_strength"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &plainResp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if stored, ok := env.tasks.tasks[plainResp.Task.ID]; !ok || stored.CoverStrength != nil {
+		t.Fatalf("plain stored = %+v ok=%v, want nil cover_strength", stored, ok)
+	}
+}

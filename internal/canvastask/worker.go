@@ -979,12 +979,13 @@ func (w *Worker) runMusic(parent context.Context, t Task) {
 	// 的地址,重提原样携带 —— 不带会把翻唱重提成了无参考的普通生成。
 	instrumental := t.Instrumental
 	ref, err := w.gateway.SubmitMusic(ctx, MusicRequest{
-		Model:        t.Model,
-		Prompt:       t.Prompt,
-		Source:       source,
-		Lyrics:       t.Lyrics,
-		Instrumental: &instrumental,
-		AudioRef:     t.AudioRef,
+		Model:         t.Model,
+		Prompt:        t.Prompt,
+		Source:        source,
+		Lyrics:        t.Lyrics,
+		Instrumental:  &instrumental,
+		AudioRef:      t.AudioRef,
+		CoverStrength: t.CoverStrength,
 	})
 	if err != nil {
 		w.fail(bookkeeping, t.ID, err.Error())

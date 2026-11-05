@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	lyrics         TEXT    NULL,
 	instrumental   INTEGER NOT NULL DEFAULT 1,
 	audio_ref      TEXT    NULL,
+	cover_strength REAL    NULL,
 	image_ref      TEXT    NULL,
 	image_refs     TEXT    NULL,
 	video_refs     TEXT    NULL,
@@ -90,6 +91,10 @@ var sqliteMigrations = []struct{ column, ddl string }{
 	// 加列先于索引建 —— EnsureSchema 的 ALTER 循环在两条索引之后,列已在
 	// 建表 DDL 内,存量库走迁移,与 62 号票同序)。
 	{"audio_ref", "ALTER TABLE canvas_tasks ADD COLUMN audio_ref TEXT NULL"},
+	// 80 号票的旋律保持强度:NULL = 未携带走上游缺省,存量行零迁移。
+	// 落点纪律同 audio_ref(48 号票教训:加列迁移的列在两条索引不引用的
+	// 前提下,新装库随建表 DDL 先于索引存在,存量库走迁移循环)。
+	{"cover_strength", "ALTER TABLE canvas_tasks ADD COLUMN cover_strength REAL NULL"},
 }
 
 // EnsureSchema creates the canvas_tasks table and its indexes when missing,
@@ -143,10 +148,10 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, coverStrengthOrNull(t.CoverStrength), t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status, now, now)
 	if err != nil {
 		return Task{}, err
@@ -635,11 +640,13 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics, audioRef sql.NullString
 	var createdAt, updatedAt string
 	var assetID sql.NullInt64
+	var coverStrength sql.NullFloat64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &coverStrength, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &createdAt, &updatedAt); err != nil {
 		return Task{}, err
 	}
+	t.CoverStrength = coverStrengthFromNull(coverStrength)
 	t.Error = errMsg.String
 	t.AssetID = assetID.Int64
 	t.ImageURL = imageURL.String

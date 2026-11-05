@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	lyrics         MEDIUMTEXT   NULL,
 	instrumental   TINYINT      NOT NULL DEFAULT 1,
 	audio_ref      MEDIUMTEXT   NULL,
+	cover_strength FLOAT        NULL,
 	image_ref      MEDIUMTEXT   NULL,
 	image_refs     MEDIUMTEXT   NULL,
 	video_refs     MEDIUMTEXT   NULL,
@@ -76,6 +77,10 @@ var migrations = []struct{ column, ddl string }{
 	{"ip_id", "ALTER TABLE canvas_tasks ADD COLUMN ip_id BIGINT UNSIGNED NOT NULL DEFAULT 0"},
 	// 78 号票的翻唱参考:NULL = 普通音乐/歌曲任务,存量行零迁移。
 	{"audio_ref", "ALTER TABLE canvas_tasks ADD COLUMN audio_ref MEDIUMTEXT NULL"},
+	// 80 号票的旋律保持强度:NULL = 未携带走上游缺省,存量行零迁移
+	// (79 号票「零 schema」被 UI 参数打破 —— 数值参数必须随行持久化,
+	// 否则 worker 重提丢参数)。
+	{"cover_strength", "ALTER TABLE canvas_tasks ADD COLUMN cover_strength FLOAT NULL"},
 }
 
 // EnsureSchema creates the canvas_tasks table when missing and widens an
@@ -105,7 +110,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 }
 
 const taskColumns = `id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds,
-	lyrics, instrumental, audio_ref, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
+	lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
 	remote_task_id, voice_spec, created_at, updated_at`
 
 func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
@@ -113,10 +118,10 @@ func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, image_ref, image_refs, video_refs, voice_spec, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, voice_spec, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
-		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
+		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, coverStrengthOrNull(t.CoverStrength), t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status)
 	if err != nil {
 		return Task{}, err
@@ -613,15 +618,36 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// coverStrengthOrNull keeps the nullable strength column honest(nil 落
+// NULL = 未携带走上游缺省;指针值原样落)。
+func coverStrengthOrNull(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// coverStrengthFromNull reads the nullable strength column back(nil =
+// 未携带;scanTask 与 scanSQLiteTask 共用)。
+func coverStrengthFromNull(n sql.NullFloat64) *float64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Float64
+	return &v
+}
+
 func scanTask(row rowScanner) (Task, error) {
 	var t Task
 	var errMsg, imageURL, videoURL, imageRef, imageRefs, videoRefs, voiceSpec, lyrics, audioRef sql.NullString
 	var assetID sql.NullInt64
+	var coverStrength sql.NullFloat64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &coverStrength, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}
+	t.CoverStrength = coverStrengthFromNull(coverStrength)
 	t.Error = errMsg.String
 	t.AssetID = assetID.Int64
 	t.ImageURL = imageURL.String

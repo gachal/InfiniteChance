@@ -80,6 +80,21 @@ const TypeMureka = "mureka"
 // 分头写常量必然漂移)。
 const MurekaQueryPathPrefix = "/v1/song/query/"
 
+// TypeAcestep marks a self-hosted ACE-Step 1.5 instance (80 号票,同曲换词
+// 通路二落):官方自带异步 REST(acestep-api,默认 :8001)—— POST
+// {base}/release_task 提交 cover 任务(multipart:参考音频文件字段 +
+// 全文新词)、POST {base}/query_result 轮询、GET {base}/v1/audio 下载产物。
+// 鉴权可选:服务端 ACESTEP_API_KEY 环境变量非空才开启,配了 key 存
+// api_key 列作 Bearer、没配 = 匿名直连(与 mureka/minimax 的必填口径
+// 相反);BaseURL 必填(如 http://<win-ip>:8001,局域网直连,IP 固定是
+// 部署欠账);无 config 凭据。渠道照常勾 music 能力位。
+const TypeAcestep = "acestep"
+
+// AcestepHealthPath is the connectivity probe path([官方] /health 一等健康
+// 端点;relay adaptor 不消费它,常量放这里与探测共用,46 号票 /v2/v2 勘误
+// 的同一条纪律:探测路径钉在一个常量上)。
+const AcestepHealthPath = "/health"
+
 // Capability marks what a channel may relay. Scheduling only ever selects a
 // channel whose capabilities cover the request kind, so a chat-only vendor
 // never receives a mapped image model by accident (07 号票).
@@ -98,7 +113,7 @@ const (
 var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio, CapMusic, CapSfx}
 
 // SupportedTypes lists the channel types this build can relay and probe.
-var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope, TypeTencentMps, TypeMureka}
+var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope, TypeTencentMps, TypeMureka, TypeAcestep}
 
 // SupportedType reports whether t is a channel type this build understands.
 func SupportedType(t string) bool {
@@ -212,7 +227,10 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 	}
 	in.BaseURL = strings.TrimRight(in.BaseURL, "/")
 
-	if requireKey && in.APIKey == "" && in.Type != TypeTencentVod && in.Type != TypeTencentMps {
+	// api_key 必填按类型豁免:tencent-vod/tencent-mps 的凭据在 config;
+	// acestep(80 号票)鉴权是服务端可选开关 —— 无 key 的匿名直连是合法
+	// 形态,创建与更新都不强制。
+	if requireKey && in.APIKey == "" && in.Type != TypeTencentVod && in.Type != TypeTencentMps && in.Type != TypeAcestep {
 		return in, fmt.Errorf("渠道密钥不能为空")
 	}
 	if in.APIKey != "" && utf8.RuneCountInString(in.APIKey) > maxAPIKeyRunes {

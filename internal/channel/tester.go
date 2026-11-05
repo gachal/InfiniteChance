@@ -70,6 +70,9 @@ func (t *Tester) Test(ctx context.Context, ch Channel) Result {
 	if ch.Type == TypeMureka {
 		return t.testMureka(ctx, ch)
 	}
+	if ch.Type == TypeAcestep {
+		return t.testAcestep(ctx, ch)
+	}
 	if ch.APIKey == "" {
 		return Result{Error: "渠道未配置密钥,请先保存密钥再测试"}
 	}
@@ -505,6 +508,59 @@ func (t *Tester) testMureka(ctx context.Context, ch Channel) Result {
 		}
 		return Result{LatencyMS: latency, Error: fmt.Sprintf(
 			"凭据失败(HTTP %d):%s", resp.StatusCode, truncateRunes(reason, maxErrorSnippet))}
+	default:
+		if snippet == "" {
+			return Result{LatencyMS: latency,
+				Error: fmt.Sprintf("上游返回 HTTP %d(无响应体)", resp.StatusCode)}
+		}
+		return Result{LatencyMS: latency,
+			Error: fmt.Sprintf("上游返回 HTTP %d:%s", resp.StatusCode, truncateRunes(snippet, maxErrorSnippet))}
+	}
+}
+
+// testAcestep probes one acestep channel with GET {base}/health(80 号票):
+// [官方] 一等健康检查端点,形状确定,优于假任务 POST —— 2xx = 网络、
+// 端点与(配置了 key 时的)Bearer 全链走通;401 = 凭据失败(服务端开了
+// ACESTEP_API_KEY 而 key 不对;无 key 渠道不会被 401,该分支即「key 错」
+// 的可裁决失败);其余(429/5xx/坏形状)如实报 —— 可达但未证健康。
+func (t *Tester) testAcestep(ctx context.Context, ch Channel) Result {
+	client := t.Client
+	if client == nil {
+		client = probeClient
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet,
+		strings.TrimRight(ch.BaseURL, "/")+AcestepHealthPath, nil)
+	if err != nil {
+		return Result{Error: fmt.Sprintf("构造探测请求失败:%v", err)}
+	}
+	// 鉴权可选:无 key 不发 Authorization 头(发了空 Bearer 反而可能在
+	// 服务端开鉴权时误报凭据失败)。
+	if ch.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+ch.APIKey)
+	}
+	req.Header.Set("User-Agent", "infinitechance-probe")
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return Result{LatencyMS: latency, Error: fmt.Sprintf("连接上游失败:%v", err)}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorSnippet))
+	snippet := strings.TrimSpace(string(body))
+
+	switch {
+	case resp.StatusCode/100 == 2:
+		return Result{OK: true, LatencyMS: latency,
+			Detail: fmt.Sprintf("HTTP %d,连通正常", resp.StatusCode)}
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return Result{LatencyMS: latency, Error: fmt.Sprintf(
+			"凭据失败(HTTP %d):%s(渠道配置的 api_key 与服务端 ACESTEP_API_KEY 不符,或服务端未开启鉴权)", resp.StatusCode, truncateRunes(snippet, maxErrorSnippet))}
 	default:
 		if snippet == "" {
 			return Result{LatencyMS: latency,

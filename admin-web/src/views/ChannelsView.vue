@@ -3,7 +3,7 @@
 // 厂商密钥只在创建/编辑时提交;列表仅显示 has_key 与尾号提示(密钥只写不读)。
 import type { FormInstance } from 'ant-design-vue';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -108,8 +108,42 @@ const isDashScope = computed(() => formState.type === 'dashscope');
 // (Song Edit 同曲换词,公开名 mureka-song-edit)。
 const isMureka = computed(() => formState.type === 'mureka');
 
+// acestep(80 号票):ACE-Step 1.5 自托管,直连官方 acestep-api 异步 REST
+// (:8001)。BaseURL 必填为局域网直连地址(如 http://192.168.1.100:8001);
+// 单可选 Bearer key——服务端未设 ACESTEP_API_KEY 时鉴权关闭,留空即可;
+// 仅 music 能力(cover 同曲换词,公开名 acestep-relyric)。
+const isAcestep = computed(() => formState.type === 'acestep');
+
+// BaseURL 表单 label 的类型分支文案(评审:原模板内四层嵌套三元可读性差,
+// 抽成 computed;各分支文案逐字保留,含 openai 族缺省「含版本路径」)。
+const baseUrlLabel = computed(() => {
+  if (isVod.value) return '(可空,缺省 vod.tencentcloudapi.com)';
+  if (isMps.value) return '(可空,缺省 mps.tencentcloudapi.com)';
+  if (isMureka.value) return '(裸域名,如 https://api.mureka.ai)';
+  if (isAcestep.value) return '(必填,局域网直连地址)';
+  return '(含版本路径)';
+});
+
 const formRef = ref<FormInstance>();
 const formState = reactive<ChannelForm>(blankForm());
+
+// 新建态切到 acestep 时,若能力位仍是缺省 ['chat'](用户未手动改过)则补成
+// ['music'];切到其他类型不动能力位(评审去掉回摆——用户先勾了 music/videos
+// 再换类型想法时不静默丢勾)。编辑态一律不碰能力位——已存值由 openEdit
+// 回填,避免扩大「编辑页重置能力位」的既有缺口(AGENTS.md)。
+watch(
+  () => formState.type,
+  (type) => {
+    if (editingId.value !== null) {
+      return;
+    }
+    const isDefaultChat =
+      formState.capabilities.length === 1 && formState.capabilities[0] === 'chat';
+    if (type === 'acestep' && isDefaultChat) {
+      formState.capabilities = ['music'];
+    }
+  },
+);
 
 // 编辑 tencent-vod 渠道时展示已存敏感键的尾号提示(值本身只写不读)。
 const editingHints = ref('');
@@ -124,6 +158,7 @@ const typeOptions = [
   { label: 'MiniMax(H3 视频生成)', value: 'minimax' },
   { label: '阿里云百炼(DashScope 视频生成)', value: 'dashscope' },
   { label: 'Mureka(同曲换词 Song Edit)', value: 'mureka' },
+  { label: 'ACE-Step(自托管)', value: 'acestep' },
 ];
 
 const columns = [
@@ -498,28 +533,28 @@ function secretSummary(ch: Channel): string {
           </FormItem>
           <FormItem
             class="md:col-span-2"
-            :label="`BaseURL${isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : (isMps ? '(可空,缺省 mps.tencentcloudapi.com)' : (isMureka ? '(裸域名,如 https://api.mureka.ai)' : '(含版本路径)'))}`"
+            :label="`BaseURL${baseUrlLabel}`"
             name="baseUrl"
             :rules="[{ required: !isVod && !isMps, message: '请输入 BaseURL' }]"
           >
             <Input
               v-model:value="formState.baseUrl"
-              :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isMps ? '留空 = https://mps.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : (isMureka ? 'https://api.mureka.ai' : 'https://api.openai.com/v1')))"
+              :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isMps ? '留空 = https://mps.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : (isMureka ? 'https://api.mureka.ai' : (isAcestep ? 'http://192.168.1.100:8001' : 'https://api.openai.com/v1'))))"
             />
           </FormItem>
 
-          <!-- openai / ark:单 Bearer 密钥;vod/mps:SecretId/SecretKey(可共用),mps 另带输出桶 -->
+          <!-- openai / ark / acestep:单 Bearer 密钥(acestep 可选);vod/mps:SecretId/SecretKey(可共用),mps 另带输出桶 -->
           <FormItem
             v-if="!isVod && !isMps"
             class="md:col-span-2"
-            :label="`厂商密钥${editingId === null ? '' : '(留空保持现有密钥)'}`"
+            :label="`厂商密钥${isAcestep ? '(可选)' : ''}${editingId === null ? '' : '(留空保持现有密钥)'}`"
             name="apiKey"
-            :rules="[{ required: editingId === null, message: '请输入厂商密钥' }]"
+            :rules="[{ required: editingId === null && !isAcestep, message: '请输入厂商密钥' }]"
           >
             <InputPassword
               v-model:value="formState.apiKey"
               autocomplete="off"
-              placeholder="sk-…"
+              :placeholder="isAcestep ? '可选;服务端未设 ACESTEP_API_KEY 时留空(鉴权关闭)' : 'sk-…'"
             />
           </FormItem>
           <template v-else-if="isMps">
@@ -705,6 +740,18 @@ function secretSummary(ch: Channel): string {
             能力位并配置模型映射(公开名 mureka-song-edit → 上游档名
             V8/V9.5,真 key 后定档)与按次配价;BaseURL 填裸域名(如
             https://api.mureka.ai);勾选其他能力不会被转发。
+          </p>
+          <p
+            v-else-if="isAcestep"
+            class="mb-2 mt-0 text-neutral-500"
+          >
+            acestep 实现同曲换词(music,ACE-Step 1.5 自托管 cover
+            任务,80 号票):同曲换词(acestep-relyric)需要勾选 music
+            能力位并配置模型映射(公开名 acestep-relyric → 上游档名任意
+            非空占位,如 turbo)与 call 轨配价(自托管 ¥0);BaseURL
+            填局域网直连地址(如 http://192.168.1.100:8001,Windows 侧
+            防火墙放行 8001);厂商密钥可选(服务端未设 ACESTEP_API_KEY
+            时鉴权关闭);连通测试走上游 GET /health;勾选其他能力不会被转发。
           </p>
           <CheckboxGroup
             v-model:value="formState.capabilities"

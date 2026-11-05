@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 音频节点(57 号票,第十一种节点类型;60 号票增配乐创作态;62 号票增
 // 人声歌曲开关;61 号票增音效创作态;78 号票增翻唱创作态;79 号票增同曲
-// 换词创作态)——
+// 换词创作态;80 号票同曲换词加「旋律保持强度」滑杆)——
 // · 创作态(右键菜单「配乐」/「音效」/「翻唱」/「同曲换词」落的空节点):
 //   内联表单(配乐 = 「人声歌曲」开关 + 开关开才显示的歌词多行框 + 模型
 //   下拉 + 风格描述 + 按次预估价 + 提交;音效 = 按 source==='sfx' 分叉的
@@ -9,7 +9,8 @@
 //   source==='cover' 分叉的参考音频 chip(必填恰好 1 条,上传 + 素材库
 //   挑选双入口)+ 演绎描述 + 歌词选填(带「英→中」翻译按钮)+ 模型下拉
 //   + 按次预估;同曲换词 = 按 source==='relyric' 分叉的参考曲 chip(必填
-//   恰好 1 条)+ 风格描述选填 + 新歌词必填(带翻译按钮)+ 模型下拉 +
+//   恰好 1 条)+ 风格描述选填 + 新歌词必填(带翻译按钮)+ 旋律保持强度
+//   滑杆(0.3–0.9 步进 0.05 缺省 0.55,越高越贴原曲旋律)+ 模型下拉 +
 //   按次预估),与音色节点同款范式,不进生成对话框;提交 = kind=music /
 //   kind=sfx 的 canvas_task 绑本节点,表单事实随整图 JSON 持久化。
 // · 在途/失败:状态徽章(排队/生成中)+ 失败原因 + 原地重试。
@@ -25,7 +26,7 @@ import type { CanvasTask, ModelPriceSummary } from '@infinitechance/api'
 
 import type { AudioNodeData } from '../../graph'
 import type { ConnectSide, ConnectState } from '../../composables/useConnection'
-import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm, validateRelyricForm, type CoverFormInput, type MusicFormInput, type RelyricFormInput } from '../../music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, RELYRIC_STRENGTH_DEFAULT, RELYRIC_STRENGTH_MAX, RELYRIC_STRENGTH_MIN, RELYRIC_STRENGTH_STEP, validateCoverForm, validateMusicForm, validateRelyricForm, type CoverFormInput, type MusicFormInput, type RelyricFormInput } from '../../music'
 import { estimateSfxCNY, MAX_SFX_TEXT_RUNES, SFX_MAX_SECONDS, SFX_MIN_SECONDS, validateSfxForm, type SfxFormInput } from '../../sfx'
 import { assetContentURL } from '../../thumbnail'
 import NodePorts from './NodePorts.vue'
@@ -233,15 +234,44 @@ function clearRef(): void {
 }
 
 // ---- 同曲换词创作态(79 号票):参考曲 chip + 风格选填 + 新歌词必填
-// (可翻译)+ 模型;参考 chip 与上传/挑选链与 cover 同形(refAssetId/
-// onRefFile/clearRef 按 ref_asset_id 操作,不分 source)。 ----
+// (可翻译)+ 旋律保持强度滑杆(80 号票)+ 模型;参考 chip 与上传/挑选
+// 链与 cover 同形(refAssetId/onRefFile/clearRef 按 ref_asset_id 操作,
+// 不分 source)。 ----
 
 const relyricFormInput = computed<RelyricFormInput>(() => ({
   refAssetId: refAssetId.value,
   prompt: props.data.prompt ?? '',
   model: props.data.model ?? '',
   lyrics: props.data.lyrics ?? '',
+  strength: props.data.strength ?? RELYRIC_STRENGTH_DEFAULT,
 }))
+
+// 旋律保持强度(80 号票):滑杆绑定值以缺省常量兜底(节点未物化也显示
+// 0.55,与提交 payload 的实际发送值一致);拖动即时回写节点 data ——
+// 草稿保留纪律(27 号票起),等待期重开节点表单不弹回。range 输入的
+// min/max/step 由元素自身钳制,handler 只防非有限值。
+const relyricStrength = computed(() => props.data.strength ?? RELYRIC_STRENGTH_DEFAULT)
+
+function onRelyricStrength(raw: string): void {
+  const v = Number.parseFloat(raw)
+  if (!Number.isFinite(v)) {
+    return
+  }
+  emit('form-change', { strength: v })
+}
+
+// 缺省强度物化(80 号票):进入 relyric 创作态且节点尚未携带 strength 时
+// 落缺省 0.55 —— 创作事实与实际发送同形(用户不动滑杆,节点也记录实际
+// 送出的值);产物节点(非创作态)不物化,不虚构旧任务没送过的事实。
+watch(
+  () => creating.value && relyricMode.value,
+  (isRelyricCreating) => {
+    if (isRelyricCreating && !((props.data.strength ?? 0) > 0)) {
+      emit('form-change', { strength: RELYRIC_STRENGTH_DEFAULT })
+    }
+  },
+  { immediate: true },
+)
 
 const selectedRelyricPrice = computed(() => {
   const m = props.data.model
@@ -593,6 +623,24 @@ function submitForm(): void {
       <div class="rune-count">
         {{ lyricsRunes }}/{{ MAX_LYRICS_CHARS }}
       </div>
+      <!-- 旋律保持强度滑杆(80 号票定案 5):0.3–0.9 步进 0.05,越高越贴
+           原曲旋律(重组自由度越低);旁边数值实时显示,拖动即时回写节点
+           data(草稿保留纪律)。音效秒数行(61 号票)同款一行三段布局。 -->
+      <label class="strength-row">
+        <span>旋律保持强度</span>
+        <input
+          class="strength-input"
+          type="range"
+          :min="RELYRIC_STRENGTH_MIN"
+          :max="RELYRIC_STRENGTH_MAX"
+          :step="RELYRIC_STRENGTH_STEP"
+          :value="relyricStrength"
+          aria-label="旋律保持强度"
+          @input="onRelyricStrength(($event.target as HTMLInputElement).value)"
+        >
+        <output class="strength-value">{{ relyricStrength.toFixed(2) }}</output>
+      </label>
+      <small class="strength-hint">越高越贴原曲旋律(重组自由度越低)</small>
       <select
         class="field"
         :value="data.model ?? ''"
@@ -874,6 +922,41 @@ select.field option {
 }
 
 .seconds-row small {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* 旋律保持强度行(80 号票):标签 + 滑杆 + 实时数值一行排开(音效秒数
+ * 行同款布局);滑杆 accent 走紫罗兰 token 与「人声歌曲」开关一致,
+ * 数值 tabular-nums 对齐,语义小注单独一行落微字号。 */
+.strength-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+}
+
+.strength-row span {
+  font-weight: 600;
+  color: var(--violet);
+  white-space: nowrap;
+}
+
+.strength-input {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--violet);
+}
+
+.strength-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--violet);
+  white-space: nowrap;
+}
+
+.strength-hint {
+  margin-top: -4px;
   color: var(--text-faint);
   font-size: var(--fs-micro);
 }

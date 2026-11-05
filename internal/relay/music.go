@@ -55,13 +55,17 @@ const maxMusicLyricsRunes = 3500
 // lyrics = 模型自动写词)。78 号票追加 audio_ref(可选单串,翻唱参考:
 // 厂商 http(s) 地址或素材内容寻址路径,服务端解出真实地址;缺省不传 =
 // 现状行为逐字节不变)—— audio_ref 只随请求上送,不落网关任务行
-// (music_tasks 零迁移,与 lyrics 同待遇)。
+// (music_tasks 零迁移,与 lyrics 同待遇)。80 号票追加 cover_strength
+// (可选浮点,旋律保持强度:越高越贴原曲旋律,闭区间 [0,1],越界 400)
+// —— 同样只随请求上送,acestep adaptor 译成上游 audio_cover_strength,
+// 其余 adaptor 自解析时忽略此键;不携带 = nil 不透传(走上游缺省)。
 type musicRequest struct {
-	Model        string `json:"model"`
-	Prompt       string `json:"prompt"`
-	Instrumental *bool  `json:"instrumental"`
-	Lyrics       string `json:"lyrics"`
-	AudioRef     string `json:"audio_ref"`
+	Model         string   `json:"model"`
+	Prompt        string   `json:"prompt"`
+	Instrumental  *bool    `json:"instrumental"`
+	Lyrics        string   `json:"lyrics"`
+	AudioRef      string   `json:"audio_ref"`
+	CoverStrength *float64 `json:"cover_strength"`
 }
 
 // errAudioRefUnsupported is the adaptor-seam refusal for a cover reference
@@ -72,6 +76,25 @@ type musicRequest struct {
 // 不换道、不记熔断账、预扣原退,客户端答 400 invalid_request_error
 // (model_not_priced 同构先例)。错误文案即用户可见指引。
 var errAudioRefUnsupported = errors.New("当前渠道族(VOD)不支持参考翻唱,请将 cover 系公开名配置在 tencent-mps 渠道")
+
+// errRelyricRequiresLyrics 是网关前置歌词校验的文案(80 号票:同曲换词
+// 通路二落后措辞涵盖 mureka/acestep 两通路,不再绑 mureka 专名;adaptor
+// 内 sentinel 保留通路专属文案作纵深防御,语义不变 —— 词是身份必需,
+// 换词通路无自动写词)。与 prepareMusic 的 relyric 形状前置校验同源。
+var errRelyricRequiresLyrics = errors.New("同曲换词仅受理带歌词的请求:歌词必填(词是身份必需)")
+
+// relyricCapableType reports whether a channel type belongs to the prompt
+// 选填豁免的类型集合(80 号票定案 6,79 号票「全 mureka」布尔谓词的类型
+// 集合化):mureka(Song Edit)∪ acestep(cover 任务)—— 两通路都是
+// 「参考 + 全文新词」语义,词已是身份描述,天然受理无 prompt 的换词。
+// 新增换词通路渠道类型时在这里登记。
+func relyricCapableType(t string) bool {
+	switch t {
+	case channel.TypeMureka, channel.TypeAcestep:
+		return true
+	}
+	return false
+}
 
 // maxAudioRefRunes bounds the optional cover reference address(78 号票:
 // URL 长度上限对齐既有 runes 上限 —— 与 /v1/videos 的 maxImageURLRunes
@@ -158,8 +181,13 @@ func (h *Handlers) CreateMusicGeneration(c *gin.Context) {
 			return
 		case errors.Is(err, errMurekaEditRequiresLyrics),
 			errors.Is(err, errMurekaEditRequiresAudioRef),
-			errors.Is(err, errMurekaUploadFailed):
-			// 79 号票同曲换词的三个请求级 sentinel(两个形状 + 上传链,
+			errors.Is(err, errMurekaUploadFailed),
+			errors.Is(err, errAcestepRequiresLyrics),
+			errors.Is(err, errAcestepRequiresAudioRef),
+			errors.Is(err, errAcestepUploadFailed),
+			errors.Is(err, errAcestepInvalidShape):
+			// 79/80 号票同曲换词的请求级 sentinel(mureka 与 acestep 各三
+			// 枚:两个形状 + 上传链,acestep 另有参数形状非法的纵深防御;
 			// 文案即客户端文案):同构 78 号票 —— 不换道、不记熔断账、
 			// 预扣原退、0 usage 行。
 			run.requestRefused(at, err)
@@ -264,6 +292,14 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 			raw = rewritten
 		}
 	}
+	// 80 号票旋律保持强度:可选闭区间 [0,1],携带越界在拨号之前 400
+	// (负数、>1、NaN/Inf 都拒;不携带 = nil 不透传走上游缺省)。校验对
+	// 全体渠道类型生效:参数是请求形状的一部分,与渠道无关。
+	if req.CoverStrength != nil && coverStrengthOutOfRange(*req.CoverStrength) {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
+			"The 'cover_strength' parameter must be a number between 0 and 1.")
+		return nil
+	}
 
 	channels, err := h.listChannels(ctx)
 	if err != nil {
@@ -277,33 +313,35 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 		return nil
 	}
 	// prompt 必填校验放在候选调度之后(79 号票定案 5「风格 prompt 选填」
-	// 的网关落地):同曲换词的请求形状 = audio_ref 非空 + 歌词非空(Edit
-	// 无自动写词,词是身份必需),词已是身份描述,风格 prompt 选填。豁免
-	// 按候选渠道分型:仅当全部候选都是 mureka 渠道(Edit 语义天然受理无
-	// prompt 的换词)才放行 —— promptless 打到 vod/mps 的语义与错误形状
-	// 字节不变(78 号票 Out of Scope:vod/mps adaptor 自身的 prompt 必填
-	// 检查不动),prepareMusic 在调度前分不出渠道族,只能按候选集判。豁免
-	// 只放行空串,2000 上限恒适用(上方已拒);所有校验都在预扣(Reserve)
-	// 之前完成。
-	allMureka := true
+	// 的网关落地):同曲换词的请求形状 = audio_ref 非空 + 歌词非空(换词
+	// 通路无自动写词,词是身份必需),词已是身份描述,风格 prompt 选填。
+	// 豁免按候选渠道分型:仅当全部候选都是换词通路渠道才放行 —— 80 号票
+	// 定案 6 把谓词从「全 mureka」扩为类型集合(mureka ∪ acestep,79 遗产
+	// 的关键复用点;两通路都天然受理无 prompt 的换词)—— promptless 打到
+	// vod/mps 的语义与错误形状字节不变(78 号票 Out of Scope:vod/mps
+	// adaptor 自身的 prompt 必填检查不动),prepareMusic 在调度前分不出
+	// 渠道族,只能按候选集判。豁免只放行空串,2000 上限恒适用(上方已拒);
+	// 所有校验都在预扣(Reserve)之前完成。
+	allRelyricCapable := true
 	for _, cand := range candidates {
-		if cand.Type != channel.TypeMureka {
-			allMureka = false
+		if !relyricCapableType(cand.Type) {
+			allRelyricCapable = false
 			break
 		}
 	}
 	hasRef := strings.TrimSpace(req.AudioRef) != ""
 	hasLyrics := strings.TrimSpace(req.Lyrics) != ""
-	if hasRef && allMureka && !hasLyrics {
-		// relyric 形状(audio_ref 非空 + 全 mureka 候选)先校验歌词再落
-		// prompt 豁免(79 号票评审修正):词是身份必需(Edit 无自动写词,
-		// 定案 5),prompt 与歌词双缺时若先报 prompt 必填会把「选填项」
-		// 报成「缺的主项」,错误优先级与票面颠倒。文案与 adaptor 内
-		// sentinel 同源(adaptor 侧保留作纵深防御,语义不变)。
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, errMurekaEditRequiresLyrics.Error())
+	if hasRef && allRelyricCapable && !hasLyrics {
+		// relyric 形状(audio_ref 非空 + 全换词通路候选)先校验歌词再落
+		// prompt 豁免(79 号票评审修正):词是身份必需(无自动写词,定案
+		// 5),prompt 与歌词双缺时若先报 prompt 必填会把「选填项」报成
+		// 「缺的主项」,错误优先级与票面颠倒。文案涵盖两通路(80 号票:
+		// 措辞不再绑 mureka;adaptor 内 sentinel 保留通路专属文案作纵深
+		// 防御,语义不变)。
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, errRelyricRequiresLyrics.Error())
 		return nil
 	}
-	promptlessRelyric := hasRef && hasLyrics && allMureka
+	promptlessRelyric := hasRef && hasLyrics && allRelyricCapable
 	if n := utf8.RuneCountInString(req.Prompt); n < 1 && !promptlessRelyric {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "You must provide a 'prompt' parameter.")
 		return nil
