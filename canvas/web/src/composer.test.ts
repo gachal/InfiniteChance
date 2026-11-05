@@ -494,6 +494,26 @@ describe('audioSyncPatch(57 号票音频节点回填;60 号票 source 判别与�
     ).toEqual({ asset_id: 18 })
   })
 
+  it('keeps source:relyric and backfills the metadata pair on a relyric task (79 号票)', () => {
+    // 同曲换词风格选填:任务行 prompt 为空时不落空串(「不送」语义不物化
+    // 0 值);词恒带必回填;'relyric' 已带不覆盖,ref_asset_id 是创作事实、
+    // 对账不写。
+    const task = makeTask({
+      kind: 'music', asset_id: 21, prompt: '',
+      model: 'mureka-song-edit', lyrics: '新词第一句',
+    })
+    expect(
+      audioSyncPatch(task, {
+        asset_id: 0, source: 'relyric', prompt: '',
+        model: '', ref_asset_id: 8,
+      }),
+    ).toEqual({
+      asset_id: 21,
+      model: 'mureka-song-edit',
+      lyrics: '新词第一句',
+    })
+  })
+
   it('backfills lyrics from the task row onto a fresh music node', () => {
     const task = makeTask({ kind: 'music', asset_id: 12, prompt: 'p', model: 'm', lyrics: 'L' })
     expect(audioSyncPatch(task, { asset_id: 0 })).toEqual({

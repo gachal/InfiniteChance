@@ -1247,7 +1247,14 @@ const maxMusicLyricsRunes = 3500
 // 由前端 source:'cover' 与 audio_ref 列区分)。
 func (h *Handlers) createMusicTask(c *gin.Context, canvasID int64, nodeID string, in createInput) {
 	prompt := strings.TrimSpace(in.Prompt)
-	if n := utf8.RuneCountInString(prompt); n < 1 {
+	// prompt 必填豁免(79 号票「风格 prompt 选填」的画布面落地):同曲换
+	// 词形状(audio_ref 非空 + 歌词非空)放行空 prompt —— 参考曲与新词已
+	// 是身份描述,风格选填;2000 上限恒适用。cover 表单 prompt 必填,实际
+	// 不产生 promptless cover 行;普通歌曲行照旧必填。行级语义由公开名区
+	// 分,选非 mureka 名由网关 400 兜底(canvas 不持渠道维度,78 号票
+	// 「不按模型特判」纪律;网关侧 prepareMusic 同源豁免按候选渠道分型)。
+	relyric := strings.TrimSpace(in.AudioRef) != "" && strings.TrimSpace(in.Lyrics) != ""
+	if n := utf8.RuneCountInString(prompt); n < 1 && !relyric {
 		apierr.InvalidRequest(c, "prompt 不能为空")
 		return
 	} else if n > maxMusicPromptRunes {

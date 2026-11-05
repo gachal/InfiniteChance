@@ -200,31 +200,34 @@ export interface VoiceNodeData {
 }
 
 /** 音频节点数据(57 号票,第十一种节点类型;60 号票增配乐来源;62 号票
- * 增歌曲;61 号票增音效;78 号票增翻唱):台词合成产物、配乐/歌曲/音效/
- * 翻唱产物或素材面板/AssetPicker 插入的音频行。asset_id 是素材库引用(
- * 内容寻址路径由展示层按 id 拼装,素材被删落「素材不可用」占位)。source
- * 是来源判别:tts = 台词合成、music = 配乐、song = 歌曲(62 号票:提交时
- * instrumental=false 记,audioSyncPatch 不覆盖)、sfx = 音效(61 号票:
- * 工具栏「音效」入口的创作意图标记兼产物来源,audioSyncPatch 不覆盖)、
- * cover = 翻唱(78 号票:「翻唱」入口的创作意图标记兼产物来源,
- * audioSyncPatch 不覆盖)、insert = 素材插入(缺省 = 60 号票前的历史行,
- * 展示按 tts 同族处理)。随身元数据按来源配对(27 号票产物-元数据配对
- * 家族):台词合成记 text/chars,配乐与歌曲记 prompt/model(歌曲另记
- * lyrics),音效记 prompt/model/seconds,翻唱记 prompt/model/lyrics 与
- * ref_asset_id(参考素材行引用,发送时随请求上送、任务行落已解析地址);
- * model 在生成来源下都记(插入行没有)。 */
+ * 增歌曲;61 号票增音效;78 号票增翻唱;79 号票增同曲换词):台词合成
+ * 产物、配乐/歌曲/音效/翻唱/同曲换词产物或素材面板/AssetPicker 插入的
+ * 音频行。asset_id 是素材库引用(内容寻址路径由展示层按 id 拼装,素材被
+ * 删落「素材不可用」占位)。source 是来源判别:tts = 台词合成、music =
+ * 配乐、song = 歌曲(62 号票:提交时 instrumental=false 记,audioSyncPatch
+ * 不覆盖)、sfx = 音效(61 号票:工具栏「音效」入口的创作意图标记兼产物
+ * 来源,audioSyncPatch 不覆盖)、cover = 翻唱(78 号票:「翻唱」入口的
+ * 创作意图标记兼产物来源,audioSyncPatch 不覆盖)、relyric = 同曲换词
+ * (79 号票:「同曲换词」入口的创作意图标记兼产物来源,audioSyncPatch
+ * 不覆盖;以参考原曲音频为旋律锁定、以新歌词重唱 —— 词是身份必需、
+ * 旋律锁定,与 cover 的风格级翻唱分立)、insert = 素材插入(缺省 =
+ * 60 号票前的历史行,展示按 tts 同族处理)。随身元数据按来源配对(27 号
+ * 票产物-元数据配对家族):台词合成记 text/chars,配乐与歌曲记
+ * prompt/model(歌曲另记 lyrics),音效记 prompt/model/seconds,翻唱与
+ * 同曲换词记 prompt/model/lyrics 与 ref_asset_id(参考素材行引用,发送时
+ * 随请求上送、任务行落已解析地址);model 在生成来源下都记(插入行没有)。 */
 export interface AudioNodeData {
   asset_id: number
-  source?: 'tts' | 'music' | 'song' | 'sfx' | 'cover' | 'insert'
+  source?: 'tts' | 'music' | 'song' | 'sfx' | 'cover' | 'relyric' | 'insert'
   text?: string
   chars?: number
   prompt?: string
   model?: string
   lyrics?: string
   seconds?: number
-  /** 翻唱的参考音频素材行 id(78 号票,恰好 1 条):发送时按它拼素材内容
-   * 寻址路径随请求上送,服务端解出真实地址落任务行;产物与任务回填不
-   * 改写(参考是创作事实,不是产物)。 */
+  /** 翻唱/同曲换词的参考音频素材行 id(78 号票加列、79 号票共用,恰好
+   * 1 条):发送时按它拼素材内容寻址路径随请求上送,服务端解出真实地址
+   * 落任务行;产物与任务回填不改写(参考是创作事实,不是产物)。 */
   ref_asset_id?: number
 }
 

@@ -1481,3 +1481,55 @@ func TestHandlerImageTaskEmptyReferenceList(t *testing.T) {
 		t.Fatalf("blank entry status = %d body %s, want 400", w.Code, w.Body.String())
 	}
 }
+
+// 79 号票同曲换词提交:relyric 形状(audio_ref 非空 + 歌词非空)放行空
+// prompt —— 风格 prompt 选填,词与参考曲已是身份描述;2000 上限恒适用;
+// 非 relyric 形状(普通歌曲/纯翻唱参考)prompt 仍必填。行级语义由公开名
+// 区分、网关侧兜底(canvas 不持渠道维度,78 号票「不按模型特判」纪律),
+// 这里只按形状豁免。
+func TestHandlerCreateMusicTaskRelyricPromptExempt(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "https://audio.example/ok.mp3"})
+
+	// promptless + relyric 形状 = 201,行内落 audio_ref 与歌词、空 prompt。
+	w := env.postTask(t, `{"node_id":"audio-relyric","kind":"music","model":"bgm-m","instrumental":false,"lyrics":"夜色慢慢降落","audio_ref":"https://vendor.example/original.mp3"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("promptless relyric status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored, ok := env.tasks.tasks[resp.Task.ID]
+	if !ok {
+		t.Fatalf("task %s not stored", resp.Task.ID)
+	}
+	if stored.Prompt != "" || stored.Lyrics != "夜色慢慢降落" ||
+		stored.AudioRef != "https://vendor.example/original.mp3" || stored.Instrumental {
+		t.Fatalf("stored = %+v, want empty prompt with relyric facts", stored)
+	}
+
+	// 2000 上限恒适用:超长 prompt 在 exempt 形状里照样 400。
+	long := strings.Repeat("雾", 2001)
+	if w := env.postTask(t, `{"node_id":"n","kind":"music","prompt":"`+long+`","model":"bgm-m","instrumental":false,"lyrics":"x","audio_ref":"https://vendor.example/original.mp3"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("overlong prompt status = %d body %s, want 400", w.Code, w.Body.String())
+	}
+
+	// 非 relyric 形状 prompt 仍必填:只有歌词(普通歌曲)、只有参考(翻唱
+	// 表单 prompt 必填,实际不产生 promptless cover 行)都照旧 400。
+	guards := []struct {
+		name string
+		body string
+	}{
+		{"只有歌词", `{"node_id":"n","kind":"music","model":"bgm-m","instrumental":false,"lyrics":"x"}`},
+		{"只有参考", `{"node_id":"n","kind":"music","model":"bgm-m","instrumental":false,"audio_ref":"https://vendor.example/original.mp3"}`},
+	}
+	for _, tc := range guards {
+		if w := env.postTask(t, tc.body); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "prompt") {
+			t.Errorf("%s: status = %d body %s, want 400 missing-prompt", tc.name, w.Code, w.Body.String())
+		}
+	}
+}

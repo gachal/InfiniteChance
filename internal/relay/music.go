@@ -150,9 +150,18 @@ func (h *Handlers) CreateMusicGeneration(c *gin.Context) {
 		}
 
 		upstream, err := h.adaptorFor(at.ch).MusicSubmit(ctx, at.ch, at.payload)
-		if errors.Is(err, errAudioRefUnsupported) {
+		switch {
+		case errors.Is(err, errAudioRefUnsupported):
 			// 78 号票(真 key 打样反转):参考翻唱打到 VOD 族 —— 请求级
 			// 失败:不换道、不记熔断账、预扣原退,文案指路 tencent-mps 渠道。
+			run.requestRefused(at, err)
+			return
+		case errors.Is(err, errMurekaEditRequiresLyrics),
+			errors.Is(err, errMurekaEditRequiresAudioRef),
+			errors.Is(err, errMurekaUploadFailed):
+			// 79 号票同曲换词的三个请求级 sentinel(两个形状 + 上传链,
+			// 文案即客户端文案):同构 78 号票 —— 不换道、不记熔断账、
+			// 预扣原退、0 usage 行。
 			run.requestRefused(at, err)
 			return
 		}
@@ -206,12 +215,10 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeMissingModel, TypeInvalidRequestError, "You must provide a 'model' parameter.")
 		return nil
 	}
-	// 风格描述按原文计费与转发(不 trim 内容,只拒绝空串):首尾空白
-	// 也是要给上游看的描述。
-	if n := utf8.RuneCountInString(req.Prompt); n < 1 {
-		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "You must provide a 'prompt' parameter.")
-		return nil
-	} else if n > mpsMaxPromptRunes {
+	// 风格描述按原文计费与转发(不 trim 内容):首尾空白也是要给上游看的
+	// 描述。2000 上限恒适用(79 号票起 prompt 允许为空,见下方候选分型
+	// 豁免;空串豁免不改上限语义)。
+	if n := utf8.RuneCountInString(req.Prompt); n > mpsMaxPromptRunes {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
 			"The 'prompt' parameter exceeds the "+strconv.Itoa(mpsMaxPromptRunes)+"-character limit.")
 		return nil
@@ -267,6 +274,38 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 	if len(candidates) == 0 {
 		apierr.OpenAI(c, http.StatusNotFound, CodeModelNotFound, TypeInvalidRequestError,
 			"The model '"+req.Model+"' does not exist or no music-capable channel serves it.")
+		return nil
+	}
+	// prompt 必填校验放在候选调度之后(79 号票定案 5「风格 prompt 选填」
+	// 的网关落地):同曲换词的请求形状 = audio_ref 非空 + 歌词非空(Edit
+	// 无自动写词,词是身份必需),词已是身份描述,风格 prompt 选填。豁免
+	// 按候选渠道分型:仅当全部候选都是 mureka 渠道(Edit 语义天然受理无
+	// prompt 的换词)才放行 —— promptless 打到 vod/mps 的语义与错误形状
+	// 字节不变(78 号票 Out of Scope:vod/mps adaptor 自身的 prompt 必填
+	// 检查不动),prepareMusic 在调度前分不出渠道族,只能按候选集判。豁免
+	// 只放行空串,2000 上限恒适用(上方已拒);所有校验都在预扣(Reserve)
+	// 之前完成。
+	allMureka := true
+	for _, cand := range candidates {
+		if cand.Type != channel.TypeMureka {
+			allMureka = false
+			break
+		}
+	}
+	hasRef := strings.TrimSpace(req.AudioRef) != ""
+	hasLyrics := strings.TrimSpace(req.Lyrics) != ""
+	if hasRef && allMureka && !hasLyrics {
+		// relyric 形状(audio_ref 非空 + 全 mureka 候选)先校验歌词再落
+		// prompt 豁免(79 号票评审修正):词是身份必需(Edit 无自动写词,
+		// 定案 5),prompt 与歌词双缺时若先报 prompt 必填会把「选填项」
+		// 报成「缺的主项」,错误优先级与票面颠倒。文案与 adaptor 内
+		// sentinel 同源(adaptor 侧保留作纵深防御,语义不变)。
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, errMurekaEditRequiresLyrics.Error())
+		return nil
+	}
+	promptlessRelyric := hasRef && hasLyrics && allMureka
+	if n := utf8.RuneCountInString(req.Prompt); n < 1 && !promptlessRelyric {
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "You must provide a 'prompt' parameter.")
 		return nil
 	}
 	price, err := h.priceFor(ctx, req.Model)
