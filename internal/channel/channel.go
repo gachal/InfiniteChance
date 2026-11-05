@@ -65,6 +65,21 @@ const TypeDashScope = "dashscope"
 // config 另带 bucket 与 region(bucket 所属地域,同时充当 TC3 签名地域)。
 const TypeTencentMps = "tencent-mps"
 
+// TypeMureka marks Mureka's native music API (79 号票,同曲换词):Bearer-key
+// async tasks —— POST {base}/v1/song/region-edit 提交(参考音频先经
+// {base}/v1/files/upload 取文件 id)、GET {base}/v1/song/query/{task_id}
+// 轮询。单 API key on the APIKey column like MiniMax;BaseURL is required
+// and is the bare host(version paths live in the adaptor/probe,46 号票
+// 勘误)—— 官方 https://api.mureka.ai。本构建只接它的 Song Edit(同曲
+// 换词)语义,渠道照常勾 music 能力位。
+const TypeMureka = "mureka"
+
+// MurekaQueryPathPrefix is the task-query path prefix shared by the relay
+// adaptor's MusicQuery and the connectivity probe(79 号票:两处共用同一
+// 常量 —— 46 号票 /v2/v2 勘误的教训,探测与轮询必须落在同一资源面上,
+// 分头写常量必然漂移)。
+const MurekaQueryPathPrefix = "/v1/song/query/"
+
 // Capability marks what a channel may relay. Scheduling only ever selects a
 // channel whose capabilities cover the request kind, so a chat-only vendor
 // never receives a mapped image model by accident (07 号票).
@@ -83,7 +98,7 @@ const (
 var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio, CapMusic, CapSfx}
 
 // SupportedTypes lists the channel types this build can relay and probe.
-var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope, TypeTencentMps}
+var SupportedTypes = []string{TypeOpenAI, TypeTencentVod, TypeVolcengineArk, TypeMiniMax, TypeDashScope, TypeTencentMps, TypeMureka}
 
 // SupportedType reports whether t is a channel type this build understands.
 func SupportedType(t string) bool {

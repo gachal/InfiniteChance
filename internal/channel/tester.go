@@ -67,6 +67,9 @@ func (t *Tester) Test(ctx context.Context, ch Channel) Result {
 	if ch.Type == TypeDashScope {
 		return t.testDashScope(ctx, ch)
 	}
+	if ch.Type == TypeMureka {
+		return t.testMureka(ctx, ch)
+	}
 	if ch.APIKey == "" {
 		return Result{Error: "渠道未配置密钥,请先保存密钥再测试"}
 	}
@@ -413,6 +416,84 @@ func (t *Tester) testDashScope(ctx context.Context, ch Channel) Result {
 	switch {
 	case resp.StatusCode/100 == 2:
 		// 探测的 TaskId 必不存在;2xx(含 UNKNOWN 体)即「任务不存在」形态。
+		return Result{OK: true, LatencyMS: latency, Detail: detail()}
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
+		// 业务级「任务不存在 / invalid task_id」:凭据与连通全通。
+		return Result{OK: true, LatencyMS: latency, Detail: detail()}
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		reason := kind
+		if reason == "" {
+			reason = snippet
+		}
+		return Result{LatencyMS: latency, Error: fmt.Sprintf(
+			"凭据失败(HTTP %d):%s", resp.StatusCode, truncateRunes(reason, maxErrorSnippet))}
+	default:
+		if snippet == "" {
+			return Result{LatencyMS: latency,
+				Error: fmt.Sprintf("上游返回 HTTP %d(无响应体)", resp.StatusCode)}
+		}
+		return Result{LatencyMS: latency,
+			Error: fmt.Sprintf("上游返回 HTTP %d:%s", resp.StatusCode, truncateRunes(snippet, maxErrorSnippet))}
+	}
+}
+
+// testMureka probes one mureka channel with a GET for a task id that cannot
+// exist(MiniMax 假任务探测同款套路,79 号票):a business-level "task not
+// found" answer (400/404) proves the whole chain — network, endpoint,
+// Bearer key — in one cheap call; 401/403 is the decidable credential
+// failure. Anything else (429/5xx/坏形状) is reported verbatim. 探测路径
+// 与 relay adaptor 的 MusicQuery 共用 MurekaQueryPathPrefix(46 号票
+// /v2/v2 勘误教训);Mureka 错误体形状未实证,佐证字段尽力取
+// error.message;具体错误码以真 key 实证为准,未实证前按 HTTP 状态分类。
+func (t *Tester) testMureka(ctx context.Context, ch Channel) Result {
+	if ch.APIKey == "" {
+		return Result{Error: "渠道未配置密钥,请先保存密钥再测试"}
+	}
+	client := t.Client
+	if client == nil {
+		client = probeClient
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet,
+		strings.TrimRight(ch.BaseURL, "/")+MurekaQueryPathPrefix+"infinitechance-probe-not-a-task", nil)
+	if err != nil {
+		return Result{Error: fmt.Sprintf("构造探测请求失败:%v", err)}
+	}
+	req.Header.Set("Authorization", "Bearer "+ch.APIKey)
+	req.Header.Set("User-Agent", "infinitechance-probe")
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return Result{LatencyMS: latency, Error: fmt.Sprintf("连接上游失败:%v", err)}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorSnippet))
+	// 错误体佐证尽力取 error.message(形状未实证;取不到就用原文摘要)。
+	kind := ""
+	var env struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &env) == nil && env.Error != nil {
+		kind = env.Error.Message
+	}
+	detail := func() string {
+		if kind != "" {
+			return fmt.Sprintf("HTTP %d,凭据与网络正常(Mureka 应答 %s)", resp.StatusCode, truncateRunes(kind, maxErrorSnippet))
+		}
+		return fmt.Sprintf("HTTP %d,凭据与网络正常", resp.StatusCode)
+	}
+	snippet := strings.TrimSpace(string(body))
+
+	switch {
+	case resp.StatusCode/100 == 2:
+		// 探测的 TaskId 必不存在;2xx 到不了,到了也算连通成功。
 		return Result{OK: true, LatencyMS: latency, Detail: detail()}
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
 		// 业务级「任务不存在 / invalid task_id」:凭据与连通全通。
