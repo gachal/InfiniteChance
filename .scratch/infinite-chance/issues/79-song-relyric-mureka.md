@@ -1,7 +1,7 @@
 # 79 同曲换词(曲不变词变)——Mureka 官方 API Song Edit 直连
 
 Type: feat
-Status: decided(2026-11-05 grilling 定案;实现另起 implement-spec 流程)
+Status: implemented(2026-11-05 定案当日 implement-spec 落 feat/79-relyric-mureka;真 key 验证与部署欠账见文末实现收口节)
 
 ## Question
 
@@ -49,3 +49,27 @@ Status: decided(2026-11-05 grilling 定案;实现另起 implement-spec 流程)
 - MPS 内换上游(Mureka/ElevenLabs 聚合档)——参考通路只文档化 MiniMaxMusic,顺路实验可、不立项。
 - 声音克隆指定音色演唱(Mureka `vocal_id`;78 号票已列)。
 - 78 号票翻唱通路的改动与收口(人耳终审另行闭,保留推翻权)。
+
+## 实现收口(2026-11-05 implement-spec,当日定案当日落)
+
+**分支拓扑**:集成分支 `feat/79-relyric-mureka` 收四实现支(--no-ff):admin-web `3243cc3`(渠道表单 mureka 类型)、画布 `1d9c54b…9c2e150`(右键第 10 条 + `source:'relyric'` 第四创作态全链,6 笔)、网关 `89322e1…8592fcc`(渠道类型 + Song Edit adaptor + prompt 豁免 + 文档回写,6 笔)、评审修复轮 `37f420e…4ded398`(5 笔);已 --no-ff 并 main,push 未做。
+
+**实现关键裁决**(实现时定,不回改票面):
+- prompt 选填的网关落地 = 「audio_ref 非空 && lyrics 非空 && 该模型候选渠道全部为 mureka」豁免,校验移到调度之后(vod/mps 的 promptless 语义与 78 钉测字节不动);canvas handler 同款豁免(audio_ref+lyrics 齐备);双缺形状先报歌词必填(修复轮对齐定案 5)。
+- 上传链失败(下载/上传)= 请求级 sentinel(定案 6 字面),文案区分三 sentinel(缺词 / 缺参考 / 上传失败);参考下载超 32MiB 由静默截断改显式拒绝(修复轮)。
+- mp3 时长嗅探容忍 ID3v2 头、ID3v1/APE 尾标与尾部杂标(修复轮),m4a 走 mvhd 不受影响。
+
+**[官方] 钉定事实**(platform.mureka.ai,2026-11-05):提交 `POST /v1/song/region-edit`、轮询 `GET /v1/song/query/{task_id}`、上传 `POST /v1/files/upload`(multipart/form-data,`file` 与 `url` 互斥,`purpose` 必填枚举,音频 mp3/m4a ≤10MB);Edit 拒收 `model` 参数(useapi 实证)→ 提交体不透传模型档。
+
+**验证**:make test / lint / build 三绿;go 23 包全过(MySQL 实跑非 skip),mureka 相关 29 例;canvas-web vitest 560/560;78 号票 `music_cover_test.go` 原样全绿(vod/mps 字节不动实证)。
+
+**真 key 验证点(部署后按序,①不过则路线降级走 Plan B 链并回写本票)**:
+1. 版权墙:region-edit 对第三方上传音频的接受度(先打这个再谈接入);
+2. API 形状:region-edit 请求字段名(现按 fal 形状 `audio_id`/`lyrics`/`edit_start`/`edit_end` 兜底)、`edit_end` 可否省略(可省则选区函数免嗅探)、上传 `purpose` 取值(现 `audio`)与应答 id 字段(现从宽 `id`/`file_id`);
+3. 状态词官方枚举(现按常见同义词收敛,防 MergeStatus 误杀);
+4. 产物 URL 字段(现三候选形状解析);
+5. 旋律保持度:色谱对撞复用(带同曲阳性对照)+ 人耳终审,判级见定案 11。
+
+**部署欠账**:官方注册/credit 充值;建 `mureka` 渠道(API key + BaseURL 裸域名 `https://api.mureka.ai` + music 能力位);model_map 配 `mureka-song-edit` → 任意非空档名(不透传上游,仅过调度命中);call 轨配价录入(估价 $0.10 × 汇率,账单出后核对);`make up --build` 重建部署。
+
+**遗留**:浏览器点验(右键第 10 条落节点 → relyric 表单全链、产物卡元数据、帮助浮层词条)、Wails WebView 实测;78 号票人耳终审另行闭。
