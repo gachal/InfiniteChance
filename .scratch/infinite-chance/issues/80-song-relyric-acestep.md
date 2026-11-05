@@ -1,7 +1,15 @@
 # 80 同曲换词通路二落——ACE-Step 1.5 自托管 cover 任务(Mureka 通路搁置)
 
 Type: feat
-Status: decided(2026-11-05 grill-with-docs 定案;实现另起 implement-spec 流程)
+Status: implemented(2026-11-05 grill-with-docs 定案;同日 implement-spec 落 feat/80-relyric-acestep 三绿并 main,收口注记见文末)
+
+## 实现收口(2026-11-05,feat/80-relyric-acestep)
+
+- **集成分支并 main(--no-ff)**:三域并行 implementer(A=Go 网关 3d28adc/2f35e25、B=画布前端 410b215、C=admin 表单 fecd073)+ 部署文档 a242e95 + 词条回写 5b45450 + 评审修复轮 bc8e92e;`make test`/`make lint` 全绿(Go 25 包含真实 MySQL 集成、canvas 574 测、packages/api 60 测)。
+- **裁决注记一(定案 9 字面修正)**:「URL 直传为主」未落地——官方文档只承诺 `src_audio_path` = 服务器本机绝对路径或 multipart 文件字段,远程 URL 直传未获承诺;adaptor 按**multipart 提交**落地(下载参考字节 → multipart `src_audio`,mureka 上传链同构,不算 wrapper),下载失败 = 请求级 400(`errAcestepUploadFailed`,照 79 上传链先例——「上游异步任务失败」语义仅指提交成功后上游拉取场景,当前不存在该路径)。URL 直传真机可行再省下载,另票。
+- **裁决注记二(定案 3 字面修正)**:连通测试未用「假任务套路」,用官方一等端点 `GET {base}/health`(形状确定:2xx 全通、带 key 401 凭据失败)——契约笔记裁决「优于假任务」,admin 表单文案与 CONTEXT 词条已一致。
+- **评审修复轮(双轴,Standards 硬伤零发现)**:修 3 处——部署欠账清单补「素材存储切 COS」、admin BaseURL label 四层三元抽 `baseUrlLabel` computed、能力位 watch 收窄单向(仅新建态切 acestep 且仍缺省 ['chat'] 时补 ['music'],删除切回其他类型的 ['chat'] 回摆,防静默丢勾)。**不修 2 处(记录)**:`acestepErrorBody`/`downloadReference` 与 mureka 版重复、sentinel errors.Is 链线性增长——提取共享 helper 必须动 mureka 代码,违反 Out of Scope「79 休眠不动」,留 mureka 复活或重构票一并处理。
+- **遗留真机验证点**(部署文档 §7 按序):cover 参数面(URL 直传接受度/audio_cover_strength 实测)、旋律保持度三档色谱对撞+人耳终审、歌词跟随度、COS↔Windows 可达性链、4060 性能。部署欠账六项照 docs/acestep-deploy.md §6。
 
 ## Question
 
