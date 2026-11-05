@@ -1,7 +1,7 @@
 # 79 同曲换词(曲不变词变)——Mureka 官方 API Song Edit 直连
 
 Type: feat
-Status: implemented(2026-11-05 定案当日 implement-spec 落 feat/79-relyric-mureka;真 key 验证与部署欠账见文末实现收口节)
+Status: implemented(2026-11-05 定案当日 implement-spec 落 feat/79-relyric-mureka;真 key 验证与部署欠账见文末实现收口节)——**通路搁置(2026-11-05,用户裁决按次成本过高)**:真 key 验证不跑,代码保留休眠、留复活权(不建渠道即零流量零成本);同曲换词主通路转 ACE-Step 1.5 自托管,见 80 号票。
 
 ## Question
 
