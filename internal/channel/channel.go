@@ -234,14 +234,15 @@ func (in Input) Normalize(requireKey bool) (Input, error) {
 			return in, fmt.Errorf("tencent-vod 渠道需在配置中提供 secret_id 与 secret_key")
 		}
 	}
-	// tencent-mps(60 号票):凭据同款在 config,另要求输出 COS 桶与地域 ——
-	// MPS 把任务产物写进调用方指定的桶,桶地域同时充当 TC3 签名地域。
+	// tencent-mps(60 号票):凭据同款在 config,要求地域(充 TC3 签名地域)。
+	// 输出桶可选 —— 78 号票真 key 打样实证 MPS 不配 StoreCosParam 也出片
+	// (产物落平台桶、Describe 回签名 URL),配了才在提交体带 StoreCosParam。
 	if requireKey && in.Type == TypeTencentMps {
 		if cfg["secret_id"] == "" || cfg["secret_key"] == "" {
 			return in, fmt.Errorf("tencent-mps 渠道需在配置中提供 secret_id 与 secret_key")
 		}
-		if cfg["bucket"] == "" || cfg["region"] == "" {
-			return in, fmt.Errorf("tencent-mps 渠道需在配置中提供 bucket 与 region(MPS 输出 COS 桶及其地域)")
+		if cfg["region"] == "" {
+			return in, fmt.Errorf("tencent-mps 渠道需在配置中提供 region(充 TC3 签名地域)")
 		}
 	}
 
