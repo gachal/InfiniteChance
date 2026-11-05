@@ -103,6 +103,11 @@ const isMiniMax = computed(() => formState.type === 'minimax');
 // BaseURL 为工作空间域名根(不含路径),MVP 仅 videos 能力。
 const isDashScope = computed(() => formState.type === 'dashscope');
 
+// mureka(79 号票)与 minimax 同族:单 Bearer key、BaseURL 是裸域名
+// (如 https://api.mureka.ai),普通 HTTPS 非 TC3;MVP 仅 music 能力
+// (Song Edit 同曲换词,公开名 mureka-song-edit)。
+const isMureka = computed(() => formState.type === 'mureka');
+
 const formRef = ref<FormInstance>();
 const formState = reactive<ChannelForm>(blankForm());
 
@@ -118,6 +123,7 @@ const typeOptions = [
   { label: '火山方舟 Ark(Seedance)', value: 'volcengine-ark' },
   { label: 'MiniMax(H3 视频生成)', value: 'minimax' },
   { label: '阿里云百炼(DashScope 视频生成)', value: 'dashscope' },
+  { label: 'Mureka(同曲换词 Song Edit)', value: 'mureka' },
 ];
 
 const columns = [
@@ -492,13 +498,13 @@ function secretSummary(ch: Channel): string {
           </FormItem>
           <FormItem
             class="md:col-span-2"
-            :label="`BaseURL${isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : (isMps ? '(可空,缺省 mps.tencentcloudapi.com)' : '(含版本路径)')}`"
+            :label="`BaseURL${isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : (isMps ? '(可空,缺省 mps.tencentcloudapi.com)' : (isMureka ? '(裸域名,如 https://api.mureka.ai)' : '(含版本路径)'))}`"
             name="baseUrl"
             :rules="[{ required: !isVod && !isMps, message: '请输入 BaseURL' }]"
           >
             <Input
               v-model:value="formState.baseUrl"
-              :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isMps ? '留空 = https://mps.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : 'https://api.openai.com/v1'))"
+              :placeholder="isVod ? '留空 = https://vod.tencentcloudapi.com' : (isMps ? '留空 = https://mps.tencentcloudapi.com' : (isArk ? 'https://ark.cn-beijing.volcengine.com/api/v3' : (isMureka ? 'https://api.mureka.ai' : 'https://api.openai.com/v1')))"
             />
           </FormItem>
 
@@ -689,6 +695,16 @@ function secretSummary(ch: Channel): string {
             聚合 MiniMaxMusic/Mureka/GL/EL 等音乐模型;模型映射的上游名填
             「ModelName ModelVersion」(空格分隔,如 MiniMaxMusic 3.0、
             Mureka instrumental_9.5);勾选其他能力不会被转发。
+          </p>
+          <p
+            v-else-if="isMureka"
+            class="mb-2 mt-0 text-neutral-500"
+          >
+            mureka 当前仅实现同曲换词(music,Mureka 官方 Song Edit,79
+            号票):同曲换词(mureka-song-edit)需要勾选 music
+            能力位并配置模型映射(公开名 mureka-song-edit → 上游档名
+            V8/V9.5,真 key 后定档)与按次配价;BaseURL 填裸域名(如
+            https://api.mureka.ai);勾选其他能力不会被转发。
           </p>
           <CheckboxGroup
             v-model:value="formState.capabilities"
