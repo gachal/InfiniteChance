@@ -540,3 +540,59 @@ func TestRelayMurekaMusicUploadChainFails(t *testing.T) {
 		}
 	})
 }
+
+// prompt 必填豁免(79 号票定案 5「风格 prompt 选填」的网关落地):同曲
+// 换词形状(audio_ref 非空 + 歌词非空)打到全 mureka 候选时放行空 prompt
+// —— 词已是身份描述;豁免只放行空串,2000 上限恒适用。分型按候选渠道:
+// promptless 打到 vod/mps 的语义与错误形状字节不变(78 号票 Out of
+// Scope),混入非 mureka 候选或打到纯 cover/普通名照旧 400。
+func TestRelayMurekaMusicPromptExempt(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	vendor := newFakeMurekaVendor(t)
+	env.seedMurekaChannel(t, vendor.server.URL, "mureka-song-edit", "mureka-9.5")
+	key, full := env.seedKey(t, 2_000_000)
+	env.seedMusicPrice(t, "mureka-song-edit")
+
+	// promptless + relyric 形状 = 受理;提交体带歌词、不带 prompt 键。
+	w := env.postMusic(t, full,
+		`{"model":"mureka-song-edit","instrumental":false,"lyrics":"第二首的词","audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("promptless relyric submit status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	if body := vendor.lastEditBody(); !strings.Contains(body, `"lyrics":"第二首的词"`) || strings.Contains(body, `"prompt"`) {
+		t.Errorf("promptless edit body = %s, want lyrics carried and no prompt key", body)
+	}
+	if balance := env.balanceOf(t, key.ID); balance != 1_800_000 {
+		t.Errorf("balance = %d, want the call track reserve held", balance)
+	}
+
+	// 2000 上限恒适用:超长 prompt 在 exempt 形状里照样 400(拨号前)。
+	long := strings.Repeat("雾", 2001)
+	w = env.postMusic(t, full,
+		`{"model":"mureka-song-edit","prompt":"`+long+`","instrumental":false,"lyrics":"x","audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request_error") {
+		t.Fatalf("overlong prompt status = %d body %s, want 400", w.Code, w.Body.String())
+	}
+
+	// 对照面 1:promptless 打到 MPS 族 cover 名照旧 400(vod/mps 语义不变)。
+	mps := newFakeMPSVendor(t)
+	env.seedMPSChannelPrio(t, mps.server.URL, "vod-minimax-music-3.0-cover", "MiniMaxMusic 3.0", 0)
+	env.seedMusicPrice(t, "vod-minimax-music-3.0-cover")
+	w = env.postMusic(t, full,
+		`{"model":"vod-minimax-music-3.0-cover","instrumental":false,"lyrics":"x"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "'prompt' parameter") {
+		t.Fatalf("promptless cover status = %d body %s, want 400 missing-prompt", w.Code, w.Body.String())
+	}
+	if submits, _ := mps.counts(); submits != 0 {
+		t.Errorf("mps submits = %d, want 0 (refused before dialing)", submits)
+	}
+
+	// 对照面 2:候选混入非 mureka 渠道(同公开名双渠道)时豁免不生效 ——
+	// promptless 可能落到 vod/mps,语义必须照旧 400。
+	env.seedMPSChannelPrio(t, mps.server.URL, "mureka-song-edit", "MiniMaxMusic 3.0", 0)
+	w = env.postMusic(t, full,
+		`{"model":"mureka-song-edit","instrumental":false,"lyrics":"x","audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "'prompt' parameter") {
+		t.Fatalf("mixed-candidate promptless status = %d body %s, want 400 missing-prompt", w.Code, w.Body.String())
+	}
+}
