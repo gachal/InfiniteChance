@@ -691,3 +691,77 @@ func TestMySQLCanvasTaskIPColumnMigratesOldTable(t *testing.T) {
 		t.Fatalf("ip_id column missing after EnsureSchema")
 	}
 }
+
+// TestMySQLCanvasTaskCoverStrengthRoundTrip 覆盖 80 号票的旋律保持强度列:
+// cover_strength(闭域 [0,1] 的浮点)保真往返;未携带(nil)落 NULL、
+// 读回 nil(= 走上游缺省,存量行零迁移语义)。
+func TestMySQLCanvasTaskCoverStrengthRoundTrip(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+
+	strength := 0.55
+	relyricID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	relyric, err := store.Create(ctx, canvastask.Task{
+		ID: relyricID, CanvasID: 7, NodeID: "audio-relyric", Kind: canvastask.KindMusic,
+		Prompt: "", Model: "acestep-relyric", Lyrics: "夜色慢慢降落", Instrumental: false,
+		AudioRef:       "https://cdn.example/uploads/20261105/master.mp3",
+		CoverStrength:  &strength, Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create relyric: %v", err)
+	}
+	got, err := store.Get(ctx, relyric.ID)
+	if err != nil {
+		t.Fatalf("Get relyric: %v", err)
+	}
+	if got.CoverStrength == nil || *got.CoverStrength != 0.55 {
+		t.Fatalf("cover_strength = %v, want 0.55 verbatim", got.CoverStrength)
+	}
+
+	plainID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	plain, err := store.Create(ctx, canvastask.Task{
+		ID: plainID, CanvasID: 7, NodeID: "audio-bgm", Kind: canvastask.KindMusic,
+		Prompt: "纯音乐", Model: "bgm-m", Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = store.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.CoverStrength != nil {
+		t.Errorf("plain cover_strength = %v, want nil(未携带走上游缺省)", got.CoverStrength)
+	}
+}
+
+// TestMySQLCanvasTaskCoverStrengthColumnMigratesOldTable 覆盖 80 号票的
+// 存量库迁移:没有 cover_strength 列的旧表必须被 EnsureSchema 原地加列
+// (与 ip_id 迁移同款 DROP→EnsureSchema 手法;ADR 0001 双方言纪律)。
+func TestMySQLCanvasTaskCoverStrengthColumnMigratesOldTable(t *testing.T) {
+	_, db := openTaskTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx, `ALTER TABLE canvas_tasks DROP COLUMN cover_strength`); err != nil {
+		t.Fatalf("drop cover_strength to simulate old table: %v", err)
+	}
+	store := canvastask.NewMySQLStore(db, nil)
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema re-adds cover_strength: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'canvas_tasks' AND COLUMN_NAME = 'cover_strength'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("cover_strength column missing after EnsureSchema")
+	}
+}

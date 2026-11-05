@@ -24,13 +24,17 @@ import (
 // 非空才带(网关互斥校验:instrumental=true 携带歌词 400);AudioRef 是
 // 78 号票的翻唱参考 —— 任务行里的已解析厂商可达地址,非空才带(网关
 // vod adaptor 译成 AudioInfos;缺省不传与 60/62 号票提交体逐字节一致)。
+// CoverStrength 是 80 号票的旋律保持强度(闭域 [0,1],仅 acestep adaptor
+// 消费,其余 adaptor 自解析时忽略);nil 不透传 = 走上游缺省,任务行携带
+// 的值原样上送(重提纪律)。
 type MusicRequest struct {
-	Model        string
-	Prompt       string
-	Source       string
-	Lyrics       string
-	Instrumental *bool
-	AudioRef     string
+	Model         string
+	Prompt        string
+	Source        string
+	Lyrics        string
+	Instrumental  *bool
+	AudioRef      string
+	CoverStrength *float64
 }
 
 // MusicSubmitResult carries the gateway's task handle (mt_…): the worker
@@ -63,12 +67,13 @@ type MusicModelCatalog struct {
 // rejected submit, so nothing is owed on this path.
 func (c *Client) SubmitMusic(ctx context.Context, req MusicRequest) (MusicSubmitResult, error) {
 	payload, err := json.Marshal(struct {
-		Model        string `json:"model"`
-		Prompt       string `json:"prompt"`
-		Lyrics       string `json:"lyrics,omitempty"`
-		Instrumental *bool  `json:"instrumental,omitempty"`
-		AudioRef     string `json:"audio_ref,omitempty"`
-	}{Model: req.Model, Prompt: req.Prompt, Lyrics: req.Lyrics, Instrumental: req.Instrumental, AudioRef: req.AudioRef})
+		Model         string   `json:"model"`
+		Prompt        string   `json:"prompt"`
+		Lyrics        string   `json:"lyrics,omitempty"`
+		Instrumental  *bool    `json:"instrumental,omitempty"`
+		AudioRef      string   `json:"audio_ref,omitempty"`
+		CoverStrength *float64 `json:"cover_strength,omitempty"`
+	}{Model: req.Model, Prompt: req.Prompt, Lyrics: req.Lyrics, Instrumental: req.Instrumental, AudioRef: req.AudioRef, CoverStrength: req.CoverStrength})
 	if err != nil {
 		return MusicSubmitResult{}, err
 	}

@@ -211,6 +211,7 @@ type Task struct {
 	Lyrics       string     // music: 歌词原文(62 号票歌曲);空 = 未携带(纯音乐或模型自动写词)
 	Instrumental bool       // music: true = 纯音乐(缺省,60 号票);false = 人声歌曲(62 号票);其余 kind 不读
 	AudioRef     string     // music: 翻唱参考的已解析地址(78 号票);空 = 普通音乐/歌曲任务
+	CoverStrength *float64  // music: 旋律保持强度(80 号票,闭域 [0,1],越高越贴原曲旋律);nil = 未携带走上游缺省,worker 重提原样携带
 	ImageRef     string     // video: 图生视频的单串参考图(12 号票旧形态)
 	VideoRefs    []VideoRef // video: 结构化多模态参考(24 号票,已解析);空 = 文生视频
 	ImageRefs    []string   // image: 图生图的参考图片地址(已解析,21 号票);空 = 文生图
