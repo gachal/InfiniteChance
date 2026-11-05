@@ -514,6 +514,54 @@ describe('audioSyncPatch(57 号票音频节点回填;60 号票 source 判别与�
     })
   })
 
+  it('backfills strength from the task row onto a relyric node that lacks it (80 号票)', () => {
+    // 任务行 cover_strength(cover 任务实际发送值)而节点未携带(79 号票
+    // 旧产物重开画布):从任务行长出强度,创作事实与产物回填同形。
+    const task = makeTask({
+      kind: 'music', asset_id: 22, prompt: '', model: 'acestep-relyric',
+      lyrics: '新词第一句', cover_strength: 0.7,
+    })
+    expect(
+      audioSyncPatch(task, { asset_id: 0, source: 'relyric', prompt: '', model: '', ref_asset_id: 8 }),
+    ).toEqual({
+      asset_id: 22,
+      model: 'acestep-relyric',
+      lyrics: '新词第一句',
+      strength: 0.7,
+    })
+  })
+
+  it('never overwrites the strength a relyric node already carries (80 号票)', () => {
+    // 节点侧 strength 是提交时的创作事实(表单物化),任务行同值或异值都
+    // 不覆盖;只有它为空缺时才补。
+    const task = makeTask({
+      kind: 'music', asset_id: 22, prompt: '', model: 'acestep-relyric',
+      lyrics: '新词', cover_strength: 0.55,
+    })
+    expect(
+      audioSyncPatch(task, {
+        asset_id: 0, source: 'relyric', prompt: '', model: 'acestep-relyric',
+        ref_asset_id: 8, strength: 0.9,
+      }),
+    ).toEqual({ asset_id: 22, lyrics: '新词' })
+  })
+
+  it('materializes no strength when the task row carried none (NULL 不落 0 值)', () => {
+    // 旧任务行 / 未携带 cover_strength 的任务:不物化 0 值(「未携带走上游
+    // 缺省」语义),普通 music 行同样不受扰。
+    const legacy = makeTask({
+      kind: 'music', asset_id: 21, prompt: '', model: 'mureka-song-edit',
+      lyrics: '新词第一句',
+    })
+    expect(
+      audioSyncPatch(legacy, { asset_id: 0, source: 'relyric', prompt: '', model: '', ref_asset_id: 8 }),
+    ).toEqual({
+      asset_id: 21,
+      model: 'mureka-song-edit',
+      lyrics: '新词第一句',
+    })
+  })
+
   it('backfills lyrics from the task row onto a fresh music node', () => {
     const task = makeTask({ kind: 'music', asset_id: 12, prompt: 'p', model: 'm', lyrics: 'L' })
     expect(audioSyncPatch(task, { asset_id: 0 })).toEqual({

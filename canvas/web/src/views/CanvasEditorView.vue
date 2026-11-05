@@ -91,6 +91,7 @@ import {
 } from '../agentTools'
 import { legalEdgeLabels } from '../connection'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
+import { RELYRIC_STRENGTH_DEFAULT } from '../music'
 import {
   appendComposerRef,
   appendNodeDraftRef,
@@ -1814,14 +1815,16 @@ function onCoverPickToggle(nodeId: string, a: AssetRecord): void {
   markChanged()
 }
 
-// 同曲换词节点创作态的提交路径(79 号票,submitCoverTask 克隆分叉):
-// kind=music 任务绑本节点,参考原曲按 ref_asset_id 拼素材内容寻址路径恒带
-// 上送(服务端解出真实地址落任务行)、新歌词恒带(词是身份必需,表单必填
-// 校验保证)、风格描述非空才送(选填,空 = 不送);instrumental 恒显式
-// false —— 不送会被网关缺省物化 true,「instrumental:true 携带歌词」撞
-// 互斥 400(78 号票先例);照翻唱先例先 markChanged + flush 再提交,产物
-// 由 audioSyncPatch 按 relyric 对账(prompt/model/lyrics 回填,
-// source:'relyric' 不覆盖)。
+// 同曲换词节点创作态的提交路径(79 号票,submitCoverTask 克隆分叉;80
+// 号票加 cover_strength):kind=music 任务绑本节点,参考原曲按 ref_asset_id
+// 拼素材内容寻址路径恒带上送(服务端解出真实地址落任务行)、新歌词恒带
+// (词是身份必需,表单必填校验保证)、风格描述非空才送(选填,空 = 不送);
+// cover_strength 恒显式送 —— 与「prompt 非空才送」不同,strength 是数值型
+// 没有空串歧义,缺省 0.55 也显式送(80 号票定案 8;节点缺值以缺省常量
+// 兜底);instrumental 恒显式 false —— 不送会被网关缺省物化 true,
+// 「instrumental:true 携带歌词」撞互斥 400(78 号票先例);照翻唱先例先
+// markChanged + flush 再提交,产物由 audioSyncPatch 按 relyric 对账
+// (prompt/model/lyrics/strength 回填,source:'relyric' 不覆盖)。
 const relyricSubmitting = ref(false)
 
 async function submitRelyricTask(nodeId: string): Promise<void> {
@@ -1848,6 +1851,7 @@ async function submitRelyricTask(nodeId: string): Promise<void> {
       ...(refAssetId > 0 ? { audio_ref: `/api/assets/${refAssetId}/content` } : {}),
       ...(prompt !== '' ? { prompt } : {}),
       lyrics: data.lyrics ?? '',
+      cover_strength: data.strength ?? RELYRIC_STRENGTH_DEFAULT,
     })
     taskSync.track(task)
   } catch (e) {
