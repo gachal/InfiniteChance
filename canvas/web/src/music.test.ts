@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
 
-import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, validateCoverForm, validateMusicForm, validateRelyricForm } from './music'
+import { estimateMusicCNY, fmtCNY, MAX_LYRICS_CHARS, MAX_MUSIC_PROMPT_RUNES, RELYRIC_STRENGTH_DEFAULT, RELYRIC_STRENGTH_MAX, RELYRIC_STRENGTH_MIN, RELYRIC_STRENGTH_STEP, validateCoverForm, validateMusicForm, validateRelyricForm } from './music'
 
 describe('validateMusicForm(60 号票配乐表单)', () => {
   it('rejects empty prompt/model and over-long prompt', () => {
@@ -75,40 +75,71 @@ describe('validateCoverForm(78 号票翻唱表单)', () => {
 
 describe('validateRelyricForm(79 号票同曲换词表单)', () => {
   it('rejects a missing reference audio (参考曲是旋律锁定的身份所在,必填恰好 1 条)', () => {
-    expect(validateRelyricForm({ refAssetId: 0, prompt: '', model: 'm', lyrics: '新词' })).toBe(
+    expect(validateRelyricForm({ refAssetId: 0, prompt: '', model: 'm', lyrics: '新词', strength: 0.55 })).toBe(
       '请先选择参考音频(必填,恰好 1 条)',
     )
   })
 
   it('rejects empty lyrics (词是身份必需,无「自动写词」;与翻唱的选填歌词区分)', () => {
-    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '   ' })).toBe(
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '   ', strength: 0.55 })).toBe(
       '新歌词不能为空',
     )
-    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm' })).toBe('新歌词不能为空')
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', strength: 0.55 })).toBe('新歌词不能为空')
   })
 
   it('rejects over-long lyrics and over-long prompt', () => {
     expect(
-      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '雨'.repeat(MAX_LYRICS_CHARS + 1) }),
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '雨'.repeat(MAX_LYRICS_CHARS + 1), strength: 0.55 }),
     ).toBe(`歌词最多 ${MAX_LYRICS_CHARS} 个字符`)
     expect(
-      validateRelyricForm({ refAssetId: 8, prompt: '雨'.repeat(MAX_MUSIC_PROMPT_RUNES + 1), model: 'm', lyrics: '新词' }),
+      validateRelyricForm({ refAssetId: 8, prompt: '雨'.repeat(MAX_MUSIC_PROMPT_RUNES + 1), model: 'm', lyrics: '新词', strength: 0.55 }),
     ).toBe(`风格描述最多 ${MAX_MUSIC_PROMPT_RUNES} 个字符`)
   })
 
   it('rejects a missing model', () => {
-    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: '', lyrics: '新词' })).toBe(
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: '', lyrics: '新词', strength: 0.55 })).toBe(
       '请选择同曲换词模型',
     )
   })
 
   it('accepts a full relyric form (prompt 选填,空串/空白即不送风格描述)', () => {
     expect(
-      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'mureka-song-edit', lyrics: '  新词第一句  ' }),
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'mureka-song-edit', lyrics: '  新词第一句  ', strength: 0.55 }),
     ).toBeNull()
     expect(
-      validateRelyricForm({ refAssetId: 8, prompt: '维持原曲编曲走向', model: 'mureka-song-edit', lyrics: '新词' }),
+      validateRelyricForm({ refAssetId: 8, prompt: '维持原曲编曲走向', model: 'mureka-song-edit', lyrics: '新词', strength: 0.55 }),
     ).toBeNull()
+  })
+})
+
+describe('validateRelyricForm strength(80 号票旋律保持强度)', () => {
+  it('rejects NaN / 非有限值 / 超出 0–1 的强度(防呆守卫,滑杆钳 0.3–0.9)', () => {
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: Number.NaN }),
+    ).toBe('旋律保持强度不合法(应为 0–1 的数值)')
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: Number.POSITIVE_INFINITY }),
+    ).toBe('旋律保持强度不合法(应为 0–1 的数值)')
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: -0.1 }),
+    ).toBe('旋律保持强度不合法(应为 0–1 的数值)')
+    expect(
+      validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: 1.1 }),
+    ).toBe('旋律保持强度不合法(应为 0–1 的数值)')
+  })
+
+  it('accepts 0–1 带内强度(滑杆两端 0.3/0.9 与缺省 0.55 都过;0–1 内非滑杆档不拒)', () => {
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: 0.3 })).toBeNull()
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: 0.55 })).toBeNull()
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: 0.9 })).toBeNull()
+    expect(validateRelyricForm({ refAssetId: 8, prompt: '', model: 'm', lyrics: '新词', strength: 0.42 })).toBeNull()
+  })
+
+  it('滑杆参数常量与票面定案 5 同源(min 0.3 / max 0.9 / step 0.05 / default 0.55)', () => {
+    expect(RELYRIC_STRENGTH_MIN).toBe(0.3)
+    expect(RELYRIC_STRENGTH_MAX).toBe(0.9)
+    expect(RELYRIC_STRENGTH_STEP).toBe(0.05)
+    expect(RELYRIC_STRENGTH_DEFAULT).toBe(0.55)
   })
 })
 

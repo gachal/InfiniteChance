@@ -215,7 +215,8 @@ export interface VoiceNodeData {
  * 票产物-元数据配对家族):台词合成记 text/chars,配乐与歌曲记
  * prompt/model(歌曲另记 lyrics),音效记 prompt/model/seconds,翻唱与
  * 同曲换词记 prompt/model/lyrics 与 ref_asset_id(参考素材行引用,发送时
- * 随请求上送、任务行落已解析地址);model 在生成来源下都记(插入行没有)。 */
+ * 随请求上送、任务行落已解析地址;同曲换词另记 strength —— 80 号票旋律
+ * 保持强度);model 在生成来源下都记(插入行没有)。 */
 export interface AudioNodeData {
   asset_id: number
   source?: 'tts' | 'music' | 'song' | 'sfx' | 'cover' | 'relyric' | 'insert'
@@ -229,6 +230,11 @@ export interface AudioNodeData {
    * 1 条):发送时按它拼素材内容寻址路径随请求上送,服务端解出真实地址
    * 落任务行;产物与任务回填不改写(参考是创作事实,不是产物)。 */
   ref_asset_id?: number
+  /** 同曲换词的旋律保持强度(80 号票,0–1 数值,越高越贴原曲旋律):
+   * 创作事实 —— 表单滑杆物化到节点(缺省 0.55 也落),提交时恒显式送
+   * cover_strength;产物回填同形(audioSyncPatch 从任务行补空缺,已带
+   * 不覆盖)。 */
+  strength?: number
 }
 
 /** 剧本节点数据(64 号票,第十二种节点类型「规划」组):title + text
