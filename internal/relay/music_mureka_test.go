@@ -292,6 +292,44 @@ func TestRelayMurekaMusicEditRequiresLyrics(t *testing.T) {
 	}
 }
 
+// 双缺形状(prompt 与歌词都空、audio_ref 非空、候选全 mureka)= 请求级
+// 400 且报**歌词**文案而非 prompt 文案(79 号票评审修正):词是身份必需、
+// prompt 是选填项,错误优先级对齐票面定案 5,与 adaptor sentinel 同源;
+// 拒绝发生在拨号之前,预扣不动、0 用量行。歌词过线后同一形状走 prompt
+// 豁免照常受理(对照)。
+func TestRelayMurekaMusicDoubleMissingReportsLyrics(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	vendor := newFakeMurekaVendor(t)
+	env.seedMurekaChannel(t, vendor.server.URL, "mureka-song-edit", "mureka-9.5")
+	key, full := env.seedKey(t, 2_000_000)
+	env.seedMusicPrice(t, "mureka-song-edit")
+
+	w := env.postMusic(t, full,
+		`{"model":"mureka-song-edit","instrumental":false,"audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request_error") {
+		t.Fatalf("status = %d body %s, want 400 invalid_request_error", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "'prompt'") {
+		t.Errorf("body = %s, want the lyrics copy not the prompt copy", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "歌词必填") {
+		t.Errorf("body = %s, want the lyrics-required copy", w.Body.String())
+	}
+	if dials := vendor.dialCount(); dials != 0 {
+		t.Errorf("vendor dials = %d, want 0 (refused before dialing)", dials)
+	}
+	if balance := env.balanceOf(t, key.ID); balance != 2_000_000 {
+		t.Errorf("balance = %d, want the reserve untouched", balance)
+	}
+
+	// 对照:补上歌词(prompt 仍空)同一形状即走豁免受理。
+	w = env.postMusic(t, full,
+		`{"model":"mureka-song-edit","instrumental":false,"lyrics":"夜色慢慢降落","audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("lyrics-only submit status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+}
+
 // 形状 sentinel 2:audio_ref 为空的普通音乐请求 = 请求级 400,文案指路
 // 普通音乐公开名 —— 同款断言集。
 func TestRelayMurekaMusicRejectsPlainGeneration(t *testing.T) {

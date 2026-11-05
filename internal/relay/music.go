@@ -285,15 +285,25 @@ func (h *Handlers) prepareMusic(c *gin.Context, key apikey.Key) *prepared {
 	// 检查不动),prepareMusic 在调度前分不出渠道族,只能按候选集判。豁免
 	// 只放行空串,2000 上限恒适用(上方已拒);所有校验都在预扣(Reserve)
 	// 之前完成。
-	promptlessRelyric := strings.TrimSpace(req.AudioRef) != "" && strings.TrimSpace(req.Lyrics) != ""
-	if promptlessRelyric {
-		for _, cand := range candidates {
-			if cand.Type != channel.TypeMureka {
-				promptlessRelyric = false
-				break
-			}
+	allMureka := true
+	for _, cand := range candidates {
+		if cand.Type != channel.TypeMureka {
+			allMureka = false
+			break
 		}
 	}
+	hasRef := strings.TrimSpace(req.AudioRef) != ""
+	hasLyrics := strings.TrimSpace(req.Lyrics) != ""
+	if hasRef && allMureka && !hasLyrics {
+		// relyric 形状(audio_ref 非空 + 全 mureka 候选)先校验歌词再落
+		// prompt 豁免(79 号票评审修正):词是身份必需(Edit 无自动写词,
+		// 定案 5),prompt 与歌词双缺时若先报 prompt 必填会把「选填项」
+		// 报成「缺的主项」,错误优先级与票面颠倒。文案与 adaptor 内
+		// sentinel 同源(adaptor 侧保留作纵深防御,语义不变)。
+		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, errMurekaEditRequiresLyrics.Error())
+		return nil
+	}
+	promptlessRelyric := hasRef && hasLyrics && allMureka
 	if n := utf8.RuneCountInString(req.Prompt); n < 1 && !promptlessRelyric {
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError, "You must provide a 'prompt' parameter.")
 		return nil
