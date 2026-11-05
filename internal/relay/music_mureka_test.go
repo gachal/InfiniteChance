@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +47,8 @@ type fakeMurekaVendor struct {
 	mu     sync.Mutex
 
 	refBytes     []byte // /ref/master.mp3 的字节(嗅探/上传链输入)
+	refOversize  bool   // 参考下载端点流式吐出超过网关取上限的体积(chunked,无 Content-Length)
+	refDeclared  int64  // >0 = 参考下载端点声明超大 Content-Length(体本身很小,走预检路径)
 	uploadStatus int    // 上传端点回答码(0 = 200)
 	uploadBody   string // 上传应答覆盖
 	editStatus   int    // region-edit 回答码(0 = 200)
@@ -81,6 +84,23 @@ func newFakeMurekaVendor(t *testing.T) *fakeMurekaVendor {
 		case r.Method == http.MethodGet && r.URL.Path == "/ref/master.mp3":
 			v.refFetches++
 			w.Header().Set("Content-Type", "audio/mpeg")
+			if n := v.refDeclared; n > 0 {
+				// 只声明超大 Content-Length、体本身很小:网关的预检在
+				// 读体之前就该拒绝,多余字节无需真传。
+				w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+				w.Write(v.refBytes)
+				return
+			}
+			if v.refOversize {
+				// 不在内存里造 32MiB 参考体:按 1MiB 块流式写出 33MiB,
+				// chunked 无 Content-Length —— 走「读满上限再探一字节」
+				// 的判定路径。
+				chunk := make([]byte, 1<<20)
+				for i := 0; i < 33; i++ {
+					w.Write(chunk)
+				}
+				return
+			}
 			w.Write(v.refBytes)
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload":
@@ -171,6 +191,18 @@ func (v *fakeMurekaVendor) setRefBytes(b []byte) {
 	v.refBytes = b
 }
 
+func (v *fakeMurekaVendor) setRefOversize() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.refOversize = true
+}
+
+func (v *fakeMurekaVendor) setRefDeclared(n int64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.refDeclared = n
+}
+
 func (v *fakeMurekaVendor) dialCount() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -257,6 +289,44 @@ func TestRelayMurekaMusicEditRequiresLyrics(t *testing.T) {
 	}
 	if vendor.dialCount() == 0 {
 		t.Errorf("vendor dials = %d, want >0 (channel not breaker-tripped)", vendor.dialCount())
+	}
+}
+
+// 双缺形状(prompt 与歌词都空、audio_ref 非空、候选全 mureka)= 请求级
+// 400 且报**歌词**文案而非 prompt 文案(79 号票评审修正):词是身份必需、
+// prompt 是选填项,错误优先级对齐票面定案 5,与 adaptor sentinel 同源;
+// 拒绝发生在拨号之前,预扣不动、0 用量行。歌词过线后同一形状走 prompt
+// 豁免照常受理(对照)。
+func TestRelayMurekaMusicDoubleMissingReportsLyrics(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	vendor := newFakeMurekaVendor(t)
+	env.seedMurekaChannel(t, vendor.server.URL, "mureka-song-edit", "mureka-9.5")
+	key, full := env.seedKey(t, 2_000_000)
+	env.seedMusicPrice(t, "mureka-song-edit")
+
+	w := env.postMusic(t, full,
+		`{"model":"mureka-song-edit","instrumental":false,"audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request_error") {
+		t.Fatalf("status = %d body %s, want 400 invalid_request_error", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "'prompt'") {
+		t.Errorf("body = %s, want the lyrics copy not the prompt copy", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "歌词必填") {
+		t.Errorf("body = %s, want the lyrics-required copy", w.Body.String())
+	}
+	if dials := vendor.dialCount(); dials != 0 {
+		t.Errorf("vendor dials = %d, want 0 (refused before dialing)", dials)
+	}
+	if balance := env.balanceOf(t, key.ID); balance != 2_000_000 {
+		t.Errorf("balance = %d, want the reserve untouched", balance)
+	}
+
+	// 对照:补上歌词(prompt 仍空)同一形状即走豁免受理。
+	w = env.postMusic(t, full,
+		`{"model":"mureka-song-edit","instrumental":false,"lyrics":"夜色慢慢降落","audio_ref":"`+murekaRef(vendor)+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("lyrics-only submit status = %d body %s, want 200", w.Code, w.Body.String())
 	}
 }
 
@@ -493,6 +563,59 @@ func TestRelayMurekaMusicUploadChainFails(t *testing.T) {
 		}
 		if body := vendor.lastEditBody(); body != "" {
 			t.Errorf("region-edit dialed despite upload failure: %s", body)
+		}
+	})
+
+	t.Run("参考超限=请求级 400(读满上限再探一字节)", func(t *testing.T) {
+		env := newRelayEnv(t, nil)
+		vendor := newFakeMurekaVendor(t)
+		env.seedMurekaChannel(t, vendor.server.URL, "mureka-song-edit", "mureka-9.5")
+		key, full := env.seedKey(t, 2_000_000)
+		env.seedMusicPrice(t, "mureka-song-edit")
+		vendor.setRefOversize()
+
+		w := env.postMusic(t, full,
+			`{"model":"mureka-song-edit","prompt":"city pop","instrumental":false,"lyrics":"夜色慢慢降落","audio_ref":"`+murekaRef(vendor)+`"}`)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "上传失败") {
+			t.Fatalf("status = %d body %s, want 400 with the upload-chain copy", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "too large") {
+			t.Errorf("body = %s, want the oversize reason", w.Body.String())
+		}
+		if balance := env.balanceOf(t, key.ID); balance != 2_000_000 {
+			t.Errorf("balance = %d, want the reserve refunded whole", balance)
+		}
+		var rows int
+		if err := env.stores.db.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM usage_logs`).Scan(&rows); err != nil {
+			t.Fatalf("count usage rows: %v", err)
+		}
+		if rows != 0 {
+			t.Errorf("usage rows = %d, want 0 (request-level refusal)", rows)
+		}
+		if body := vendor.lastEditBody(); body != "" {
+			t.Errorf("region-edit dialed despite oversize reference: %s", body)
+		}
+	})
+
+	t.Run("参考 Content-Length 超限=请求级 400(预检)", func(t *testing.T) {
+		env := newRelayEnv(t, nil)
+		vendor := newFakeMurekaVendor(t)
+		env.seedMurekaChannel(t, vendor.server.URL, "mureka-song-edit", "mureka-9.5")
+		_, full := env.seedKey(t, 2_000_000)
+		env.seedMusicPrice(t, "mureka-song-edit")
+		vendor.setRefDeclared(40 << 20)
+
+		w := env.postMusic(t, full,
+			`{"model":"mureka-song-edit","prompt":"city pop","instrumental":false,"lyrics":"夜色慢慢降落","audio_ref":"`+murekaRef(vendor)+`"}`)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "上传失败") {
+			t.Fatalf("status = %d body %s, want 400 with the upload-chain copy", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "too large") {
+			t.Errorf("body = %s, want the oversize reason", w.Body.String())
+		}
+		if body := vendor.lastEditBody(); body != "" {
+			t.Errorf("region-edit dialed despite oversize reference: %s", body)
 		}
 	})
 

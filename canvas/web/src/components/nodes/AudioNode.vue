@@ -206,8 +206,8 @@ const lyricsEmpty = computed(() => (props.data.lyrics ?? '').trim() === '')
 // 改选后不再动。
 watch(
   () => [(coverMode.value || relyricMode.value), props.musicModels] as const,
-  ([isRefMusicish, models]) => {
-    if (isRefMusicish && !(props.data.model ?? '') && models.length > 0) {
+  ([isRefCreationMode, models]) => {
+    if (isRefCreationMode && !(props.data.model ?? '') && models.length > 0) {
       emit('form-change', { model: models[0]! })
     }
   },
