@@ -114,19 +114,34 @@ const isMureka = computed(() => formState.type === 'mureka');
 // 仅 music 能力(cover 同曲换词,公开名 acestep-relyric)。
 const isAcestep = computed(() => formState.type === 'acestep');
 
+// BaseURL 表单 label 的类型分支文案(评审:原模板内四层嵌套三元可读性差,
+// 抽成 computed;各分支文案逐字保留,含 openai 族缺省「含版本路径」)。
+const baseUrlLabel = computed(() => {
+  if (isVod.value) return '(可空,缺省 vod.tencentcloudapi.com)';
+  if (isMps.value) return '(可空,缺省 mps.tencentcloudapi.com)';
+  if (isMureka.value) return '(裸域名,如 https://api.mureka.ai)';
+  if (isAcestep.value) return '(必填,局域网直连地址)';
+  return '(含版本路径)';
+});
+
 const formRef = ref<FormInstance>();
 const formState = reactive<ChannelForm>(blankForm());
 
-// 新建态切到 acestep 时能力位缺省只勾 music(切回其他类型回 chat 缺省);
-// 编辑态一律不碰能力位——已存值由 openEdit 回填,避免扩大「编辑页重置
-// 能力位」的既有缺口(AGENTS.md)。
+// 新建态切到 acestep 时,若能力位仍是缺省 ['chat'](用户未手动改过)则补成
+// ['music'];切到其他类型不动能力位(评审去掉回摆——用户先勾了 music/videos
+// 再换类型想法时不静默丢勾)。编辑态一律不碰能力位——已存值由 openEdit
+// 回填,避免扩大「编辑页重置能力位」的既有缺口(AGENTS.md)。
 watch(
   () => formState.type,
   (type) => {
     if (editingId.value !== null) {
       return;
     }
-    formState.capabilities = type === 'acestep' ? ['music'] : ['chat'];
+    const isDefaultChat =
+      formState.capabilities.length === 1 && formState.capabilities[0] === 'chat';
+    if (type === 'acestep' && isDefaultChat) {
+      formState.capabilities = ['music'];
+    }
   },
 );
 
@@ -518,7 +533,7 @@ function secretSummary(ch: Channel): string {
           </FormItem>
           <FormItem
             class="md:col-span-2"
-            :label="`BaseURL${isVod ? '(可空,缺省 vod.tencentcloudapi.com)' : (isMps ? '(可空,缺省 mps.tencentcloudapi.com)' : (isMureka ? '(裸域名,如 https://api.mureka.ai)' : (isAcestep ? '(必填,局域网直连地址)' : '(含版本路径)')))}`"
+            :label="`BaseURL${baseUrlLabel}`"
             name="baseUrl"
             :rules="[{ required: !isVod && !isMps, message: '请输入 BaseURL' }]"
           >

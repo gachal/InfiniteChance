@@ -95,7 +95,8 @@ Mac 能拉通 `health` 即链路通;网关连通测试按钮走的就是这个�
 1. admin 台新建渠道:类型 `acestep`,BaseURL `http://192.168.1.100:8001`,music 能力位,**api_key 留空**(服务端未设 `ACESTEP_API_KEY` 时);设了 key 则同值填入。
 2. model_map 配公开名 **`acestep-relyric`**(→ 档名任意非空占位,如 `acestep-v15-turbo`;adaptor 不透传 model)。
 3. 计价:**call 轨配价 ¥0**(自托管无边际成本;未配价会被 `model_not_priced` 拒)。
-4. 一键连通测试:绿 = health 链路全通。
+4. **素材存储切 COS**(23 号票驱动已在):settings 切驱动行 + 桶配置 + 公网可拉形态核验——公开读直链 or 签名 302 跟随;**新素材落 COS,存量素材不迁**(老素材参考地址是 Mac 侧局域网直链,两机同网可达)。§7.4 的「Windows 拉 COS 产物 URL」验证依赖此项。
+5. 一键连通测试:绿 = health 链路全通。
 
 ## 七、真机验证点(票面定案 11,按序)
 
