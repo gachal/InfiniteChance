@@ -1636,15 +1636,18 @@ async function submitSfxTask(nodeId: string): Promise<void> {
   }
 }
 
-/** 音频节点创作态提交的分发(61 号票;78 号票增翻唱):source='sfx' 走
- * 音效链、source='cover' 走翻唱链,其余(配乐/歌曲)走配乐链 —— 节点侧
- * 表单已按 source 分叉,这里同款分流。 */
+/** 音频节点创作态提交的分发(61 号票;78 号票增翻唱;79 号票增同曲换词):
+ * source='sfx' 走音效链、source='cover' 走翻唱链、source='relyric' 走同曲
+ * 换词链,其余(配乐/歌曲)走配乐链 —— 节点侧表单已按 source 分叉,这里
+ * 同款分流。 */
 function submitAudioTask(nodeId: string): void {
   const data = findNode(nodeId)?.data as AudioNodeData | undefined
   if (data?.source === 'sfx') {
     void submitSfxTask(nodeId)
   } else if (data?.source === 'cover') {
     void submitCoverTask(nodeId)
+  } else if (data?.source === 'relyric') {
+    void submitRelyricTask(nodeId)
   } else {
     void submitMusicTask(nodeId)
   }
@@ -1790,6 +1793,7 @@ function openCoverPicker(nodeId: string): void {
   pickerNodeId.value = ''
   levelPickerNodeId.value = ''
   voicePickerNodeId.value = ''
+  relyricPickerNodeId.value = ''
 }
 
 function closeCoverPicker(): void {
@@ -1810,9 +1814,138 @@ function onCoverPickToggle(nodeId: string, a: AssetRecord): void {
   markChanged()
 }
 
+// 同曲换词节点创作态的提交路径(79 号票,submitCoverTask 克隆分叉):
+// kind=music 任务绑本节点,参考原曲按 ref_asset_id 拼素材内容寻址路径恒带
+// 上送(服务端解出真实地址落任务行)、新歌词恒带(词是身份必需,表单必填
+// 校验保证)、风格描述非空才送(选填,空 = 不送);instrumental 恒显式
+// false —— 不送会被网关缺省物化 true,「instrumental:true 携带歌词」撞
+// 互斥 400(78 号票先例);照翻唱先例先 markChanged + flush 再提交,产物
+// 由 audioSyncPatch 按 relyric 对账(prompt/model/lyrics 回填,
+// source:'relyric' 不覆盖)。
+const relyricSubmitting = ref(false)
+
+async function submitRelyricTask(nodeId: string): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as AudioNodeData | undefined
+  if (!node || !data || relyricSubmitting.value) {
+    return
+  }
+  relyricSubmitting.value = true
+  try {
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const refAssetId = data.ref_asset_id ?? 0
+    const prompt = (data.prompt ?? '').trim()
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'music',
+      model: data.model ?? '',
+      instrumental: false,
+      ...(refAssetId > 0 ? { audio_ref: `/api/assets/${refAssetId}/content` } : {}),
+      ...(prompt !== '' ? { prompt } : {}),
+      lyrics: data.lyrics ?? '',
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '同曲换词任务提交失败,请稍后再试')
+  } finally {
+    relyricSubmitting.value = false
+  }
+}
+
+// 同曲换词参考原曲:本机上传 kind=audio 入素材库(服务端魔数裁决),成功
+// 回写 ref_asset_id;失败轻提示,节点侧表单保持可再选(79 号票照翻唱链
+// 克隆,在途旗标分立)。
+const relyricRefUploading = ref(false)
+
+async function onRelyricRefFile(nodeId: string, file: File): Promise<void> {
+  if (relyricRefUploading.value) {
+    return
+  }
+  relyricRefUploading.value = true
+  try {
+    const a = await client.uploadAsset(file, 'audio', uploadIPId.value)
+    updateNodeData(nodeId, { ref_asset_id: a.id } satisfies Partial<AudioNodeData>)
+    markChanged()
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '参考原曲上传失败,请稍后再试')
+  } finally {
+    relyricRefUploading.value = false
+  }
+}
+
+// 同曲换词参考原曲的素材库挑选面板(音频过滤,翻唱挑选面板同范式;互斥
+// 纪律一致:开时关其他面板)。
+const relyricPickerNodeId = ref('')
+const relyricPickerNode = computed(() =>
+  relyricPickerNodeId.value ? findNode(relyricPickerNodeId.value) ?? null : null,
+)
+const relyricPickerSelectedIds = computed<number[]>(() => {
+  const data = relyricPickerNode.value?.data as AudioNodeData | undefined
+  const id = data?.ref_asset_id ?? 0
+  return id > 0 ? [id] : []
+})
+
+function openRelyricPicker(nodeId: string): void {
+  relyricPickerNodeId.value = nodeId
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+  composerPickerOpen.value = false
+  historyNodeId.value = ''
+  pickerNodeId.value = ''
+  levelPickerNodeId.value = ''
+  voicePickerNodeId.value = ''
+  coverPickerNodeId.value = ''
+}
+
+function closeRelyricPicker(): void {
+  relyricPickerNodeId.value = ''
+}
+
+function onRelyricPickToggle(nodeId: string, a: AssetRecord): void {
+  if (a.kind !== 'audio') {
+    return
+  }
+  const data = findNode(nodeId)?.data as AudioNodeData | undefined
+  if (!data) {
+    return
+  }
+  // 恰好 1 条:点选即绑、再点取消(换选 = 点新的一条)。
+  const next = data.ref_asset_id === a.id ? 0 : a.id
+  updateNodeData(nodeId, { ref_asset_id: next } satisfies Partial<AudioNodeData>)
+  markChanged()
+}
+
+// 参考音频节点事件的 source 分发(79 号票):ref-file / pick-ref 是 cover
+// 与 relyric 共用的节点事件(都操作 ref_asset_id 与 audio 上传),按节点
+// source 分流到各自链路(在途旗标分立,上传/提交互不误禁);translate 操
+// 作 lyrics 字段与 source 无关,翻唱/同曲换词共用 onCoverTranslate。
+function onAudioRefFile(nodeId: string, file: File): void {
+  const data = findNode(nodeId)?.data as AudioNodeData | undefined
+  if (data?.source === 'relyric') {
+    void onRelyricRefFile(nodeId, file)
+  } else {
+    void onCoverRefFile(nodeId, file)
+  }
+}
+
+function openAudioRefPicker(nodeId: string): void {
+  const data = findNode(nodeId)?.data as AudioNodeData | undefined
+  if (data?.source === 'relyric') {
+    openRelyricPicker(nodeId)
+  } else {
+    openCoverPicker(nodeId)
+  }
+}
+
 // 「英→中」翻译(78 号票确认式):调翻译端点,译文回填替换歌词框,人工
 // 可再改;空框禁用(按钮侧),这里再挡一道。模型取 /prompt-models 目录
-// 首项(token 轨聊天模型目录,翻译与生成提示词同族计费)。
+// 首项(token 轨聊天模型目录,翻译与生成提示词同族计费);79 号票起翻唱
+// 与同曲换词共用(操作 lyrics 字段,与 source 无关)。
 const translatingNodeId = ref('')
 
 async function onCoverTranslate(nodeId: string): Promise<void> {
@@ -4675,13 +4808,15 @@ function backToList(): void {
             :sfx-submitting="sfxSubmitting"
             :cover-submitting="coverSubmitting"
             :cover-ref-uploading="coverRefUploading"
+            :relyric-submitting="relyricSubmitting"
+            :relyric-ref-uploading="relyricRefUploading"
             :translating="translatingNodeId === nodeProps.id"
             :connect-state="connection.stateOf(nodeProps.id)"
             @retry="onRetry(nodeProps.id)"
             @form-change="onMusicFormChange(nodeProps.id, $event)"
             @submit="submitAudioTask(nodeProps.id)"
-            @ref-file="onCoverRefFile(nodeProps.id, $event)"
-            @pick-ref="openCoverPicker(nodeProps.id)"
+            @ref-file="onAudioRefFile(nodeProps.id, $event)"
+            @pick-ref="openAudioRefPicker(nodeProps.id)"
             @translate="onCoverTranslate(nodeProps.id)"
             @connect-start="connection.start(nodeProps.id, $event)"
           />
@@ -4864,6 +4999,19 @@ function backToList(): void {
         :ip-id="canvasIPID || undefined"
         @toggle="onCoverPickToggle(coverPickerNode.id, $event)"
         @close="closeCoverPicker"
+      />
+      <!-- 79 号票:同曲换词参考原曲的挑选面板(白名单仅音频),点选即绑、
+           再点取消(恰好 1 条);不做大小/时长守卫(上游裁决 4xx 透出)。 -->
+      <AssetPicker
+        v-else-if="relyricPickerNode"
+        :key="`relyric-picker-${relyricPickerNode.id}`"
+        title="挑选参考原曲"
+        :kind-whitelist="['audio']"
+        hint="点选挂为参考原曲(恰好 1 条),再点取消;同曲换词以它锁定旋律、按新歌词重唱。"
+        :selected-asset-ids="relyricPickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
+        @toggle="onRelyricPickToggle(relyricPickerNode.id, $event)"
+        @close="closeRelyricPicker"
       />
       <!-- 40 号票:预演台全屏编辑层(Teleport 到 body),场景改动走同一条
            scene-change 落盘链;渲染帧大图经编辑器级灯箱打开(灯箱入口收进

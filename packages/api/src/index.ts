@@ -570,7 +570,10 @@ export interface CanvasVideoRef {
 export interface CreateCanvasTaskInput {
   node_id: string
   kind: 'image' | 'video' | 'voice' | 'tts' | 'music' | 'sfx'
-  prompt: string
+  /** 风格描述(1–2000 字)。79 号票起可选:同曲换词(relyric)的风格
+   * prompt 选填,空 = 不送(上游是否吃 prompt 未证实,有则透传);其余
+   * kind 仍必填,由调用侧表单校验保证。 */
+  prompt?: string
   model: string
   size?: string
   ratio?: string
@@ -581,7 +584,7 @@ export interface CreateCanvasTaskInput {
   /** kind=video:期望时长(缺省 = 自动,厂商缺省时长);kind=sfx:音效
    * 时长(1–30 整数,61 号票;模型域如 Kling [3,10] 由上游裁)。 */
   seconds?: number
-  /** kind=voice 的创建表单事实(57 号票):mode/name/target_model + 
+  /** kind=voice 的创建表单事实(57 号票):mode/name/target_model +
    * design 的 voice_prompt 或 clone 的 sample_asset_id(素材行引用,
    * 服务端就地解出 http(s) 地址),preview_text 15–200 字。 */
   voice?: CreateVoiceTaskSpec
@@ -596,7 +599,9 @@ export interface CreateCanvasTaskInput {
   lyrics?: string
   /** kind=music 的翻唱参考(78 号票):可选单串,厂商 http(s) 地址或素材
    * 内容寻址路径(/api/assets/{id}/content,服务端解出真实地址落行);
-   * data: 内联拒绝;缺省不传 = 普通音乐/歌曲任务(62 号票行为不变)。 */
+   * data: 内联拒绝;缺省不传 = 普通音乐/歌曲任务(62 号票行为不变);
+   * 79 号票起同曲换词恒带(audio_ref 非空 + lyrics 必填 = Song Edit
+   * 语义,网关按渠道裁决落 mureka 或 400)。 */
   audio_ref?: string
 }
 
