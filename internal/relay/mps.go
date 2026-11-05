@@ -64,9 +64,10 @@ type mpsChannel struct {
 }
 
 // mpsView resolves the channel into MPS credentials. ok=false means the
-// channel is misconfigured (secrets or bucket never stored) — the caller
-// answers a 401-shaped refusal: no failover, no breaker debt, 与上游密钥
-// 失效同语义。
+// channel is misconfigured (secrets never stored) — the caller answers a
+// 401-shaped refusal: no failover, no breaker debt, 与上游密钥失效同语义。
+// bucket 可选:真 key 打样实证 MPS 不配 StoreCosParam 也出片(产物落平台
+// 桶、Describe 回签名 URL),配了才在提交体带 StoreCosParam。
 func mpsView(ch channel.Channel) (mpsChannel, bool) {
 	v := mpsChannel{
 		endpoint:  strings.TrimRight(ch.BaseURL, "/"),
@@ -78,7 +79,7 @@ func mpsView(ch channel.Channel) (mpsChannel, bool) {
 	if v.endpoint == "" {
 		v.endpoint = mpsDefaultEndpoint
 	}
-	if v.secretID == "" || v.secretKey == "" || v.bucket == "" || v.region == "" {
+	if v.secretID == "" || v.secretKey == "" || v.region == "" {
 		return v, false
 	}
 	return v, true
@@ -140,43 +141,60 @@ func mpsRefusal(message string) *UpstreamResponse {
 
 // musicSubmitBody is the gateway submit body's adaptor slice — model 已经
 // 换成上游 "ModelName ModelVersion" 串,prompt 是风格描述。AudioRef 是
-// 78 号票的翻唱参考:MPS 族没有参考音频通路(写死 is_instrumental:true,
-// 60 号票「MPS 不动」定案),检测到非空即按请求级失败显式拒绝 ——
-// 参考是翻唱的身份所在,静默丢参考是产物级错误,62 号票歌词静默降级
-// 边界在翻唱场景不可接受(78 号票定案 6)。
+// 78 号票的翻唱参考:真 key 打样反转(2026-11-05)后 MPS 域就是翻唱通路
+// —— 862 族文档明文「MiniMaxMusic 的翻唱功能使用 AudioInfos」,实测
+// 拒 Type 收 AudioUrl; instrumental/lyrics 随歌曲事实(62 号票纪律)随
+// 请求上送,MPS 域 AdditionalParameters 透传这两参(862 文档参数清单)。
 type musicSubmitBody struct {
-	Model    string `json:"model"`
-	Prompt   string `json:"prompt"`
-	AudioRef string `json:"audio_ref"`
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Instrumental *bool  `json:"instrumental"`
+	Lyrics       string `json:"lyrics"`
+	AudioRef     string `json:"audio_ref"`
 }
 
-// mpsAdditionalParameters renders the per-model fixed extras: 纯音乐物种
-// 定案下 MiniMaxMusic 需要 is_instrumental 写死 true(MPS 文档的官方示例
-// 参数);Mureka 走 instrumental_* 版本名、GL/EL 无需参数,一律不给。
-func mpsAdditionalParameters(modelName string) (string, bool) {
-	if strings.EqualFold(modelName, "MiniMaxMusic") {
-		return `{"is_instrumental":true}`, true
+// mpsAdditionalParameters renders the per-model extras for MPS 文生音乐:
+// MiniMaxMusic 收 is_instrumental(按请求,缺省 true)+ lyrics(非空才
+// 带);Mureka 只透传 lyrics(其纯音乐参数表达未证,is_instrumental 不
+// 送);GL/EL 无需参数,不给。与 vod 族同构(62 号票歌词纪律)。
+func mpsAdditionalParameters(modelName string, instrumental bool, lyrics string) (string, bool) {
+	isMiniMax := strings.EqualFold(modelName, "MiniMaxMusic")
+	isMureka := strings.EqualFold(modelName, "Mureka")
+	if !isMiniMax && !isMureka {
+		return "", false
 	}
-	return "", false
+	extras := map[string]any{}
+	if isMiniMax {
+		extras["is_instrumental"] = instrumental
+	}
+	if strings.TrimSpace(lyrics) != "" {
+		extras["lyrics"] = lyrics
+	}
+	if len(extras) == 0 {
+		return "", false
+	}
+	b, err := json.Marshal(extras)
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
 }
 
 // MusicSubmit translates one {"model","prompt"} body into a submitted MPS
 // CreateAigcAudioTask, returning the normalized {"task_id"} body. 上游名
 // 的空格前段是 ModelName、后段是 ModelVersion(缺版本时省略 ModelVersion,
-// MPS 取该模型的稳定版)。
+// MPS 取该模型的稳定版)。翻唱参考(audio_ref 非空)走 AudioInfos 单字段
+// AudioUrl 形状 —— 78 号票真 key 打样后 MPS 域是翻唱通路。
 func (a *mpsAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payload []byte) (*UpstreamResponse, error) {
 	var req musicSubmitBody
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: mpsErrorBody("tencent mps: request body is not a valid JSON object")}, nil
 	}
-	// 78 号票定案 6:带参考的请求打到 MPS 族 = 配置错位(同名模型映射在
-	// 无参考通路的渠道),按请求级失败拒绝 —— sentinel 错误由
-	// CreateMusicGeneration 归为不换道、不记熔断账的 400
-	// invalid_request_error,不静默丢参考。
-	if strings.TrimSpace(req.AudioRef) != "" {
-		return nil, errAudioRefUnsupported
-	}
+	// 78 号票定案 6(真 key 打样反转):MPS 族就是翻唱通路,AudioRef
+	// 非空时提交体带 AudioInfos([{AudioUrl:…}] —— MPS 域
+	// AigcAudioReferenceAudioInfo 的单字段形状,实测拒 Type 收 AudioUrl;
+	// 无 audio_ref 的提交体逐字节不变(60/62 号票既有行为零改动)。
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
@@ -191,25 +209,38 @@ func (a *mpsAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payloa
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: mpsErrorBody("tencent mps: model mapping is empty")}, nil
 	}
+	instrumental := true
+	if req.Instrumental != nil {
+		instrumental = *req.Instrumental
+	}
 
 	v, ok := mpsView(ch)
 	if !ok {
-		return mpsRefusal("tencent-mps 渠道缺少 secret_id/secret_key/bucket/region,请在管理端补齐凭据与输出桶"), nil
+		return mpsRefusal("tencent-mps 渠道缺少 secret_id/secret_key/region,请在管理端补齐凭据"), nil
 	}
 	mpsReq := map[string]any{
 		"ModelName": modelName,
 		"SceneType": mpsSceneTypeMusic,
 		"Prompt":    prompt,
-		"StoreCosParam": map[string]any{
+	}
+	// 输出桶可选:真 key 打样实证 MPS 不配 StoreCosParam 也出片(产物落
+	// 平台桶、Describe 回带签名 URL,转存链照常消费);配了才带键。
+	if v.bucket != "" {
+		mpsReq["StoreCosParam"] = map[string]any{
 			"CosBucketName":   v.bucket,
 			"CosBucketRegion": v.region,
-		},
+		}
 	}
 	if modelVersion != "" {
 		mpsReq["ModelVersion"] = modelVersion
 	}
-	if extra, ok := mpsAdditionalParameters(modelName); ok {
+	if extra, ok := mpsAdditionalParameters(modelName, instrumental, req.Lyrics); ok {
 		mpsReq["AdditionalParameters"] = extra
+	}
+	// 78 号票翻唱参考:AudioInfos 聚合的参考音频通路(MPS 域形状,单字段
+	// AudioUrl)。非空才带键 —— 无 audio_ref 的提交体逐字节不变。
+	if ref := strings.TrimSpace(req.AudioRef); ref != "" {
+		mpsReq["AudioInfos"] = []map[string]any{{"AudioUrl": ref}}
 	}
 	// 输出格式定死 mp3:产物转存的扩展名/嗅探不依赖 Describe 应答(上游
 	// 不保证报格式),可预测的容器让「成功即转存」的链路无歧义。

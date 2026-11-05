@@ -1,10 +1,12 @@
 package relay_test
 
-// 78 号票(歌曲翻唱)网关契约的端到端测试:/v1/audio/music 的可选
-// audio_ref —— http(s) 原样透传、素材内容寻址路径经素材表解出真实地址
-// 并改写请求体(adaptor 拿到的恒是上游可拉取地址)、data: 内联与其余形状
-// 在调度与预扣之前 400;翻唱参考打到 mps 族渠道 = 请求级 400
-// invalid_request_error(不换道、不记熔断账、预扣原退、不留用量行)。
+// 78 号票(歌曲翻唱)网关契约的端到端测试,真 key 打样反转后的形态:
+// audio_ref http(s) 原样透传、素材内容寻址路径经素材表解出真实地址并
+// 改写请求体(adaptor 拿到的恒是上游可拉取地址)、data: 内联与其余形状
+// 在调度与预扣之前 400;翻唱通路在 MPS 族渠道(AudioInfos 单字段
+// AudioUrl —— 实测拒 Type 收 AudioUrl),翻唱参考打到 vod 族渠道 = 请求
+// 级 400 invalid_request_error(不换道、不记熔断账、预扣原退、不留用量
+// 行;VOD 域收下 Type+Url 结构却不执行翻唱,静默丢参考不可接受)。
 // 缺省不传 = 现状行为逐字节不变。共享 relay_test.go 的 MySQL 环境,
 // 基础设施不可达时自动 skip。
 
@@ -38,12 +40,13 @@ func (e *relayEnv) wireCoverResolution(t *testing.T) {
 	e.handlers.PublicBaseURL = func(ctx context.Context) string { return "https://cdn.example" }
 }
 
-// cover 提交端到端:audio_ref http(s) → VOD 收到 AudioInfos
-// [{Type:"Url",Url:…}];对照面不带 audio_ref 的提交体不含 AudioInfos 键。
-func TestRelayVODMusicCoverCarriesAudioInfos(t *testing.T) {
+// cover 提交端到端:audio_ref → MPS 收到 AudioInfos
+// [{AudioUrl:…}] + 歌曲事实;对照面不带 audio_ref 的提交体不含
+// AudioInfos 键且 is_instrumental 缺省 true(逐字节不变)。
+func TestRelayMPSMusicCoverCarriesAudioUrl(t *testing.T) {
 	env := newRelayEnv(t, nil)
-	vendor := newFakeVODVendor(t)
-	env.seedVODMusicChannel(t, vendor.server.URL, "vod-minimax-music-3.0-cover", "MiniMaxMusic 3.0")
+	vendor := newFakeMPSVendor(t)
+	env.seedMPSChannelPrio(t, vendor.server.URL, "vod-minimax-music-3.0-cover", "MiniMaxMusic 3.0", 10)
 	_, full := env.seedKey(t, 2_000_000)
 	env.seedMusicPrice(t, "vod-minimax-music-3.0-cover")
 
@@ -54,12 +57,16 @@ func TestRelayVODMusicCoverCarriesAudioInfos(t *testing.T) {
 	}
 	body := vendor.lastSubmitBody()
 	for _, want := range []string{
-		`"AudioInfos":[{"Type":"Url","Url":"https://assets.example/original.mp3"}]`,
-		`"AdditionalParameters":"{\"is_instrumental\":false,\"lyrics\":\"夜色慢慢降落\"}"`,
+		`"AudioInfos":[{"AudioUrl":"https://assets.example/original.mp3"}]`,
+		// AdditionalParameters 是 JSON 字符串字段,内层引号带转义。
+		`{\"is_instrumental\":false,\"lyrics\":\"夜色慢慢降落\"}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("cover submit body missing %s:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "audio_ref") {
+		t.Errorf("cover submit body leaked audio_ref:\n%s", body)
 	}
 
 	// 对照面:不带 audio_ref 的提交体不含 AudioInfos 键(逐字节不变)。
@@ -76,8 +83,8 @@ func TestRelayVODMusicCoverCarriesAudioInfos(t *testing.T) {
 // 都在调度与预扣之前 400(不拨上游、不动账)。
 func TestRelayMusicAudioRefGuards(t *testing.T) {
 	env := newRelayEnv(t, nil)
-	vendor := newFakeVODVendor(t)
-	env.seedVODMusicChannel(t, vendor.server.URL, "cover-m", "MiniMaxMusic 3.0")
+	vendor := newFakeMPSVendor(t)
+	env.seedMPSChannelPrio(t, vendor.server.URL, "cover-m", "MiniMaxMusic 3.0", 10)
 	key, full := env.seedKey(t, 2_000_000)
 	env.seedMusicPrice(t, "cover-m")
 	env.wireCoverResolution(t)
@@ -115,18 +122,18 @@ func TestRelayMusicAudioRefGuards(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("http(s) audio_ref status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"Url":"https://assets.example/original.mp3"`) {
+	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"AudioUrl":"https://assets.example/original.mp3"`) {
 		t.Errorf("http(s) audio_ref body = %s, want the verbatim address", body)
 	}
 }
 
 // 内容寻址路径的服务端解引用:自有存储公网地址(object_key + public base)
-// 优先,请求体就地改写,VOD 收到的是解出后的地址;素材行只有厂商原址时
+// 优先,请求体就地改写,MPS 收到的是解出后的地址;素材行只有厂商原址时
 // 原址回落;kind 非 audio 的素材行拒收。
 func TestRelayMusicAudioRefResolvesContentPath(t *testing.T) {
 	env := newRelayEnv(t, nil)
-	vendor := newFakeVODVendor(t)
-	env.seedVODMusicChannel(t, vendor.server.URL, "cover-m", "MiniMaxMusic 3.0")
+	vendor := newFakeMPSVendor(t)
+	env.seedMPSChannelPrio(t, vendor.server.URL, "cover-m", "MiniMaxMusic 3.0", 10)
 	_, full := env.seedKey(t, 2_000_000)
 	env.seedMusicPrice(t, "cover-m")
 	env.wireCoverResolution(t)
@@ -138,7 +145,7 @@ func TestRelayMusicAudioRefResolvesContentPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("content-path submit status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"Url":"https://cdn.example/uploads/20261104/abc.mp3"`) {
+	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"AudioUrl":"https://cdn.example/uploads/20261104/abc.mp3"`) {
 		t.Errorf("content-path body = %s, want the resolved public address", body)
 	}
 	if strings.Contains(vendor.lastSubmitBody(), "/api/assets/") {
@@ -152,7 +159,7 @@ func TestRelayMusicAudioRefResolvesContentPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("vendor-url fallback status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"Url":"https://vendor.example/song-master.mp3"`) {
+	if body := vendor.lastSubmitBody(); !strings.Contains(body, `"AudioUrl":"https://vendor.example/song-master.mp3"`) {
 		t.Errorf("fallback body = %s, want the vendor address", body)
 	}
 
@@ -168,15 +175,11 @@ func TestRelayMusicAudioRefResolvesContentPath(t *testing.T) {
 	}
 }
 
-// 翻唱参考打到 mps 族渠道 = 请求级 400 invalid_request_error:不换道
-// (voltage 候选不被尝试)、预扣原退、不留用量行、不记熔断账(下一拍
-// 同渠道的正常请求照常受理)。
-func TestRelayMPSMusicRefusesAudioRefAsRequestError(t *testing.T) {
+// 翻唱参考打到 vod 族渠道 = 请求级 400 invalid_request_error:预扣原退、
+// 不留用量行、不记熔断账(下一拍同渠道的正常请求照常受理)。
+func TestRelayVODMusicRejectsAudioRefAsRequestError(t *testing.T) {
 	env := newRelayEnv(t, nil)
-	mps := newFakeMPSVendor(t)
 	vod := newFakeVODVendor(t)
-	// mps 优先级更高,若换道则 vod 会被尝试 —— 不换道语义由 vod 零提交钉住。
-	env.seedMPSChannelPrio(t, mps.server.URL, "mix-cover", "MiniMaxMusic 3.0", 10)
 	env.seedVODMusicChannel(t, vod.server.URL, "mix-cover", "MiniMaxMusic 3.0")
 	key, full := env.seedKey(t, 2_000_000)
 	env.seedMusicPrice(t, "mix-cover")
@@ -189,12 +192,9 @@ func TestRelayMPSMusicRefusesAudioRefAsRequestError(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "参考翻唱") {
 		t.Errorf("body = %s, want the cover guidance copy", w.Body.String())
 	}
-	// 不换道:vod 候选没被尝试;mps 也没被拨号(adaptor 本地拒绝)。
+	// adaptor 本地拒绝,vod 没被拨号。
 	if vodSubmits := len(vod.bodies); vodSubmits != 0 {
-		t.Errorf("vod vendor submits = %d, want 0 (request-level refusal does not fail over)", vodSubmits)
-	}
-	if mpsSubmits, _ := mps.counts(); mpsSubmits != 0 {
-		t.Errorf("mps vendor submits = %d, want 0 (refused at the adaptor seam)", mpsSubmits)
+		t.Errorf("vod vendor submits = %d, want 0 (refused at the adaptor seam)", vodSubmits)
 	}
 	// 预扣原退,不留用量行。
 	if balance := env.balanceOf(t, key.ID); balance != 2_000_000 {
@@ -214,8 +214,8 @@ func TestRelayMPSMusicRefusesAudioRefAsRequestError(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("follow-up plain submit status = %d body %s, want 200", w.Code, w.Body.String())
 	}
-	if mpsSubmits, _ := mps.counts(); mpsSubmits != 1 {
-		t.Errorf("mps vendor submits = %d, want 1 (channel not breaker-tripped)", mpsSubmits)
+	if vodSubmits := len(vod.bodies); vodSubmits != 1 {
+		t.Errorf("vod vendor submits = %d, want 1 (channel not breaker-tripped)", vodSubmits)
 	}
 }
 

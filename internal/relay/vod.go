@@ -685,11 +685,11 @@ type vodMusicRequest struct {
 	Instrumental *bool  `json:"instrumental"`
 	Lyrics       string `json:"lyrics"`
 	// AudioRef 是翻唱参考(78 号票):网关已解出上游可拉取的 http(s)
-	// 地址(直连调用方的素材内容寻址路径在 prepareMusic 就地改写)。非空
-	// 时提交体带 AudioInfos([{Type:"Url",Url:…}] —— VOD 域
-	// AigcAudioReferenceAudioInfo 的 Type+Url 结构,真 key 打样已定形;
-	// AudioUrl 是 MPS 域形状,VOD 判 UnknownParameter);空串 = 不带
-	// 键,提交体与 62 号票形态逐字节一致。
+	// 地址。真 key 打样反转(2026-11-05):VOD 域的 music 管道收下
+	// Type+Url 结构却不执行翻唱(DescribeTaskDetail 回显 Input 完整含
+	// AudioInfos,产物仍自重新编曲;AudioUrl 形状在本域判
+	// UnknownParameter)—— 参考是翻唱的身份所在,静默丢参考不可接受,
+	// 非空即按请求级失败拒绝(翻唱通路在 MPS 域,见 errAudioRefUnsupported)。
 	AudioRef string `json:"audio_ref"`
 }
 
@@ -751,6 +751,12 @@ func (a *vodAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payloa
 	if req.Instrumental != nil {
 		instrumental = *req.Instrumental
 	}
+	// 78 号票翻唱参考:VOD 域无翻唱通路(见 AudioRef 字段注),非空即
+	// 请求级拒绝 —— 不静默丢参考;翻唱走 MPS 族渠道(errAudioRefUnsupported
+	// 由 CreateMusicGeneration 归一为 400,不换道、不记熔断账)。
+	if strings.TrimSpace(req.AudioRef) != "" {
+		return nil, errAudioRefUnsupported
+	}
 
 	audioReq := map[string]any{
 		"ModelName":    modelName,
@@ -763,15 +769,6 @@ func (a *vodAdaptor) MusicSubmit(ctx context.Context, ch channel.Channel, payloa
 	}
 	if extra, ok := vodMusicAdditionalParameters(modelName, instrumental, req.Lyrics); ok {
 		audioReq["AdditionalParameters"] = extra
-	}
-	// 78 号票翻唱参考:AudioInfos 聚合的参考音频通路(MPS 官方文档明文
-	// 「MiniMaxMusic的翻唱功能使用 AudioInfos」)。VOD 域元素是
-	// AigcAudioReferenceAudioInfo 的 Type+Url 结构(Type=Url 走外网可访问
-	// 地址),单字段 AudioUrl 是 MPS 域形状 —— 真 key 打样回
-	// UnknownParameter(AudioInfos.0.AudioUrl)后单点改定。非空才带键
-	// —— 无 audio_ref 的提交体逐字节不变(60/62 号票既有行为零改动)。
-	if ref := strings.TrimSpace(req.AudioRef); ref != "" {
-		audioReq["AudioInfos"] = []map[string]any{{"Type": "Url", "Url": ref}}
 	}
 	if v, ok := vodView(ch); ok && v.subAppID != 0 {
 		audioReq["SubAppId"] = v.subAppID

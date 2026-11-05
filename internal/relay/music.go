@@ -65,12 +65,13 @@ type musicRequest struct {
 }
 
 // errAudioRefUnsupported is the adaptor-seam refusal for a cover reference
-// aimed at a channel family without a reference-audio path(78 号票定案 6:
-// mps 族 MusicSubmit 检测到 audio_ref 非空即拒)—— CreateMusicGeneration
-// 归为请求级失败:不换道、不记熔断账、预扣原退,客户端答 400
-// invalid_request_error(model_not_priced 同构先例)。错误文案即用户可见
-// 指引,按票面原文落(指路 cover 系公开名)。
-var errAudioRefUnsupported = errors.New("当前模型不支持参考翻唱,请选择 cover 系公开模型(如 vod-minimax-music-3.0-cover)")
+// aimed at the VOD family(78 号票定案 6 经真 key 打样反转:翻唱参考通路
+// 落地在 MPS 域 —— 862 族文档明文「MiniMaxMusic 的翻唱功能使用
+// AudioInfos」且实测拒 Type 收 AudioUrl;VOD 域收下 Type+Url 结构却不
+// 执行翻唱,参考被静默忽略)。CreateMusicGeneration 归为请求级失败:
+// 不换道、不记熔断账、预扣原退,客户端答 400 invalid_request_error
+// (model_not_priced 同构先例)。错误文案即用户可见指引。
+var errAudioRefUnsupported = errors.New("当前渠道族(VOD)不支持参考翻唱,请将 cover 系公开名配置在 tencent-mps 渠道")
 
 // maxAudioRefRunes bounds the optional cover reference address(78 号票:
 // URL 长度上限对齐既有 runes 上限 —— 与 /v1/videos 的 maxImageURLRunes
@@ -150,8 +151,8 @@ func (h *Handlers) CreateMusicGeneration(c *gin.Context) {
 
 		upstream, err := h.adaptorFor(at.ch).MusicSubmit(ctx, at.ch, at.payload)
 		if errors.Is(err, errAudioRefUnsupported) {
-			// 78 号票:参考翻唱打到无参考通路的渠道族(mps 族)—— 请求级
-			// 失败:不换道、不记熔断账、预扣原退,文案指路 cover 公开名。
+			// 78 号票(真 key 打样反转):参考翻唱打到 VOD 族 —— 请求级
+			// 失败:不换道、不记熔断账、预扣原退,文案指路 tencent-mps 渠道。
 			run.requestRefused(at, err)
 			return
 		}
