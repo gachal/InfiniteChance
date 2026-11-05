@@ -303,14 +303,15 @@ curl -X PUT $GATEWAY/admin/prices -H "Authorization: Bearer $TOKEN" \
 # 78 号票翻唱参数面(同一提交端点):audio_ref(可选单串,翻唱参考音频)
 # —— 厂商 http(s) 地址或素材内容寻址路径(/api/assets/{id}/content,网关
 # 经素材表解出真实地址,要求素材行 kind=audio;data: 内联 400);缺省不传
-# = 现状行为逐字节不变。audio_ref 非空时 VOD adaptor 把它译成提交体的
-# AudioInfos([{Type:"Url",Url:…}],聚合的参考音频通路;VOD 域
-# AigcAudioReferenceAudioInfo 结构,单字段 AudioUrl 是 MPS 域形状、上游判
-# UnknownParameter);audio_ref 打到 MPS 侧
-# 模型(非 vod- 前缀公开名映射在 tencent-mps 渠道)→ 请求级 400
-# invalid_request_error(不换道、不记熔断账、预扣原退),文案指路 cover 系
-# 公开名 —— 参考是翻唱的身份所在,不静默丢参考。audio_ref 只随请求上送,
-# 不落网关任务行(music_tasks 零迁移)。
+# = 现状行为逐字节不变。真 key 打样反转(2026-11-05):翻唱参考通路在
+# MPS 域 —— audio_ref 非空时 tencent-mps 渠道的 adaptor 把它译成提交体的
+# AudioInfos([{AudioUrl:…}],单字段形状,实测拒 Type 收 AudioUrl;MPS
+# AdditionalParameters 同样透传 lyrics/is_instrumental);audio_ref 打到
+# tencent-vod 渠道 → 请求级 400 invalid_request_error(不换道、不记熔断
+# 账、预扣原退),文案指路把 cover 公开名配到 tencent-mps 渠道 —— VOD 域
+# 收下 Type+Url 结构却不执行翻唱(参考被静默忽略),参考是翻唱的身份
+# 所在,不静默丢参考。audio_ref 只随请求上送,不落网关任务行(music_tasks
+# 零迁移)。
 
 # 提交配乐任务(风格描述 1-2000 字,对齐 MPS Prompt 上限)
 curl -X POST $GATEWAY/v1/audio/music \
@@ -348,8 +349,9 @@ curl $GATEWAY/v1/audio/music/tasks/mt_1a2b… -H "Authorization: Bearer $GWKEY"
 #   失败时 {"status":"failed","error":{"message":"…厂商原因…"}}
 
 # 提交翻唱任务(78 号票:audio_ref 携带参考原曲;公开名 vod-minimax-music-
-# 3.0-cover 独立于普通歌曲名,模型映射 MiniMaxMusic 3.0;翻唱恒人声,
-# lyrics 选填 —— 留空由模型自动写词、非原曲歌词)
+# 3.0-cover 独立于普通歌曲名,须映射在 **tencent-mps 渠道**(翻唱通路所在
+# 域)→ 上游 MiniMaxMusic 3.0;翻唱恒人声,lyrics 选填 —— 留空由模型自动
+# 写词、非原曲歌词)
 curl -X POST $GATEWAY/v1/audio/music \
   -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
   -d '{
@@ -362,13 +364,14 @@ curl -X POST $GATEWAY/v1/audio/music \
 #   audio_ref 也可带素材内容寻址路径(网关解出真实地址后上游拿到的恒是
 #   可拉取地址):"audio_ref":"/api/assets/8/content"
 
-# 参考误落 MPS 侧模型:请求级 400,不换道不记熔断账、预扣原退
+# 参考误落 VOD 侧渠道:请求级 400,不换道不记熔断账、预扣原退(VOD 域
+# 收下 Type+Url 结构却不执行翻唱,静默丢参考不可接受)
 curl -X POST $GATEWAY/v1/audio/music \
   -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
-  -d '{"model":"minimax-music","prompt":"cover","audio_ref":"https://assets.example/original-song.mp3"}'
+  -d '{"model":"vod-minimax-music-3.0","prompt":"cover","audio_ref":"https://assets.example/original-song.mp3"}'
 # → 400 {"error":{"code":"invalid_request_error","type":"invalid_request_error",
-#    "message":"当前模型不支持参考翻唱,请选择 cover 系公开模型(如
-#    vod-minimax-music-3.0-cover)"}}
+#    "message":"当前渠道族(VOD)不支持参考翻唱,请将 cover 系公开名配置在
+#    tencent-mps 渠道"}}
 #   audio_ref 为 data: 内联 URI 同码拒绝(12 号票契约)。
 
 # 配乐模型目录:启用 + music 能力渠道的映射并集 ∩ 按次轨配价,价格随行
