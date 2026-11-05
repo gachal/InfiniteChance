@@ -1,9 +1,10 @@
 /**
- * 配乐/歌曲/翻唱生成的纯逻辑(60 号票;62 号票追加歌曲开关与歌词;
- * 78 号票追加翻唱表单校验):创作表单校验与按次预估价。组件只做渲染与
- * 交互,这里集中可单测的判定 —— 与 voice.ts 同族。上限与服务端同源
- * (internal/relay/music.go 与 canvastask/handler.go 的 2000 字 prompt /
- * 3500 字歌词),改一边要同步另一边。
+ * 配乐/歌曲/翻唱/同曲换词生成的纯逻辑(60 号票;62 号票追加歌曲开关与
+ * 歌词;78 号票追加翻唱表单校验;79 号票追加同曲换词表单校验,词必填、
+ * 风格选填):创作表单校验与按次预估价。组件只做渲染与交互,这里集中可
+ * 单测的判定 —— 与 voice.ts 同族。上限与服务端同源(internal/relay/
+ * music.go 与 canvastask/handler.go 的 2000 字 prompt / 3500 字歌词),
+ * 改一边要同步另一边。
  */
 import type { ModelPriceSummary } from '@infinitechance/api'
 
@@ -90,6 +91,44 @@ export function validateCoverForm(form: CoverFormInput): string | null {
   }
   const lyrics = form.lyrics ?? ''
   if ([...lyrics].length > MAX_LYRICS_CHARS) {
+    return `歌词最多 ${MAX_LYRICS_CHARS} 个字符`
+  }
+  return null
+}
+
+/** 同曲换词创作表单(79 号票,cover 形态的姊妹分叉):refAssetId 是参考
+ * 原曲素材行 id(必填恰好 1 条 —— 无参考无旋律锁定,参考是身份所在;
+ * 来源 = 本机上传 + 素材库挑选双入口),lyrics 是**新歌词,必填**(trim
+ * 后非空,≤3500;同曲换词按新词重唱,词是身份必需,无「自动写词」,
+ * 与翻唱的选填歌词区分),prompt 是风格描述**选填**(非空时 1–2000
+ * runes 照 music 上限;空 = 不送风格描述),model 是 /music-models 目录
+ * 的公开模型名(全量不过滤,选非 mureka 名由网关 400 兜底)。 */
+export interface RelyricFormInput {
+  refAssetId: number
+  prompt: string
+  model: string
+  lyrics?: string
+}
+
+/** 首个校验错误的用户文案;null = 通过(文案与后端 400 同口径)。参考
+ * 音频不做大小/时长守卫(79 号票定案 8 照 78 号票先例:硬守卫可能误拒,
+ * 上游裁决 4xx 透出)。 */
+export function validateRelyricForm(form: RelyricFormInput): string | null {
+  if (!(form.refAssetId > 0)) {
+    return '请先选择参考音频(必填,恰好 1 条)'
+  }
+  const prompt = form.prompt.trim()
+  if (prompt !== '' && [...prompt].length > MAX_MUSIC_PROMPT_RUNES) {
+    return `风格描述最多 ${MAX_MUSIC_PROMPT_RUNES} 个字符`
+  }
+  if (form.model.trim() === '') {
+    return '请选择同曲换词模型'
+  }
+  const lyrics = (form.lyrics ?? '').trim()
+  if (lyrics === '') {
+    return '新歌词不能为空'
+  }
+  if ([...(form.lyrics ?? '')].length > MAX_LYRICS_CHARS) {
     return `歌词最多 ${MAX_LYRICS_CHARS} 个字符`
   }
   return null
