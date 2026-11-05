@@ -376,6 +376,7 @@ function submitForm(): void {
             素材库挑选
           </button>
           <input
+            ref="refInput"
             class="sample-file"
             type="file"
             accept="audio/*"

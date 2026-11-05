@@ -423,6 +423,7 @@ const previewBroken = ref(false)
               素材库挑选
             </button>
             <input
+              ref="sampleInput"
               class="sample-file"
               type="file"
               accept="audio/*"
