@@ -5,6 +5,7 @@ import type { CanvasTask } from '@infinitechance/api'
 import {
   canInsertRecord,
   formatRecordTime,
+  isPanoramaRecord,
   recordKindLabel,
   recordStatusLabel,
   recordThumbURL,
@@ -90,6 +91,21 @@ describe('recordStatusLabel / recordKindLabel', () => {
     expect(recordKindLabel('video')).toBe('视频')
     expect(recordKindLabel('voice')).toBe('音色')
     expect(recordKindLabel('tts')).toBe('台词')
+  })
+})
+
+describe('isPanoramaRecord(81 号票:全景徽章)', () => {
+  it('scene_type 非空(3d_panorama)出全景徽章', () => {
+    expect(isPanoramaRecord(task({ scene_type: '3d_panorama' }))).toBe(true)
+  })
+
+  it('scene_type 空串/缺省 = 普通生图,不出徽章', () => {
+    expect(isPanoramaRecord(task({}))).toBe(false)
+    expect(isPanoramaRecord(task({ scene_type: '' }))).toBe(false)
+  })
+
+  it('徽章只看 scene_type,kind/状态无关(排队中的全景行也标)', () => {
+    expect(isPanoramaRecord(task({ scene_type: '3d_panorama', kind: 'image', status: 'running' }))).toBe(true)
   })
 })
 

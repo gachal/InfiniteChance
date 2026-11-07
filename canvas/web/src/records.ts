@@ -60,6 +60,13 @@ export function recordKindLabel(kind: string): string {
   }
 }
 
+/** 全景行判定(81 号票定案 4):任务行回显 scene_type 非空即出「全景」
+ * 徽章(当前仅 '3d_panorama';网关侧其他值 400,到不了任务行)。只看
+ * 该字段,kind/状态无关 —— 排队中的全景行同样标。 */
+export function isPanoramaRecord(task: Pick<CanvasTask, 'scene_type'>): boolean {
+  return (task.scene_type ?? '') !== ''
+}
+
 /** 音频行(57 号票 tts;60 号票 music;61 号票 sfx):成功行有 kind=audio
  * 素材产物,行内直接给 <audio> 试听(素材面板同款;voice 行的产物在台账
  * 试听,不走这里)。 */
