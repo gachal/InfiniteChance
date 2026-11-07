@@ -15,9 +15,9 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
     expect(CONTEXT_MENU_SECTIONS.map((s) => s.label)).toEqual(['创作', '规划', '组织', '面板'])
   })
 
-  it('飞出条目规模:创作 10 / 规划 4 / 组织 1 / 面板 4(共 19;76 号票 17 条原样随迁,78 号票创作段增翻唱,79 号票增同曲换词)', () => {
-    expect(CONTEXT_MENU_SECTIONS.map((s) => s.items.length)).toEqual([10, 4, 1, 4])
-    expect(flatItems.length).toBe(19)
+  it('飞出条目规模:创作 11 / 规划 4 / 组织 1 / 面板 4(共 20;76 号票 17 条原样随迁,78 号票创作段增翻唱,79 号票增同曲换词,81 号票增全景)', () => {
+    expect(CONTEXT_MENU_SECTIONS.map((s) => s.items.length)).toEqual([11, 4, 1, 4])
+    expect(flatItems.length).toBe(20)
   })
 
   it('每个分区入口的飞出条目非空(空飞出 = 死入口)', () => {
@@ -26,7 +26,7 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
     }
   })
 
-  it('创作飞出条目集与序:Agent/图片/视频/预演台/角色/音色/配乐/音效/翻唱/同曲换词(音效在配乐后、翻唱随其后、同曲换词压轴,78/79 号票第三、第四音频入口)', () => {
+  it('创作飞出条目集与序:Agent/图片/视频/预演台/角色/音色/配乐/音效/翻唱/同曲换词/全景(音效在配乐后、翻唱随其后、同曲换词随后,全景第 11 条压轴,78/79/81 号票)', () => {
     const create = CONTEXT_MENU_SECTIONS[0]!
     expect(create.items.map((i) => i.id)).toEqual([
       'agent',
@@ -39,6 +39,7 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
       'sfx',
       'cover',
       'relyric',
+      'panorama',
     ])
     expect(create.items.map((i) => i.label)).toEqual([
       'Agent',
@@ -51,6 +52,7 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
       '音效',
       '翻唱',
       '同曲换词',
+      '全景',
     ])
   })
 
@@ -101,6 +103,14 @@ describe('CONTEXT_MENU_SECTIONS 两级结构(77 号票:一级分区入口 + 飞�
     const relyric = create.items.find((i) => i.id === 'relyric')!
     expect(relyric.command).toEqual({ kind: 'add-node', nodeType: 'audio', dataPatch: { source: 'relyric' } })
     expect(relyric.title).toContain('同曲换词')
+  })
+
+  it('全景命令 = panorama 节点不带 dataPatch(81 号票:创作段第 11 条,创作态表单在节点上)', () => {
+    const create = CONTEXT_MENU_SECTIONS[0]!
+    const panorama = create.items.find((i) => i.id === 'panorama')!
+    expect(panorama.command).toEqual({ kind: 'add-node', nodeType: 'panorama' })
+    expect(panorama.label).toBe('全景')
+    expect(panorama.title).toContain('全景')
   })
 
   it('全部飞出条目不带「+」前缀、文案非空且各带 tone 配色与 title 提示', () => {

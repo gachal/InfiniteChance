@@ -548,6 +548,10 @@ export interface CanvasTask {
    * cover_strength(0–1);未携带(走上游缺省)或其余 kind 为空。编辑器
    * 据此补写音频节点的 strength 元数据(缺空缺才补,已带不覆盖)。 */
   cover_strength?: number
+  /** kind=image 的场景类型(81 号票):'3d_panorama' = 全景任务(腾讯原生
+   * 全景通路,prompt 恒空串、参考图恰好 1);空/缺省 = 普通生图。生成记录
+   * 面板按非空出「全景」徽章,编辑器据此区分全景回填链。 */
+  scene_type?: string
   created_at: string
   updated_at: string
 }
@@ -611,6 +615,11 @@ export interface CreateCanvasTaskInput {
    * 同曲换词恒显式送(缺省 0.55 也送 —— 数值型没有空串歧义),普通
    * 音乐/歌曲任务不传;越界网关 400(invalid_request_error)。 */
   cover_strength?: number
+  /** kind=image 的场景类型(81 号票):当前仅收 '3d_panorama'(腾讯原生
+   * 全景通路:prompt 恒空串 —— 上游不吃提示词;image_urls 恰好 1 条参考
+   * 场景图;上游固定输出 8K 2:1);其他值网关 400,缺省不传 = 普通生图,
+   * 行为逐字节不变。 */
+  scene_type?: string
 }
 
 /** 音色创建任务的表单(57 号票)。 */

@@ -14,6 +14,7 @@ import {
   canInsertRecord,
   formatRecordTime,
   isAudioRecord,
+  isPanoramaRecord,
   RECORDS_LIMIT,
   recordKindLabel,
   recordStatusLabel,
@@ -148,6 +149,11 @@ function statusClass(task: CanvasTask): string {
         <div class="meta">
           <span class="row-1">
             <span class="kind">{{ recordKindLabel(task.kind) }}</span>
+            <span
+              v-if="isPanoramaRecord(task)"
+              class="bg-flag pano-flag"
+              title="全景任务(81 号票,scene_type=3d_panorama)"
+            >全景</span>
             <span
               v-if="task.background === 'transparent'"
               class="bg-flag"
@@ -317,6 +323,12 @@ function statusClass(task: CanvasTask): string {
   border-radius: var(--r-sm);
   background: rgba(var(--accent-rgb), 0.18);
   color: var(--indigo-soft);
+}
+
+/* 81 号票:全景任务徽章,青色系与全景节点的 sky tone/minimap 配色同族。 */
+.pano-flag {
+  background: rgba(103, 232, 249, 0.16);
+  color: #67e8f9;
 }
 
 .status {
