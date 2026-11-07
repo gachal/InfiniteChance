@@ -137,6 +137,23 @@ curl -X POST $GATEWAY/v1/images/generations \
 # 数组顺序即参考序,提示词「图N」按下标对应;计费与文生图同轨按张。
 ```
 
+全景生图(81 号票):`scene_type` 为可选参数,当前只收 `"3d_panorama"`
+(其他值 400;缺省不传 = 普通生图)。全景走腾讯原生全景模型(VOD 域
+`Hunyuan 3d_2.0`),参考图即身份、prompt 可省(上游不吃提示词),n 恒 1:
+
+```bash
+curl -X POST $GATEWAY/v1/images/generations \
+  -H "Authorization: Bearer $GWKEY" -H "Content-Type: application/json" \
+  -d '{
+    "model": "hunyuan-world-panorama",        # 公开名,渠道映射到 "Hunyuan 3d_2.0"
+    "scene_type": "3d_panorama",
+    "n": 1,                                    # 全景恒 1(携带 n>1 400 拒)
+    "image": "https://your-bucket.example.com/scene.png"
+  }'
+# → 8K 2:1 球面全景(7680×3840);生成分钟级,内部提交+轮询同步封装;
+#   参考图须为场景图,人像/物体会被上游场景审核拒绝(错误文案透传)。
+```
+
 ### 3.6 生图(图生图,edits,multipart)
 
 ```bash
@@ -147,6 +164,14 @@ curl -X POST $GATEWAY/v1/images/edits \
   -F size=1024x1024 \
   -F image=@./reference.png
 # → 同 generations 响应形状;tencent-vod 渠道会把上传图片转成 Base64 参考图。
+
+# 全景生图同样走 edits(81 号票):scene_type 作为文本字段,multipart 形态
+# 的参考图经 Base64 直上(打样已证 SceneType+Base64 组合受理);prompt 可省。
+curl -X POST $GATEWAY/v1/images/edits \
+  -H "Authorization: Bearer $GWKEY" \
+  -F model=hunyuan-world-panorama \
+  -F scene_type=3d_panorama \
+  -F image=@./scene.png
 ```
 
 ### 3.7 生视频(异步任务:提交 → 轮询 → 取消)
