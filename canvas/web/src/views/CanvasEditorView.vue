@@ -43,6 +43,7 @@ import {
   type MediaNodeData,
   type NameNodeData,
   type NamePage,
+  type PanoramaNodeData,
   type PrevizNodeData,
   type ScriptNodeData,
   type StoryboardCut,
@@ -92,6 +93,7 @@ import {
 import { legalEdgeLabels } from '../connection'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import { RELYRIC_STRENGTH_DEFAULT } from '../music'
+import { PANO_SCENE_TYPE, panoramaSyncPatch, uploadPanoramaCapture } from '../panorama'
 import {
   appendComposerRef,
   appendNodeDraftRef,
@@ -148,6 +150,7 @@ import { useAutosave } from '../composables/useAutosave'
 import { useCanvasTasks } from '../composables/useCanvasTasks'
 import { isHelpToggleKey } from '../canvasHelp'
 import { isTypingTargetEl } from '../keyboardGuard'
+import { assetContentURL } from '../thumbnail'
 import { useConnection } from '../composables/useConnection'
 import { canInsertRecord } from '../records'
 import { cascadeAnchor, newNodeAnchor } from '../placement'
@@ -164,6 +167,7 @@ import AssetPicker from '../components/AssetPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
 import GenerationRecordsPanel from '../components/GenerationRecordsPanel.vue'
 import MediaLightbox from '../components/MediaLightbox.vue'
+import PanoramaViewer from '../components/PanoramaViewer.vue'
 import CanvasHelpModal from '../components/CanvasHelpModal.vue'
 import PrevizEditorLayer from '../components/PrevizEditorLayer.vue'
 import StoryboardEditorLayer from '../components/StoryboardEditorLayer.vue'
@@ -181,6 +185,7 @@ import StoryboardNode from '../components/nodes/StoryboardNode.vue'
 import VideoNode from '../components/nodes/VideoNode.vue'
 import AudioNode from '../components/nodes/AudioNode.vue'
 import VoiceNode from '../components/nodes/VoiceNode.vue'
+import PanoramaNode from '../components/nodes/PanoramaNode.vue'
 import GroupNode from '../components/nodes/GroupNode.vue'
 
 const route = useRoute()
@@ -439,6 +444,16 @@ function syncTaskToCanvas(task: CanvasTask): void {
   if (node.type === 'audio') {
     const audio = node.data as AudioNodeData
     const patch = audioSyncPatch(task, audio)
+    if (patch) {
+      updateNodeData(task.node_id, patch)
+      markChanged()
+    }
+    return
+  }
+  if (node.type === 'panorama') {
+    // 81 号票:全景产物回填节点自身,重新生成 = 原地替换(旧产物留素材
+    // 库);对账判定在 panoramaSyncPatch,与媒体节点的「补空缺」不同型。
+    const patch = panoramaSyncPatch(task, node.data as PanoramaNodeData)
     if (patch) {
       updateNodeData(task.node_id, patch)
       markChanged()
@@ -1041,12 +1056,14 @@ const composerPickerSelectedIds = computed<number[]>(() => {
 function toggleComposerPicker(): void {
   composerPickerOpen.value = !composerPickerOpen.value
   if (composerPickerOpen.value) {
-    // 面板同占画布右缘,互斥打开(32 号票纪律)。
+    // 面板同占画布右缘,互斥打开(32 号票纪律;81 号票评审修复:全景挑选
+    // 面板同列互斥组,漏清会双开叠层)。
     assetPanelOpen.value = false
     recordsPanelOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
     levelPickerNodeId.value = ''
+    panoramaPickerNodeId.value = ''
   }
 }
 
@@ -1693,6 +1710,7 @@ function openVoicePicker(nodeId: string): void {
   historyNodeId.value = ''
   pickerNodeId.value = ''
   levelPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 function closeVoicePicker(): void {
@@ -1795,6 +1813,7 @@ function openCoverPicker(nodeId: string): void {
   levelPickerNodeId.value = ''
   voicePickerNodeId.value = ''
   relyricPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 function closeCoverPicker(): void {
@@ -1904,6 +1923,7 @@ function openRelyricPicker(nodeId: string): void {
   levelPickerNodeId.value = ''
   voicePickerNodeId.value = ''
   coverPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 function closeRelyricPicker(): void {
@@ -1934,6 +1954,141 @@ function onAudioRefFile(nodeId: string, file: File): void {
     void onRelyricRefFile(nodeId, file)
   } else {
     void onCoverRefFile(nodeId, file)
+  }
+}
+
+// ---- 全景节点(81 号票,第十四种节点类型):创作态表单在节点上,提交
+// = kind=image + scene_type=3d_panorama 的 canvas_task 绑本节点 ----
+
+// 全景创作表单的事实变更(逐键上抛 → updateNodeData 浅合并落盘,自动保存
+// 免费获得;与音色/音频表单同一纪律)。
+function onPanoramaFormChange(nodeId: string, patch: Partial<PanoramaNodeData>): void {
+  updateNodeData(nodeId, patch)
+  markChanged()
+}
+
+// 参考场景图:本机上传 kind=image 入素材库,成功回写 ref_asset_id;失败
+// 轻提示,节点侧表单保持可再选。
+const panoramaRefUploading = ref(false)
+
+async function onPanoramaRefFile(nodeId: string, file: File): Promise<void> {
+  if (panoramaRefUploading.value) {
+    return
+  }
+  panoramaRefUploading.value = true
+  try {
+    const a = await client.uploadAsset(file, 'image', uploadIPId.value)
+    updateNodeData(nodeId, { ref_asset_id: a.id } satisfies Partial<PanoramaNodeData>)
+    markChanged()
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '参考图上传失败,请稍后再试')
+  } finally {
+    panoramaRefUploading.value = false
+  }
+}
+
+// 参考场景图的素材库挑选面板(cover/relyric picker 同款纪律):恰好 1 条,
+// 点选即绑、再点取消;开时按右缘面板互斥组关其他面板。
+const panoramaPickerNodeId = ref('')
+const panoramaPickerNode = computed(() =>
+  panoramaPickerNodeId.value ? findNode(panoramaPickerNodeId.value) ?? null : null,
+)
+const panoramaPickerSelectedIds = computed<number[]>(() => {
+  const data = panoramaPickerNode.value?.data as PanoramaNodeData | undefined
+  const id = data?.ref_asset_id ?? 0
+  return id > 0 ? [id] : []
+})
+
+function openPanoramaPicker(nodeId: string): void {
+  panoramaPickerNodeId.value = nodeId
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+  composerPickerOpen.value = false
+  historyNodeId.value = ''
+  pickerNodeId.value = ''
+  levelPickerNodeId.value = ''
+  voicePickerNodeId.value = ''
+  coverPickerNodeId.value = ''
+  relyricPickerNodeId.value = ''
+}
+
+function closePanoramaPicker(): void {
+  panoramaPickerNodeId.value = ''
+}
+
+function onPanoramaPickToggle(nodeId: string, a: AssetRecord): void {
+  if (a.kind !== 'image') {
+    return
+  }
+  const data = findNode(nodeId)?.data as PanoramaNodeData | undefined
+  if (!data) {
+    return
+  }
+  // 恰好 1 条:点选即绑、再点取消(换选 = 点新的一条)。
+  const next = data.ref_asset_id === a.id ? 0 : a.id
+  updateNodeData(nodeId, { ref_asset_id: next } satisfies Partial<PanoramaNodeData>)
+  markChanged()
+}
+
+// 全景创作态的提交路径(81 号票,固定契约):kind=image 任务绑本节点,
+// **prompt 恒空串**(上游原生全景不吃提示词)、scene_type 恒显式送
+// '3d_panorama'、image_urls 恒恰好 1 条(参考场景图按素材内容寻址路径,
+// 服务端解出真实地址);n 由服务端 worker 恒按 1 出图(前端契约不携带)。
+// 照音色/音频先例先 markChanged + flush 再提交,防抖窗口里的表单编辑必须
+// 先落图;产物由 panoramaSyncPatch 回填节点自身(重新生成 = 原地替换,
+// 旧产物留素材库)。
+const panoramaSubmitting = ref(false)
+
+async function submitPanoramaTask(nodeId: string): Promise<void> {
+  const node = findNode(nodeId)
+  const data = node?.data as PanoramaNodeData | undefined
+  // 在途任务(排队/生成中)不接受重复提交;失败/取消是终态,节点重按
+  // 「生成全景」发新任务(或失败行走原地重试)。
+  const active = taskSync.byNode.get(nodeId)
+  if (
+    !node ||
+    !data ||
+    panoramaSubmitting.value ||
+    (active && (active.status === 'queued' || active.status === 'running'))
+  ) {
+    return
+  }
+  if (!(data.ref_asset_id > 0) || (data.model ?? '') === '') {
+    showNotice('先配一张参考场景图并选择模型,再生成全景')
+    return
+  }
+  panoramaSubmitting.value = true
+  try {
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      showNotice('画布尚未保存成功,任务未提交;请先解决保存问题')
+      return
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: nodeId,
+      kind: 'image',
+      prompt: '',
+      model: data.model ?? '',
+      image_urls: [assetContentURL(data.ref_asset_id)],
+      scene_type: PANO_SCENE_TYPE,
+    })
+    taskSync.track(task)
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '全景任务提交失败,请稍后再试')
+  } finally {
+    panoramaSubmitting.value = false
+  }
+}
+
+// ---- 全景球面查看层(81 号票):编辑器级单实例,产物态整卡点击 /
+// 「直接环视」置位素材 id;贴图按它拼 /api/assets/{id}/content 同源地址。 ----
+
+const panoramaViewerAssetId = ref<number | null>(null)
+
+function openPanoramaViewer(assetId: number): void {
+  if (assetId > 0) {
+    panoramaViewerAssetId.value = assetId
   }
 }
 
@@ -2483,6 +2638,7 @@ function openAgentHistory(nodeId: string): void {
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
   levelPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 function openAgentPicker(nodeId: string): void {
@@ -2496,6 +2652,7 @@ function openAgentPicker(nodeId: string): void {
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
   levelPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 /** 清空会话(历史面板顶部按钮):与新会话同一语义,清后节点可重新开始。 */
@@ -3204,6 +3361,7 @@ function openLevelPicker(nodeId: string): void {
   composerPickerOpen.value = false
   historyNodeId.value = ''
   pickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 /** 画面槽挑选点选:已在槽中 = 摘下;不在 = 追加,满员整条拒收并提示
@@ -3426,6 +3584,9 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     if (lightbox.value) {
       return // 灯箱自己处理 Esc(33 号票),这里不叠加动作。
     }
+    if (panoramaViewerAssetId.value !== null) {
+      return // 全景查看层自己处理 Esc(81 号票),这里不叠加动作。
+    }
     // 76 号票:右键菜单是最新开的临时浮层,后开先关 —— 它开着时全视口
     // 垫挡住一切画布交互,天然处于浮层栈顶。
     if (contextMenu.value) {
@@ -3454,6 +3615,11 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     }
     if (levelPickerNodeId.value) {
       levelPickerNodeId.value = ''
+      return
+    }
+    // 81 号票:全景参考挑选面板与既有 picker 同族,Esc 栈顶先收。
+    if (panoramaPickerNodeId.value) {
+      panoramaPickerNodeId.value = ''
       return
     }
     if (historyNodeId.value) {
@@ -3527,6 +3693,7 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     if (
       !helpOpen.value &&
       (lightbox.value ||
+        panoramaViewerAssetId.value !== null ||
         previzEditorNode.value ||
         storyboardEditorNode.value ||
         nameEditorNode.value ||
@@ -4158,6 +4325,9 @@ function miniMapNodeColor(node: { type?: string | null }): string {
       return '#a78bfa'
     case 'script':
       return '#d3b571'
+    case 'panorama':
+      // 81 号票:全景节点青色系(#67e8f9),与卡头/360° 角标/菜单 sky tone 同族。
+      return '#67e8f9'
     case 'group':
       // 72 号票:组节点不进 minimap(大色块喧宾夺主),配合
       // miniMapNodeClassName 的 minimap-group 类整块隐藏。
@@ -4183,6 +4353,20 @@ const lightbox = ref<{ kind: 'image' | 'video'; url: string; nodeId: string } | 
 function openPreview(kind: 'image' | 'video', url: string, nodeId: string): void {
   if (url) {
     lightbox.value = { kind, url, nodeId }
+  }
+}
+
+/** 全景查看层截图入素材库(81 号票定案 8):当前取景 JPEG 经共享上传流
+ * (uploadPanoramaCapture,文件名/kind 约定在 panorama.ts 一处)走
+ * /api/assets/upload 入库(键落 uploads/ 档,挂画布 IP)—— **仅进素材库
+ * 不落节点**(连拍多角度不堆画布,要用经素材面板/参考条「库」入口取);
+ * 连续截不关层,toast 确认;失败文案走轻提示。 */
+async function onPanoramaCapture(blob: Blob): Promise<void> {
+  try {
+    await uploadPanoramaCapture((file, kind, ipId) => client.uploadAsset(file, kind, ipId), blob, uploadIPId.value)
+    showNotice('全景截图已入素材库(仅入库,不落画布)')
+  } catch (e) {
+    showNotice(e instanceof ApiError ? e.message : '截图上传失败,请稍后再试')
   }
 }
 
@@ -4255,6 +4439,7 @@ function toggleAssetPanel(): void {
     historyNodeId.value = ''
     pickerNodeId.value = ''
     levelPickerNodeId.value = ''
+    panoramaPickerNodeId.value = ''
   }
 }
 
@@ -4266,6 +4451,7 @@ function toggleRecordsPanel(): void {
     historyNodeId.value = ''
     pickerNodeId.value = ''
     levelPickerNodeId.value = ''
+    panoramaPickerNodeId.value = ''
   }
 }
 
@@ -4825,6 +5011,28 @@ function backToList(): void {
             @connect-start="connection.start(nodeProps.id, $event)"
           />
         </template>
+        <!-- 81 号票:全景节点 —— 创作态表单内联(参考 chip + 模型 + 生成),
+             产物态整卡点击进查看层;不渲染把手,不作任何连线端点;选中不
+             唤起生成对话框(composerNode 只认 image/video)。 -->
+        <template #node-panorama="nodeProps">
+          <PanoramaNode
+            :id="nodeProps.id"
+            :type="nodeProps.type"
+            :data="nodeProps.data"
+            :task="taskSync.byNode.get(nodeProps.id) ?? null"
+            :retrying="retryingNode === nodeProps.id"
+            :image-models="imageModels"
+            :image-prices="imagePrices"
+            :submitting="panoramaSubmitting"
+            :ref-uploading="panoramaRefUploading"
+            @form-change="onPanoramaFormChange(nodeProps.id, $event)"
+            @submit="submitPanoramaTask(nodeProps.id)"
+            @retry="onRetry(nodeProps.id)"
+            @ref-file="onPanoramaRefFile(nodeProps.id, $event)"
+            @pick-ref="openPanoramaPicker(nodeProps.id)"
+            @view="openPanoramaViewer($event)"
+          />
+        </template>
         <!-- 72 号票:分组节点(组织装饰)—— 渲染尺寸按 max(用户尺寸,
              成员包围盒+内边距)在编辑器算好传入;标题/色板/解组/resize
              事件回编辑器收 markChanged。不渲染把手,不作连线端点。 -->
@@ -5017,6 +5225,20 @@ function backToList(): void {
         @toggle="onRelyricPickToggle(relyricPickerNode.id, $event)"
         @close="closeRelyricPicker"
       />
+      <!-- 81 号票:全景参考场景图的挑选面板(白名单仅图片),点选即绑、
+           再点取消(恰好 1 条);不做尺寸守卫 —— 人像/物体由上游场景审核
+           400 透出。 -->
+      <AssetPicker
+        v-else-if="panoramaPickerNode"
+        :key="`panorama-picker-${panoramaPickerNode.id}`"
+        title="挑选参考场景图"
+        :kind-whitelist="['image']"
+        hint="点选挂为全景参考(恰好 1 条),再点取消;须为场景图,人像/物体会被上游拒绝。"
+        :selected-asset-ids="panoramaPickerSelectedIds"
+        :ip-id="canvasIPID || undefined"
+        @toggle="onPanoramaPickToggle(panoramaPickerNode.id, $event)"
+        @close="closePanoramaPicker"
+      />
       <!-- 40 号票:预演台全屏编辑层(Teleport 到 body),场景改动走同一条
            scene-change 落盘链;渲染帧大图经编辑器级灯箱打开(灯箱入口收进
            编辑层,33 号票对图片/视频节点不变)。 -->
@@ -5072,6 +5294,17 @@ function backToList(): void {
         :data="scriptEditorNode.data"
         @scene-change="onScriptSceneChange(scriptEditorNode.id, $event)"
         @close="scriptEditorNodeId = ''"
+      />
+      <!-- 81 号票:全景球面查看层,编辑器级单实例(Teleport 到 body,z 90
+           族编辑层档);产物态整卡点击 / 「直接环视」置位素材 id,Esc 与
+           「返回」双路退出(组件内自处理);截图事件在此入素材库
+           (uploads 档,仅入库不落节点),失败文案走轻提示。 -->
+      <PanoramaViewer
+        v-if="panoramaViewerAssetId !== null"
+        :asset-id="panoramaViewerAssetId"
+        @close="panoramaViewerAssetId = null"
+        @capture="onPanoramaCapture"
+        @capture-error="showNotice($event)"
       />
       <!-- 33 号票:媒体预览灯箱,编辑器级单实例(Teleport 到 body);41 号票
            截帧事件在此入素材 + 落画布,失败文案走轻提示。参考条 chip 的预览

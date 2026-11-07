@@ -37,8 +37,10 @@ import { NODE_TYPE_LABEL, type CanvasNodeType } from './graph'
  * 作任何连线的源与目标(64 号票:剧本是文本载体卡,内容经 Agent 工具读写
  * 不靠边,66 号票 read_source 分段消费,与 level 的「不连线」同族,组件
  * 不渲染把手);group 同样不作任何连线的源与目标(72 号票:分组是组织
- * 装饰容器,不是内容节点,纯组织语义不影响生成链);其余组合(agent→agent、
- * voice→image 等)拒连。
+ * 装饰容器,不是内容节点,纯组织语义不影响生成链);panorama 也不作任何
+ * 连线的源与目标(81 号票:参考经节点表单 chip 持有、产物回填节点自身,
+ * 均不靠边,与 script/level 的「不连线」同族,组件不渲染把手);其余组合
+ * (agent→agent、voice→image 等)拒连。
  */
 export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   agent: ['image', 'video'],
@@ -54,6 +56,7 @@ export const EDGE_MATRIX: Record<CanvasNodeType, readonly CanvasNodeType[]> = {
   audio: [],
   script: [],
   group: [],
+  panorama: [],
 }
 
 /** source 类型到 target 类型能否建立新连线;未知/缺失类型一律拒绝。 */

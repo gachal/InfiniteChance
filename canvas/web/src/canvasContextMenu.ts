@@ -114,9 +114,11 @@ function nodeItem({ type, tone, data, label }: NodeItemInput): ContextMenuItem {
 }
 
 /**
- * 菜单四段(票·定案 3):创作 10 钮 / 规划 4 钮 / 组织分组 / 面板 4 入口
+ * 菜单四段(票·定案 3):创作 11 钮 / 规划 4 钮 / 组织分组 / 面板 4 入口
  * (78 号票起创作段 8 → 9:翻唱是与配乐/音效并列的第三音频入口;79 号
- * 票起 9 → 10:同曲换词是第四音频入口,与翻唱的风格级分立、旋律锁定)。
+ * 票起 9 → 10:同曲换词是第四音频入口,与翻唱的风格级分立、旋律锁定;
+ * 81 号票起 10 → 11:全景是参考图生成 360° 球面环绕视图的创作节点,
+ * 压轴第 11 条)。
  * 顺序即渲染序;测试按本常量钉住条目集。
  */
 export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
@@ -126,7 +128,8 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
     items: [
       // 53 号票序:agent/image/video/previz + 52/57/60/61 号票四音频与
       // 角色入口(配乐在音色后,原工具栏顺序原样随迁);78 号票的翻唱是
-      // 第三音频入口、79 号票的同曲换词是第四音频入口,随音效之后。
+      // 第三音频入口、79 号票的同曲换词是第四音频入口,随音效之后;
+      // 81 号票的全景压轴(创作态表单在节点上,不带 dataPatch)。
       nodeItem({ type: 'agent', tone: 'accent' }),
       nodeItem({ type: 'image', tone: 'success' }),
       nodeItem({ type: 'video', tone: 'amber' }),
@@ -137,6 +140,7 @@ export const CONTEXT_MENU_SECTIONS: ContextMenuSection[] = [
       nodeItem({ type: 'audio', tone: 'violet-strong', data: { source: 'sfx' }, label: '音效' }),
       nodeItem({ type: 'audio', tone: 'gold', data: { source: 'cover' }, label: '翻唱' }),
       nodeItem({ type: 'audio', tone: 'red', data: { source: 'relyric' }, label: '同曲换词' }),
+      nodeItem({ type: 'panorama', tone: 'sky' }),
     ],
   },
   {

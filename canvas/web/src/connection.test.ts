@@ -135,12 +135,29 @@ describe('voice → audio(57 号票)', () => {
     expect(canConnect('voice', 'character')).toBe(false)
   })
 
-  it('keeps the matrix total over the thirteen node types', () => {
-    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):13 种节点各有条目
-    // (64 号票起 script 入册,72 号票起 group 入册)。
+  it('keeps the matrix total over the fourteen node types', () => {
+    // 矩阵键齐全(缺键会在 canConnect 里静默拒连):14 种节点各有条目
+    // (64 号票起 script 入册,72 号票起 group 入册,81 号票起 panorama 入册)。
     expect(Object.keys(EDGE_MATRIX).sort()).toEqual(
-      ['agent', 'analysis', 'audio', 'character', 'group', 'image', 'level', 'name', 'previz', 'script', 'storyboard', 'video', 'voice'].sort(),
+      ['agent', 'analysis', 'audio', 'character', 'group', 'image', 'level', 'name', 'panorama', 'previz', 'script', 'storyboard', 'video', 'voice'].sort(),
     )
+  })
+})
+
+describe('panorama 节点连线(81 号票)', () => {
+  it('keeps the panorama node out of the edge matrix entirely', () => {
+    // 全景 = 参考图生成 360° 环绕视图的自足创作卡:不作任何连线的源与
+    // 目标(参考经节点表单 chip 持有、产物回填节点自身,均不靠边;组件
+    // 不渲染把手)。Record 全键类型缺键即编译失败,此处钉运行时形状。
+    expect(EDGE_MATRIX.panorama).toEqual([])
+    expect(canConnect('panorama', 'image')).toBe(false)
+    expect(canConnect('panorama', 'panorama')).toBe(false)
+    expect(canConnect('agent', 'panorama')).toBe(false)
+    expect(canConnect('image', 'panorama')).toBe(false)
+    expect(canConnect('video', 'panorama')).toBe(false)
+    for (const source of Object.keys(EDGE_MATRIX) as (keyof typeof EDGE_MATRIX)[]) {
+      expect(EDGE_MATRIX[source]).not.toContain('panorama')
+    }
   })
 })
 

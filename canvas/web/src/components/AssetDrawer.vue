@@ -28,6 +28,8 @@ import type { AssetKind } from '../assetlib'
 import { imageLabelsForKind, isPrimaryLabel, orderedImages } from '../assetlib'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
 import { composeSize, RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
+import { isPanoRatio, uploadPanoramaCapture } from '../panorama'
+import PanoramaViewer from './PanoramaViewer.vue'
 import { SHEET_TYPES, latestVariantImage } from '../sheet'
 import { fmtCNY, voiceStatusBadge } from '../voice'
 import AssetPicker from './AssetPicker.vue'
@@ -417,6 +419,49 @@ async function deleteImageByKind(imageId: number): Promise<void> {
   }
 }
 
+// ---- 直接环视(81 号票):画廊 ≈2:1 图行出「直接环视」,不生成直接进
+// 全屏球面查看层(贴图 = /api/assets/{id}/content 同源);查看层截图经
+// /api/assets/upload 落 uploads/ 档挂实体 IP,仅入素材库。 ----
+
+/** 已判定 ≈2:1 的画廊素材 id(缩略加载后量自然尺寸,判定走 panorama
+ * 纯函数;判定过的 id 记住,不随重渲反复触发)。 */
+const panoRatioIds = ref(new Set<number>())
+
+function onGalleryImgLoad(assetId: number, e: Event): void {
+  const img = e.target as HTMLImageElement
+  if (isPanoRatio(img.naturalWidth, img.naturalHeight)) {
+    const next = new Set(panoRatioIds.value)
+    next.add(assetId)
+    panoRatioIds.value = next
+  }
+}
+
+const panoViewAssetId = ref<number | null>(null)
+const panoUploading = ref(false)
+const panoNote = ref('')
+let panoNoteTimer: number | undefined
+
+async function onPanoCapture(blob: Blob): Promise<void> {
+  if (panoUploading.value) {
+    return
+  }
+  panoUploading.value = true
+  actionError.value = ''
+  try {
+    await uploadPanoramaCapture((file, kind, ipId) => client.uploadAsset(file, kind, ipId), blob, props.ipId || undefined)
+    panoNote.value = '全景截图已入素材库(仅入库,不落实体画廊)'
+    window.clearTimeout(panoNoteTimer)
+    panoNoteTimer = window.setTimeout(() => {
+      panoNote.value = ''
+      panoNoteTimer = undefined
+    }, 4000)
+  } catch (e) {
+    fail(e, '截图上传失败,请稍后再试')
+  } finally {
+    panoUploading.value = false
+  }
+}
+
 /** <img> 两阶段回落:缩略失败先回原图(onThumbError 已换 src),原图再
  * 失败才落「素材不可用」占位(素材行被删的图行保留,可手动移除)。 */
 function onImageError(assetId: number): void {
@@ -668,6 +713,7 @@ async function anchorSheet(assetId: number): Promise<void> {
 
 onUnmounted(() => {
   window.clearInterval(sheetPollTimer)
+  window.clearTimeout(panoNoteTimer)
 })
 </script>
 
@@ -941,6 +987,14 @@ onUnmounted(() => {
           {{ galleryTitle }}
           <span class="count">{{ galleryImages.length }}</span>
         </h4>
+        <!-- 81 号票:查看层截图入库的确认行(4 秒自动消退,连截可连看)。 -->
+        <p
+          v-if="panoNote"
+          class="feedback hint"
+          role="status"
+        >
+          {{ panoNote }}
+        </p>
         <p
           v-if="variantLacksViews"
           class="feedback hint"
@@ -1017,6 +1071,7 @@ onUnmounted(() => {
                 class="gallery-thumb"
                 loading="lazy"
                 :alt="imageAltLabel(kind)"
+                @load="onGalleryImgLoad(img.asset_id, $event)"
                 @error="onImageError(img.asset_id)"
               >
               <span
@@ -1044,6 +1099,17 @@ onUnmounted(() => {
                 </option>
               </select>
               <span class="gallery-actions-inline">
+                <!-- 81 号票:≈2:1 图行出「直接环视」,不生成直接进球面查看层
+                     (覆盖「素材库全景图再看」);按钮在库内已判定才出现。 -->
+                <button
+                  v-if="panoRatioIds.has(img.asset_id)"
+                  type="button"
+                  class="mini pano-view"
+                  title="2:1 全景图,直接球面环视(不生成)"
+                  @click="panoViewAssetId = img.asset_id"
+                >
+                  直接环视
+                </button>
                 <button
                   type="button"
                   class="mini"
@@ -1287,6 +1353,16 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+
+    <!-- 81 号票:全景球面查看层(Teleport 到 body 单实例),画廊「直接环视」
+         置位素材 id;截图入素材库挂实体 IP,失败走抽屉错误位。 -->
+    <PanoramaViewer
+      v-if="panoViewAssetId !== null"
+      :asset-id="panoViewAssetId"
+      @close="panoViewAssetId = null"
+      @capture="onPanoCapture"
+      @capture-error="fail($event, '截图失败,请稍后再试')"
+    />
   </aside>
 </template>
 
@@ -1515,6 +1591,18 @@ onUnmounted(() => {
 .mini.primary:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent-ink);
+}
+
+/* 81 号票:「直接环视」mini 钮,青色系与全景节点/查看层同族。 */
+.mini.pano-view {
+  border-color: rgba(103, 232, 249, 0.55);
+  color: #67e8f9;
+}
+
+.mini.pano-view:hover:not(:disabled) {
+  border-color: rgba(103, 232, 249, 0.85);
+  background: rgba(103, 232, 249, 0.12);
+  color: #a5f3fc;
 }
 
 .danger-text {

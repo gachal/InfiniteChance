@@ -53,6 +53,12 @@ const (
 	maxPreviewTextRunes = 200
 	maxSpeechTextRunes  = 600
 	maxInstructionRunes = 500
+
+	// sceneTypePanorama 是 scene_type 契约当前唯一收的枚举值(81 号票全景
+	// 生图),与网关 /v1(internal/relay/images.go 同名常量)校验同形(严格
+	// 全等不 trim)。两包各持一份**不互引**—— 为一个字面串造 relay←canvastask
+	// 包依赖不值;改值时两边同步(那边注释反向指回这里)。
+	sceneTypePanorama = "3d_panorama"
 )
 
 // CanvasGetter is the slice of the canvas store the handlers need: a task
@@ -134,7 +140,10 @@ type taskJSON struct {
 	Size       string `json:"size"`
 	Ratio      string `json:"ratio"`
 	Background string `json:"background"`
-	Seconds    int64  `json:"seconds"`
+	// SceneType 是 81 号票的全景开关回显:"3d_panorama" = 全景生图任务
+	// (生成记录面板据此出「全景」徽章);空串 = 普通生图,其余 kind 恒空。
+	SceneType string `json:"scene_type"`
+	Seconds   int64  `json:"seconds"`
 	// Lyrics/Instrumental 是 music 任务的物种事实(62 号票歌曲):歌词原文
 	// 与纯音乐开关,前端 composer 据此回填音频节点的 lyrics 与 source:'song';
 	// 其余 kind 恒为 空串/true(列缺省,无语义)。
@@ -160,7 +169,7 @@ func toTaskJSON(t Task) taskJSON {
 	return taskJSON{
 		ID: t.ID, CanvasID: t.CanvasID, NodeID: t.NodeID, IPID: t.IPID, Kind: t.Kind,
 		Prompt: t.Prompt, Model: t.Model, Size: t.Size, Ratio: t.Ratio,
-		Background: t.Background, Seconds: t.Seconds,
+		Background: t.Background, SceneType: t.SceneType, Seconds: t.Seconds,
 		Lyrics: t.Lyrics, Instrumental: t.Instrumental, CoverStrength: t.CoverStrength,
 		Status: t.Status, Attempts: t.Attempts, Error: t.Error, AssetID: t.AssetID,
 		ImageURL: t.ImageURL, VideoURL: t.VideoURL, Chars: t.VoiceSpec.Chars,
@@ -176,6 +185,7 @@ type createInput struct {
 	Size         string       `json:"size"`
 	Ratio        string       `json:"ratio"`
 	Background   string       `json:"background"`
+	SceneType    string       `json:"scene_type"`
 	Seconds      *int64       `json:"seconds"`
 	Lyrics       string       `json:"lyrics"`
 	Instrumental *bool        `json:"instrumental"`
@@ -400,8 +410,24 @@ func (h *Handlers) Create(c *gin.Context) {
 			imageRefs = append(imageRefs, resolved)
 		}
 	}
+	// 全景生图(81 号票):仅图片任务、仅 sceneTypePanorama 一个枚举值 ——
+	// 其他值在落任务行之前 400,与网关 /v1 的校验同形(严格全等,不 trim,
+	// 行上的值就是上送的值);视频任务不读该字段(与 background 的态度
+	// 对称,全景是图片任务的专属开关)。校验先于 prompt:豁免以它为据。
+	sceneType := ""
+	if kind == KindImage && in.SceneType != "" {
+		if in.SceneType != sceneTypePanorama {
+			apierr.InvalidRequest(c, "scene_type 仅支持 "+sceneTypePanorama)
+			return
+		}
+		sceneType = in.SceneType
+	}
 	prompt := strings.TrimSpace(in.Prompt)
-	if prompt == "" {
+	// prompt 必填豁免(81 号票全景节点):scene_type=sceneTypePanorama 的生图
+	// 形态放行空 prompt —— 原生全景上游不吃提示词(打样实证,参考图即
+	// 身份,全景任务行 prompt 恒空串);非全景形态照旧必填,普通生图零
+	// 变化。上游真跑时对多余 prompt 不消费,非空 prompt 落行保真溯源。
+	if prompt == "" && sceneType != sceneTypePanorama {
 		apierr.InvalidRequest(c, "prompt 不能为空")
 		return
 	}
@@ -475,6 +501,7 @@ func (h *Handlers) Create(c *gin.Context) {
 	task, err := h.Tasks.Create(c.Request.Context(), Task{
 		ID: id, CanvasID: canvasID, NodeID: nodeID, Kind: kind,
 		Prompt: prompt, Model: model, Size: size, Ratio: ratio, Background: background,
+		SceneType: sceneType,
 		Seconds: seconds, ImageRef: imageRef, VideoRefs: videoRefs, ImageRefs: imageRefs,
 	})
 	if err != nil {

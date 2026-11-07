@@ -267,6 +267,22 @@ export interface GroupNodeData {
   h?: number
 }
 
+/** 全景节点数据(81 号票,第十四种节点类型「创作」组):参考场景图生成
+ * 360° 球面环绕视图(腾讯原生全景通路,公开名 hunyuan-world-panorama)。
+ * ref_asset_id 是创作事实(参考场景图素材行引用,恰好 1,0 = 未绑);
+ * url/asset_id/model 是产物配对(任务成功回填节点自身,**重新生成 =
+ * 原地替换**,旧产物留素材库;产物素材行恒 kind=image,全景语义只活在
+ * 节点层)。表单无描述框、无尺寸/比例/透明选项(上游固定 8K 2:1、不吃
+ * 提示词,任务 prompt 恒空串);节点不参与任何连线(EDGE_MATRIX 全空、
+ * 组件不渲染把手)、选中不唤起生成对话框。判定与回填的纯函数在
+ * panorama.ts。 */
+export interface PanoramaNodeData {
+  ref_asset_id: number
+  url?: string
+  asset_id?: number
+  model?: string
+}
+
 export type CanvasNodeData =
   | AgentNodeData
   | MediaNodeData
@@ -280,6 +296,7 @@ export type CanvasNodeData =
   | AudioNodeData
   | ScriptNodeData
   | GroupNodeData
+  | PanoramaNodeData
 
 export type CanvasNodeType =
   | 'agent'
@@ -295,6 +312,7 @@ export type CanvasNodeType =
   | 'audio'
   | 'script'
   | 'group'
+  | 'panorama'
 
 export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
   return (
@@ -310,7 +328,8 @@ export function isCanvasNodeType(value: unknown): value is CanvasNodeType {
     value === 'voice' ||
     value === 'audio' ||
     value === 'script' ||
-    value === 'group'
+    value === 'group' ||
+    value === 'panorama'
   )
 }
 
@@ -364,6 +383,12 @@ export function initialData(type: CanvasNodeType): CanvasNodeData {
     // (用户画框/落点计算时才写入,空组按最小占位渲染)。
     return defaultGroupData()
   }
+  if (type === 'panorama') {
+    // 81 号票:只带未绑定的参考图引用(0 = 待选),产物配对 url/asset_id/
+    // model 由任务成功回填,初始不落键;创作态表单(参考 chip + 模型 +
+    // 生成)内联在节点上(ADR 0002 显式例外)。
+    return { ref_asset_id: 0 }
+  }
   return { url: '', note: '' }
 }
 
@@ -381,6 +406,7 @@ export const NODE_TYPE_LABEL: Record<CanvasNodeType, string> = {
   audio: '音频',
   script: '剧本',
   group: '分组',
+  panorama: '全景',
 }
 
 /** 历史上限 20 轮(29 号票):一轮 = 一条 user + 一条 assistant,超出

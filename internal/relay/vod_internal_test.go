@@ -771,3 +771,78 @@ func TestVODAdaptorTransparentBackgroundExtInfo(t *testing.T) {
 		t.Errorf("default OutputConfig = %v, want no OutputFormat", submit.OutputConfig)
 	}
 }
+
+// 81 号票:scene_type=3d_panorama 见到即在 CreateAigcImageTask 带
+// SceneType(打样已证 SceneType+参考图组合受理,Hunyuan 3d_2.0 出 8K
+// 全景),generations 与 edits 两路共用同一段翻译;不带的请求保持现状
+// (提交体无 SceneType 键)。
+func TestVODAdaptorSceneTypePassthrough(t *testing.T) {
+	stub, srv := newVODStub(t,
+		`{"Response":{"AigcImageTask":{"Status":"SUCCESS","Output":{"FileInfos":[{"FileUrl":"https://cdn/p.png"}]}}}}`)
+	a := fastVODAdaptor(srv.URL)
+	ch := vodTestChannel(srv.URL)
+
+	assertSceneType := func(who string, raw []byte) {
+		t.Helper()
+		var submit map[string]any
+		if err := json.Unmarshal(raw, &submit); err != nil {
+			t.Fatalf("%s submit body: %v (%s)", who, err, raw)
+		}
+		if submit["SceneType"] != "3d_panorama" {
+			t.Errorf("%s SceneType = %v, want 3d_panorama", who, submit["SceneType"])
+		}
+	}
+
+	// generations:scene_type 带上即翻译。
+	upstream, err := a.ImagesGenerations(context.Background(), ch,
+		[]byte(`{"model":"Hunyuan 3d_2.0","scene_type":"3d_panorama"}`))
+	if err != nil || !upstream.OK {
+		t.Fatalf("generations = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	select {
+	case raw := <-stub.submits:
+		assertSceneType("generations", raw)
+	default:
+		t.Fatal("no generations submit reached the stub")
+	}
+
+	// edits:multipart 文本字段 scene_type 同样翻译(Base64 参考组合)。
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("model", "Hunyuan 3d_2.0")
+	_ = mw.WriteField("scene_type", "3d_panorama")
+	fw, _ := mw.CreateFormFile("image", "ref-0.png")
+	_, _ = fw.Write([]byte("fake-png-bytes"))
+	_ = mw.Close()
+	upstream, err = a.ImagesEdits(context.Background(), ch, mw.FormDataContentType(), buf.Bytes())
+	if err != nil || !upstream.OK {
+		t.Fatalf("edits = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	select {
+	case raw := <-stub.submits:
+		assertSceneType("edits", raw)
+	default:
+		t.Fatal("no edits submit reached the stub")
+	}
+
+	// 缺省不传:提交体没有 SceneType 键。
+	upstream, err = a.ImagesGenerations(context.Background(), ch,
+		[]byte(`{"model":"OG image2.5_sunburst","prompt":"plain"}`))
+	if err != nil || !upstream.OK {
+		t.Fatalf("default generations = ok:%v err:%v body:%s", upstream.OK, err, upstream.Body)
+	}
+	var submit struct {
+		SceneType *string `json:"SceneType"`
+	}
+	select {
+	case raw := <-stub.submits:
+		if err := json.Unmarshal(raw, &submit); err != nil {
+			t.Fatalf("default submit body: %v (%s)", err, raw)
+		}
+	default:
+		t.Fatal("no default submit reached the stub")
+	}
+	if submit.SceneType != nil {
+		t.Errorf("default SceneType = %q, want absent", *submit.SceneType)
+	}
+}

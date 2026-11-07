@@ -33,16 +33,25 @@ import (
 // pricing.MaxSizeRunes) — one owner for the numbers the charge depends on.
 const defaultImageCount = int64(1)
 
+// sceneTypePanorama 是 scene_type 契约当前唯一收的枚举值(81 号票全景生图),
+// 校验与错误文案都引它。画布侧 internal/canvastask/handler.go 对同值做同形
+// 校验,各持一份同名常量**不互引**—— 为一个字面串在 relay←canvastask 间
+// 造包依赖不值;改值时两边同步(那边注释反向指回这里)。
+const sceneTypePanorama = "3d_panorama"
+
 // imagesRequest is the slice of an images body the gateway itself needs.
 // Everything else rides through untouched. Background is 37 号票的透明背景
 // 参数:MVP 只收 transparent 一个枚举值(校验见 prepareImages),openai
 // 形渠道全量透传 —— generations 的 JSON 体经 rewriteModel 保形重写、edits
-// 的重建表单逐字段复刻,两边都不需要 adaptor 参与。
+// 的重建表单逐字段复刻,两边都不需要 adaptor 参与。SceneType 是 81 号票
+// 的全景参数:同样只收一个枚举值(3d_panorama),透传纪律与 background
+// 相同。
 type imagesRequest struct {
 	Model      string `json:"model"`
 	N          *int64 `json:"n"`
 	Size       string `json:"size"`
 	Background string `json:"background"`
+	SceneType  string `json:"scene_type"`
 }
 
 // ImagesGenerations relays POST /v1/images/generations (JSON body).
@@ -82,7 +91,7 @@ func (h *Handlers) prepareImagesEdit(c *gin.Context, key apikey.Key) *prepared {
 		return nil
 	}
 	req := imagesRequest{Model: formValue(form, "model"), Size: formValue(form, "size"),
-		Background: formValue(form, "background")}
+		Background: formValue(form, "background"), SceneType: formValue(form, "scene_type")}
 	if v := formValue(form, "n"); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
@@ -132,6 +141,22 @@ func (h *Handlers) prepareImages(c *gin.Context, key apikey.Key, req imagesReque
 		apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
 			"The 'background' parameter only supports 'transparent' at the moment.")
 		return nil
+	}
+	// scene_type 只收 sceneTypePanorama(81 号票的全景生图):其他枚举值与带
+	// 空白的变体在预扣之前 400;缺省不传 = 现状行为不变。全景上游一次只出
+	// 一张(打样实证单图产物),n>1 与它互斥 —— 拒绝而不钳制,请求方改 n
+	// 重发比被静默改单更可预期;错误写明理由,透传纪律与 background 相同。
+	if st := req.SceneType; st != "" {
+		if st != sceneTypePanorama {
+			apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
+				"The 'scene_type' parameter only supports '"+sceneTypePanorama+"' at the moment.")
+			return nil
+		}
+		if n > 1 {
+			apierr.OpenAI(c, http.StatusBadRequest, CodeInvalidRequest, TypeInvalidRequestError,
+				"The 'scene_type' parameter '"+sceneTypePanorama+"' only supports n=1.")
+			return nil
+		}
 	}
 
 	channels, err := h.listChannels(ctx)
