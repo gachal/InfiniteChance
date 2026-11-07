@@ -357,7 +357,9 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 	// 图生图分流(21 号票):带参考图的任务走 edits multipart,其余与
 	// 文生图同一 generations 调用;产物/记账/失败路径两种形态完全同构。
 	// Background(37 号票)两种形态同语义:非空即上送(行上只可能是
-	// "transparent",createInput 已校验),空串不落线。
+	// "transparent",createInput 已校验),空串不落线。SceneType(81 号票)
+	// 亦然:非空(只可能是 "3d_panorama",createInput 已校验)即随两条
+	// 分流路上送,空串不落线。
 	// 来源标记(70 号票):无画布任务落 ip=<id> task=<ct> gen=asset,
 	// 画布任务形状 canvas=<id> task=<ct> node=<id> 不动 —— admin 用量审计
 	// 的 asset 档按它过滤。
@@ -373,6 +375,7 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 			Prompt:     t.Prompt,
 			Size:       t.Size,
 			Background: t.Background,
+			SceneType:  t.SceneType,
 			Images:     t.ImageRefs,
 			Source:     source,
 		})
@@ -382,6 +385,7 @@ func (w *Worker) runOne(parent context.Context, t Task) {
 			Prompt:     t.Prompt,
 			Size:       t.Size,
 			Background: t.Background,
+			SceneType:  t.SceneType,
 			Source:     source,
 		})
 	}

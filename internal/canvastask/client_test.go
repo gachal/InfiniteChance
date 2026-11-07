@@ -484,3 +484,57 @@ func TestClientEditImageRejectsCombinedReferenceSize(t *testing.T) {
 		t.Errorf("gateway was dialed despite the combined cap")
 	}
 }
+
+// 81 号票:scene_type 非空即落 generations JSON 的 scene_type 键(空串
+// 不落线,与不传逐字节一致)。
+func TestClientGenerateImageSendsSceneType(t *testing.T) {
+	g := &fakeGateway{status: http.StatusOK, body: `{"data":[{"url":"https://img.example/pano.png"}]}`}
+	server := newGatewayServer(t, g)
+
+	client := canvastask.NewClient(server.URL, "sk-service-key")
+	if _, err := client.GenerateImage(context.Background(), canvastask.ImageRequest{
+		Model: "hunyuan-world-panorama", Prompt: "", SceneType: "3d_panorama",
+		Source: "canvas=7 task=ct_abc node=pano-1",
+	}); err != nil {
+		t.Fatalf("GenerateImage: %v", err)
+	}
+	if g.requestBody["scene_type"] != "3d_panorama" {
+		t.Errorf("scene_type = %v, want 3d_panorama on the wire", g.requestBody["scene_type"])
+	}
+
+	// 缺省不传:字段整体缺席(普通生图的请求体逐字节不变)。
+	if _, err := client.GenerateImage(context.Background(), canvastask.ImageRequest{
+		Model: "img-m", Prompt: "星空", Source: "canvas=1",
+	}); err != nil {
+		t.Fatalf("GenerateImage plain: %v", err)
+	}
+	if _, ok := g.requestBody["scene_type"]; ok {
+		t.Errorf("plain scene_type = %v, want the field omitted when unset", g.requestBody["scene_type"])
+	}
+}
+
+// 81 号票:scene_type 非空即落 edits multipart 的 scene_type 文本字段。
+func TestClientEditImageSendsSceneType(t *testing.T) {
+	var fields map[string][]string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseMultipartForm(32 << 20)
+		fields = r.MultipartForm.Value
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"url":"https://img.example/pano.png"}]}`))
+	}))
+	t.Cleanup(gateway.Close)
+
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x01}
+	refs := refServer(t, png)
+	client := canvastask.NewClient(gateway.URL, "sk-service-key")
+	if _, err := client.EditImage(context.Background(), canvastask.EditRequest{
+		Model: "hunyuan-world-panorama", Prompt: "", SceneType: "3d_panorama",
+		Images: []string{refs.URL + "/scene.png"},
+		Source: "canvas=7 task=ct_abc node=pano-1",
+	}); err != nil {
+		t.Fatalf("EditImage: %v", err)
+	}
+	if len(fields["scene_type"]) != 1 || fields["scene_type"][0] != "3d_panorama" {
+		t.Errorf("scene_type field = %v, want 3d_panorama on the wire", fields["scene_type"])
+	}
+}

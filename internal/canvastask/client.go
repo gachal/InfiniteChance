@@ -38,12 +38,14 @@ func NewClient(baseURL, key string) *Client {
 // ImageRequest is one text-to-image generation the worker submits.
 // Source is the canvas origin mark (X-InfiniteChance-Source 值). Background
 // (37 号票)是透明背景请求:非空只可能是 "transparent",落 generations
-// JSON 体;空串不落线(与不传逐字节一致)。
+// JSON 体;空串不落线(与不传逐字节一致)。SceneType (81 号票)是全景
+// 开关:非空只可能是 "3d_panorama",同款空串不落线。
 type ImageRequest struct {
 	Model      string
 	Prompt     string
 	Size       string
 	Background string
+	SceneType  string
 	Source     string
 }
 
@@ -80,7 +82,8 @@ func (c *Client) GenerateImage(ctx context.Context, req ImageRequest) (ImageResu
 		N          int64  `json:"n"`
 		Size       string `json:"size,omitempty"`
 		Background string `json:"background,omitempty"`
-	}{Model: req.Model, Prompt: req.Prompt, N: 1, Size: req.Size, Background: req.Background}
+		SceneType  string `json:"scene_type,omitempty"`
+	}{Model: req.Model, Prompt: req.Prompt, N: 1, Size: req.Size, Background: req.Background, SceneType: req.SceneType}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return ImageResult{}, err
@@ -151,11 +154,13 @@ func decodeImageDelivery(raw []byte) (ImageResult, error) {
 // fetches each one and uploads the bytes as multipart file parts — the
 // gateway's edits contract is a rebuilt multipart form, not a URL list.
 // Background (37 号票)与 ImageRequest 同语义,以 multipart 文本字段落线。
+// SceneType (81 号票)亦然:非空只可能是 "3d_panorama",空串不落线。
 type EditRequest struct {
 	Model      string
 	Prompt     string
 	Size       string
 	Background string
+	SceneType  string
 	Images     []string
 	Source     string
 }
@@ -181,6 +186,9 @@ func (c *Client) EditImage(ctx context.Context, req EditRequest) (ImageResult, e
 	}
 	if req.Background != "" {
 		fields = append(fields, struct{ name, value string }{"background", req.Background})
+	}
+	if req.SceneType != "" {
+		fields = append(fields, struct{ name, value string }{"scene_type", req.SceneType})
 	}
 	for _, f := range fields {
 		if err := w.WriteField(f.name, f.value); err != nil {

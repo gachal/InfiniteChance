@@ -1113,6 +1113,79 @@ func TestHandlerCreateImageTaskBackground(t *testing.T) {
 	}
 }
 
+// 任务收 scene_type=3d_panorama 落行并回显;该形态放行空 prompt(81 号
+// 票:原生全景上游不吃提示词,参考图即身份);其他枚举值 400;普通生图
+// (缺省不传)prompt 照旧必填、字段落空;视频任务上该字段不读(与
+// background 的态度对称)。
+func TestHandlerCreateImageTaskSceneType(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "x"})
+
+	// 3d_panorama + 空 prompt + 参考图:落行 + 回显(prompt 豁免)。
+	w := env.postTask(t, `{"node_id":"pano-1","kind":"image","prompt":"","model":"img-m","scene_type":"3d_panorama","image_urls":["https://img.example/scene.png"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("panorama status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task struct {
+			ID        string `json:"id"`
+			Prompt    string `json:"prompt"`
+			SceneType string `json:"scene_type"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	stored := env.tasks.tasks[resp.Task.ID]
+	if stored.SceneType != "3d_panorama" {
+		t.Errorf("stored scene_type = %q, want 3d_panorama", stored.SceneType)
+	}
+	if resp.Task.SceneType != "3d_panorama" {
+		t.Errorf("echo scene_type = %q, want 3d_panorama", resp.Task.SceneType)
+	}
+	if stored.Prompt != "" {
+		t.Errorf("stored prompt = %q, want empty(全景任务行 prompt 恒空)", stored.Prompt)
+	}
+
+	// 缺省不传:prompt 照旧必填(普通生图形态零变化),scene_type 落空。
+	w = env.postTask(t, `{"node_id":"img-1","kind":"image","prompt":"","model":"img-m"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("default empty prompt = %d %s, want 400 (prompt exemption is scene_type-scoped)", w.Code, w.Body.String())
+	}
+	w = env.postTask(t, `{"node_id":"img-2","kind":"image","prompt":"p","model":"img-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("default status = %d, want 201", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if env.tasks.tasks[resp.Task.ID].SceneType != "" {
+		t.Errorf("default scene_type = %q, want empty", env.tasks.tasks[resp.Task.ID].SceneType)
+	}
+
+	// 其他枚举值 400(含带空白变体,严格全等)。
+	w = env.postTask(t, `{"node_id":"x","kind":"image","prompt":"p","model":"img-m","scene_type":"panorama"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("unknown scene_type = %d %s, want 400", w.Code, w.Body.String())
+	}
+	w = env.postTask(t, `{"node_id":"x","kind":"image","prompt":"p","model":"img-m","scene_type":" 3d_panorama "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("padded scene_type = %d %s, want 400", w.Code, w.Body.String())
+	}
+
+	// 视频任务不读 scene_type:提交合法,字段落空。
+	w = env.postTask(t, `{"node_id":"video-1","kind":"video","prompt":"p","model":"vid-m","scene_type":"3d_panorama"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("video with scene_type status = %d body %s, want 201 (field ignored)", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if env.tasks.tasks[resp.Task.ID].SceneType != "" {
+		t.Errorf("video scene_type = %q, want empty (panorama is image-only)",
+			env.tasks.tasks[resp.Task.ID].SceneType)
+	}
+}
+
 func TestHandlerCancelClosesActiveVideoTask(t *testing.T) {
 	env := newHandlerEnv(&okGateway{url: "x"})
 	w := env.postTask(t, `{"node_id":"video-1-1","kind":"video","prompt":"p","model":"vid-m","image_url":"https://img.example/a.png"}`)
