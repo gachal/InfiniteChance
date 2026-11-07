@@ -219,7 +219,9 @@ func vodRefusal(message string) *UpstreamResponse {
 // upstream and dropped by design (response_format 恒 url,quality 不翻译).
 // 21 号票:image(参考图 URL,单个字符串或数组)存在即图生图,ratio 为
 // 显式宽高比、优先于 size 推导。37 号票:background=transparent 翻译为
-// ExtInfo + 强制 OutputFormat=png(见 vodTransparentExtInfo)。
+// ExtInfo + 强制 OutputFormat=png(见 vodTransparentExtInfo)。81 号票:
+// scene_type=3d_panorama 原名直上 SceneType(全景模型 Hunyuan 3d_2.0 的
+// 场景开关,打样实证 SceneType+参考图组合受理)。
 type vodImagesRequest struct {
 	Model      string       `json:"model"`
 	Prompt     string       `json:"prompt"`
@@ -227,6 +229,7 @@ type vodImagesRequest struct {
 	Size       string       `json:"size"`
 	Ratio      string       `json:"ratio"`
 	Background string       `json:"background"`
+	SceneType  string       `json:"scene_type"`
 	Image      vodImageRefs `json:"image"`
 }
 
@@ -310,8 +313,9 @@ func vodURLFileInfos(refs []string) []map[string]string {
 // documented shape "ModelName ModelVersion" (空格连接,如 "OG image2.5_sunburst")。
 // background 非空(经网关校验只可能是 "transparent")时透明输出:ExtInfo
 // 双层 JSON + 强制 OutputFormat=png,generations 与 edits 两路共用这段翻译
-// (37 号票)。
-func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, modelName, prompt, size, aspectOverride, background string, n int64, refs []map[string]string) (*UpstreamResponse, string, error) {
+// (37 号票)。sceneType 非空(经网关校验只可能是 "3d_panorama")时原名
+// 直上 SceneType —— 全景场景开关,非空即带、空串不落线(81 号票)。
+func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, modelName, prompt, size, aspectOverride, background, sceneType string, n int64, refs []map[string]string) (*UpstreamResponse, string, error) {
 	if n < 1 || n > vodMaxOutputImages {
 		return &UpstreamResponse{Status: http.StatusBadRequest,
 			Body: vodErrorBody(fmt.Sprintf("'n' must be between 1 and %d on tencent-vod image channels.", vodMaxOutputImages))}, "", nil
@@ -338,6 +342,9 @@ func (a *vodAdaptor) vodSubmitTask(ctx context.Context, ch channel.Channel, mode
 	if strings.TrimSpace(background) != "" {
 		output["OutputFormat"] = "png"
 		req["ExtInfo"] = vodTransparentExtInfo
+	}
+	if st := strings.TrimSpace(sceneType); st != "" {
+		req["SceneType"] = st
 	}
 	if v, ok := vodView(ch); ok && v.subAppID != 0 {
 		req["SubAppId"] = v.subAppID
@@ -575,7 +582,7 @@ func (a *vodAdaptor) ImagesGenerations(ctx context.Context, ch channel.Channel, 
 	if refusal := vodCheckImageRefs(req.Image); refusal != nil {
 		return refusal, nil
 	}
-	upstream, taskID, err := a.vodSubmitTask(ctx, ch, req.Model, req.Prompt, req.Size, req.Ratio, req.Background, n, vodURLFileInfos(req.Image))
+	upstream, taskID, err := a.vodSubmitTask(ctx, ch, req.Model, req.Prompt, req.Size, req.Ratio, req.Background, req.SceneType, n, vodURLFileInfos(req.Image))
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}
@@ -594,7 +601,7 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 	}
 	reader := multipart.NewReader(bytes.NewReader(payload), params["boundary"])
 
-	var prompt, model, size, background string
+	var prompt, model, size, background, sceneType string
 	n := int64(1)
 	var refs []map[string]string
 	for {
@@ -616,6 +623,8 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 				size = readPartText(part)
 			case "background":
 				background = readPartText(part)
+			case "scene_type":
+				sceneType = readPartText(part)
 			case "n":
 				if v, perr := strconv.ParseInt(strings.TrimSpace(readPartText(part)), 10, 64); perr == nil {
 					n = v
@@ -635,7 +644,7 @@ func (a *vodAdaptor) ImagesEdits(ctx context.Context, ch channel.Channel, conten
 		})
 	}
 
-	upstream, taskID, err := a.vodSubmitTask(ctx, ch, model, prompt, size, "", background, n, refs)
+	upstream, taskID, err := a.vodSubmitTask(ctx, ch, model, prompt, size, "", background, sceneType, n, refs)
 	if err != nil || !upstream.OK {
 		return upstream, err
 	}
