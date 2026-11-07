@@ -188,6 +188,9 @@ func NewID() (string, error) {
 // Background (37 号票) is the image task's transparency request — 空串 =
 // 不传,非空只可能是 "transparent"(createInput 已校验),worker 非空即
 // 上送网关;视频任务不读它(视频透明显式 out of scope)。
+// SceneType (81 号票) 是图片任务的全景开关 — 空串 = 普通生图,非空只可能
+// 是 "3d_panorama"(createInput 已校验,该形态放行空 prompt —— 原生全景
+// 上游不吃提示词,打样实证);worker 非空即随生成调用上送网关。
 // Lyrics/Instrumental (62 号票) 是 music 任务的物种事实:歌词原文与纯音乐
 // 开关(instrumental=false = 人声歌曲)。列缺省 1(纯音乐)—— 60 号票
 // 存量行与老客户端提交的既有语义零迁移;worker 重提/恢复路径必须原样重提
@@ -207,6 +210,7 @@ type Task struct {
 	Size         string
 	Ratio        string     // video: 显式宽高比串(如 16:9);空 = 不传
 	Background   string     // image: "transparent" = 透明背景;空 = 不传
+	SceneType    string     // image: "3d_panorama" = 全景生图(81 号票);空 = 普通生图
 	Seconds      int64      // video: 期望时长(秒);0 = 自动(不传,厂商缺省);sfx: 音效时长(1–30,61 号票复用 video 的列);image/music/tts 恒 0
 	Lyrics       string     // music: 歌词原文(62 号票歌曲);空 = 未携带(纯音乐或模型自动写词)
 	Instrumental bool       // music: true = 纯音乐(缺省,60 号票);false = 人声歌曲(62 号票);其余 kind 不读

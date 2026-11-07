@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	size           TEXT    NOT NULL DEFAULT '',
 	ratio          TEXT    NOT NULL DEFAULT '',
 	background     TEXT    NOT NULL DEFAULT '',
+	scene_type     TEXT    NOT NULL DEFAULT '',
 	seconds        INTEGER NOT NULL DEFAULT 0,
 	lyrics         TEXT    NULL,
 	instrumental   INTEGER NOT NULL DEFAULT 1,
@@ -81,6 +82,10 @@ var sqliteMigrations = []struct{ column, ddl string }{
 	{"video_refs", "ALTER TABLE canvas_tasks ADD COLUMN video_refs TEXT NULL"},
 	{"ratio", "ALTER TABLE canvas_tasks ADD COLUMN ratio TEXT NOT NULL DEFAULT ''"},
 	{"background", "ALTER TABLE canvas_tasks ADD COLUMN background TEXT NOT NULL DEFAULT ''"},
+	// 81 号票的全景开关:空串 = 普通生图,存量行零迁移。落点纪律同
+	// cover_strength(48 号票教训:列不被两条索引引用,新装库随建表 DDL
+	// 先于索引存在,存量库走迁移循环)。
+	{"scene_type", "ALTER TABLE canvas_tasks ADD COLUMN scene_type TEXT NOT NULL DEFAULT ''"},
 	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec TEXT NULL"},
 	{"lyrics", "ALTER TABLE canvas_tasks ADD COLUMN lyrics TEXT NULL"},
 	{"instrumental", "ALTER TABLE canvas_tasks ADD COLUMN instrumental INTEGER NOT NULL DEFAULT 1"},
@@ -148,9 +153,9 @@ func (s *SQLiteStore) Create(ctx context.Context, t Task) (Task, error) {
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, scene_type, seconds, lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, voice_spec, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background, t.SceneType,
 		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, coverStrengthOrNull(t.CoverStrength), t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status, now, now)
 	if err != nil {
@@ -642,7 +647,7 @@ func scanSQLiteTask(row rowScanner) (Task, error) {
 	var assetID sql.NullInt64
 	var coverStrength sql.NullFloat64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &coverStrength, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.SceneType, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &coverStrength, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &createdAt, &updatedAt); err != nil {
 		return Task{}, err
 	}

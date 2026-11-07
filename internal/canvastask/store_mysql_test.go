@@ -765,3 +765,70 @@ func TestMySQLCanvasTaskCoverStrengthColumnMigratesOldTable(t *testing.T) {
 		t.Fatalf("cover_strength column missing after EnsureSchema")
 	}
 }
+
+// 81 号票:scene_type 列在 MySQL 侧保真往返;空串 = 普通生图(缺省落 '')。
+func TestMySQLCanvasTaskSceneTypeRoundTrip(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	ctx := context.Background()
+
+	id, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	task, err := store.Create(ctx, canvastask.Task{
+		ID: id, CanvasID: 7, NodeID: "pano-1", Kind: canvastask.KindImage,
+		Prompt: "", Model: "hunyuan-world-panorama", SceneType: "3d_panorama",
+		Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.SceneType != "3d_panorama" {
+		t.Errorf("scene_type = %q, want 3d_panorama verbatim", got.SceneType)
+	}
+
+	plainID, err := canvastask.NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	plain, err := store.Create(ctx, canvastask.Task{
+		ID: plainID, CanvasID: 7, NodeID: "pano-2", Kind: canvastask.KindImage,
+		Prompt: "p", Model: "img-m", Status: canvastask.StatusQueued,
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = store.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.SceneType != "" {
+		t.Errorf("plain scene_type = %q, want empty (缺省不传)", got.SceneType)
+	}
+}
+
+func TestMySQLCanvasTaskSceneTypeColumnMigratesOldTable(t *testing.T) {
+	_, db := openTaskTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx, `ALTER TABLE canvas_tasks DROP COLUMN scene_type`); err != nil {
+		t.Fatalf("drop scene_type to simulate old table: %v", err)
+	}
+	store := canvastask.NewMySQLStore(db, nil)
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema re-adds scene_type: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'canvas_tasks' AND COLUMN_NAME = 'scene_type'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("scene_type column missing after EnsureSchema")
+	}
+}

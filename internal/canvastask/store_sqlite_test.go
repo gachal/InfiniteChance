@@ -401,3 +401,42 @@ func TestSQLiteCanvasTaskCoverStrengthMigratesOldTable(t *testing.T) {
 		t.Fatalf("got = %+v err %v, want the strength back after migration", got, err)
 	}
 }
+
+// TestSQLiteCanvasTaskSceneTypeRoundTrip 覆盖 81 号票的 scene_type 列:
+// "3d_panorama" 保真往返(全景任务行);普通生图任务空串(缺省 = 不传)。
+func TestSQLiteCanvasTaskSceneTypeRoundTrip(t *testing.T) {
+	s := newSQLiteStore(t)
+	ctx := context.Background()
+
+	pano, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 1, NodeID: "pano-1", Kind: KindImage,
+		Prompt: "", Model: "hunyuan-world-panorama",
+		SceneType: "3d_panorama",
+		ImageRefs: []string{"https://img.example/scene.png"},
+	})
+	if err != nil {
+		t.Fatalf("Create panorama: %v", err)
+	}
+	got, err := s.Get(ctx, pano.ID)
+	if err != nil {
+		t.Fatalf("Get panorama: %v", err)
+	}
+	if got.SceneType != "3d_panorama" {
+		t.Fatalf("scene_type = %q, want 3d_panorama verbatim", got.SceneType)
+	}
+
+	plain, err := s.Create(ctx, Task{
+		ID: mustTaskID(t), CanvasID: 1, NodeID: "pano-2", Kind: KindImage,
+		Prompt: "p", Model: "img-m",
+	})
+	if err != nil {
+		t.Fatalf("Create plain: %v", err)
+	}
+	got, err = s.Get(ctx, plain.ID)
+	if err != nil {
+		t.Fatalf("Get plain: %v", err)
+	}
+	if got.SceneType != "" {
+		t.Errorf("plain scene_type = %q, want empty(普通生图)", got.SceneType)
+	}
+}

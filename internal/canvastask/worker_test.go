@@ -889,6 +889,57 @@ func TestWorkerCarriesBackgroundToGateway(t *testing.T) {
 	}
 }
 
+// 81 号票:任务行的 SceneType 非空即上送 —— generations 与 edits 两条
+// 分流路都把它带上网关请求;行上只可能是 "3d_panorama"(createInput 已
+// 校验),worker 不再做枚举判断;空串不落线。
+func TestWorkerCarriesSceneTypeToGateway(t *testing.T) {
+	store, _ := openTaskTestDB(t)
+	gateway := &stubGateway{
+		fn: func(_ context.Context, _ canvastask.ImageRequest) (canvastask.ImageResult, error) {
+			return canvastask.ImageResult{URL: "https://img.example/plain.png"}, nil
+		},
+		editFn: func(_ context.Context, _ canvastask.EditRequest) (canvastask.ImageResult, error) {
+			return canvastask.ImageResult{URL: "https://img.example/pano.png"}, nil
+		},
+	}
+	runWorker(t, newTestWorker(store, gateway))
+
+	seed := func(nodeID string, refs []string) canvastask.Task {
+		t.Helper()
+		id, err := canvastask.NewID()
+		if err != nil {
+			t.Fatalf("NewID: %v", err)
+		}
+		task, err := store.Create(context.Background(), canvastask.Task{
+			ID: id, CanvasID: 7, NodeID: nodeID, Kind: canvastask.KindImage,
+			Prompt: "", Model: "img-m",
+			SceneType: "3d_panorama", ImageRefs: refs, Status: canvastask.StatusQueued,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		return task
+	}
+
+	refTask := seed("pano-1", []string{"https://img.example/scene.png"})
+	if final := awaitTask(t, store, refTask.ID); final.Status != canvastask.StatusSucceeded {
+		t.Fatalf("panorama task = %+v, want succeeded", final)
+	}
+	plainTask := seed("pano-2", nil)
+	if final := awaitTask(t, store, plainTask.ID); final.Status != canvastask.StatusSucceeded {
+		t.Fatalf("panorama task = %+v, want succeeded", final)
+	}
+
+	edits := gateway.seenEdits()
+	if len(edits) != 1 || edits[0].SceneType != "3d_panorama" {
+		t.Errorf("edit requests = %+v, want one carrying scene_type 3d_panorama", edits)
+	}
+	reqs := gateway.seen()
+	if len(reqs) != 1 || reqs[0].SceneType != "3d_panorama" {
+		t.Errorf("generations requests = %+v, want one carrying scene_type 3d_panorama", reqs)
+	}
+}
+
 // ---- 50 号票:产物 IP 归属传导 ----
 
 // fakeIPCanvases answers the worker's canvas lookups: 画布 7 归 IP 5;

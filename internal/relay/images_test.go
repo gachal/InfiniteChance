@@ -418,6 +418,9 @@ func TestRelayImagesValidation(t *testing.T) {
 		{"background opaque", `{"model":"img-m","background":"opaque"}`, 400, "invalid_request"},
 		{"background auto", `{"model":"img-m","background":"auto"}`, 400, "invalid_request"},
 		{"background padded", `{"model":"img-m","background":" transparent "}`, 400, "invalid_request"},
+		{"scene_type unknown", `{"model":"img-m","scene_type":"panorama"}`, 400, "invalid_request"},
+		{"scene_type padded", `{"model":"img-m","scene_type":" 3d_panorama "}`, 400, "invalid_request"},
+		{"scene_type with n over 1", `{"model":"img-m","scene_type":"3d_panorama","n":2}`, 400, "invalid_request"},
 		{"token-track model", `{"model":"tokenpriced-m","prompt":"x"}`, 400, "model_not_priced"},
 		{"unpriced model", `{"model":"unpriced-m","prompt":"x"}`, 400, "model_not_priced"},
 	} {
@@ -510,6 +513,76 @@ func TestRelayImagesBackgroundPassthrough(t *testing.T) {
 	defer mu.Unlock()
 	if sawFormBackground != "transparent" {
 		t.Errorf("upstream edits background = %q, want transparent verbatim", sawFormBackground)
+	}
+}
+
+// TestRelayImagesSceneTypePassthrough 覆盖 81 号票的 scene_type 参数:
+// generations JSON 体与 edits multipart 的 3d_panorama 值对 openai 形渠道
+// 全量透传(generations 经 rewriteModel 保形重写、edits 逐字段复刻),
+// 400 枚举/n 拒绝已在 TestRelayImagesValidation 覆盖;缺省不传的逐字节
+// 不变由既有测试族兜底。
+func TestRelayImagesSceneTypePassthrough(t *testing.T) {
+	env := newRelayEnv(t, nil)
+	var mu sync.Mutex
+	var sawJSONSceneType string
+	var sawFormSceneType string
+	upstream := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(32 << 20); err == nil {
+				sawFormSceneType = r.FormValue("scene_type")
+			}
+		} else {
+			var body struct {
+				SceneType string `json:"scene_type"`
+			}
+			raw, _ := io.ReadAll(r.Body)
+			if json.Unmarshal(raw, &body) == nil {
+				sawJSONSceneType = body.SceneType
+			}
+		}
+		okImagesHandler(map[string]any{"url": "https://img.example/pano.png"})(w, r)
+	})
+	env.seedImageChannel(t, "img", upstream.server.URL, "img-m", "upstream-img", 0,
+		[]channel.Capability{channel.CapImages})
+	_, full := env.seedKey(t, 1_000_000)
+	env.seedImagePrice(t, "img-m", nil)
+
+	// generations:3d_panorama 原样抵达上游(空 prompt 是全景的合法形态,
+	// 网关本就不强制 images prompt)。
+	w := env.postImages(t, full, `{"model":"img-m","scene_type":"3d_panorama"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("generations status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	if sawJSONSceneType != "3d_panorama" {
+		mu.Unlock()
+		t.Fatalf("upstream generations scene_type = %q, want 3d_panorama verbatim", sawJSONSceneType)
+	}
+	mu.Unlock()
+
+	// edits:multipart 文本字段 scene_type 原样复刻进重建表单。
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, _ := mw.CreateFormFile("image", "scene.png")
+	part.Write([]byte{0x89, 'P', 'N', 'G'})
+	mw.WriteField("prompt", "")
+	mw.WriteField("model", "img-m")
+	mw.WriteField("scene_type", "3d_panorama")
+	mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+full)
+	w = httptest.NewRecorder()
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("edits status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sawFormSceneType != "3d_panorama" {
+		t.Errorf("upstream edits scene_type = %q, want 3d_panorama verbatim", sawFormSceneType)
 	}
 }
 

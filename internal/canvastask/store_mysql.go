@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS canvas_tasks (
 	video_refs     MEDIUMTEXT   NULL,
 	ratio          VARCHAR(32)  NOT NULL DEFAULT '',
 	background     VARCHAR(32)  NOT NULL DEFAULT '',
+	scene_type     VARCHAR(32)  NOT NULL DEFAULT '',
 	status         VARCHAR(16)  NOT NULL,
 	attempts       BIGINT       NOT NULL DEFAULT 0,
 	error          TEXT         NULL,
@@ -67,6 +68,8 @@ var migrations = []struct{ column, ddl string }{
 	{"video_refs", "ALTER TABLE canvas_tasks ADD COLUMN video_refs MEDIUMTEXT NULL"},
 	{"ratio", "ALTER TABLE canvas_tasks ADD COLUMN ratio VARCHAR(32) NOT NULL DEFAULT ''"},
 	{"background", "ALTER TABLE canvas_tasks ADD COLUMN background VARCHAR(32) NOT NULL DEFAULT ''"},
+	// 81 号票的全景开关:空串 = 普通生图,存量行零迁移。
+	{"scene_type", "ALTER TABLE canvas_tasks ADD COLUMN scene_type VARCHAR(32) NOT NULL DEFAULT ''"},
 	{"video_url", "ALTER TABLE canvas_tasks ADD COLUMN video_url MEDIUMTEXT NULL"},
 	{"remote_task_id", "ALTER TABLE canvas_tasks ADD COLUMN remote_task_id VARCHAR(64) NOT NULL DEFAULT ''"},
 	{"voice_spec", "ALTER TABLE canvas_tasks ADD COLUMN voice_spec MEDIUMTEXT NULL"},
@@ -109,18 +112,18 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
-const taskColumns = `id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds,
-	lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
-	remote_task_id, voice_spec, created_at, updated_at`
+const taskColumns = `id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, scene_type, seconds,
+		lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, status, attempts, error, asset_id, image_url, video_url,
+		remote_task_id, voice_spec, created_at, updated_at`
 
 func (s *MySQLStore) Create(ctx context.Context, t Task) (Task, error) {
 	if t.Status == "" {
 		t.Status = StatusQueued
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, seconds, lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, voice_spec, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background,
+		`INSERT INTO canvas_tasks (id, canvas_id, node_id, ip_id, kind, prompt, model, size, ratio, background, scene_type, seconds, lyrics, instrumental, audio_ref, cover_strength, image_ref, image_refs, video_refs, voice_spec, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.CanvasID, t.NodeID, t.IPID, t.Kind, t.Prompt, t.Model, t.Size, t.Ratio, t.Background, t.SceneType,
 		t.Seconds, t.Lyrics, t.Instrumental, t.AudioRef, coverStrengthOrNull(t.CoverStrength), t.ImageRef, encodeImageRefs(t.ImageRefs), encodeVideoRefs(t.VideoRefs),
 		encodeVoiceSpec(t.VoiceSpec), t.Status)
 	if err != nil {
@@ -643,7 +646,7 @@ func scanTask(row rowScanner) (Task, error) {
 	var assetID sql.NullInt64
 	var coverStrength sql.NullFloat64
 	if err := row.Scan(&t.ID, &t.CanvasID, &t.NodeID, &t.IPID, &t.Kind, &t.Prompt, &t.Model,
-		&t.Size, &t.Ratio, &t.Background, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &coverStrength, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
+		&t.Size, &t.Ratio, &t.Background, &t.SceneType, &t.Seconds, &lyrics, &t.Instrumental, &audioRef, &coverStrength, &imageRef, &imageRefs, &videoRefs, &t.Status, &t.Attempts, &errMsg, &assetID,
 		&imageURL, &videoURL, &t.RemoteTaskID, &voiceSpec, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return Task{}, err
 	}
