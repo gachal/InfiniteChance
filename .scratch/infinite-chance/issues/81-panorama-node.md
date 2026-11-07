@@ -1,7 +1,7 @@
 # 81 全景节点——参考图生成 360° 球面环绕视图(腾讯原生全景通路)
 
 Type: feat
-Status: 定案(2026-11-06 grill-with-docs 两轮 + 真 key 打样;2026-11-07 收口,Q1–Q18 全按推荐;实现待 implement-spec)
+Status: 已实现(2026-11-06 grill-with-docs 两轮 + 真 key 打样;2026-11-07 收口,Q1–Q18 全按推荐;2026-11-07 implement-spec 落 feat/81-panorama-node——81a 网关 scene_type 契约/canvastask 全链,81b 画布全景节点全家桶,评审修复轮收 6 条发现;遗留真机点验见「验证点」)
 
 ## Question
 
