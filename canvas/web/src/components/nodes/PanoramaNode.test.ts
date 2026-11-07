@@ -15,7 +15,17 @@ const nodeTemplate = nodeSource.slice(nodeSource.indexOf('<template>'))
 const editorSource = readFileSync(fileURLToPath(new URL('../../views/CanvasEditorView.vue', import.meta.url)), 'utf8')
 const viewerSource = readFileSync(fileURLToPath(new URL('../PanoramaViewer.vue', import.meta.url)), 'utf8')
 const drawerSource = readFileSync(fileURLToPath(new URL('../AssetDrawer.vue', import.meta.url)), 'utf8')
+const panelSource = readFileSync(fileURLToPath(new URL('../AssetPanel.vue', import.meta.url)), 'utf8')
 const graphSource = readFileSync(fileURLToPath(new URL('../../graph.ts', import.meta.url)), 'utf8')
+
+/** 摘一个顶层函数的源码段(从 function 声明到第一个零列闭括号):互斥
+ * 清单按函数 scoped 断言,防「别处清过、本函数漏了」误绿。 */
+function fnSource(src: string, name: string): string {
+  const start = src.indexOf(`function ${name}(`)
+  expect(start).toBeGreaterThan(-1)
+  const bodyEnd = src.indexOf('\n}', start)
+  return src.slice(start, bodyEnd)
+}
 
 describe('PanoramaNode 卡面(81 号票)', () => {
   it('卡头与产物态都带 360° 角标(卡面不跑 WebGL,2:1 缩略)', () => {
@@ -90,7 +100,9 @@ describe('编辑器全景提交链(81 号票固定契约)', () => {
 
   it('查看层截图:导出 JPEG 经 /api/assets/upload 落 uploads 档,仅入素材库不落节点', () => {
     expect(editorSource.includes('onPanoramaCapture')).toBe(true)
-    expect(editorSource.includes("uploadAsset(file, 'image', uploadIPId.value)")).toBe(true)
+    // 入库走共享上传流(uploadPanoramaCapture),编辑器侧挂画布 IP。
+    expect(editorSource.includes('uploadPanoramaCapture(')).toBe(true)
+    expect(fnSource(editorSource, 'onPanoramaCapture').includes('uploadIPId.value')).toBe(true)
     // 截图不落节点:capture 链没有 addNodes/insertAssetRef。
     expect(editorSource.includes('function onPanoramaCapture')).toBe(true)
   })
@@ -99,6 +111,26 @@ describe('编辑器全景提交链(81 号票固定契约)', () => {
     expect(drawerSource.includes('直接环视')).toBe(true)
     expect(drawerSource.includes('isPanoRatio')).toBe(true)
     expect(drawerSource.includes('PanoramaViewer')).toBe(true)
+  })
+
+  it('直接环视入口在素材面板(素材库任意图,评审修复轮补落第二入口)', () => {
+    expect(panelSource.includes('直接环视')).toBe(true)
+    expect(panelSource.includes('isPanoRatio')).toBe(true)
+    expect(panelSource.includes('PanoramaViewer')).toBe(true)
+    // 截图入库同走共享流;IP 挂 uploadIpId(画布语境 = 画布 IP,独立语境
+    // = 实体 IP),判定入口不依赖 selectable(纯浏览形态也可见)。
+    expect(panelSource.includes('uploadPanoramaCapture(')).toBe(true)
+    expect(panelSource.includes('uploadIpId')).toBe(true)
+  })
+
+  it('截图入库共享流同形:抽屉与面板都经 uploadPanoramaCapture 且不复制文件名约定', () => {
+    expect(drawerSource.includes('uploadPanoramaCapture(')).toBe(true)
+    // 文件名约定只在 panorama.ts 一处(宿主不再手拼 panorama-<ts>.jpg;
+    // 整段模板串为钉,避开 panoramaPickerNodeId 这类无关同前缀)。
+    const fileNaming = '`panorama-${Date.now()}.jpg`'
+    expect(drawerSource.includes(fileNaming)).toBe(false)
+    expect(panelSource.includes(fileNaming)).toBe(false)
+    expect(editorSource.includes(fileNaming)).toBe(false)
   })
 
   it('graph 注册完整:类型值/初始数据/中文标签三件套在册', () => {
@@ -112,5 +144,29 @@ describe('2:1 判定边界复钉(与 panorama.test.ts 同源常量)', () => {
     expect(isPanoRatio(7680, 3840)).toBe(true)
     expect(isPanoRatio(1920, 1080)).toBe(false)
     expect(panoRatioDeviation(7680, 3840)).toBe(0)
+  })
+})
+
+describe('右缘面板互斥(评审修复轮):开任一面板都要关全景挑选面板', () => {
+  // 互斥纪律 = 每个右缘入口「开自己」时清掉其余面板;81b 落了六处,漏了
+  // 三处(Agent 历史 / Agent 素材选择 / 对话框挑选)—— 全景挑选面板与
+  // 它们同占画布右缘,漏清会双开叠层。按函数 scoped 断言(见 fnSource)。
+  it('评审发现的三处漏口补齐', () => {
+    for (const name of ['openAgentHistory', 'openAgentPicker', 'toggleComposerPicker']) {
+      expect(fnSource(editorSource, name).includes("panoramaPickerNodeId.value = ''")).toBe(true)
+    }
+  })
+
+  it('既有六处不回归(音色/翻唱/换词/画面槽/素材库/生成记录)', () => {
+    for (const name of [
+      'openVoicePicker',
+      'openCoverPicker',
+      'openRelyricPicker',
+      'openLevelPicker',
+      'toggleAssetPanel',
+      'toggleRecordsPanel',
+    ]) {
+      expect(fnSource(editorSource, name).includes("panoramaPickerNodeId.value = ''")).toBe(true)
+    }
   })
 })

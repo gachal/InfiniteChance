@@ -69,6 +69,22 @@ export function captureSize(ratio: string): { width: number; height: number } {
   return { width: w, height: h }
 }
 
+// ---- 查看层截图入库(票·定案 8;编辑器/素材抽屉/素材面板三宿主共用)----
+
+/** 查看层截图入库的共享上传流:blob → panorama-<ts>.jpg(kind=image)交
+ * 宿主的 uploadAsset;IP 归属由宿主语境给定(编辑器挂画布 IP、素材抽屉挂
+ * 实体 IP、素材面板随宿主声明),undefined = 全局口径。确认提示与失败路径
+ * 留在宿主(文案随语境,连截不关层语义在查看层自身)—— 这里只封「blob →
+ * 上传」的固定形态,评审修复轮由编辑器/抽屉两处手拼去重而来。 */
+export function uploadPanoramaCapture(
+  upload: (file: File, kind: 'image', ipId?: number) => Promise<unknown>,
+  blob: Blob,
+  ipId?: number,
+): Promise<unknown> {
+  const file = new File([blob], `panorama-${Date.now()}.jpg`, { type: 'image/jpeg' })
+  return upload(file, 'image', ipId)
+}
+
 // ---- 终态任务对全景节点自身的回填(票·定案 5)----
 
 /** panoramaSyncPatch 收的任务形状:TaskForNodeSync 加 scene_type(81 号票

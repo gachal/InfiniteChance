@@ -93,7 +93,7 @@ import {
 import { legalEdgeLabels } from '../connection'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import { RELYRIC_STRENGTH_DEFAULT } from '../music'
-import { PANO_SCENE_TYPE, panoramaSyncPatch } from '../panorama'
+import { PANO_SCENE_TYPE, panoramaSyncPatch, uploadPanoramaCapture } from '../panorama'
 import {
   appendComposerRef,
   appendNodeDraftRef,
@@ -1056,12 +1056,14 @@ const composerPickerSelectedIds = computed<number[]>(() => {
 function toggleComposerPicker(): void {
   composerPickerOpen.value = !composerPickerOpen.value
   if (composerPickerOpen.value) {
-    // 面板同占画布右缘,互斥打开(32 号票纪律)。
+    // 面板同占画布右缘,互斥打开(32 号票纪律;81 号票评审修复:全景挑选
+    // 面板同列互斥组,漏清会双开叠层)。
     assetPanelOpen.value = false
     recordsPanelOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
     levelPickerNodeId.value = ''
+    panoramaPickerNodeId.value = ''
   }
 }
 
@@ -2636,6 +2638,7 @@ function openAgentHistory(nodeId: string): void {
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
   levelPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 function openAgentPicker(nodeId: string): void {
@@ -2649,6 +2652,7 @@ function openAgentPicker(nodeId: string): void {
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
   levelPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
 }
 
 /** 清空会话(历史面板顶部按钮):与新会话同一语义,清后节点可重新开始。 */
@@ -4352,14 +4356,14 @@ function openPreview(kind: 'image' | 'video', url: string, nodeId: string): void
   }
 }
 
-/** 全景查看层截图入素材库(81 号票定案 8):当前取景 JPEG 经
+/** 全景查看层截图入素材库(81 号票定案 8):当前取景 JPEG 经共享上传流
+ * (uploadPanoramaCapture,文件名/kind 约定在 panorama.ts 一处)走
  * /api/assets/upload 入库(键落 uploads/ 档,挂画布 IP)—— **仅进素材库
  * 不落节点**(连拍多角度不堆画布,要用经素材面板/参考条「库」入口取);
  * 连续截不关层,toast 确认;失败文案走轻提示。 */
 async function onPanoramaCapture(blob: Blob): Promise<void> {
   try {
-    const file = new File([blob], `panorama-${Date.now()}.jpg`, { type: 'image/jpeg' })
-    await client.uploadAsset(file, 'image', uploadIPId.value)
+    await uploadPanoramaCapture((file, kind, ipId) => client.uploadAsset(file, kind, ipId), blob, uploadIPId.value)
     showNotice('全景截图已入素材库(仅入库,不落画布)')
   } catch (e) {
     showNotice(e instanceof ApiError ? e.message : '截图上传失败,请稍后再试')

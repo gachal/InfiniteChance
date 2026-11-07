@@ -13,6 +13,7 @@ import {
   isPanoRatio,
   panoRatioDeviation,
   panoramaSyncPatch,
+  uploadPanoramaCapture,
 } from './panorama'
 
 describe('isPanoRatio / panoRatioDeviation(2:1 ±2%)', () => {
@@ -69,6 +70,45 @@ describe('PANO_SCENE_TYPE / PANO_DEFAULT_MODEL(通路常量)', () => {
   it('场景类型与缺省公开名按定案钉死', () => {
     expect(PANO_SCENE_TYPE).toBe('3d_panorama')
     expect(PANO_DEFAULT_MODEL).toBe('hunyuan-world-panorama')
+  })
+})
+
+describe('uploadPanoramaCapture(查看层截图入库共享流,评审修复轮提取)', () => {
+  /** 宿主上传函数的替身:记下收到的 (file, kind, ipId),返回素材行形状。 */
+  function fakeUpload() {
+    const calls: Array<{ name: string; type: string; kind: string; ipId?: number }> = []
+    const upload = async (file: File, kind: 'image', ipId?: number) => {
+      calls.push({ name: file.name, type: file.type, kind, ipId })
+      return { id: 1 }
+    }
+    return { calls, upload }
+  }
+
+  it('blob → panorama-<ts>.jpg(kind=image),IP 归属透传给宿主上传函数', async () => {
+    const { calls, upload } = fakeUpload()
+    await uploadPanoramaCapture(upload, new Blob(['x'], { type: 'image/jpeg' }), 7)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.name).toMatch(/^panorama-\d+\.jpg$/)
+    expect(calls[0]!.type).toBe('image/jpeg')
+    expect(calls[0]!.kind).toBe('image')
+    expect(calls[0]!.ipId).toBe(7)
+  })
+
+  it('未声明 IP 的宿主透传 undefined(全局口径,不虚构 0)', async () => {
+    const { calls, upload } = fakeUpload()
+    await uploadPanoramaCapture(upload, new Blob(['x']))
+    expect(calls[0]!.ipId).toBeUndefined()
+  })
+
+  it('宿主上传函数抛错时原样上抛(失败路径留在宿主,这里只管上传)', async () => {
+    await expect(
+      uploadPanoramaCapture(
+        async () => {
+          throw new Error('boom')
+        },
+        new Blob(['x']),
+      ),
+    ).rejects.toThrow('boom')
   })
 })
 
