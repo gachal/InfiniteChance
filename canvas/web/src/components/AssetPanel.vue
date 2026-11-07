@@ -13,6 +13,8 @@ import { ApiError, type AssetRecord } from '@infinitechance/api'
 
 import { useAuth } from '../auth'
 import { useThumbFallback } from '../thumbnail'
+import { isPanoRatio, uploadPanoramaCapture } from '../panorama'
+import PanoramaViewer from './PanoramaViewer.vue'
 import { useAssetListQuery, type AssetListKind } from '../composables/useAssetList'
 
 const props = withDefaults(
@@ -124,6 +126,54 @@ function kindLabel(k: 'image' | 'video' | 'audio'): string {
   return k === 'image' ? '图片' : k === 'video' ? '视频' : '音频'
 }
 
+// ---- 直接环视(81 号票定案 6「创作态参考图或素材库任意图」,评审修复轮
+// 补落):素材面板 ≈2:1 图出「直接环视」,不生成直接进全屏球面查看层 ——
+// 「素材库全景图再看」的本命入口落本面板(画廊抽屉之外的第二处),判定与
+// 抽屉同款走 panorama 纯函数(复用勿复制);入口不依赖 selectable(纯浏览
+// 形态也可见)。----
+
+/** 已判定 ≈2:1 的素材 id(缩略加载后量自然尺寸;判定过的 id 记住,不随
+ * 重渲反复触发,AssetDrawer 同款)。 */
+const panoRatioIds = ref(new Set<number>())
+
+function onPanelImgLoad(assetId: number, e: Event): void {
+  const img = e.target as HTMLImageElement
+  if (isPanoRatio(img.naturalWidth, img.naturalHeight)) {
+    const next = new Set(panoRatioIds.value)
+    next.add(assetId)
+    panoRatioIds.value = next
+  }
+}
+
+const panoViewAssetId = ref<number | null>(null)
+const panoUploading = ref(false)
+const panoNote = ref('')
+let panoNoteTimer: number | undefined
+
+/** 查看层截图入库(81 号票定案 8):共享上传流走 /api/assets/upload;IP
+ * 归属随宿主语境挂 uploadIpId —— 画布编辑器语境 = 画布 IP(票面字面),
+ * IP 详情页等独立于画布的语境挂实体 IP;未声明 IP 的宿主落全局(面板上传
+ * 同口径)。仅进素材库,连续截不关层,4 秒确认行自动消退。 */
+async function onPanoCapture(blob: Blob): Promise<void> {
+  if (panoUploading.value) {
+    return
+  }
+  panoUploading.value = true
+  try {
+    await uploadPanoramaCapture((file, kind, ipId) => client.uploadAsset(file, kind, ipId), blob, props.uploadIpId)
+    panoNote.value = '全景截图已入素材库(仅入库,不落画布)'
+    window.clearTimeout(panoNoteTimer)
+    panoNoteTimer = window.setTimeout(() => {
+      panoNote.value = ''
+      panoNoteTimer = undefined
+    }, 4000)
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : '截图上传失败,请稍后再试'
+  } finally {
+    panoUploading.value = false
+  }
+}
+
 function downloadURL(a: AssetRecord): string {
   return `${a.content_url}?download=1`
 }
@@ -192,6 +242,15 @@ onMounted(refresh)
       >
     </div>
 
+    <!-- 81 号票:查看层截图入库的确认行(4 秒自动消退,连截可连看)。 -->
+    <p
+      v-if="panoNote"
+      class="pano-note"
+      role="status"
+    >
+      {{ panoNote }}
+    </p>
+
     <p
       v-if="error"
       class="panel-error"
@@ -218,14 +277,30 @@ onMounted(refresh)
         :key="a.id"
         class="asset-card"
       >
-        <img
+        <!-- 81 号票:≈2:1 图出「直接环视」浮层钮(库内已判定才出现,
+             不生成直接进球面查看层);入口不依赖 selectable。 -->
+        <div
           v-if="a.kind === 'image'"
-          :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
-          class="thumb"
-          loading="lazy"
-          alt="素材缩略图"
-          @error="thumbs.onThumbError(a.content_url)"
+          class="thumb-holder"
         >
+          <img
+            :src="thumbs.displayURL(a.content_url, a.thumbnail_url)"
+            class="thumb"
+            loading="lazy"
+            alt="素材缩略图"
+            @load="onPanelImgLoad(a.id, $event)"
+            @error="thumbs.onThumbError(a.content_url)"
+          >
+          <button
+            v-if="panoRatioIds.has(a.id)"
+            type="button"
+            class="pano-view"
+            title="2:1 全景图,直接球面环视(不生成)"
+            @click="panoViewAssetId = a.id"
+          >
+            直接环视
+          </button>
+        </div>
         <video
           v-else-if="a.kind === 'video'"
           :src="a.content_url"
@@ -285,6 +360,17 @@ onMounted(refresh)
     >
       {{ loading ? '加载中…' : '加载更多' }}
     </button>
+
+    <!-- 81 号票:全景球面查看层(Teleport 到 body 单实例),「直接环视」
+         置位素材 id;截图入库挂 uploadIpId(见 onPanoCapture 注),失败走
+         面板错误位。 -->
+    <PanoramaViewer
+      v-if="panoViewAssetId !== null"
+      :asset-id="panoViewAssetId"
+      @close="panoViewAssetId = null"
+      @capture="onPanoCapture"
+      @capture-error="error = $event"
+    />
   </aside>
 </template>
 
@@ -428,6 +514,48 @@ onMounted(refresh)
   object-fit: cover;
   border-radius: var(--r-md);
   background: var(--wash-soft);
+}
+
+/* 图片缩略带浮层钮的容器:占原 .thumb 的格子,钮压右下角。 */
+.thumb-holder {
+  position: relative;
+  grid-row: span 2;
+}
+
+.thumb-holder .thumb {
+  grid-row: auto;
+  display: block;
+}
+
+/* 81 号票:「直接环视」浮层钮,青色系与全景节点/查看层/抽屉同族。 */
+.pano-view {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  border: 1px solid rgba(103, 232, 249, 0.55);
+  background: rgba(16, 21, 31, 0.72);
+  color: #67e8f9;
+  border-radius: var(--r-md);
+  padding: 2px 8px;
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.pano-view:hover {
+  border-color: rgba(103, 232, 249, 0.85);
+  background: rgba(103, 232, 249, 0.18);
+  color: #a5f3fc;
+}
+
+/* 81 号票:查看层截图入库的确认行(轻提示,不占错误位)。 */
+.pano-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
 }
 
 /* 音频卡片:试听条占缩略位,下方照常给元信息。 */

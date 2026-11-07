@@ -28,7 +28,7 @@ import type { AssetKind } from '../assetlib'
 import { imageLabelsForKind, isPrimaryLabel, orderedImages } from '../assetlib'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
 import { composeSize, RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
-import { isPanoRatio } from '../panorama'
+import { isPanoRatio, uploadPanoramaCapture } from '../panorama'
 import PanoramaViewer from './PanoramaViewer.vue'
 import { SHEET_TYPES, latestVariantImage } from '../sheet'
 import { fmtCNY, voiceStatusBadge } from '../voice'
@@ -448,8 +448,7 @@ async function onPanoCapture(blob: Blob): Promise<void> {
   panoUploading.value = true
   actionError.value = ''
   try {
-    const file = new File([blob], `panorama-${Date.now()}.jpg`, { type: 'image/jpeg' })
-    await client.uploadAsset(file, 'image', props.ipId || undefined)
+    await uploadPanoramaCapture((file, kind, ipId) => client.uploadAsset(file, kind, ipId), blob, props.ipId || undefined)
     panoNote.value = '全景截图已入素材库(仅入库,不落实体画廊)'
     window.clearTimeout(panoNoteTimer)
     panoNoteTimer = window.setTimeout(() => {

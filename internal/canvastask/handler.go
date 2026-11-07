@@ -53,6 +53,12 @@ const (
 	maxPreviewTextRunes = 200
 	maxSpeechTextRunes  = 600
 	maxInstructionRunes = 500
+
+	// sceneTypePanorama 是 scene_type 契约当前唯一收的枚举值(81 号票全景
+	// 生图),与网关 /v1(internal/relay/images.go 同名常量)校验同形(严格
+	// 全等不 trim)。两包各持一份**不互引**—— 为一个字面串造 relay←canvastask
+	// 包依赖不值;改值时两边同步(那边注释反向指回这里)。
+	sceneTypePanorama = "3d_panorama"
 )
 
 // CanvasGetter is the slice of the canvas store the handlers need: a task
@@ -404,24 +410,24 @@ func (h *Handlers) Create(c *gin.Context) {
 			imageRefs = append(imageRefs, resolved)
 		}
 	}
-	// 全景生图(81 号票):仅图片任务、仅 3d_panorama 一个枚举值 —— 其他
-	// 值在落任务行之前 400,与网关 /v1 的校验同形(严格全等,不 trim,
+	// 全景生图(81 号票):仅图片任务、仅 sceneTypePanorama 一个枚举值 ——
+	// 其他值在落任务行之前 400,与网关 /v1 的校验同形(严格全等,不 trim,
 	// 行上的值就是上送的值);视频任务不读该字段(与 background 的态度
 	// 对称,全景是图片任务的专属开关)。校验先于 prompt:豁免以它为据。
 	sceneType := ""
 	if kind == KindImage && in.SceneType != "" {
-		if in.SceneType != "3d_panorama" {
-			apierr.InvalidRequest(c, "scene_type 仅支持 3d_panorama")
+		if in.SceneType != sceneTypePanorama {
+			apierr.InvalidRequest(c, "scene_type 仅支持 "+sceneTypePanorama)
 			return
 		}
 		sceneType = in.SceneType
 	}
 	prompt := strings.TrimSpace(in.Prompt)
-	// prompt 必填豁免(81 号票全景节点):scene_type=3d_panorama 的生图
+	// prompt 必填豁免(81 号票全景节点):scene_type=sceneTypePanorama 的生图
 	// 形态放行空 prompt —— 原生全景上游不吃提示词(打样实证,参考图即
 	// 身份,全景任务行 prompt 恒空串);非全景形态照旧必填,普通生图零
 	// 变化。上游真跑时对多余 prompt 不消费,非空 prompt 落行保真溯源。
-	if prompt == "" && sceneType != "3d_panorama" {
+	if prompt == "" && sceneType != sceneTypePanorama {
 		apierr.InvalidRequest(c, "prompt 不能为空")
 		return
 	}
