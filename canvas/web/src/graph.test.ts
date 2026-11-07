@@ -113,6 +113,17 @@ describe('isCanvasNodeType / initialData', () => {
     expect('detail' in data).toBe(false)
     expect(NODE_TYPE_LABEL.level).toBe('关卡')
   })
+
+  it('seeds panorama nodes with an unbound reference id (81 号票)', () => {
+    // 第十四种节点类型「创作」组:只带未绑定的参考图引用(0 = 待选),
+    // 产物配对 url/asset_id/model 由任务成功回填,初始不落键。
+    expect(isCanvasNodeType('panorama')).toBe(true)
+    expect(normalizeNodeType('panorama')).toBe('panorama')
+    const data = initialData('panorama') as { ref_asset_id: number; url?: string }
+    expect(data).toEqual({ ref_asset_id: 0 })
+    expect('url' in data).toBe(false)
+    expect(NODE_TYPE_LABEL.panorama).toBe('全景')
+  })
 })
 
 describe('appendAgentTurn', () => {
