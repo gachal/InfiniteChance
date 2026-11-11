@@ -83,6 +83,11 @@ type SheetFacts struct {
 // MaxSheetPromptRunes。未知类型跳过模板行(handler 在落行前已拦,这里
 // 是防御面)。与 TS 侧 sheet.ts buildSheetPrompt 同形,两侧测试各自钉住
 // 同一组字面量。
+//
+// 防叠对照(84 号票 B2 评审修复轮):本函数是请求体事实的全新拼装、不
+// 消费前端预填文本,无旧「角色配色」段可叠 —— 不需要 TS 侧
+// palette.stripPaletteSegment/prependPaletteSegment 那样的剥段守卫;
+// 两侧语义以 TS 侧 palette.ts 注释与本注释对照钉住。
 func BuildSheetPrompt(sheetType string, f SheetFacts, style string) string {
 	lines := make([]string, 0, 8)
 	if tpl, ok := sheetTypeTemplates[sheetType]; ok {

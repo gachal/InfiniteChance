@@ -10,6 +10,7 @@
 import type { StoryboardCut, StoryboardNodeData } from './graph'
 import { prependStyleSegment } from './ipStyle'
 import { moveItem, removeAt } from './list'
+import { prependPaletteSegment } from './palette'
 import { assetContentURL } from './thumbnail'
 
 /** 运镜白名单(53 号票):前端持有,后端存串不校验(51 号 label 同哲学);
@@ -132,6 +133,20 @@ const BRIEF_SEGMENT_LABEL = '全片基调:'
 export const QUALITY_TAIL =
   '高清,细节丰富,电影质感,色彩自然;保持无字幕,不要生成Logo和水印'
 
+/** 直通拼装的 section 标记清单(84 号票 B2 防叠显式化,评审修复轮):
+ * palette.prependPaletteSegment/stripPaletteSegment 据此识别「配色段之后
+ * 的 section 行」—— palette 不反向 import 本文件(会循环依赖),段边界
+ * 由拼装面声明、清单与上面各段标记同源维护,漂移由 storyboard.test 的
+ * 段序钉子与 palette.test 的边界用例两侧对拍。 */
+const SECTION_MARKS = [
+  BRIEF_SEGMENT_LABEL,
+  '画面描述:',
+  '景别:',
+  '运镜:',
+  '台词/音效:',
+  QUALITY_TAIL,
+]
+
 /** cut → 视频提示词拼装(67 号票 cut→视频直通;73 号票段序按官方公式
  * 重排):画面风格段 → 全片基调段 → 画面描述 → 景别 → 运镜 → 台词/音效 →
  * 画质约束尾段。基调段(brief)与尾段作为 sections 成员参与序位 —— 基调
@@ -148,16 +163,17 @@ export const QUALITY_TAIL =
  *   标签、运镜顿号连接、cut.seconds 不进 prompt 照旧(秒数参照由导演写
  *   进 note,73 号票定案 D.7)。
  * - 84 号票 B3:角色配色段(paletteLine,palette.buildPaletteLine 产物)
- *   非空进 sections 首位 —— 风格段最后由 prependStyleSegment 顶到最前,
- *   最终序 = 画面风格 → 角色配色 → 全片基调 → …;发送链的绑定行
- *   (「出场元素:」)经 insertElementLine 插风格段之后、配色段之前,
- *   即票面「配色段插在绑定行之后」。有画面路径不传(71 号票互斥不注入)。
+ *   非空拼在 sections 之前(段位 = 首位)—— 风格段最后由
+ *   prependStyleSegment 顶到最前,最终序 = 画面风格 → 角色配色 → 全片
+ *   基调 → …;发送链的绑定行(「出场元素:」)经 insertElementLine 插
+ *   风格段之后、配色段之前,即票面「配色段插在绑定行之后」。有画面路径
+ *   不传(71 号票互斥不注入)。拼装经 palette.prependPaletteSegment
+ *   (84-B2 防叠显式化):拼前剥掉 body 里已存在的段,「prompt 已含同段
+ *   不叠段」是拼装函数自身的性质而非调用方纪律(与 ipStyle 防叠的同构
+ *   关系与服务端对照见 palette.stripPaletteSegment 注释)。
  * 纯函数便于单测;参考图注入不进提示词照旧(70 号票,配色段是 84 另加)。 */
 export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = '', paletteLine = ''): string {
   const sections: string[] = []
-  if (paletteLine !== '') {
-    sections.push(paletteLine)
-  }
   const briefText = brief.trim()
   if (briefText !== '') {
     sections.push(`${BRIEF_SEGMENT_LABEL}${briefText}`)
@@ -177,7 +193,7 @@ export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = '', 
     sections.push(`台词/音效:${lines}`)
   }
   sections.push(QUALITY_TAIL)
-  return prependStyleSegment(sections.join('\n'), style)
+  return prependStyleSegment(prependPaletteSegment(sections.join('\n'), paletteLine, SECTION_MARKS), style)
 }
 
 /** cut → 图片提示词拼装(分镜画面直通生成;73 号票定案 D.5 生图直通
@@ -185,12 +201,10 @@ export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = '', 
  * → 画面描述 → 景别 → 画质约束尾段 —— 分镜画面是视频首帧种子,同需基调
  * 一致与画面干净,两直通口径一致;不拼运镜/台词照旧(那是视频语汇)。
  * 基调段/尾段/风格段/配色段的拼装口径与 buildCutVideoPrompt 逐条一致
- * (含尾段恒拼、brief 不受开关管)。纯函数便于单测。 */
+ * (含尾段恒拼、brief 不受开关管、配色段经 prependPaletteSegment 防叠
+ * 拼装)。纯函数便于单测。 */
 export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = '', paletteLine = ''): string {
   const sections: string[] = []
-  if (paletteLine !== '') {
-    sections.push(paletteLine)
-  }
   const briefText = brief.trim()
   if (briefText !== '') {
     sections.push(`${BRIEF_SEGMENT_LABEL}${briefText}`)
@@ -203,7 +217,7 @@ export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = '', 
     sections.push(`景别:${cut.shot}`)
   }
   sections.push(QUALITY_TAIL)
-  return prependStyleSegment(sections.join('\n'), style)
+  return prependStyleSegment(prependPaletteSegment(sections.join('\n'), paletteLine, SECTION_MARKS), style)
 }
 
 /** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。
