@@ -59,12 +59,16 @@ type Character struct {
 }
 
 // Variant is one 造型变体:换装 = 新建变体后成套上传新视图。Note 是服装
-// 描述(自由文本);Sort 支持展示排序(同值按 id,即创建序)。
+// 描述(自由文本);Palette 是配色指定(84 号票,自由文本 HEX 行,如
+// 「发色:#1A2E;肤色:#FFE0D0;…」,上限 500 runes 在 handler 层拒绝,
+// 空串 = 无配色、生成注入面整段跳过);Sort 支持展示排序(同值按 id,
+// 即创建序)。
 type Variant struct {
 	ID          int64
 	CharacterID int64
 	Name        string
 	Note        string
+	Palette     string
 	Sort        int
 	Images      []Image
 	CreatedAt   time.Time
@@ -103,10 +107,12 @@ type CharacterUpdate struct {
 }
 
 // VariantUpdate carries UpdateVariant's partial fields: nil = 不动。
+// Palette 显式给出即改配色,空串 = 清除(可空字段既有语义)。
 type VariantUpdate struct {
-	Name *string
-	Note *string
-	Sort *int
+	Name    *string
+	Note    *string
+	Palette *string
+	Sort    *int
 }
 
 // ImageInput carries CreateImage's fields; label/sort 可选(sort 缺省 0,
@@ -145,9 +151,10 @@ type Store interface {
 	// DeleteCharacter removes the character row and cascades its variants
 	// and image rows; asset rows are untouched (引用不复制).
 	DeleteCharacter(ctx context.Context, id int64) error
-	// CreateVariant adds one outfit variant under the character;
-	// ErrCharacterNotFound when there is no character row.
-	CreateVariant(ctx context.Context, characterID int64, name, note string) (Variant, error)
+	// CreateVariant adds one outfit variant under the character(palette
+	// 是配色自由文本,可为空);ErrCharacterNotFound when there is no
+	// character row.
+	CreateVariant(ctx context.Context, characterID int64, name, note, palette string) (Variant, error)
 	// UpdateVariant applies the non-nil fields of u; ErrVariantNotFound.
 	UpdateVariant(ctx context.Context, id int64, u *VariantUpdate) (Variant, error)
 	// DeleteVariant removes the variant and cascades its image rows;

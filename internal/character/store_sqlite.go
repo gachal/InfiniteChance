@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS character_variants (
 	character_id INTEGER NOT NULL,
 	name         TEXT    NOT NULL,
 	note         TEXT    NOT NULL DEFAULT '',
+	palette      TEXT    NOT NULL DEFAULT '',
 	sort         INTEGER NOT NULL DEFAULT 0,
 	created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
 	updated_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
@@ -68,15 +70,20 @@ var sqliteIndexes = []string{
 }
 
 // sqliteMigrations widens tables created by earlier desktop builds in place
-// (57 号票的角色绑定音色列):CREATE TABLE IF NOT EXISTS 不会加宽已存在的
-// 表,存量 app.db 靠 PRAGMA table_info 检查后 ALTER(canvastask 包先例)。
-// Idempotent.
-var sqliteMigrations = []struct{ column, ddl string }{
-	{"voice_id", "ALTER TABLE characters ADD COLUMN voice_id INTEGER NULL"},
+// (57 号票的角色绑定音色列、84 号票的变体配色列):CREATE TABLE IF NOT
+// EXISTS 不会加宽已存在的表,存量 app.db 靠 PRAGMA table_info 检查后
+// ALTER(canvastask 包先例)。**检查必须按表参数化**(84 号票勘察修正:
+// 曾把 PRAGMA table_info 钉死 characters,第二张表的加列会被误跳)——
+// PRAGMA 不支持占位符,表名用本文件的编译期常量拼进语句。SQLite 侧
+// ADD COLUMN 带非 NULL 默认值(NOT NULL 约束的加列要求),存量行读回
+// '' = 无配色,与 MySQL 侧语义一致。Idempotent.
+var sqliteMigrations = []struct{ table, column, ddl string }{
+	{"characters", "voice_id", "ALTER TABLE characters ADD COLUMN voice_id INTEGER NULL"},
+	{"character_variants", "palette", "ALTER TABLE character_variants ADD COLUMN palette TEXT NOT NULL DEFAULT ''"},
 }
 
 // EnsureSchema creates the three tables and their indexes when missing,
-// then widens an existing characters table in place. Idempotent.
+// then widens already deployed tables in place. Idempotent.
 func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 	for _, ddl := range []string{sqliteCharactersSchema, sqliteVariantsSchema, sqliteImagesSchema} {
 		if _, err := s.DB.ExecContext(ctx, ddl); err != nil {
@@ -89,7 +96,7 @@ func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 		}
 	}
 	for _, m := range sqliteMigrations {
-		rows, err := s.DB.QueryContext(ctx, `PRAGMA table_info(characters)`)
+		rows, err := s.DB.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, m.table))
 		if err != nil {
 			return err
 		}
@@ -155,7 +162,7 @@ func (s *SQLiteStore) touchCharacter(ctx context.Context, id int64) {
 
 // loadTree assembles one character's variants and images (sort+id 序)。
 func (s *SQLiteStore) loadTree(ctx context.Context, c *Character) error {
-	vrows, err := s.DB.QueryContext(ctx, `SELECT id, character_id, name, note, sort, created_at, updated_at
+	vrows, err := s.DB.QueryContext(ctx, `SELECT id, character_id, name, note, palette, sort, created_at, updated_at
 		FROM character_variants WHERE character_id = ? ORDER BY sort ASC, id ASC`, c.ID)
 	if err != nil {
 		return err
@@ -164,7 +171,7 @@ func (s *SQLiteStore) loadTree(ctx context.Context, c *Character) error {
 	for vrows.Next() {
 		var v Variant
 		var createdAt, updatedAt string
-		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Sort, &createdAt, &updatedAt); err != nil {
+		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Palette, &v.Sort, &createdAt, &updatedAt); err != nil {
 			return err
 		}
 		if v.CreatedAt, err = sqlitedb.ParseTime(createdAt); err != nil {
@@ -215,7 +222,7 @@ func (s *SQLiteStore) CreateCharacter(ctx context.Context, ipID int64, in Charac
 	}
 	// 变体纪律:建角色自动带「默认」变体(可改名;最后一个不可删)。
 	if _, err := s.DB.ExecContext(ctx,
-		`INSERT INTO character_variants (character_id, name, note, sort, created_at, updated_at) VALUES (?, '默认', '', 0, ?, ?)`,
+		`INSERT INTO character_variants (character_id, name, note, palette, sort, created_at, updated_at) VALUES (?, '默认', '', '', 0, ?, ?)`,
 		id, now, now); err != nil {
 		return Character{}, err
 	}
@@ -267,7 +274,7 @@ func (s *SQLiteStore) attachTree(ctx context.Context, ipID int64, byID map[int64
 	if len(byID) == 0 {
 		return nil
 	}
-	vrows, err := s.DB.QueryContext(ctx, `SELECT v.id, v.character_id, v.name, v.note, v.sort, v.created_at, v.updated_at
+	vrows, err := s.DB.QueryContext(ctx, `SELECT v.id, v.character_id, v.name, v.note, v.palette, v.sort, v.created_at, v.updated_at
 		FROM character_variants v JOIN characters c ON v.character_id = c.id
 		WHERE c.ip_id = ? ORDER BY v.sort ASC, v.id ASC`, ipID)
 	if err != nil {
@@ -280,7 +287,7 @@ func (s *SQLiteStore) attachTree(ctx context.Context, ipID int64, byID map[int64
 	for vrows.Next() {
 		var v Variant
 		var createdAt, updatedAt string
-		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Sort, &createdAt, &updatedAt); err != nil {
+		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Palette, &v.Sort, &createdAt, &updatedAt); err != nil {
 			return err
 		}
 		if v.CreatedAt, err = sqlitedb.ParseTime(createdAt); err != nil {
@@ -416,9 +423,9 @@ func (s *SQLiteStore) DeleteCharacter(ctx context.Context, id int64) error {
 func (s *SQLiteStore) loadVariantRow(ctx context.Context, id int64) (Variant, error) {
 	var v Variant
 	var createdAt, updatedAt string
-	err := s.DB.QueryRowContext(ctx, `SELECT id, character_id, name, note, sort, created_at, updated_at
+	err := s.DB.QueryRowContext(ctx, `SELECT id, character_id, name, note, palette, sort, created_at, updated_at
 		FROM character_variants WHERE id = ?`, id).
-		Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Sort, &createdAt, &updatedAt)
+		Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Palette, &v.Sort, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Variant{}, ErrVariantNotFound
 	}
@@ -438,7 +445,7 @@ func (s *SQLiteStore) GetVariant(ctx context.Context, id int64) (Variant, error)
 	return s.loadVariantRow(ctx, id)
 }
 
-func (s *SQLiteStore) CreateVariant(ctx context.Context, characterID int64, name, note string) (Variant, error) {
+func (s *SQLiteStore) CreateVariant(ctx context.Context, characterID int64, name, note, palette string) (Variant, error) {
 	var one int
 	if err := s.DB.QueryRowContext(ctx, `SELECT 1 FROM characters WHERE id = ?`, characterID).Scan(&one); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -448,8 +455,8 @@ func (s *SQLiteStore) CreateVariant(ctx context.Context, characterID int64, name
 	}
 	now := sqlitedb.FormatTime(time.Now())
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO character_variants (character_id, name, note, sort, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)`,
-		characterID, name, note, now, now)
+		`INSERT INTO character_variants (character_id, name, note, palette, sort, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)`,
+		characterID, name, note, palette, now, now)
 	if err != nil {
 		return Variant{}, err
 	}
@@ -477,6 +484,10 @@ func (s *SQLiteStore) UpdateVariant(ctx context.Context, id int64, u *VariantUpd
 	if u.Note != nil {
 		sets = append(sets, "note = ?")
 		args = append(args, *u.Note)
+	}
+	if u.Palette != nil {
+		sets = append(sets, "palette = ?")
+		args = append(args, *u.Palette)
 	}
 	if u.Sort != nil {
 		sets = append(sets, "sort = ?")
