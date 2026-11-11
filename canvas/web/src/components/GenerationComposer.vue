@@ -38,7 +38,7 @@ import {
   presetNeedsConfirm,
   presetPromptFor,
 } from '../composerElements'
-import { GAMEPLAY_PRESETS } from '../presets'
+import { GAMEPLAY_PRESETS, IMAGE_GAMEPLAY_PRESETS } from '../presets'
 import {
   composerRefMentions,
   insertMentionToken,
@@ -414,17 +414,25 @@ const tooManyCharacters = computed(
       CHARACTER_ELEMENT_HINT_LIMIT,
 )
 
-/** 「玩法」下拉(71 号票 C,仅视频模式):选中即按参考条元素 chip 序填名
- * 写进提示词 —— 提示词空直接写入、非空先确认替换;只写提示词,不动时长/
- * 比例/分辨率/模型/风格,不记「当前预设」状态(下拉写完复位到占位项)。 */
+/** 当前模式的玩法预设清单(85 号票 B1:图片模式也出「玩法」下拉,渲染
+ * IMAGE_GAMEPLAY_PRESETS;视频模式维持 GAMEPLAY_PRESETS,85 号票 B2 已
+ * 垫后追加「三人同框」)。 */
+const gameplayPresets = computed(() => (isVideo.value ? GAMEPLAY_PRESETS : IMAGE_GAMEPLAY_PRESETS))
+
+/** 「玩法」下拉(71 号票 C;85 号票 B1 起图片模式同款):选中即按参考条
+ * 元素 chip 序填名写进提示词 —— 提示词空直接写入、非空先确认替换;只写
+ * 提示词,不动时长/比例/分辨率/模型/风格,不记「当前预设」状态(下拉写完
+ * 复位到占位项)。 */
 function onPresetChange(e: Event): void {
   const select = e.target as HTMLSelectElement
-  const preset = GAMEPLAY_PRESETS.find((p) => p.key === select.value)
+  const preset = gameplayPresets.value.find((p) => p.key === select.value)
   select.value = ''
   if (!preset) {
     return
   }
-  const next = presetPromptFor(preset, props.videoRefs, props.videoRefNames ?? [])
+  const [refs, names] =
+    isVideo.value ? [props.videoRefs, props.videoRefNames ?? []] : [props.refs, props.refNames ?? []]
+  const next = presetPromptFor(preset, refs, names)
   if (presetNeedsConfirm(props.prompt, next) && !window.confirm(`用「${preset.label}」模板替换当前提示词?`)) {
     return
   }
@@ -749,9 +757,9 @@ function onFileChange(e: Event): void {
 
     <!-- 提示词框下沿一行:绑定行预览(71 号票 B5:发送时插在风格段之后的
          那一行,只读、不改写输入框;无元素不显示)+「玩法」下拉(71 号票
-         C:仅视频模式,选中写提示词,非空先确认替换)。 -->
+         C 视频;85 号票 B1 起图片模式同款,选中写提示词,非空先确认替换)。 -->
     <div
-      v-if="elementLine || isVideo"
+      v-if="elementLine || gameplayPresets.length > 0"
       class="prompt-meta"
     >
       <p
@@ -762,7 +770,6 @@ function onFileChange(e: Event): void {
         将附加:{{ elementLine }}
       </p>
       <select
-        v-if="isVideo"
         class="preset"
         :disabled="disabledReason !== ''"
         title="玩法预设:按参考条元素填名写进提示词(只写提示词,不动时长/比例/分辨率/模型)"
@@ -773,7 +780,7 @@ function onFileChange(e: Event): void {
           玩法…
         </option>
         <option
-          v-for="p in GAMEPLAY_PRESETS"
+          v-for="p in gameplayPresets"
           :key="p.key"
           :value="p.key"
         >
