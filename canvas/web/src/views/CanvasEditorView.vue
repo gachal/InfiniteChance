@@ -1035,17 +1035,18 @@ const composerPickerKinds = computed<Array<'image' | 'video' | 'audio'>>(() =>
 )
 
 /** 面板说明行随模式;带 IP 归属时才有资产视图(角色/场景/道具),一并说明
- * 那里挑出的是元素(71 号票:带名称、视频模式恒参考图)。 */
+ * 那里挑出的是元素(71 号票:带名称、视频模式恒参考图)。85 号票顺带说明
+ * 多选能力(群像场次跨变体勾多张一次拉入)。 */
 const composerPickerHint = computed(() => {
   const library = canvasIPID.value > 0
   if (composerMode.value === 'video') {
     return library
-      ? '素材视图点选按默认角色挂为参考;角色/场景/道具视图点选挂为元素(带名称,恒为参考图);再点取消。'
-      : '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。'
+      ? '素材视图点选按默认角色挂为参考;角色/场景/道具视图点选挂为元素(带名称,恒为参考图);再点取消。多选模式可跨变体勾选多张一次拉入。'
+      : '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。多选模式可勾选多张一次拉入。'
   }
   return library
-    ? '点选挂为参考图;角色/场景/道具视图点选挂为元素(带名称);再点取消。'
-    : '点选挂为参考图,再点取消。'
+    ? '点选挂为参考图;角色/场景/道具视图点选挂为元素(带名称);再点取消。多选模式可跨变体勾选多张一次拉入。'
+    : '点选挂为参考图,再点取消。多选模式可勾选多张一次拉入。'
 })
 
 /** 已选高亮 = 当前模式参考条上的素材 id(选中节点产物 + 上传/挑选条目)。 */
@@ -1156,6 +1157,21 @@ function toastElementPick(result: ElementPickResult<ComposerRef | VideoComposerR
   const text = elementPickNotice(result.action, name)
   if (text !== '') {
     showNotice(text)
+  }
+}
+
+/** 挑选面板多选确认(85 号票 A):按勾选序逐条走既有单选链,不加新合并
+ * 逻辑 —— 元素载荷走 pickComposerElement(mergeElementPick 既有守卫:同
+ * 实体替换/同图取消/去重/上限整条拒收,拒收横幅与替换 toast 沿用既有出口,
+ * 逐条应用时守卫面对的是前一条已生效的最新条),散图载荷(素材平铺视图勾
+ * 的)走 onComposerPickToggle 的追加/摘下路径。 */
+function onComposerPickConfirm(picks: { asset: AssetRecord; element?: ComposerElement }[]): void {
+  for (const { asset, element } of picks) {
+    if (element) {
+      pickComposerElement(asset, element)
+    } else {
+      onComposerPickToggle(asset)
+    }
   }
 }
 
@@ -5170,7 +5186,9 @@ function backToList(): void {
         :hint="composerPickerHint"
         :selected-asset-ids="composerPickerSelectedIds"
         :ip-id="canvasIPID || undefined"
+        :multi-select="true"
         @toggle="onComposerPickToggle"
+        @confirm="onComposerPickConfirm"
         @close="composerPickerOpen = false"
       />
       <AssetPicker
