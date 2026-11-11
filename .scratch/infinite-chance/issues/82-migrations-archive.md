@@ -1,7 +1,7 @@
 # 82 全库 Schema 文件化留底:migrations 基线对 + 增量对 + 形状对账(纯留底不执行)
 
 Type: feat(工程基建)
-Status: 已定案(2026-11-11 grill-with-docs 三轮,Q1–Q8 全裁;研究底座 = [01 号 Schema 全景调查](../../ip-capabilities/issues/01-schema-inventory.md),取舍落 [ADR 0008](../../../docs/adr/0008-migrations-archive-not-runtime.md);待 implement-spec)
+Status: 已实现(2026-11-11 grill-with-docs 三轮,Q1–Q8 全裁;同日 implement-spec 落 feat/82-migrations-archive——`migrations/` 基线两份冻结(MySQL `SHOW CREATE TABLE` 归一 / SQLite sqlite_master 原文,双方言 22 表)+ `internal/migrations` 形状对账(文件链真实执行 vs 全部 EnsureSchema 逐表比名集合,MySQL 实连 3307 侧 22 表/217 列名互证、可 skip,SQLite 临时文件库永不 skip;切换提交零增量);评审修复轮收 4 条(执行原语收进测试文件编译期锁死纯留底 / 17-store 装配清单共享 helper / Split 注释名实相符 / 测试名核实);取舍落 [ADR 0008](../../../docs/adr/0008-migrations-archive-not-runtime.md);遗留 = 首个真实增量随 [04 号 Lore 实体票](../../ip-capabilities/issues/04-lore-entity-model.md)加表出现,走全量双写纪律)
 
 ## Question
 
