@@ -1,7 +1,7 @@
 # 85 群像同框便利层(多选快速拉取 + 图片模式预设 + 提示泛化)(2026-11-11 grilling 定案)
 
 Type: feat
-Status: 定案(2026-11-11 grill-with-docs 定案,06 号一致性深化三项之三;Q9 全按推荐;待 implement-spec;实现顺序垫后)
+Status: 已实现(2026-11-12,feat/consistency-deepening 集成分支并 main 8da7eab;含评审修复轮)。实现注记:多选为 opt-in 开关(其余 7 个 AssetPicker 调用点单选行为逐字节不变,仅 composer 挑选面板传 multi-select);图片预设首批 = 合照合影/群像列阵/双人对峙/多人场景互动;视频侧「三人同框」随 `PresetSlots.role3` 扩容(第三个之后的角色靠绑定行兜底);>4 提示两模式同出、文案去厂商语境。
 
 ## Question
 

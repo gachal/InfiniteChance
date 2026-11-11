@@ -1,7 +1,7 @@
 # 83 服装变体深化(cut→变体绑定 + 变体成套生成)(2026-11-11 grilling 定案)
 
 Type: feat
-Status: 定案(2026-11-11 grill-with-docs 定案,06 号一致性深化裁三项之第一优先;Q7/Q8 全按推荐;待 implement-spec)
+Status: 已实现(2026-11-12,feat/consistency-deepening 集成分支并 main 8da7eab;含评审修复轮)。实现注记:成套生成对话框顺路带比例/分辨率选择;cut 移除角色标注即清绑定并以 `pruneCutVariantOrphans` 收回孤儿绑定;总价预估按计价轨道分派、不可估笔显式标注(生图任务网关只收 call 轨,已核实)——均为实现裁量,定案口径不变。
 
 ## Question
 

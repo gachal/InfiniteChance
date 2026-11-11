@@ -23,7 +23,7 @@ Label: wayfinder:map
 - [01 全库 Schema 全景与 EnsureSchema 装配调查](issues/01-schema-inventory.md)(2026-11-11 关闭):22 张表/16 包/双方言 44 条 CREATE TABLE 全清单落 `research/schema-inventory` 分支;关键事实——迁移形态含列形状改写与启动数据自愈(不止加列)、MySQL 基线须取迁移链收敛后形状、全库零 SQL 外键引用完整性全在应用层、SQLite 列迁移先于索引是执行器硬约束。
 - [03 角色库与消费链全景调查](issues/03-character-library-survey.md)(2026-11-11 关闭):纪要落 `research/character-library-survey` 分支;关键事实——65 号票 scene/prop 已是「角色库模式砍变体层」的复制先例(Lore 存储面照 scene 包改)、注入链三层截断口径互不通用(聊天 50 万/生图 2000/风格 500)、物化契约实体无关可换芯、但消费面(引用节点/连线矩阵/cut 标注/Agent chip)实体版整体缺位——05 号票独立成票被坐实。
 - [02 migrations 机制定案](issues/02-migrations-mechanism.md)(2026-11-11 关闭):纯留底定案,定案票 = [82 号](../infinite-chance/issues/82-migrations-archive.md)——`migrations/` 只落文件(基线两份冻结 + 增量成对),EnsureSchema 保持唯一运行时,无 runner 无记账;全量双写纪律(每变更 4 处:增量对 + EnsureSchema 双方言)由 go test 形状对账兜底(SQLite 侧永不 skip);取舍落 ADR 0008,**04 号 Lore 实体票解锁**。
-- [06 一致性深化定案](issues/06-consistency-deepening.md)(2026-11-11 关闭):三项全做、按项拆票、锁现有表边界(不预设 Lore 形状,需要动实体模型的子项移交 04);定案票 = [83 服装变体](../infinite-chance/issues/83-outfit-variants.md)(cut→变体绑定 + 成套生成)/ [84 色指定](../infinite-chance/issues/84-color-spec.md)(变体配色字段,migrations 纪律首次增量 + 光照色板第六类型)/ [85 群像同框便利层](../infinite-chance/issues/85-group-shot.md)(多选拉取 + 图片模式预设 + 提示泛化);实现顺序 83→84→85。
+- [06 一致性深化定案](issues/06-consistency-deepening.md)(2026-11-11 关闭):三项全做、按项拆票、锁现有表边界(不预设 Lore 形状,需要动实体模型的子项移交 04);定案票 = [83 服装变体](../infinite-chance/issues/83-outfit-variants.md)(cut→变体绑定 + 成套生成)/ [84 色指定](../infinite-chance/issues/84-color-spec.md)(变体配色字段,migrations 纪律首次增量 + 光照色板第六类型)/ [85 群像同框便利层](../infinite-chance/issues/85-group-shot.md)(多选拉取 + 图片模式预设 + 提示泛化);实现顺序 83→84→85。三票已实现(2026-11-12,feat/consistency-deepening 并 main 8da7eab,含评审修复轮;84 号票完成 migrations 纪律首个增量实战)。
 
 ## Not yet specified
 

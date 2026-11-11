@@ -1,7 +1,7 @@
 # 84 色指定增量(变体配色字段 + 色板模板补色 + 光照色板第六类型)(2026-11-11 grilling 定案)
 
 Type: feat
-Status: 定案(2026-11-11 grill-with-docs 定案,06 号一致性深化三项之二;Q5/Q6/Q10 全按推荐;待 implement-spec;依赖 83 号票先行非硬阻塞,仅实现顺序约定)
+Status: 已实现(2026-11-12,feat/consistency-deepening 集成分支并 main 8da7eab;含评审修复轮)。实现注记:列名定 `palette`;500 runes 超限 = 400 `invalid_request` 拒绝(照 69 号票 MaxIPStyleRunes 口径);首个迁移增量 `migrations/261111_character_variants_palette{,.sqlite}.sql`(MySQL 隐式默认 ''/SQLite 显式 DEFAULT '',读回空串语义一致);加列存在性检查按表参数化(先硬编码 characters 表名,本票修正);cut 配色段防叠由评审修复轮显式化(`stripPaletteSegment`/`prependPaletteSegment`,纯前端,服务端全新拼装无需等价物)。
 
 ## Question
 
