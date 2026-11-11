@@ -135,18 +135,44 @@ function toggleCastOverlay(index: number): void {
   castFor.value = castFor.value === index ? null : index
 }
 
-/** 已选角色按 cut.character_ids 顺序解析(选择序即标注序);目录里找不
- * 到的悬空 id 不显示,由下方 watch 收回。 */
-function castCharacters(cut: StoryboardCut): CharacterRecord[] {
-  const picked: CharacterRecord[] = []
-  for (const id of cut.character_ids ?? []) {
-    const c = props.characters.find((ch) => ch.id === id)
-    if (c) {
-      picked.push(c)
-    }
-  }
-  return picked
+/** 已选角色的 chip 投影(评审修复轮收敛:每角色一次 resolveCutVariant,
+ * 徽记/v-for/下拉值/回落徽记共用同一份 —— 此前下拉值与回落态各自解析,
+ * 每角色 chip 三次)。无绑定 = 跟随默认变体(值 0、无回落态),不调解析;
+ * 绑定可解析 = 绑定变体 id;绑定已删 = 值 0 + 回落态(resolveCutVariant
+ * 已回落默认变体)。 */
+interface CastChip {
+  character: CharacterRecord
+  variantValue: number
+  variantFellBack: boolean
 }
+
+function buildCastChips(cut: StoryboardCut, characters: CharacterRecord[]): CastChip[] {
+  const chips: CastChip[] = []
+  for (const id of cut.character_ids ?? []) {
+    const c = characters.find((ch) => ch.id === id)
+    if (!c) {
+      continue
+    }
+    const bound = cut.character_variants?.[c.id]
+    if (bound === undefined) {
+      chips.push({ character: c, variantValue: 0, variantFellBack: false })
+      continue
+    }
+    const { variant, fellBack } = resolveCutVariant(c, bound)
+    chips.push({
+      character: c,
+      variantValue: fellBack ? 0 : variant?.id ?? 0,
+      variantFellBack: fellBack,
+    })
+  }
+  return chips
+}
+
+/** 逐 cut 的 chips(cuts 变更整体重算;模板徽记/v-for 共用同一份,不再
+ * 重复解析)。目录里找不到的悬空 id 不显示,由下方 watch 收回。 */
+const castChipList = computed(() =>
+  props.data.cuts.map((cut) => buildCastChips(cut, props.characters)),
+)
 
 function onCastChip(index: number, characterId: number): void {
   const cut = props.data.cuts[index]
@@ -162,23 +188,6 @@ function onCastChip(index: number, characterId: number): void {
       ? { character_variants: setCutVariantBinding(cut.character_variants, characterId, 0) }
       : {}),
   })
-}
-
-/** 角色 chip 变体下拉的当前档:0 = 跟随默认变体(无绑定);绑定可解析 =
- * 绑定变体 id;绑定已删 = 0 + 回落态徽记(castVariantFellBack)。 */
-function castVariantValue(cut: StoryboardCut, c: CharacterRecord): number {
-  const bound = cut.character_variants?.[c.id]
-  if (bound === undefined) {
-    return 0
-  }
-  const { variant, fellBack } = resolveCutVariant(c, bound)
-  return fellBack ? 0 : variant?.id ?? 0
-}
-
-/** 回落态:有绑定但所指变体已删(解析已回落默认变体)。 */
-function castVariantFellBack(cut: StoryboardCut, c: CharacterRecord): boolean {
-  const bound = cut.character_variants?.[c.id]
-  return bound !== undefined && resolveCutVariant(c, bound).fellBack
 }
 
 function onCastVariantChange(index: number, characterId: number, raw: string): void {
@@ -460,23 +469,23 @@ onBeforeUnmount(() => {
                       :title="castFor === i ? '收起角色目录' : '标注本镜头出场角色(可多选)'"
                       @click="toggleCastOverlay(i)"
                     >
-                      从角色目录标注{{ castCharacters(cut).length > 0 ? `(${castCharacters(cut).length})` : '' }}
+                      从角色目录标注{{ castChipList[i]?.length ? `(${castChipList[i]?.length})` : '' }}
                     </button>
                     <span
-                      v-for="c in castCharacters(cut)"
-                      :key="c.id"
+                      v-for="chip in castChipList[i] ?? []"
+                      :key="chip.character.id"
                       class="cast-chip"
                     >
                       <span
                         class="cast-name"
-                        :title="c.alias ? `${c.name}(${c.alias})` : c.name"
-                      >{{ c.name }}</span>
+                        :title="chip.character.alias ? `${chip.character.name}(${chip.character.alias})` : chip.character.name"
+                      >{{ chip.character.name }}</span>
                       <select
                         class="cast-variant"
-                        :value="castVariantValue(cut, c)"
-                        :aria-label="`${c.name}的变体`"
-                        :title="castVariantFellBack(cut, c) ? '所选变体已删,取图已回落默认变体' : '本镜头取该变体的设定图;默认变体 = 不指定'"
-                        @change="onCastVariantChange(i, c.id, ($event.target as HTMLSelectElement).value)"
+                        :value="chip.variantValue"
+                        :aria-label="`${chip.character.name}的变体`"
+                        :title="chip.variantFellBack ? '所选变体已删,取图已回落默认变体' : '本镜头取该变体的设定图;默认变体 = 不指定'"
+                        @change="onCastVariantChange(i, chip.character.id, ($event.target as HTMLSelectElement).value)"
                       >
                         <option
                           :value="0"
@@ -485,7 +494,7 @@ onBeforeUnmount(() => {
                           默认变体
                         </option>
                         <option
-                          v-for="v in c.variants"
+                          v-for="v in chip.character.variants"
                           :key="v.id"
                           :value="v.id"
                         >
@@ -493,7 +502,7 @@ onBeforeUnmount(() => {
                         </option>
                       </select>
                       <span
-                        v-if="castVariantFellBack(cut, c)"
+                        v-if="chip.variantFellBack"
                         class="cast-fallback"
                         title="所选变体已删,取图已回落默认变体;换档后解除"
                       >回落</span>
@@ -501,7 +510,7 @@ onBeforeUnmount(() => {
                         type="button"
                         class="cast-x"
                         title="移除本角色的出场标注"
-                        @click="onCastChip(i, c.id)"
+                        @click="onCastChip(i, chip.character.id)"
                       >
                         ×
                       </button>

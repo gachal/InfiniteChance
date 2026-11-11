@@ -78,10 +78,14 @@ describe('AssetPicker 多选模式(85 号票 A:挑选器内存态,纯 UI 无新�
   })
 
   it('卡片高亮在多选模式按勾选集判定,单选模式维持 selectedAssetIds(两语义不串)', () => {
-    const selected = declSource(pickerSource, 'cardSelected')
+    // 评审修复轮:素材平铺/资产库两视图的高亮与提示统一到 id 一层
+    // (cardSelectedId/cardTitleId),不再有 AssetRecord 形状的重复条件。
+    expect(pickerSource.includes('cardSelected(')).toBe(false)
+    expect(pickerSource.includes('cardTitle(')).toBe(false)
+    const selected = declSource(pickerSource, 'cardSelectedId')
     expect(selected.includes('multi.value')).toBe(true)
     expect(selected.includes('checked.value.has')).toBe(true)
-    const titled = declSource(pickerSource, 'cardTitle')
+    const titled = declSource(pickerSource, 'cardTitleId')
     expect(titled.includes('取消勾选')).toBe(true)
     expect(titled.includes('加入勾选')).toBe(true)
   })

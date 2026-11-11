@@ -192,8 +192,6 @@ function kindLabel(k: PickerKind): string {
 // 只传 AssetRecord,不受显示面影响。
 const thumbs = useThumbFallback()
 
-const isSelected = (a: AssetRecord): boolean => props.selectedAssetIds.includes(a.id)
-
 // ---- 多选快速拉取(85 号票 A):挑选器内存态加层,关闭即散 ----
 
 /** 多选模式开关与勾选集(Map 按 assetId,插入序 = 勾选序;确认按此序逐条
@@ -228,19 +226,11 @@ function confirmPicks(): void {
   clearChecked()
 }
 
-/** 卡片高亮与提示文案:多选模式按勾选集(加入勾选/取消勾选),单选模式
- * 维持 selectedAssetIds 已选态(选为参考/取消选择)—— 两语义不串。素材
- * 平铺视图按记录、资产库视图按 asset_id(同素材锚多实体去重展示)。 */
-const cardSelected = (a: AssetRecord): boolean =>
-  multi.value ? checked.value.has(a.id) : isSelected(a)
-
-const cardTitle = (a: AssetRecord): string => {
-  if (multi.value) {
-    return checked.value.has(a.id) ? '取消勾选' : '加入勾选'
-  }
-  return isSelected(a) ? '取消选择' : '选为参考'
-}
-
+/** 卡片高亮与提示文案(id 一层,评审修复轮统一:素材平铺视图与资产库
+ * 视图同用 assetId 形状,两份条件不再重复):多选模式按勾选集(加入
+ * 勾选/取消勾选),单选模式维持 selectedAssetIds 已选态(选为参考/取消
+ * 选择)—— 两语义不串;资产库视图按 asset_id(同素材锚多实体去重展示),
+ * 素材平铺视图传 a.id。 */
 const cardSelectedId = (assetId: number): boolean =>
   multi.value ? checked.value.has(assetId) : props.selectedAssetIds.includes(assetId)
 
@@ -461,8 +451,8 @@ onMounted(refresh)
             v-for="a in visibleAssets"
             :key="a.id"
             class="asset-card"
-            :class="{ selected: cardSelected(a) }"
-            :title="cardTitle(a)"
+            :class="{ selected: cardSelectedId(a.id) }"
+            :title="cardTitleId(a.id)"
             @click="onPick(a)"
           >
             <img
@@ -498,7 +488,7 @@ onMounted(refresh)
               >{{ a.prompt || '(无提示词)' }}</span>
             </div>
             <span
-              v-if="cardSelected(a)"
+              v-if="cardSelectedId(a.id)"
               class="picked"
             >✓</span>
           </li>
