@@ -9,24 +9,6 @@ import (
 	"time"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
-
-	"github.com/gachal/InfiniteChance/internal/apikey"
-	"github.com/gachal/InfiniteChance/internal/asset"
-	"github.com/gachal/InfiniteChance/internal/auth"
-	"github.com/gachal/InfiniteChance/internal/canvas"
-	"github.com/gachal/InfiniteChance/internal/canvastask"
-	"github.com/gachal/InfiniteChance/internal/channel"
-	"github.com/gachal/InfiniteChance/internal/character"
-	"github.com/gachal/InfiniteChance/internal/migrations"
-	"github.com/gachal/InfiniteChance/internal/musictask"
-	"github.com/gachal/InfiniteChance/internal/pricing"
-	"github.com/gachal/InfiniteChance/internal/prompttemplate"
-	"github.com/gachal/InfiniteChance/internal/prop"
-	"github.com/gachal/InfiniteChance/internal/scene"
-	"github.com/gachal/InfiniteChance/internal/settings"
-	"github.com/gachal/InfiniteChance/internal/usage"
-	"github.com/gachal/InfiniteChance/internal/videotask"
-	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // openMigrationsMySQL 按 internal/settings/store_mysql_test.go 的 MYSQL_TEST_DSN
@@ -82,40 +64,6 @@ func openMigrationsMySQL(t *testing.T, suffix string) *sql.DB {
 	return db
 }
 
-// ensureMySQLSchema 按 desktop/runtime.go 的 17 store 装配顺序跑全部 MySQL 侧
-// EnsureSchema(与 reconcile_sqlite_test.go 的 ensureSQLiteSchema、desktop/runtime.go
-// 三方同步 —— 唯一显式顺序依赖 canvases → assets → ips)。
-func ensureMySQLSchema(ctx context.Context, db *sql.DB) error {
-	assets := asset.NewMySQLStore(db)
-	stores := []interface {
-		EnsureSchema(ctx context.Context) error
-	}{
-		auth.NewMySQLStore(db),
-		channel.NewMySQLStore(db),
-		apikey.NewMySQLStore(db),
-		pricing.NewMySQLStore(db),
-		usage.NewMySQLStore(db),
-		videotask.NewMySQLStore(db),
-		musictask.NewMySQLStore(db),
-		prompttemplate.NewMySQLStore(db),
-		settings.NewMySQLStore(db),
-		canvas.NewMySQLStore(db),
-		assets,
-		canvas.NewMySQLIPStore(db),
-		character.NewMySQLStore(db),
-		scene.NewMySQLStore(db),
-		prop.NewMySQLStore(db),
-		voice.NewMySQLStore(db),
-		canvastask.NewMySQLStore(db, assets),
-	}
-	for _, s := range stores {
-		if err := s.EnsureSchema(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // TestReconcileMySQL 形状对账(MySQL 侧):一侧执行「基线 + 全部增量」文件链,
 // 一侧跑全部 EnsureSchema,逐表比对表名集合、列名集合(information_schema.COLUMNS)、
 // 索引名集合(information_schema.STATISTICS 按 INDEX_NAME 去重)。只比名集合
@@ -130,21 +78,19 @@ func ensureMySQLSchema(ctx context.Context, db *sql.DB) error {
 // 侧是内联约束,由同方言对账兜住)。
 func TestReconcileMySQL(t *testing.T) {
 	ctx := context.Background()
-	chain, err := migrations.Load(migrateDir)
+	chain, err := Load(migrateDir)
 	if err != nil {
 		t.Fatalf("load migrations: %v", err)
 	}
 
 	// 库 A:基线 + 全部增量,真实执行。
 	dbA := openMigrationsMySQL(t, "chain")
-	if err := migrations.ApplyMySQL(ctx, dbA, chain); err != nil {
+	if err := ApplyMySQL(ctx, dbA, chain); err != nil {
 		t.Fatalf("apply chain: %v", err)
 	}
-	// 库 B:全部 EnsureSchema。
+	// 库 B:全部 EnsureSchema(装配清单见 chain_test.go 的 ensureAllSchemas)。
 	dbB := openMigrationsMySQL(t, "ensure")
-	if err := ensureMySQLSchema(ctx, dbB); err != nil {
-		t.Fatalf("ensure schema: %v", err)
-	}
+	ensureAllSchemas(t, ctx, dbB, "mysql")
 
 	tablesA := mysqlTables(t, dbA)
 	tablesB := mysqlTables(t, dbB)
