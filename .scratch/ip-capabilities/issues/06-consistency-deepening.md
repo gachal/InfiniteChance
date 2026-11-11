@@ -1,7 +1,7 @@
 # 06 一致性深化定案(色指定增量/群像同框/服装变体)
 
 Label: wayfinder:grilling
-Status: open
+Status: closed(2026-11-11 grill-with-docs 三轮定案;拆 83/84/85 三张定案票,见文末「定案」)
 Assignee: (未认领)
 
 ## Question
@@ -13,3 +13,11 @@ B 域三项增量,先厘清与 70 号票五类型(三视图/多视图/表情集/
 3. **服装变体**:52/70 已有变体服装描述进设定图 prompt,还缺什么(变体→cut 按场穿装?变体专属设定图批量重生成)?
 
 三项可拆可合,grilling 时按实际痒处定优先与取舍。
+
+## 定案(2026-11-11 grill-with-docs 三轮)
+
+三项全做、按项拆票、锁现有表边界(Q1–Q3);实现顺序 = 票号顺序 83→84→85(Q4)。定案票落主项目票目录:
+
+- **[83 服装变体深化](../../../infinite-chance/issues/83-outfit-variants.md)**:cut→变体精确绑定(`StoryboardCut.character_variants` 整图 JSON 零迁移,绑定优先/默认变体回落;71 号票「有画面不注入」维持)+ 变体成套生成(前端串行 N 笔无画布任务,端点零改动;推翻 70 号票「批量编排」Out of Scope 条目)。
+- **[84 色指定增量](../../../infinite-chance/issues/84-color-spec.md)**:变体级配色字段(HEX 自由文本 ≤500 runes,82 号票 migrations 纪律首次增量)+ 三注入面(设定图五类型全拼/cut 画面直通逐角色一行/cut→视频无画面)+ 色板模板补瞳色线色 + 新第六类型「光照色板」(不进 ViewLabels);场景侧承载否决,锁定挂 characters 表族不预设 Lore(Q3)。
+- **[85 群像同框便利层](../../../infinite-chance/issues/85-group-shot.md)**:AssetPicker 多选快速拉取(无新实体)+ 图片模式玩法预设与视频三人模板 + >4 提示泛化并扩图片模式;持久化「角色组」不做归雾。
