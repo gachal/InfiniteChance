@@ -14,6 +14,24 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"testing"
+
+	"github.com/gachal/InfiniteChance/internal/apikey"
+	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/auth"
+	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/canvastask"
+	"github.com/gachal/InfiniteChance/internal/channel"
+	"github.com/gachal/InfiniteChance/internal/character"
+	"github.com/gachal/InfiniteChance/internal/musictask"
+	"github.com/gachal/InfiniteChance/internal/pricing"
+	"github.com/gachal/InfiniteChance/internal/prompttemplate"
+	"github.com/gachal/InfiniteChance/internal/prop"
+	"github.com/gachal/InfiniteChance/internal/scene"
+	"github.com/gachal/InfiniteChance/internal/settings"
+	"github.com/gachal/InfiniteChance/internal/usage"
+	"github.com/gachal/InfiniteChance/internal/videotask"
+	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // Script 是一份 SQL 文件装载后的形态:文件名与切分后的语句序列。
@@ -216,4 +234,74 @@ func apply(ctx context.Context, db *sql.DB, scripts []Script) error {
 		}
 	}
 	return nil
+}
+
+// —— 形状对账共用的装配清单 ——
+
+// schemaEnsurer 是各 store 的建表自愈口,对账测试按 desktop/runtime.go 的
+// 装配顺序逐个调用。
+type schemaEnsurer interface {
+	EnsureSchema(ctx context.Context) error
+}
+
+// ensureAllSchemas 按 desktop/runtime.go 的 17 store 装配顺序跑全部
+// EnsureSchema,TestReconcileMySQL 与 TestReconcileSQLite 共用同一份清单
+// (desktop/runtime.go 是第三份,两侧须同步)。唯一显式顺序依赖
+// canvases → assets → ips(ips 的自愈迁移读 canvases.ip_id,列先就位),
+// 其余族间顺序无关,但列表顺序即装配顺序,照抄不创新。dialect 取
+// "mysql" / "sqlite",按方言构造同名 store。
+func ensureAllSchemas(t *testing.T, ctx context.Context, db *sql.DB, dialect string) {
+	t.Helper()
+	var stores []schemaEnsurer
+	switch dialect {
+	case "mysql":
+		assets := asset.NewMySQLStore(db)
+		stores = []schemaEnsurer{
+			auth.NewMySQLStore(db),
+			channel.NewMySQLStore(db),
+			apikey.NewMySQLStore(db),
+			pricing.NewMySQLStore(db),
+			usage.NewMySQLStore(db),
+			videotask.NewMySQLStore(db),
+			musictask.NewMySQLStore(db),
+			prompttemplate.NewMySQLStore(db),
+			settings.NewMySQLStore(db),
+			canvas.NewMySQLStore(db),
+			assets,
+			canvas.NewMySQLIPStore(db),
+			character.NewMySQLStore(db),
+			scene.NewMySQLStore(db),
+			prop.NewMySQLStore(db),
+			voice.NewMySQLStore(db),
+			canvastask.NewMySQLStore(db, assets),
+		}
+	case "sqlite":
+		assets := asset.NewSQLiteStore(db)
+		stores = []schemaEnsurer{
+			auth.NewSQLiteStore(db),
+			channel.NewSQLiteStore(db),
+			apikey.NewSQLiteStore(db),
+			pricing.NewSQLiteStore(db),
+			usage.NewSQLiteStore(db),
+			videotask.NewSQLiteStore(db),
+			musictask.NewSQLiteStore(db),
+			prompttemplate.NewSQLiteStore(db),
+			settings.NewSQLiteStore(db),
+			canvas.NewSQLiteStore(db),
+			assets,
+			canvas.NewSQLiteIPStore(db),
+			character.NewSQLiteStore(db),
+			scene.NewSQLiteStore(db),
+			prop.NewSQLiteStore(db),
+			voice.NewSQLiteStore(db),
+			canvastask.NewSQLiteStore(db, assets),
+		}
+	default:
+		t.Fatalf("未知方言 %q", dialect)
+	}
+	for _, s := range stores {
+		if err := s.EnsureSchema(ctx); err != nil {
+			t.Fatalf("ensure schema(%s): %v", dialect, err)
+		}
+	}
 }

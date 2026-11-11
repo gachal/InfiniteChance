@@ -8,62 +8,11 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/gachal/InfiniteChance/internal/apikey"
-	"github.com/gachal/InfiniteChance/internal/asset"
-	"github.com/gachal/InfiniteChance/internal/auth"
-	"github.com/gachal/InfiniteChance/internal/canvas"
-	"github.com/gachal/InfiniteChance/internal/canvastask"
-	"github.com/gachal/InfiniteChance/internal/channel"
-	"github.com/gachal/InfiniteChance/internal/character"
-	"github.com/gachal/InfiniteChance/internal/musictask"
-	"github.com/gachal/InfiniteChance/internal/pricing"
-	"github.com/gachal/InfiniteChance/internal/prompttemplate"
-	"github.com/gachal/InfiniteChance/internal/prop"
-	"github.com/gachal/InfiniteChance/internal/scene"
-	"github.com/gachal/InfiniteChance/internal/settings"
 	"github.com/gachal/InfiniteChance/internal/sqlitedb"
-	"github.com/gachal/InfiniteChance/internal/usage"
-	"github.com/gachal/InfiniteChance/internal/videotask"
-	"github.com/gachal/InfiniteChance/internal/voice"
 )
 
 // migrateDir 是仓库根的 migrations/ 留底目录(测试 cwd = internal/migrations)。
 const migrateDir = "../../migrations"
-
-// ensureSQLiteSchema 按 desktop/runtime.go 的 17 store 装配顺序跑全部
-// EnsureSchema。本函数必须与 desktop/runtime.go 装配段保持同步 —— 唯一显式
-// 顺序依赖 canvases → assets → ips(ips 的自愈迁移读 canvases.ip_id,列先就位),
-// 其余族间顺序无关但列表顺序即装配顺序,照抄不创新。
-func ensureSQLiteSchema(ctx context.Context, db *sql.DB) error {
-	assets := asset.NewSQLiteStore(db)
-	stores := []interface {
-		EnsureSchema(ctx context.Context) error
-	}{
-		auth.NewSQLiteStore(db),
-		channel.NewSQLiteStore(db),
-		apikey.NewSQLiteStore(db),
-		pricing.NewSQLiteStore(db),
-		usage.NewSQLiteStore(db),
-		videotask.NewSQLiteStore(db),
-		musictask.NewSQLiteStore(db),
-		prompttemplate.NewSQLiteStore(db),
-		settings.NewSQLiteStore(db),
-		canvas.NewSQLiteStore(db),
-		assets,
-		canvas.NewSQLiteIPStore(db),
-		character.NewSQLiteStore(db),
-		scene.NewSQLiteStore(db),
-		prop.NewSQLiteStore(db),
-		voice.NewSQLiteStore(db),
-		canvastask.NewSQLiteStore(db, assets),
-	}
-	for _, s := range stores {
-		if err := s.EnsureSchema(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // TestReconcileSQLite 形状对账(SQLite 侧,永不 skip):
 //
@@ -102,15 +51,13 @@ func TestReconcileSQLite(t *testing.T) {
 		t.Fatalf("apply chain: %v", err)
 	}
 
-	// 库 B:全部 EnsureSchema(装配顺序照 desktop/runtime.go,注释见上)。
+	// 库 B:全部 EnsureSchema(装配清单见 chain_test.go 的 ensureAllSchemas)。
 	dbB, err := sqlitedb.Open(filepath.Join(t.TempDir(), "ensure.db"))
 	if err != nil {
 		t.Fatalf("open ensure db: %v", err)
 	}
 	defer dbB.Close()
-	if err := ensureSQLiteSchema(ctx, dbB); err != nil {
-		t.Fatalf("ensure schema: %v", err)
-	}
+	ensureAllSchemas(t, ctx, dbB, "sqlite")
 
 	tablesA, err := sqliteTables(dbA)
 	if err != nil {
