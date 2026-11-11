@@ -278,7 +278,8 @@ export function insertElementLine(prompt: string, line: string, segment?: string
 
 // ---- 数量提示(71 号票 B7)----
 
-/** 角色元素提示阈值(Seedance 官方口径:超过 4 人稳定性下降;只出提示行
+/** 角色元素提示阈值(多角色同框稳定性的经验阈值:71 号票 B7 引入时取
+ * Seedance 官方多人建议口径,85 号票 C 文案泛化去厂商语境;只出提示行
  * 不拦发送,上游裁决原则不变)。 */
 export const CHARACTER_ELEMENT_HINT_LIMIT = 4
 

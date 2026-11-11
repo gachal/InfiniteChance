@@ -404,14 +404,15 @@ const elementLine = computed(() =>
     : buildElementLine(props.refs, props.refNames ?? [], 'image'),
 )
 
-/** 出场角色超过阈值的提示(71 号票 B7;Seedance 官方:超过 4 人稳定性下降)。
- * 只提示不拦发送;视频模式才出(文案指向视频模型)。退化无名的角色 chip 不
- * 进计数(已不是有名元素,71 号票 B2)。 */
-const tooManyCharacters = computed(
-  () =>
-    isVideo.value &&
-    countCharacterElements(props.videoRefs, props.videoRefNames ?? []) >
-      CHARACTER_ELEMENT_HINT_LIMIT,
+/** 出场角色超过阈值的提示(71 号票 B7 引入;85 号票 C 泛化:文案去厂商
+ * 语境,图片模式同样出提示行 —— 多角色同框稳定性下降不限于视频)。只提示
+ * 不拦发送,两模式一致;≤4 不出现。退化无名的角色 chip 不进计数(已不是
+ * 有名元素,71 号票 B2)。 */
+const tooManyCharacters = computed(() =>
+  isVideo.value
+    ? countCharacterElements(props.videoRefs, props.videoRefNames ?? []) >
+      CHARACTER_ELEMENT_HINT_LIMIT
+    : countCharacterElements(props.refs, props.refNames ?? []) > CHARACTER_ELEMENT_HINT_LIMIT,
 )
 
 /** 当前模式的玩法预设清单(85 号票 B1:图片模式也出「玩法」下拉,渲染
@@ -676,12 +677,13 @@ function onFileChange(e: Event): void {
     >
       首帧/尾帧与参考图/视频/音频不能混用(Seedance、MiniMax H3 会拒);要首帧效果可只传参考图,并在提示词里写明哪张作首帧
     </p>
-    <!-- 出场角色数提示(71 号票 B7):角色元素超阈值时出,不拦发送。 -->
+    <!-- 出场角色数提示(71 号票 B7;85 号票 C 泛化文案并扩图片模式):
+         角色元素超阈值时出,不拦发送。 -->
     <p
       v-if="tooManyCharacters"
       class="vref-hint"
     >
-      出场角色超过 {{ CHARACTER_ELEMENT_HINT_LIMIT }} 个,Seedance 等模型稳定性会下降
+      出场角色超过 {{ CHARACTER_ELEMENT_HINT_LIMIT }} 个,多角色同框稳定性会下降
     </p>
 
     <!-- 设定图类型选择(70 号票入口一):预填在途时出现,五类型固定序、
