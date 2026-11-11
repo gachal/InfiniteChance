@@ -68,7 +68,7 @@ func newIPTaskEnv(gateway *okGateway) *ipTaskEnv {
 		IPs:   fakeIPStore{},
 		Characters: fakeCharacters{byID: map[int64]character.Character{
 			11: {ID: 11, IPID: 3, Name: "林小满", Variants: []character.Variant{
-				{ID: 21, CharacterID: 11, Name: "冬季制服", Note: "深蓝色大衣"},
+				{ID: 21, CharacterID: 11, Name: "冬季制服", Note: "深蓝色大衣", Palette: "发色:#1A2E;肤色:#FFE0D0"},
 			}},
 			12: {ID: 12, IPID: 9, Name: "别的企划的角色", Variants: []character.Variant{
 				{ID: 22, CharacterID: 12, Name: "默认"},
@@ -111,13 +111,14 @@ func TestIPCreateAssemblesPromptAndLandsCanvasFreeTask(t *testing.T) {
 		t.Fatalf("kind = %q, want image(IP 端点仅 image)", got.Kind)
 	}
 	// 拼装落行可审计:风格段(该 IP 定了水彩淡彩,73 号票换形)+ 模板 +
-	// 四件套 + 变体。
+	// 四件套 + 变体 + 配色(84 号票 B1:变体 palette 非空才拼)。
 	for _, want := range []string{
 		"画面风格:水彩淡彩\n",
 		"角色设定图·三视图:",
 		"角色:林小满",
 		"造型:冬季制服",
-		"服装:深蓝色大衣",
+		"服装:深蓝色大衣\n",
+		"配色:发色:#1A2E;肤色:#FFE0D0",
 	} {
 		if !strings.Contains(got.Prompt, want) {
 			t.Fatalf("prompt %q missing %q", got.Prompt, want)
@@ -125,6 +126,28 @@ func TestIPCreateAssemblesPromptAndLandsCanvasFreeTask(t *testing.T) {
 	}
 	if got.Model != "img-m" || got.Size != "1024x1024" {
 		t.Fatalf("model/size = %q/%q, want img-m/1024x1024", got.Model, got.Size)
+	}
+}
+
+// 84 号票 C2:第六类型「光照色板」过白名单,模板落 prompt(默认档不变,
+// 三视图仍排第一)。
+func TestIPCreateAcceptsLightingPaletteType(t *testing.T) {
+	e := newIPTaskEnv(&okGateway{url: "https://img.example/out.png"})
+	w := e.do(t, http.MethodPost, "/ips/3/tasks",
+		`{"character_id":11,"variant_id":21,"sheet_type":"光照色板","model":"img-m"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s, want 201", w.Code, w.Body.String())
+	}
+	got := e.tasks.all()[0]
+	if !strings.Contains(got.Prompt, "角色设定图·光照色板:同一角色的昼光、夜色、黄昏、逆光四格配色对照") {
+		t.Fatalf("prompt missing lighting-palette template: %q", got.Prompt)
+	}
+
+	// 白名单外仍 400(六类之外的「其他」不属于设定图类型)。
+	w = e.do(t, http.MethodPost, "/ips/3/tasks",
+		`{"character_id":11,"variant_id":21,"sheet_type":"场景设定图","model":"img-m"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-whitelisted type = %d, want 400", w.Code)
 	}
 }
 
@@ -140,7 +163,7 @@ func TestIPCreateValidatesIPCharacterVariantAndType(t *testing.T) {
 		{"角色不存在", "/ips/3/tasks", `{"character_id":99,"variant_id":21,"sheet_type":"三视图","model":"img-m"}`, http.StatusNotFound},
 		{"角色不属于本 IP", "/ips/3/tasks", `{"character_id":12,"variant_id":22,"sheet_type":"三视图","model":"img-m"}`, http.StatusNotFound},
 		{"变体不属于该角色", "/ips/3/tasks", `{"character_id":11,"variant_id":22,"sheet_type":"三视图","model":"img-m"}`, http.StatusBadRequest},
-		{"类型不在五类", "/ips/3/tasks", `{"character_id":11,"variant_id":21,"sheet_type":"其他","model":"img-m"}`, http.StatusBadRequest},
+		{"类型不在白名单", "/ips/3/tasks", `{"character_id":11,"variant_id":21,"sheet_type":"其他","model":"img-m"}`, http.StatusBadRequest},
 		{"模型未配价", "/ips/3/tasks", `{"character_id":11,"variant_id":21,"sheet_type":"三视图","model":"nope"}`, http.StatusBadRequest},
 		{"背景值非法", "/ips/3/tasks", `{"character_id":11,"variant_id":21,"sheet_type":"三视图","model":"img-m","background":"black"}`, http.StatusBadRequest},
 		{"缺模型", "/ips/3/tasks", `{"character_id":11,"variant_id":21,"sheet_type":"三视图"}`, http.StatusBadRequest},
