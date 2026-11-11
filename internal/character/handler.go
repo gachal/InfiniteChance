@@ -47,13 +47,16 @@ type VoiceChecker interface {
 }
 
 // 列宽对齐 schema(name/alias VARCHAR(255)、description/note VARCHAR(1024)、
-// label VARCHAR(32)、detail TEXT),按字符数而非字节裁;detail 的 20000
-// runes 上限是中文形态下 TEXT 64KB 字节预算内的安全值。
+// label VARCHAR(32)、detail/palette TEXT),按字符数而非字节裁;detail 的
+// 20000 runes 上限是中文形态下 TEXT 64KB 字节预算内的安全值;palette 的
+// 500 runes 照 canvas.MaxIPStyleRunes(69 号票)先例同档(84 号票:超限
+// 拒绝、空串 = 清除,同款口径)。
 const (
 	maxNameRunes        = 255
 	maxDescriptionRunes = 1024
 	maxLabelRunes       = 32
 	maxDetailRunes      = 20000
+	maxPaletteRunes     = 500
 )
 
 // RegisterIPRoutes mounts the per-IP endpoints (relative to the group,
@@ -107,12 +110,14 @@ type imageJSON struct {
 	Sort        int    `json:"sort"`
 }
 
-// variantJSON is the wire form of one 造型变体。
+// variantJSON is the wire form of one 造型变体。palette 是配色自由文本
+// (84 号票,HEX 行;空串 = 无配色)。
 type variantJSON struct {
 	ID          int64       `json:"id"`
 	CharacterID int64       `json:"character_id"`
 	Name        string      `json:"name"`
 	Note        string      `json:"note"`
+	Palette     string      `json:"palette"`
 	Sort        int         `json:"sort"`
 	Images      []imageJSON `json:"images"`
 	CreatedAt   time.Time   `json:"created_at"`
@@ -151,7 +156,8 @@ func toVariantJSON(v Variant) variantJSON {
 	}
 	return variantJSON{
 		ID: v.ID, CharacterID: v.CharacterID, Name: v.Name, Note: v.Note,
-		Sort: v.Sort, Images: images, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+		Palette: v.Palette, Sort: v.Sort, Images: images,
+		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}
 }
 
@@ -322,8 +328,9 @@ func (h *Handlers) DeleteCharacter(c *gin.Context) {
 }
 
 type variantCreateInput struct {
-	Name string `json:"name"`
-	Note string `json:"note"`
+	Name    string `json:"name"`
+	Note    string `json:"note"`
+	Palette string `json:"palette"`
 }
 
 func (h *Handlers) CreateVariant(c *gin.Context) {
@@ -344,7 +351,11 @@ func (h *Handlers) CreateVariant(c *gin.Context) {
 	if !validateOptional(c, note, maxDescriptionRunes, "服装描述最多 1024 个字符") {
 		return
 	}
-	created, err := h.Store.CreateVariant(c.Request.Context(), id, name, note)
+	palette := strings.TrimSpace(in.Palette)
+	if !validateOptional(c, palette, maxPaletteRunes, "变体配色最多 500 个字符") {
+		return
+	}
+	created, err := h.Store.CreateVariant(c.Request.Context(), id, name, note, palette)
 	if err != nil {
 		h.failStore(c, err)
 		return
@@ -352,11 +363,13 @@ func (h *Handlers) CreateVariant(c *gin.Context) {
 	c.JSON(http.StatusCreated, toVariantJSON(created))
 }
 
-// variantUpdateInput 支持 name/note/sort(改名字与服装描述、展示排序)。
+// variantUpdateInput 支持 name/note/palette/sort(改名字与服装描述、配色
+// 指定、展示排序)。
 type variantUpdateInput struct {
-	Name *string `json:"name"`
-	Note *string `json:"note"`
-	Sort *int    `json:"sort"`
+	Name    *string `json:"name"`
+	Note    *string `json:"note"`
+	Palette *string `json:"palette"`
+	Sort    *int    `json:"sort"`
 }
 
 func (h *Handlers) PatchVariant(c *gin.Context) {
@@ -366,11 +379,11 @@ func (h *Handlers) PatchVariant(c *gin.Context) {
 	}
 	var in variantUpdateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		apierr.InvalidRequest(c, "请求体必须是 {name?/note?/sort?} 的 JSON")
+		apierr.InvalidRequest(c, "请求体必须是 {name?/note?/palette?/sort?} 的 JSON")
 		return
 	}
-	if in.Name == nil && in.Note == nil && in.Sort == nil {
-		apierr.InvalidRequest(c, "至少提供 name、note 或 sort 之一")
+	if in.Name == nil && in.Note == nil && in.Palette == nil && in.Sort == nil {
+		apierr.InvalidRequest(c, "至少提供 name、note、palette 或 sort 之一")
 		return
 	}
 	u := &VariantUpdate{}
@@ -387,6 +400,15 @@ func (h *Handlers) PatchVariant(c *gin.Context) {
 			return
 		}
 		u.Note = &note
+	}
+	if in.Palette != nil {
+		// 空串 = 清除配色(可空字段既有语义);超限拒绝(400,69 号票
+		// 画面风格的同款口径)。
+		palette := strings.TrimSpace(*in.Palette)
+		if !validateOptional(c, palette, maxPaletteRunes, "变体配色最多 500 个字符") {
+			return
+		}
+		u.Palette = &palette
 	}
 	if in.Sort != nil {
 		if !validateSort(c, *in.Sort) {

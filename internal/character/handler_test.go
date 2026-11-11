@@ -126,7 +126,7 @@ func (f *fakeStore) DeleteCharacter(_ context.Context, id int64) error {
 	return nil
 }
 
-func (f *fakeStore) CreateVariant(_ context.Context, characterID int64, name, note string) (character.Variant, error) {
+func (f *fakeStore) CreateVariant(_ context.Context, characterID int64, name, note, palette string) (character.Variant, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c, ok := f.character[characterID]
@@ -135,7 +135,8 @@ func (f *fakeStore) CreateVariant(_ context.Context, characterID int64, name, no
 	}
 	v := character.Variant{
 		ID: f.nextID, CharacterID: characterID, Name: name, Note: note,
-		Images: []character.Image{},
+		Palette: palette,
+		Images:  []character.Image{},
 	}
 	f.nextID++
 	c.Variants = append(c.Variants, v)
@@ -156,6 +157,9 @@ func (f *fakeStore) UpdateVariant(_ context.Context, id int64, u *character.Vari
 			}
 			if u.Note != nil {
 				c.Variants[i].Note = *u.Note
+			}
+			if u.Palette != nil {
+				c.Variants[i].Palette = *u.Palette
 			}
 			if u.Sort != nil {
 				c.Variants[i].Sort = *u.Sort
@@ -788,5 +792,77 @@ func TestHandlerVoiceBindingRejectsUnknownLedgerRow(t *testing.T) {
 	}
 	if len(querier.calls) != 0 {
 		t.Fatalf("query calls = %v, want none for unknown rows", querier.calls)
+	}
+}
+
+// ---- 84 号票:变体配色(palette)的 HTTP 面 ----
+
+// 创建与部分更新:palette 随 201/200 回行、超 500 runes 拒绝(400,69 号
+// 票画面风格同款口径)、空串 = 清除(200)。
+func TestHandlerVariantPalette(t *testing.T) {
+	store := newFakeStore()
+	r := newRouter(store)
+	c := store.seed(1, "小星")
+	vid := c.Variants[0].ID
+
+	// 创建带配色:201 且行内带出。
+	w := do(r, "POST", "/characters/"+itoa(c.ID)+"/variants",
+		`{"name":"校服","palette":"发色:#1A2E;肤色:#FFE0D0"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s", w.Code, w.Body.String())
+	}
+	var v struct {
+		Palette string `json:"palette"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v.Palette != "发色:#1A2E;肤色:#FFE0D0" {
+		t.Fatalf("created palette = %q", v.Palette)
+	}
+
+	// PATCH 改配色:200 回新值。
+	w = do(r, "PATCH", "/character-variants/"+itoa(vid), `{"palette":"瞳色:#4A90D9"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch status = %d body %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v.Palette != "瞳色:#4A90D9" {
+		t.Fatalf("patched palette = %q", v.Palette)
+	}
+
+	// 空串 = 清除。
+	w = do(r, "PATCH", "/character-variants/"+itoa(vid), `{"palette":""}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear status = %d body %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v.Palette != "" {
+		t.Fatalf("cleared palette = %q", v.Palette)
+	}
+
+	// 超限拒绝:500 runes 恰好不拒,501 拒(400 invalid_request)。
+	exactly := `{"palette":"` + strings.Repeat("色", 500) + `"}`
+	if w = do(r, "PATCH", "/character-variants/"+itoa(vid), exactly); w.Code != http.StatusOK {
+		t.Fatalf("exactly-500 status = %d body %s", w.Code, w.Body.String())
+	}
+	over := `{"palette":"` + strings.Repeat("色", 501) + `"}`
+	w = do(r, "PATCH", "/character-variants/"+itoa(vid), over)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("over-limit status = %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "变体配色最多 500 个字符") {
+		t.Fatalf("over-limit body = %s", w.Body.String())
+	}
+
+	// 创建面同款校验:超限 400。
+	w = do(r, "POST", "/characters/"+itoa(c.ID)+"/variants",
+		`{"name":"x","palette":"`+strings.Repeat("色", 501)+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create over-limit status = %d body %s", w.Code, w.Body.String())
 	}
 }

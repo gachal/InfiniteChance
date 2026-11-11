@@ -13,7 +13,9 @@ import {
   emptyStoryboardCut,
   formatDuration,
   moveCut,
+  pruneCutVariantOrphans,
   removeCut,
+  setCutVariantBinding,
   setShotSize,
   toggleCameraMove,
   totalSeconds,
@@ -45,6 +47,46 @@ describe('defaultStoryboard / emptyStoryboardCut', () => {
 
   it('does not share the cuts array between boards', () => {
     expect(defaultStoryboard().cuts).not.toBe(defaultStoryboard().cuts)
+  })
+
+  it('83 号票:新空 cut 不落 character_variants 键(缺省回落默认变体)', () => {
+    const c = emptyStoryboardCut()
+    expect('character_variants' in c).toBe(false)
+  })
+})
+
+describe('setCutVariantBinding(83 号票 cut→变体绑定映射的纯操作)', () => {
+  it('设置绑定:换新对象,不改入参', () => {
+    const seed: Record<number, number> = { 1: 21 }
+    const next = setCutVariantBinding(seed, 2, 22)
+    expect(next).toEqual({ 1: 21, 2: 22 })
+    expect(seed).toEqual({ 1: 21 })
+  })
+
+  it('缺省映射(undefined)首次设置:从空簿建起', () => {
+    expect(setCutVariantBinding(undefined, 3, 23)).toEqual({ 3: 23 })
+  })
+
+  it('清绑定(variantId ≤ 0):删该角色键;清到空整键不落(undefined)', () => {
+    expect(setCutVariantBinding({ 1: 21, 2: 22 }, 1, 0)).toEqual({ 2: 22 })
+    expect(setCutVariantBinding({ 1: 21 }, 1, 0)).toBeUndefined()
+    expect(setCutVariantBinding(undefined, 1, 0)).toBeUndefined()
+  })
+})
+
+describe('pruneCutVariantOrphans(83 号票孤儿绑定收回)', () => {
+  it('角色不在出场清单的绑定条目收回(目录级悬空收回同语义)', () => {
+    expect(pruneCutVariantOrphans({ 1: 21, 2: 22 }, [2])).toEqual({ 2: 22 })
+  })
+
+  it('无孤儿:返回原引用(不产生无谓落盘);缺省簿原样 undefined', () => {
+    const m = { 1: 21 }
+    expect(pruneCutVariantOrphans(m, [1])).toBe(m)
+    expect(pruneCutVariantOrphans(undefined, [])).toBeUndefined()
+  })
+
+  it('清到空整键不落(undefined)', () => {
+    expect(pruneCutVariantOrphans({ 1: 21 }, [])).toBeUndefined()
   })
 })
 
@@ -317,5 +359,37 @@ describe('totalSeconds / formatDuration', () => {
     expect(formatDuration(65)).toBe('1:05')
     expect(formatDuration(600)).toBe('10:00')
     expect(formatDuration(3600)).toBe('60:00')
+  })
+})
+
+// ---- 84 号票 B2/B3:角色配色段进 sections 首位(风格段顶最前)----
+
+describe('buildCutFramePrompt / buildCutVideoPrompt 配色段(84 号票)', () => {
+  const LINE_SINGLE = '角色配色:小蓝:发色:#1A2E'
+  const LINE_MULTI = '角色配色:\n小蓝:发色:#1A2E\n阿红:发色:#C0392B'
+
+  it('配色段非空:图片直通拼在风格段之后、全片基调段之前', () => {
+    expect(
+      buildCutFramePrompt(cut({ note: '雨夜巷口' }), '基调文本', '水墨', LINE_SINGLE),
+    ).toBe(
+      `画面风格:水墨\n${LINE_SINGLE}\n全片基调:基调文本\n画面描述:雨夜巷口\n${QUALITY_TAIL}`,
+    )
+  })
+
+  it('配色段非空:视频直通同拼(多角色标记行 + 逐角色一行)', () => {
+    expect(
+      buildCutVideoPrompt(cut({ note: '雨夜巷口' }), '', '', LINE_MULTI),
+    ).toBe(`${LINE_MULTI}\n画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+  })
+
+  it('配色段空串:整段跳过,行为与 73 号票逐字节一致(存量调用不传第 4 参)', () => {
+    expect(buildCutFramePrompt(cut({ note: '雨夜巷口' }))).toBe(`画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+    expect(buildCutVideoPrompt(cut({ note: '雨夜巷口' }))).toBe(`画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+  })
+
+  it('段不设总截断(票面 B4):多角色行数随出场角色数,拼装不再截', () => {
+    const many = ['角色配色:', ...Array.from({ length: 6 }, (_, i) => `角色${i + 1}:发色:#1A2E`)].join('\n')
+    const got = buildCutVideoPrompt(cut({ note: '雨夜巷口' }), '', '', many)
+    expect(got.startsWith(`${many}\n画面描述:雨夜巷口`)).toBe(true)
   })
 })

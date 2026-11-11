@@ -2,7 +2,7 @@ package canvastask
 
 // 无画布任务端点族(70 号票,[ADR 0007]):IP 库级生成路径的第一条 ——
 // 角色设定图生成。任务行 canvas_id=0、node_id 空、ip_id 携归属;prompt 由
-// 服务端按五类型模板拼装(类型模板 + 角色四件套 + 变体名/服装描述 + IP
+// 服务端按类型模板拼装(类型模板 + 角色四件套 + 变体名/服装描述/配色 + IP
 // 风格段),落任务行可审计 —— 抽屉轻量生成对话框没有 prompt 编辑面
 // (票面 B5),拼装是唯一口径。端点形状不排他:场景/道具将来复用另票。
 //
@@ -26,28 +26,36 @@ import (
 	"github.com/gachal/InfiniteChance/internal/pricing"
 )
 
-// 设定图五类型(70 号票,label 白名单六类去「其他」)。默认三视图。
+// 设定图六类型(70 号票五类型;84 号票补第六类「光照色板」,label 白名单
+// 七类去「其他」)。默认三视图。
 const (
-	SheetTypeTurnaround = "三视图"
-	SheetTypeMultiView  = "多视图"
-	SheetTypeExprSheet  = "表情集"
-	SheetTypePalette    = "色板"
-	SheetTypePose       = "姿态"
+	SheetTypeTurnaround      = "三视图"
+	SheetTypeMultiView       = "多视图"
+	SheetTypeExprSheet       = "表情集"
+	SheetTypePalette         = "色板"
+	SheetTypeLightingPalette = "光照色板"
+	SheetTypePose            = "姿态"
 )
 
-// SheetTypes 是合法类型的固定序(默认档排第一,前端下拉同序同默认)。
-var SheetTypes = []string{SheetTypeTurnaround, SheetTypeMultiView, SheetTypeExprSheet, SheetTypePalette, SheetTypePose}
+// SheetTypes 是合法类型的固定序(默认档排第一,前端下拉同序同默认;
+// 84 号票:光照色板插「色板」之后,不进 character.ViewLabels —— 光照色板
+// 不计入视图类,封面投影行为不变)。
+var SheetTypes = []string{SheetTypeTurnaround, SheetTypeMultiView, SheetTypeExprSheet, SheetTypePalette, SheetTypeLightingPalette, SheetTypePose}
 
-// sheetTypeTemplates 是五类型的 prompt 模板常量(照分析指令先例,不进
-// 技能库):三视图按票面定案 = 全身站姿正/侧/背三视图对照白底设定图。
-// 前端 canvas/web/src/sheet.ts 备同字面量一份(composer 入口预填拼装),
-// 两侧各自用字面量测试钉住防漂移 —— 改文案必须两侧同改。
+// sheetTypeTemplates 是六类型的 prompt 模板常量(照分析指令先例,不进
+// 技能库):三视图按票面定案 = 全身站姿正/侧/背三视图对照白底设定图;
+// 色板模板 84 号票补瞳色与线色(官方色板口径:发/肤/瞳/线 + 服装色);
+// 光照色板 = 同一角色昼光/夜色/黄昏/逆光四格配色对照(场景变体色指定的
+// 角色侧承载,场景设定图生成不开)。前端 canvas/web/src/sheet.ts 备同
+// 字面量一份(composer 入口预填拼装),两侧各自用字面量测试钉住防漂移
+// —— 改文案必须两侧同改。
 var sheetTypeTemplates = map[string]string{
-	SheetTypeTurnaround: "角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风",
-	SheetTypeMultiView:  "角色设定图·多视图:同一角色的全身多角度视图对照(正面、四分之三、侧面、背面),白底,各视角比例一致,标准设定图画风",
-	SheetTypeExprSheet:  "角色设定图·表情集:同一角色头部的多种表情对照(喜、怒、哀、惊等),白底,构图整齐,表情差异清晰,标准设定图画风",
-	SheetTypePalette:    "角色设定图·色板:该角色的配色色板展示(发色、肤色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风",
-	SheetTypePose:       "角色设定图·姿态集:同一角色的多个典型动作与姿态对照,全身,白底,姿态自然清晰,标准设定图画风",
+	SheetTypeTurnaround:      "角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风",
+	SheetTypeMultiView:       "角色设定图·多视图:同一角色的全身多角度视图对照(正面、四分之三、侧面、背面),白底,各视角比例一致,标准设定图画风",
+	SheetTypeExprSheet:       "角色设定图·表情集:同一角色头部的多种表情对照(喜、怒、哀、惊等),白底,构图整齐,表情差异清晰,标准设定图画风",
+	SheetTypePalette:         "角色设定图·色板:该角色的配色色板展示(发色、肤色、瞳色、线色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风",
+	SheetTypeLightingPalette: "角色设定图·光照色板:同一角色的昼光、夜色、黄昏、逆光四格配色对照,同站姿同构图,各格光照差异清晰,白底,标注干净,标准设定图画风",
+	SheetTypePose:            "角色设定图·姿态集:同一角色的多个典型动作与姿态对照,全身,白底,姿态自然清晰,标准设定图画风",
 }
 
 // MaxSheetPromptRunes 是拼装后的 prompt 截断上限(70 号票定案 ≤2000
@@ -55,7 +63,9 @@ var sheetTypeTemplates = map[string]string{
 // 会顶穿,所以截断是拼装的固定尾步。
 const MaxSheetPromptRunes = 2000
 
-// SheetFacts 是拼装的角色事实(name 必给,其余可空整行跳过)。
+// SheetFacts 是拼装的角色事实(name 必给,其余可空整行跳过)。Palette
+// 是变体配色自由文本(84 号票 B1:五类型全拼,非空才落「配色:」行,
+// 插服装行之后)。
 type SheetFacts struct {
 	Name        string
 	Alias       string
@@ -63,16 +73,23 @@ type SheetFacts struct {
 	Detail      string
 	VariantName string
 	VariantNote string
+	Palette     string
 }
 
 // BuildSheetPrompt assembles the server-side sheet prompt:类型模板 +
-// 角色四件套(name/alias/description/detail)+ 变体名与服装描述(note),
-// IP 风格段(69 号票 StyleSegment,有则拼)放 prompt 前部单独成行,最后
-// 按 rune 截断到 MaxSheetPromptRunes。未知类型跳过模板行(handler 在
-// 落行前已拦,这里是防御面)。与 TS 侧 sheet.ts buildSheetPrompt 同形,
-// 两侧测试各自钉住同一组字面量。
+// 角色四件套(name/alias/description/detail)+ 变体名与服装描述(note)
+// 与配色(palette,84 号票 B1,非空才拼),IP 风格段(69 号票
+// StyleSegment,有则拼)放 prompt 前部单独成行,最后按 rune 截断到
+// MaxSheetPromptRunes。未知类型跳过模板行(handler 在落行前已拦,这里
+// 是防御面)。与 TS 侧 sheet.ts buildSheetPrompt 同形,两侧测试各自钉住
+// 同一组字面量。
+//
+// 防叠对照(84 号票 B2 评审修复轮):本函数是请求体事实的全新拼装、不
+// 消费前端预填文本,无旧「角色配色」段可叠 —— 不需要 TS 侧
+// palette.stripPaletteSegment/prependPaletteSegment 那样的剥段守卫;
+// 两侧语义以 TS 侧 palette.ts 注释与本注释对照钉住。
 func BuildSheetPrompt(sheetType string, f SheetFacts, style string) string {
-	lines := make([]string, 0, 7)
+	lines := make([]string, 0, 8)
 	if tpl, ok := sheetTypeTemplates[sheetType]; ok {
 		lines = append(lines, tpl)
 	}
@@ -89,6 +106,9 @@ func BuildSheetPrompt(sheetType string, f SheetFacts, style string) string {
 	lines = append(lines, "造型:"+f.VariantName)
 	if f.VariantNote != "" {
 		lines = append(lines, "服装:"+f.VariantNote)
+	}
+	if f.Palette != "" {
+		lines = append(lines, "配色:"+f.Palette)
 	}
 	prompt := strings.Join(lines, "\n")
 	if seg := canvas.StyleSegment(style); seg != "" {
@@ -188,7 +208,7 @@ func (h *Handlers) IPCreate(c *gin.Context) {
 		h.failStore(c, err)
 		return
 	}
-	variantName, variantNote, ok := variantFacts(ch, in.VariantID)
+	variantName, variantNote, variantPalette, ok := variantFacts(ch, in.VariantID)
 	if !ok {
 		apierr.InvalidRequest(c, "变体不属于该角色")
 		return
@@ -199,7 +219,7 @@ func (h *Handlers) IPCreate(c *gin.Context) {
 		sheetType = SheetTypes[0]
 	}
 	if !validSheetType(sheetType) {
-		apierr.InvalidRequest(c, "sheet_type 必须是三视图、多视图、表情集、色板或姿态之一")
+		apierr.InvalidRequest(c, "sheet_type 必须是三视图、多视图、表情集、色板、光照色板或姿态之一")
 		return
 	}
 	model := strings.TrimSpace(in.Model)
@@ -275,6 +295,7 @@ func (h *Handlers) IPCreate(c *gin.Context) {
 		Detail:      ch.Detail,
 		VariantName: variantName,
 		VariantNote: variantNote,
+		Palette:     variantPalette,
 	}, style)
 
 	id, err := NewID()
@@ -338,15 +359,16 @@ func (h *Handlers) IPGet(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"task": toTaskJSON(task)})
 }
 
-// variantFacts answers the variant's name and note when it belongs to the
-// character;ok=false 否则(变体隶属校验,400 的裁决点)。
-func variantFacts(ch character.Character, variantID int64) (name, note string, ok bool) {
+// variantFacts answers the variant's name, note and palette when it belongs
+// to the character;ok=false 否则(变体隶属校验,400 的裁决点)。palette
+// 是配色自由文本(84 号票 B1 注入面)。
+func variantFacts(ch character.Character, variantID int64) (name, note, palette string, ok bool) {
 	for _, v := range ch.Variants {
 		if v.ID == variantID {
-			return v.Name, v.Note, true
+			return v.Name, v.Note, v.Palette, true
 		}
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 func validSheetType(t string) bool {

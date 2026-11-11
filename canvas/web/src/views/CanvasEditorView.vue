@@ -143,6 +143,7 @@ import {
   elementPickRejectNotice,
 } from '../composerElements'
 import { buildCutVideoPrefill } from '../cutVideo'
+import { buildPaletteEntries, buildPaletteLine } from '../palette'
 import { buildEntrancePrefill, cutPrefillNotice, cutPrefillVideoRefs } from '../videoPrefill'
 import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
 import type { SheetCharacterFacts } from '../sheet'
@@ -1034,17 +1035,18 @@ const composerPickerKinds = computed<Array<'image' | 'video' | 'audio'>>(() =>
 )
 
 /** 面板说明行随模式;带 IP 归属时才有资产视图(角色/场景/道具),一并说明
- * 那里挑出的是元素(71 号票:带名称、视频模式恒参考图)。 */
+ * 那里挑出的是元素(71 号票:带名称、视频模式恒参考图)。85 号票顺带说明
+ * 多选能力(群像场次跨变体勾多张一次拉入)。 */
 const composerPickerHint = computed(() => {
   const library = canvasIPID.value > 0
   if (composerMode.value === 'video') {
     return library
-      ? '素材视图点选按默认角色挂为参考;角色/场景/道具视图点选挂为元素(带名称,恒为参考图);再点取消。'
-      : '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。'
+      ? '素材视图点选按默认角色挂为参考;角色/场景/道具视图点选挂为元素(带名称,恒为参考图);再点取消。多选模式可跨变体勾选多张一次拉入。'
+      : '点选按默认角色挂为参考,再点取消;图片条目的角色可在条上切换。多选模式可勾选多张一次拉入。'
   }
   return library
-    ? '点选挂为参考图;角色/场景/道具视图点选挂为元素(带名称);再点取消。'
-    : '点选挂为参考图,再点取消。'
+    ? '点选挂为参考图;角色/场景/道具视图点选挂为元素(带名称);再点取消。多选模式可跨变体勾选多张一次拉入。'
+    : '点选挂为参考图,再点取消。多选模式可勾选多张一次拉入。'
 })
 
 /** 已选高亮 = 当前模式参考条上的素材 id(选中节点产物 + 上传/挑选条目)。 */
@@ -1155,6 +1157,21 @@ function toastElementPick(result: ElementPickResult<ComposerRef | VideoComposerR
   const text = elementPickNotice(result.action, name)
   if (text !== '') {
     showNotice(text)
+  }
+}
+
+/** 挑选面板多选确认(85 号票 A):按勾选序逐条走既有单选链,不加新合并
+ * 逻辑 —— 元素载荷走 pickComposerElement(mergeElementPick 既有守卫:同
+ * 实体替换/同图取消/去重/上限整条拒收,拒收横幅与替换 toast 沿用既有出口,
+ * 逐条应用时守卫面对的是前一条已生效的最新条),散图载荷(素材平铺视图勾
+ * 的)走 onComposerPickToggle 的追加/摘下路径。 */
+function onComposerPickConfirm(picks: { asset: AssetRecord; element?: ComposerElement }[]): void {
+  for (const { asset, element } of picks) {
+    if (element) {
+      pickComposerElement(asset, element)
+    } else {
+      onComposerPickToggle(asset)
+    }
   }
 }
 
@@ -3032,11 +3049,13 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   // 73 号票:分镜板的 brief 作全片基调段拼在风格段之后(签名新序
   // cut, brief, style;brief 非空恒拼,不受 composer「带 IP 风格」开关管)。
-  videoPrompt.value = buildCutVideoPrompt(cut, board?.brief ?? '', ipStyle.value)
+  // 84 号票 B3:角色配色段(绑定变体配色,无画面路径才拼)经 prefill
+  // 带回,插风格段之后 —— 有画面路径 prefill.paletteLine 恒空(71 互斥)。
+  const prefill = buildCutVideoPrefill(cut, ipCharacters.value, VIDEO_REFS_TOTAL_CAP)
+  videoPrompt.value = buildCutVideoPrompt(cut, board?.brief ?? '', ipStyle.value, prefill.paletteLine)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
   // 71 号票 A2(修 70 号票 C 节):首帧与参考互斥判定在纯函数层;角色无图
   // 静默跳过,超上限按序截断,有画面而标了出场角色时说明未注入原因。
-  const prefill = buildCutVideoPrefill(cut, ipCharacters.value, VIDEO_REFS_TOTAL_CAP)
   uploadedVideoRefs.value = cutPrefillVideoRefs(prefill)
   const notice = cutPrefillNotice(prefill)
   if (notice !== '') {
@@ -3085,14 +3104,21 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   // 73 号票:brief 全片基调段 + 画质约束尾段同吃(生图直通与视频直通
-  // 口径一致,签名新序 cut, brief, style)。
-  composerPrompt.value = buildCutFramePrompt(cut, board?.brief ?? '', ipStyle.value)
-  // 出场角色注入(70 号票 C):整条替换参考条 —— 预填序 = character_ids
-  // 序(素材内容寻址引用);预填可手动移除。
+  // 口径一致,签名新序 cut, brief, style)。84 号票 B2:出场角色按绑定
+  // 变体配色拼「角色配色」段(与参考图挑选同源解析、互不依赖 —— 无图
+  // 角色的配色照拼,无配色角色跳过不占行)。
+  const paletteLine = buildPaletteLine(
+    buildPaletteEntries(ipCharacters.value, cut.character_ids ?? [], cut.character_variants),
+  )
+  composerPrompt.value = buildCutFramePrompt(cut, board?.brief ?? '', ipStyle.value, paletteLine)
+  // 出场角色注入(70 号票 C;83 号票取图规则更新):整条替换参考条 ——
+  // 预填序 = character_ids 序(素材内容寻址引用),变体解析 = cut 绑定
+  // 优先 → 默认变体回落;预填可手动移除。
   const { picks, dropped } = pickCutCharacterRefs(
     ipCharacters.value,
     cut.character_ids ?? [],
     MAX_COMPOSER_REFS,
+    cut.character_variants,
   )
   uploadedRefs.value = picks.map((p) => ({
     url: characterImageContentURL(p.assetId),
@@ -3179,6 +3205,7 @@ function onCharacterGenerateSheet(
     detail: p.character.detail || undefined,
     variantName: p.variant.name,
     variantNote: p.variant.note || undefined,
+    palette: p.variant.palette || undefined,
   }
   sheetPreset.value = { nodeId: newId, characterId: p.character.id, variantId: p.variant.id, facts }
   composerSheetType.value = SHEET_TYPES[0]
@@ -5159,7 +5186,9 @@ function backToList(): void {
         :hint="composerPickerHint"
         :selected-asset-ids="composerPickerSelectedIds"
         :ip-id="canvasIPID || undefined"
+        :multi-select="true"
         @toggle="onComposerPickToggle"
+        @confirm="onComposerPickConfirm"
         @close="composerPickerOpen = false"
       />
       <AssetPicker

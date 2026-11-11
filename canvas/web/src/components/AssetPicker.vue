@@ -13,6 +13,11 @@
 // (角色 = entityId + 所在变体 variantId,场景/道具 = entityId),生成对话框
 // 据此出名称与类型小标、进绑定行;平铺素材视图不带(散图仍是无名参考图)。
 // 名称不随载荷走 —— 渲染与发送时按 entityId 从 IP 目录实时取。
+// 85 号票加多选快速拉取(opt-in prop):multiSelect 打开后点选只进挑选器
+// 内存态勾选集,确认一次按勾选序上抛 confirm,由调用方逐条走既有合并/追加
+// 链(同实体替换/同图取消/去重/上限整条拒收都在调用方既有守卫里,组件不
+// 添合并逻辑);勾选态跨分组切换与翻页保持,同一挑选器会话内有效 —— 关闭
+// 面板(组件卸载)即散,不建实体、不持久化(票面 A2)。单选语义不动。
 import { computed, onMounted, ref } from 'vue'
 
 import {
@@ -49,6 +54,9 @@ const props = defineProps<{
   /** 「本 IP」归属(50 号票);缺省 = 无 IP 维度,恒全库(也不出资产视图
    * —— 角色/场景/道具都是 IP 级实体,51/65 号票)。 */
   ipId?: number
+  /** 多选快速拉取开关(85 号票 A,opt-in;缺省关 = 既有单选行为逐字节
+   * 不变)。打开后顶部出「多选」开关与底部确认条,点选只进内存态勾选集。 */
+  multiSelect?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -56,6 +64,9 @@ const emit = defineEmits<{
    * 携带(71 号票元素);平铺素材视图缺省。不关心元素的调用方(Agent 附件、
    * 关卡画面、音色样本)只取第一参数。 */
   toggle: [asset: AssetRecord, element?: ComposerElement]
+  /** 多选确认(85 号票 A):按勾选序逐条上抛全部勾选载荷,element 携带
+   * 规则与 toggle 同款;合并/拒收裁决归调用方既有守卫。 */
+  confirm: [picks: { asset: AssetRecord; element?: ComposerElement }[]]
   close: []
 }>()
 
@@ -181,10 +192,62 @@ function kindLabel(k: PickerKind): string {
 // 只传 AssetRecord,不受显示面影响。
 const thumbs = useThumbFallback()
 
-const isSelected = (a: AssetRecord): boolean => props.selectedAssetIds.includes(a.id)
+// ---- 多选快速拉取(85 号票 A):挑选器内存态加层,关闭即散 ----
+
+/** 多选模式开关与勾选集(Map 按 assetId,插入序 = 勾选序;确认按此序逐条
+ * 上抛)。纯内存态:不落库、不进 URL,组件卸载即散(票面 A2)。 */
+const multi = ref(false)
+const checked = ref(new Map<number, { asset: AssetRecord; element?: ComposerElement }>())
+
+function toggleMultiSelect(): void {
+  multi.value = !multi.value
+  clearChecked()
+}
+
+function clearChecked(): void {
+  checked.value = new Map()
+}
+
+function toggleChecked(a: AssetRecord, element?: ComposerElement): void {
+  if (checked.value.has(a.id)) {
+    checked.value.delete(a.id)
+    return
+  }
+  checked.value.set(a.id, { asset: a, element })
+}
+
+/** 确认一次按勾选序上抛全部勾选,随后清空勾选(保持多选模式,便于分批
+ * 继续挑);合并与拒收裁决归调用方既有守卫,组件不添合并逻辑。 */
+function confirmPicks(): void {
+  if (checked.value.size === 0) {
+    return
+  }
+  emit('confirm', [...checked.value.values()])
+  clearChecked()
+}
+
+/** 卡片高亮与提示文案(id 一层,评审修复轮统一:素材平铺视图与资产库
+ * 视图同用 assetId 形状,两份条件不再重复):多选模式按勾选集(加入
+ * 勾选/取消勾选),单选模式维持 selectedAssetIds 已选态(选为参考/取消
+ * 选择)—— 两语义不串;资产库视图按 asset_id(同素材锚多实体去重展示),
+ * 素材平铺视图传 a.id。 */
+const cardSelectedId = (assetId: number): boolean =>
+  multi.value ? checked.value.has(assetId) : props.selectedAssetIds.includes(assetId)
+
+const cardTitleId = (assetId: number): string => {
+  if (multi.value) {
+    return checked.value.has(assetId) ? '取消勾选' : '加入勾选'
+  }
+  return props.selectedAssetIds.includes(assetId) ? '取消选择' : '选为参考'
+}
 
 function onPick(a: AssetRecord, element?: ComposerElement): void {
   if (!props.kindWhitelist.includes(a.kind)) {
+    return
+  }
+  if (multi.value) {
+    // 多选模式:点选只进勾选集,不 emit toggle(单选语义 = 既有行为不变)。
+    toggleChecked(a, element)
     return
   }
   emit('toggle', a, element)
@@ -242,9 +305,6 @@ function libraryAsset(assetId: number): AssetRecord {
   }
 }
 
-/** 资产视图的已选高亮按素材 id(同一素材锚进多个变体/实体去重展示)。 */
-const isLibraryAssetSelected = (assetId: number): boolean => props.selectedAssetIds.includes(assetId)
-
 function onPickLibraryAsset(assetId: number, element: ComposerElement): void {
   onPick(libraryAsset(assetId), element)
 }
@@ -282,6 +342,18 @@ onMounted(refresh)
     <header class="panel-head">
       <h3>{{ title }}</h3>
       <div class="head-actions">
+        <!-- 多选开关(85 号票 A,opt-in):进入后点选只勾选,底部确认条
+             一次拉入;退出清空勾选。 -->
+        <button
+          v-if="multiSelect"
+          class="multi-toggle"
+          :class="{ active: multi }"
+          type="button"
+          :title="multi ? '退出多选(清空勾选)' : '多选:勾选多张一次拉入'"
+          @click="toggleMultiSelect"
+        >
+          多选
+        </button>
         <button
           class="close"
           type="button"
@@ -379,8 +451,8 @@ onMounted(refresh)
             v-for="a in visibleAssets"
             :key="a.id"
             class="asset-card"
-            :class="{ selected: isSelected(a) }"
-            :title="isSelected(a) ? '取消选择' : '选为参考'"
+            :class="{ selected: cardSelectedId(a.id) }"
+            :title="cardTitleId(a.id)"
             @click="onPick(a)"
           >
             <img
@@ -416,7 +488,7 @@ onMounted(refresh)
               >{{ a.prompt || '(无提示词)' }}</span>
             </div>
             <span
-              v-if="isSelected(a)"
+              v-if="cardSelectedId(a.id)"
               class="picked"
             >✓</span>
           </li>
@@ -491,8 +563,8 @@ onMounted(refresh)
                   v-for="img in orderedVariantImages(v)"
                   :key="img.id"
                   class="asset-card"
-                  :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
-                  :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
+                  :class="{ selected: cardSelectedId(img.asset_id) }"
+                  :title="cardTitleId(img.asset_id)"
                   @click="onPickLibraryAsset(img.asset_id, characterElement(c.id, v.id))"
                 >
                   <span
@@ -516,7 +588,7 @@ onMounted(refresh)
                     >{{ img.label || '设定图' }}</span>
                   </div>
                   <span
-                    v-if="isLibraryAssetSelected(img.asset_id)"
+                    v-if="cardSelectedId(img.asset_id)"
                     class="picked"
                   >✓</span>
                 </li>
@@ -553,8 +625,8 @@ onMounted(refresh)
                 v-for="img in orderedImages(libraryViewKind, e.images)"
                 :key="img.id"
                 class="asset-card"
-                :class="{ selected: isLibraryAssetSelected(img.asset_id) }"
-                :title="isLibraryAssetSelected(img.asset_id) ? '取消选择' : '选为参考'"
+                :class="{ selected: cardSelectedId(img.asset_id) }"
+                :title="cardTitleId(img.asset_id)"
                 @click="onPickLibraryAsset(img.asset_id, libraryElement(e))"
               >
                 <span
@@ -578,7 +650,7 @@ onMounted(refresh)
                   >{{ img.label || '设定图' }}</span>
                 </div>
                 <span
-                  v-if="isLibraryAssetSelected(img.asset_id)"
+                  v-if="cardSelectedId(img.asset_id)"
                   class="picked"
                 >✓</span>
               </li>
@@ -593,6 +665,32 @@ onMounted(refresh)
         </template>
       </div>
     </template>
+
+    <!-- 多选确认条(85 号票 A):按勾选序一次上抛,清空可重挑;两视图
+         (素材平铺/资产库分组)通用,固定在列表区之下(75 号票滚动下沉
+         纪律,不随列表滚走)。 -->
+    <footer
+      v-if="multi"
+      class="multi-bar"
+    >
+      <span class="multi-count">已勾选 {{ checked.size }} 张</span>
+      <button
+        type="button"
+        class="multi-clear"
+        :disabled="checked.size === 0"
+        @click="clearChecked"
+      >
+        清空
+      </button>
+      <button
+        type="button"
+        class="multi-confirm"
+        :disabled="checked.size === 0"
+        @click="confirmPicks"
+      >
+        加入({{ checked.size }})
+      </button>
+    </footer>
   </aside>
 </template>
 
@@ -667,6 +765,52 @@ onMounted(refresh)
 
 .head-actions button:hover {
   border-color: var(--line-action);
+  color: inherit;
+}
+
+/* 多选开关 active 态(85 号票 A):与视图切换按钮同款高亮。 */
+.head-actions button.active {
+  background: rgba(var(--accent-rgb), 0.25);
+  color: inherit;
+  border-color: rgba(var(--accent-rgb), 0.6);
+}
+
+/* 多选确认条(85 号票 A):固定列表区之下,计数 + 清空 + 确认。 */
+.multi-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-section);
+}
+
+.multi-count {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+}
+
+.multi-clear,
+.multi-confirm {
+  border: 1px solid var(--line-control);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
+  padding: 6px 12px;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
+.multi-clear:disabled,
+.multi-confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.multi-confirm:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.25);
   color: inherit;
 }
 

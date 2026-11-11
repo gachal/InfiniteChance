@@ -13,12 +13,13 @@ import { buildCutVideoPrefill } from './cutVideo'
 
 // ---- 测试脚手架(sheet.test.ts 同款轻量对象,不依赖 api 包运行时)----
 
-function variant(id: number, images: { id: number; asset_id: number; label: string }[]): CharacterVariantRecord {
+function variant(id: number, images: { id: number; asset_id: number; label: string }[], palette = ''): CharacterVariantRecord {
   return {
     id,
     character_id: 1,
     name: '默认',
     note: '',
+    palette,
     sort: 0,
     images: images.map((im) => ({ id: im.id, character_id: 1, variant_id: id, asset_id: im.asset_id, label: im.label, sort: 0 })),
     created_at: '',
@@ -63,6 +64,7 @@ describe('buildCutVideoPrefill(cut 有画面 = 真首帧,不注入角色设定�
       refs: [],
       dropped: 0,
       skippedInject: true,
+      paletteLine: '',
     })
   })
 
@@ -156,6 +158,123 @@ describe('buildCutVideoPrefill(cut 无画面 = 按出场角色注入元素 chip)
       [character(5, [variant(25, [])])],
       9,
     )
-    expect(got).toEqual({ firstFrameAssetId: 0, refs: [], dropped: 0, skippedInject: false })
+    expect(got).toEqual({ firstFrameAssetId: 0, refs: [], dropped: 0, skippedInject: false, paletteLine: '' })
+  })
+})
+
+describe('buildCutVideoPrefill 变体绑定(83 号票:绑定优先 → 默认变体回落)', () => {
+  const def = variant(21, [{ id: 7, asset_id: 107, label: '三视图' }])
+  const rain = { ...variant(22, [{ id: 8, asset_id: 208, label: '三视图' }]), name: '雨衣' }
+  const chars = [character(1, [def, rain])]
+
+  it('无画面 + 绑定:元素 chip 取绑定变体图,variantId = 绑定变体', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1], character_variants: { 1: 22 } },
+      chars,
+      9,
+    )
+    expect(got.refs).toEqual([
+      {
+        url: '/api/assets/208/content',
+        kind: 'image',
+        role: 'reference_image',
+        asset_id: 208,
+        element: { type: 'character', entityId: 1, variantId: 22 },
+      },
+    ])
+  })
+
+  it('绑定变体已删:回落默认变体(variantId = 默认变体 id)', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1], character_variants: { 1: 99 } },
+      chars,
+      9,
+    )
+    expect(got.refs[0].asset_id).toBe(107)
+    expect(got.refs[0].element).toStrictEqual({ type: 'character', entityId: 1, variantId: 21 })
+  })
+
+  it('无字段(存量画布):行为与改动前逐字节一致', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1] },
+      chars,
+      9,
+    )
+    expect(got.refs[0].asset_id).toBe(107)
+    expect(got.refs[0].element).toStrictEqual({ type: 'character', entityId: 1, variantId: 21 })
+  })
+
+  it('A4 硬约束不动:有画面 + 绑定,仍不注入(skippedInject 真、refs 空)', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 55, character_ids: [1], character_variants: { 1: 22 } },
+      chars,
+      9,
+    )
+    expect(got).toEqual({ firstFrameAssetId: 55, refs: [], dropped: 0, skippedInject: true, paletteLine: '' })
+  })
+})
+
+// ---- 84 号票 B3:角色配色段(无画面路径同拼,有画面路径恒空)----
+
+describe('buildCutVideoPrefill 配色段(84 号票 B3)', () => {
+  const HEX_BLUE = '发色:#1A2E;肤色:#FFE0D0'
+  const HEX_RED = '发色:#C0392B;服装主色:#8E2A22'
+
+  it('无画面:paletteLine 按绑定变体配色拼行(单角色单行),与参考 chip 同源解析', () => {
+    const chars = [
+      character(1, [variant(21, [{ id: 7, asset_id: 107, label: '三视图' }], HEX_BLUE)]),
+    ]
+    const got = buildCutVideoPrefill({ asset_id: 0, character_ids: [1] }, chars, 9)
+    expect(got.paletteLine).toBe(`角色配色:角色1:${HEX_BLUE}`)
+  })
+
+  it('绑定变体优先:配色取绑定变体(参考图取图同源,绑定映射同份)', () => {
+    const def = variant(21, [{ id: 7, asset_id: 107, label: '三视图' }], HEX_BLUE)
+    const rain = { ...variant(22, [{ id: 8, asset_id: 208, label: '三视图' }], HEX_RED), name: '雨衣' }
+    const chars = [character(1, [def, rain])]
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1], character_variants: { 1: 22 } },
+      chars,
+      9,
+    )
+    expect(got.refs[0].asset_id).toBe(208)
+    expect(got.paletteLine).toBe(`角色配色:角色1:${HEX_RED}`)
+  })
+
+  it('多角色:标记行 + 逐角色一行;无配色角色跳过不占行', () => {
+    const chars = [
+      character(1, [variant(21, [{ id: 7, asset_id: 107, label: '三视图' }], HEX_BLUE)]),
+      character(2, [variant(22, [{ id: 3, asset_id: 203, label: '三视图' }], '')]),
+      character(3, [variant(23, [{ id: 4, asset_id: 204, label: '三视图' }], HEX_RED)]),
+    ]
+    const got = buildCutVideoPrefill({ asset_id: 0, character_ids: [1, 2, 3] }, chars, 9)
+    expect(got.paletteLine).toBe(`角色配色:\n角色1:${HEX_BLUE}\n角色3:${HEX_RED}`)
+  })
+
+  it('角色全无配色:paletteLine 空串(整段跳过,行为回到 83 号票形态)', () => {
+    const chars = [character(1, [variant(21, [{ id: 7, asset_id: 107, label: '三视图' }])])]
+    const got = buildCutVideoPrefill({ asset_id: 0, character_ids: [1] }, chars, 9)
+    expect(got.paletteLine).toBe('')
+  })
+
+  it('无图但绑定变体有配色:参考条跳过(refs 空)、配色行照拼(两件事互不依赖)', () => {
+    const chars = [character(1, [variant(21, [], HEX_BLUE)])]
+    const got = buildCutVideoPrefill({ asset_id: 0, character_ids: [1] }, chars, 9)
+    expect(got.refs).toHaveLength(0)
+    expect(got.paletteLine).toBe(`角色配色:角色1:${HEX_BLUE}`)
+  })
+
+  it('有画面:paletteLine 恒空(71 号票互斥不注入,84 不碰有画面路径)', () => {
+    const chars = [
+      character(1, [variant(21, [{ id: 7, asset_id: 107, label: '三视图' }], HEX_BLUE)]),
+      character(2, [variant(22, [{ id: 3, asset_id: 203, label: '三视图' }], HEX_RED)]),
+    ]
+    const got = buildCutVideoPrefill(
+      { asset_id: 55, character_ids: [1, 2], character_variants: { 1: 21, 2: 22 } },
+      chars,
+      9,
+    )
+    expect(got.skippedInject).toBe(true)
+    expect(got.paletteLine).toBe('')
   })
 })

@@ -10,6 +10,7 @@
 import type { StoryboardCut, StoryboardNodeData } from './graph'
 import { prependStyleSegment } from './ipStyle'
 import { moveItem, removeAt } from './list'
+import { prependPaletteSegment } from './palette'
 import { assetContentURL } from './thumbnail'
 
 /** 运镜白名单(53 号票):前端持有,后端存串不校验(51 号 label 同哲学);
@@ -77,6 +78,49 @@ export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
   return { ...cut, shot }
 }
 
+/** cut 出场角色的变体绑定映射(83 号票,角色 id → 变体 id)的纯操作:
+ * variantId ≤ 0 = 清除该角色绑定(下拉回「默认变体」档);清到空整键
+ * 不落(undefined,缺省回落默认变体,数据不留空壳);换新对象不改入参。
+ * 已删变体的悬空键**不在此处清洗** —— 保留才能在编辑层显示回落态,
+ * 用户在下拉换档时自然覆写(sheet.resolveCutVariant 负责解析回落)。 */
+export function setCutVariantBinding(
+  map: Record<number, number> | undefined,
+  characterId: number,
+  variantId: number,
+): Record<number, number> | undefined {
+  const next: Record<number, number> = { ...(map ?? {}) }
+  if (variantId <= 0) {
+    delete next[characterId]
+  } else {
+    next[characterId] = variantId
+  }
+  return Object.keys(next).length === 0 ? undefined : next
+}
+
+/** 变体绑定簿的孤儿收回(83 号票,目录刷新的悬空收回链):角色已不在
+ * 出场清单(character_ids,keptCharacterIds 即收回后的清单)的绑定条目
+ * 删掉 —— 角色标注被收回时其绑定随之无主,不把孤儿键留在整图 JSON;
+ * 清到空整键不落(undefined)。无孤儿时返回原引用(编辑层不产生无谓
+ * 落盘)。注意与「变体已删但角色仍在场」不同:那种绑定键**保留**,编辑
+ * 展示回落态(用户换档自然覆写),不在此清洗。 */
+export function pruneCutVariantOrphans(
+  map: Record<number, number> | undefined,
+  keptCharacterIds: number[],
+): Record<number, number> | undefined {
+  if (!map) {
+    return undefined
+  }
+  const kept = new Set(keptCharacterIds)
+  const next: Record<number, number> = {}
+  for (const [k, v] of Object.entries(map)) {
+    if (kept.has(Number(k))) {
+      next[Number(k)] = v
+    }
+  }
+  const count = Object.keys(next).length
+  return count === Object.keys(map).length ? map : count === 0 ? undefined : next
+}
+
 // ---- 直通预填拼装(67 号票;73 号票按 Seedance 2.0 官方公式重排) ----
 
 /** 全片基调段标签(73 号票定案 B):半角冒号,拼在 brief trim 后文本前,
@@ -88,6 +132,20 @@ const BRIEF_SEGMENT_LABEL = '全片基调:'
  * (官方约束词;要不要背景音乐交给 lines 的音乐`()`段,尾段不写)。 */
 export const QUALITY_TAIL =
   '高清,细节丰富,电影质感,色彩自然;保持无字幕,不要生成Logo和水印'
+
+/** 直通拼装的 section 标记清单(84 号票 B2 防叠显式化,评审修复轮):
+ * palette.prependPaletteSegment/stripPaletteSegment 据此识别「配色段之后
+ * 的 section 行」—— palette 不反向 import 本文件(会循环依赖),段边界
+ * 由拼装面声明、清单与上面各段标记同源维护,漂移由 storyboard.test 的
+ * 段序钉子与 palette.test 的边界用例两侧对拍。 */
+const SECTION_MARKS = [
+  BRIEF_SEGMENT_LABEL,
+  '画面描述:',
+  '景别:',
+  '运镜:',
+  '台词/音效:',
+  QUALITY_TAIL,
+]
 
 /** cut → 视频提示词拼装(67 号票 cut→视频直通;73 号票段序按官方公式
  * 重排):画面风格段 → 全片基调段 → 画面描述 → 景别 → 运镜 → 台词/音效 →
@@ -101,11 +159,20 @@ export const QUALITY_TAIL =
  *   是空串而是尾段一行(旧「全空返回空串」行为按 73 号票定案 D.1/D.4
  *   调整);有风格则风格段照旧在最前。
  * - 画面描述取 note(53 号票备注字段;66 号票 save_storyboard 产物的
- *   note 即画面内容描述,工具产物与人工 cut 同规),信息密度最高,排
- *   基调段之后的首位;台词/音效段标签、运镜顿号连接、cut.seconds 不进
- *   prompt 照旧(秒数参照由导演写进 note,73 号票定案 D.7)。
- * 纯函数便于单测;出场角色不进提示词(70 号票已走参考图注入)。 */
-export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = ''): string {
+ *   note 即画面内容描述,信息密度最高,排基调段之后的首位;台词/音效段
+ *   标签、运镜顿号连接、cut.seconds 不进 prompt 照旧(秒数参照由导演写
+ *   进 note,73 号票定案 D.7)。
+ * - 84 号票 B3:角色配色段(paletteLine,palette.buildPaletteLine 产物)
+ *   非空拼在 sections 之前(段位 = 首位)—— 风格段最后由
+ *   prependStyleSegment 顶到最前,最终序 = 画面风格 → 角色配色 → 全片
+ *   基调 → …;发送链的绑定行(「出场元素:」)经 insertElementLine 插
+ *   风格段之后、配色段之前,即票面「配色段插在绑定行之后」。有画面路径
+ *   不传(71 号票互斥不注入)。拼装经 palette.prependPaletteSegment
+ *   (84-B2 防叠显式化):拼前剥掉 body 里已存在的段,「prompt 已含同段
+ *   不叠段」是拼装函数自身的性质而非调用方纪律(与 ipStyle 防叠的同构
+ *   关系与服务端对照见 palette.stripPaletteSegment 注释)。
+ * 纯函数便于单测;参考图注入不进提示词照旧(70 号票,配色段是 84 另加)。 */
+export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = '', paletteLine = ''): string {
   const sections: string[] = []
   const briefText = brief.trim()
   if (briefText !== '') {
@@ -126,16 +193,17 @@ export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = ''):
     sections.push(`台词/音效:${lines}`)
   }
   sections.push(QUALITY_TAIL)
-  return prependStyleSegment(sections.join('\n'), style)
+  return prependStyleSegment(prependPaletteSegment(sections.join('\n'), paletteLine, SECTION_MARKS), style)
 }
 
 /** cut → 图片提示词拼装(分镜画面直通生成;73 号票定案 D.5 生图直通
- * 同吃):画面风格段 → 全片基调段 → 画面描述 → 景别 → 画质约束尾段 ——
- * 分镜画面是视频首帧种子,同需基调一致与画面干净,两直通口径一致;不拼
- * 运镜/台词照旧(那是视频语汇)。基调段/尾段/风格段的拼装口径与
- * buildCutVideoPrompt 逐条一致(含尾段恒拼、brief 不受开关管)。纯函数
- * 便于单测。 */
-export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = ''): string {
+ * 同吃):画面风格段 → 角色配色段(84 号票 B2,非空才拼)→ 全片基调段
+ * → 画面描述 → 景别 → 画质约束尾段 —— 分镜画面是视频首帧种子,同需基调
+ * 一致与画面干净,两直通口径一致;不拼运镜/台词照旧(那是视频语汇)。
+ * 基调段/尾段/风格段/配色段的拼装口径与 buildCutVideoPrompt 逐条一致
+ * (含尾段恒拼、brief 不受开关管、配色段经 prependPaletteSegment 防叠
+ * 拼装)。纯函数便于单测。 */
+export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = '', paletteLine = ''): string {
   const sections: string[] = []
   const briefText = brief.trim()
   if (briefText !== '') {
@@ -149,7 +217,7 @@ export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = ''):
     sections.push(`景别:${cut.shot}`)
   }
   sections.push(QUALITY_TAIL)
-  return prependStyleSegment(sections.join('\n'), style)
+  return prependStyleSegment(prependPaletteSegment(sections.join('\n'), paletteLine, SECTION_MARKS), style)
 }
 
 /** 单个 cut 时长的夹紧上限(秒):一个分镜 cut 超过一小时没有意义。

@@ -9,8 +9,9 @@ import type { CharacterImageRecord } from '@infinitechance/api'
 
 import { assetContentURL } from './thumbnail'
 
-/** 设定图标签的六类白名单(新建/改标签时的唯一入口)。 */
-export const CHARACTER_IMAGE_LABELS = ['三视图', '多视图', '表情集', '色板', '姿态', '其他'] as const
+/** 设定图标签的七类白名单(新建/改标签时的唯一入口;84 号票补第六生成
+ * 类型「光照色板」,锚定 label 与改标签同白名单)。 */
+export const CHARACTER_IMAGE_LABELS = ['三视图', '多视图', '表情集', '色板', '光照色板', '姿态', '其他'] as const
 
 /** 视图类 label 集合:主资产,展示面排序置前。与服务端 character.ViewLabels
  * 同集(两处各持一份,后端不校验枚举,此处是唯一写入口)。 */

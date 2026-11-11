@@ -22,6 +22,7 @@ const variant = (id: number, name: string, images: CharacterImageRecord[] = []):
   character_id: 1,
   name,
   note: '',
+  palette: '',
   sort: 0,
   images,
   created_at: '',
@@ -98,6 +99,20 @@ describe('cut→视频预填折算(71 号票 A2,修 70 号票首帧/参考互斥
     const prefill = buildCutVideoPrefill({ asset_id: 0 }, [blue], 9)
     expect(cutPrefillVideoRefs(prefill)).toEqual([])
     expect(cutPrefillNotice(prefill)).toBe('')
+  })
+
+  it('83 号票 A4:变体绑定只影响「取哪张参考」不影响「注不注入」——有画面路径 toast 文案逐字不变', () => {
+    const prefill = buildCutVideoPrefill(
+      { asset_id: 900, character_ids: [7], character_variants: { 7: 70 } },
+      [blue],
+      9,
+    )
+    expect(cutPrefillVideoRefs(prefill)).toEqual([
+      { url: '/api/assets/900/content', kind: 'image', role: 'first_frame', asset_id: 900 },
+    ])
+    expect(cutPrefillNotice(prefill)).toBe(
+      'cut 已有画面作首帧,出场角色设定图未注入(首帧与参考不能混用)',
+    )
   })
 })
 

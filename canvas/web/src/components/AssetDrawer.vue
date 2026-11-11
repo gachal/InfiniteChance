@@ -7,7 +7,7 @@
 // 用 label 表达)。素材行被删的图行落「素材不可用」占位可手动移除。数据
 // 自取自管(get* 拉全树),每次变更 emit('changed', kind, record) 让父级
 // 卡墙同步刷新。
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
   ApiError,
@@ -31,6 +31,7 @@ import { composeSize, RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
 import { isPanoRatio, uploadPanoramaCapture } from '../panorama'
 import PanoramaViewer from './PanoramaViewer.vue'
 import { SHEET_TYPES, latestVariantImage } from '../sheet'
+import { BUNDLE_DEFAULT_TYPES, bundleEstimateText } from '../sheetBundle'
 import { fmtCNY, voiceStatusBadge } from '../voice'
 import AssetPicker from './AssetPicker.vue'
 
@@ -76,13 +77,16 @@ const descriptionDraft = ref('')
 const detailDraft = ref('')
 const savingFields = ref(false)
 
-// 变体条状态(仅角色):选中变体、行内改名/描述草稿(仅一行处于编辑态)。
+// 变体条状态(仅角色):选中变体、行内改名/描述/配色草稿(仅一行处于
+// 编辑态)。palette 是配色自由文本(84 号票,HEX 行;textarea 手填)。
 const activeVariantId = ref<number>(0)
 const editingVariantId = ref<number>(0)
 const variantNameDraft = ref('')
 const variantNoteDraft = ref('')
+const variantPaletteDraft = ref('')
 const newVariantName = ref('')
 const newVariantNote = ref('')
+const newVariantPalette = ref('')
 const creatingVariant = ref(false)
 
 // 画廊状态:标签下拉直接改、上下移排序、本机上传、从库选。
@@ -135,6 +139,12 @@ const activeVariant = computed<CharacterVariantRecord | null>(() => {
     return null
   }
   return c.variants.find((v) => v.id === activeVariantId.value) ?? c.variants[0] ?? null
+})
+
+// 84 号票 A3:新建变体的配色 UI 预填抄当前选中变体(纯前端预填,后端零
+// 智能继承)—— 换装场景只需改服装色行;随选中变体切换同步刷新草稿。
+watch(activeVariant, (v) => {
+  newVariantPalette.value = v?.palette ?? ''
 })
 
 /** 画廊展示序:主资产置前(角色 = 视图类三视图/多视图;场景 = 全景;
@@ -271,9 +281,13 @@ async function addVariant(): Promise<void> {
     const created = await client.createCharacterVariant(character.value.id, {
       name,
       note: newVariantNote.value.trim(),
+      palette: newVariantPalette.value.trim(),
     })
     newVariantName.value = ''
     newVariantNote.value = ''
+    // 新建表单清空;配色随选中变体切换的 watch 自动预填新建变体的当前值
+    // (84 号票:换装改服装色行即可)。
+    newVariantPalette.value = ''
     activeVariantId.value = created.id
     await refresh()
   } catch (e) {
@@ -287,6 +301,7 @@ function startVariantEdit(v: CharacterVariantRecord): void {
   editingVariantId.value = v.id
   variantNameDraft.value = v.name
   variantNoteDraft.value = v.note
+  variantPaletteDraft.value = v.palette
   actionError.value = ''
 }
 
@@ -299,7 +314,11 @@ async function commitVariantEdit(): Promise<void> {
   }
   actionError.value = ''
   try {
-    await client.patchCharacterVariant(id, { name, note: variantNoteDraft.value.trim() })
+    await client.patchCharacterVariant(id, {
+      name,
+      note: variantNoteDraft.value.trim(),
+      palette: variantPaletteDraft.value.trim(),
+    })
     editingVariantId.value = 0
     await refresh()
   } catch (e) {
@@ -618,6 +637,9 @@ async function loadSheetModels(): Promise<void> {
     if (!catalog.models.includes(sheetModel.value)) {
       sheetModel.value = catalog.models[0] ?? ''
     }
+    if (!catalog.models.includes(bundleModel.value)) {
+      bundleModel.value = catalog.models[0] ?? ''
+    }
   } catch {
     sheetModelsFailed.value = true
   }
@@ -711,8 +733,193 @@ async function anchorSheet(assetId: number): Promise<void> {
   }
 }
 
+// ---- 成套生成(83 号票 B,仅角色):同变体逐类型各一笔的批量编排 ----
+// 类型多选对话框(默认勾视图三类 BUNDLE_DEFAULT_TYPES,表情集/光照色板/姿态按需
+// 加勾),一次人工确认(含 N 笔总价预估)→ **前端循环串行**逐笔发
+// POST /api/ips/:id/tasks(端点零改动,一笔一类型,不新建批量端点);
+// 逐笔独立计价、独立失败、部分成功不回滚;参考图 = 发起时统一取变体当前
+// 最近一张设定图(循环外冻结一次,不串联后续笔);对话框内逐笔进度
+// (每行一类型一状态),成功逐笔锚进目标变体(照 70 号票自锚机制)。
+// 「一次请求生成多图」仍不做(70 号票口径修订:同变体逐类型各一笔进本票)。
+
+/** 成套生成的一笔进度行。 */
+interface BundleRowState {
+  type: string
+  taskId: string
+  status: 'submitting' | CanvasTask['status']
+  error: string
+  assetId: number
+  anchoring: boolean
+  anchored: boolean
+}
+
+const bundleOpen = ref(false)
+/** 目标变体 = 抽屉当前选中变体(入口在变体节,切目标先在列表选变体)。 */
+const bundleVariantId = ref(0)
+const bundleTypes = ref<string[]>([...BUNDLE_DEFAULT_TYPES])
+const bundleModel = ref('')
+const bundleRatio = ref('')
+const bundleResolution = ref('')
+const bundleRows = ref<BundleRowState[]>([])
+let bundlePollTimer: number | undefined
+
+function bundleVariantOf(): CharacterVariantRecord | null {
+  return character.value?.variants.find((v) => v.id === bundleVariantId.value) ?? null
+}
+
+/** 进行中(提交/排队/生成/锚定):确认按钮禁用与轮询停止共用判定。 */
+const bundleBusy = computed(() =>
+  bundleRows.value.some(
+    (r) => r.status === 'submitting' || r.status === 'queued' || r.status === 'running' || r.anchoring,
+  ),
+)
+
+/** 打开对话框:默认勾视图三类(83 号票 B1),模型缺省沿用单笔对话框的
+ * 当前选择(同为生图面);模型目录拉取与单笔对话框共用同一份状态。 */
+function openBundleDialog(): void {
+  bundleOpen.value = true
+  bundleRows.value = []
+  bundleTypes.value = [...BUNDLE_DEFAULT_TYPES]
+  bundleVariantId.value = activeVariant.value?.id ?? 0
+  if (bundleModel.value === '') {
+    bundleModel.value = sheetModel.value
+  }
+  void loadSheetModels()
+}
+
+/** 类型勾选切换:勾选面恒为 SHEET_TYPES 白名单,展示与提交序按白名单序。 */
+function toggleBundleType(type: string): void {
+  const next = bundleTypes.value.includes(type)
+    ? bundleTypes.value.filter((t) => t !== type)
+    : [...bundleTypes.value, type]
+  bundleTypes.value = SHEET_TYPES.filter((t) => next.includes(t))
+}
+
+/** 比例 × 分辨率 → size 串(composer 同一组合表;双自动 = 不传)。 */
+const bundleSize = computed(() => composeSize(bundleRatio.value, bundleResolution.value) || undefined)
+
+/** 一次确认的 N 笔总价预估(38 号票按次轨口径;无价不显示)。 */
+const bundleEstimate = computed(() =>
+  bundleEstimateText(imagePrices.value, bundleModel.value, bundleTypes.value.length),
+)
+
+/** 成套生成提交(83 号票 B2/B3):**循环串行**逐笔 createIPTask,逐笔
+ * 独立 try/catch —— 某笔提交失败(如 model_not_priced 拒绝)就地标记
+ * 该行,不影响其余笔(部分成功不回滚);参考图在循环外冻结一次。 */
+async function submitBundle(): Promise<void> {
+  const c = character.value
+  const v = bundleVariantOf()
+  const types = [...bundleTypes.value]
+  if (!c || !v || types.length === 0 || !bundleModel.value || bundleBusy.value) {
+    return
+  }
+  // 发起时统一冻结参考图:变体当前最近一张设定图,全部笔共用这一张 ——
+  // 第一笔成功不改变第二笔的参考(不串联后续笔)。
+  const bundleRefAssetId = latestVariantImage(v)?.asset_id ?? 0
+  bundleRows.value = types.map((type) => ({
+    type,
+    taskId: '',
+    status: 'submitting',
+    error: '',
+    assetId: 0,
+    anchoring: false,
+    anchored: false,
+  }))
+  for (let i = 0; i < types.length; i++) {
+    const row = bundleRows.value[i]
+    try {
+      const task = await client.createIPTask(props.ipId, {
+        character_id: c.id,
+        variant_id: v.id,
+        sheet_type: row.type,
+        model: bundleModel.value,
+        ...(bundleSize.value ? { size: bundleSize.value } : {}),
+        ...(bundleRefAssetId > 0
+          ? { image_urls: [characterImageContentURL(bundleRefAssetId)] }
+          : {}),
+      })
+      row.taskId = task.id
+      row.status = task.status
+    } catch (e) {
+      row.status = 'failed'
+      row.error = e instanceof ApiError ? e.message : '提交失败,请稍后再试'
+    }
+  }
+  pollBundle()
+}
+
+/** 逐笔进度行文案(每行一类型一状态)。 */
+function bundleRowStatusText(row: BundleRowState): string {
+  if (row.status === 'submitting') {
+    return '提交中…'
+  }
+  if (row.status === 'queued') {
+    return '排队中'
+  }
+  if (row.status === 'running') {
+    return '生成中'
+  }
+  if (row.status === 'succeeded') {
+    return row.anchoring ? '已生成,锚定中…' : row.anchored ? '已生成并锚进变体' : '已生成'
+  }
+  return row.status === 'canceled' ? '已取消' : '失败'
+}
+
+/** 成套生成逐笔轮询(2s):终态逐笔改行态;成功且带产物素材行时逐笔锚进
+ * 目标变体(label = 该笔类型,同 label 多张并存;锚定失败不拦产物 ——
+ * 素材在库,画廊「从库选」可手动锚兜底,即 70 号票「前端记账」语义:
+ * 刷新丢映射后产物仍在库可手动锚)。暂态轮询失败静默下一拍再试;全部
+ * 终态即停;抽屉关闭(组件卸载)即停,任务照常服务端续跑。 */
+function pollBundle(): void {
+  window.clearInterval(bundlePollTimer)
+  bundlePollTimer = window.setInterval(() => {
+    void (async () => {
+      const c = character.value
+      if (!c) {
+        return
+      }
+      const variantId = bundleVariantId.value
+      for (const row of bundleRows.value) {
+        if (row.taskId === '' || row.status === 'succeeded' || row.status === 'failed' || row.status === 'canceled') {
+          continue
+        }
+        try {
+          const t = await client.getIPTask(props.ipId, row.taskId)
+          row.status = t.status
+          row.assetId = t.asset_id
+          if (t.status === 'succeeded' && t.asset_id > 0) {
+            row.anchoring = true
+            try {
+              await client.createCharacterImage(c.id, {
+                variant_id: variantId,
+                asset_id: t.asset_id,
+                label: row.type,
+              })
+              row.anchored = true
+              await refresh()
+            } catch (e) {
+              row.error = e instanceof ApiError ? e.message : '自动锚定失败,可稍后手动锚'
+            } finally {
+              row.anchoring = false
+            }
+          } else if (t.status !== 'succeeded') {
+            row.error = t.error
+          }
+        } catch {
+          /* 暂态失败下一拍再试 */
+        }
+      }
+      if (!bundleBusy.value) {
+        window.clearInterval(bundlePollTimer)
+        bundlePollTimer = undefined
+      }
+    })()
+  }, 2000)
+}
+
 onUnmounted(() => {
   window.clearInterval(sheetPollTimer)
+  window.clearInterval(bundlePollTimer)
   window.clearTimeout(panoNoteTimer)
 })
 </script>
@@ -890,6 +1097,15 @@ onUnmounted(() => {
                   maxlength="1024"
                   placeholder="服装描述(可选)"
                 >
+                <!-- 配色 textarea(84 号票 A3):自由文本 HEX 行,手填不校验
+                     格式;空串 = 无配色。 -->
+                <textarea
+                  v-model="variantPaletteDraft"
+                  class="variant-palette"
+                  rows="2"
+                  maxlength="500"
+                  placeholder="配色(可选,如 发色:#1A2E;肤色:#FFE0D0)"
+                />
                 <button
                   type="submit"
                   class="mini primary"
@@ -970,6 +1186,14 @@ onUnmounted(() => {
             maxlength="1024"
             placeholder="服装描述(可选)"
           >
+          <!-- 配色预填抄当前选中变体(84 号票 A3 纯前端预填,可改可清)。 -->
+          <textarea
+            v-model="newVariantPalette"
+            class="variant-palette"
+            rows="2"
+            maxlength="500"
+            placeholder="配色(可选,预填当前变体)"
+          />
           <button
             type="submit"
             class="mini primary"
@@ -978,6 +1202,16 @@ onUnmounted(() => {
             {{ creatingVariant ? '创建中…' : '+ 新建变体' }}
           </button>
         </form>
+        <!-- 83 号票 B:成套生成入口(目标 = 当前选中变体):类型多选,
+             一次确认逐笔串行发起,给变体补齐成套视图。 -->
+        <button
+          type="button"
+          class="mini primary bundle-entry"
+          title="为当前选中变体逐类型各发一笔(默认勾三视图/多视图/色板,可加勾表情集/光照色板/姿态)"
+          @click="openBundleDialog"
+        >
+          成套生成
+        </button>
       </section>
 
       <!-- 设定图画廊:角色 = 选中变体,场景/道具 = 实体级;主资产置前;
@@ -1012,7 +1246,7 @@ onUnmounted(() => {
             v-if="character"
             type="button"
             class="mini primary"
-            title="生成设定图(三视图/多视图/表情集/色板/姿态,服务端拼装提示词)"
+            title="生成设定图(六类型,服务端拼装提示词)"
             @click="openSheetDialog"
           >
             生成设定图
@@ -1352,6 +1586,154 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+
+      <!-- 成套生成对话框(83 号票 B,仅角色):类型多选(默认勾视图三
+           类),一次人工确认(含 N 笔总价预估)→ 前端循环串行逐笔发
+           POST /ips/:id/tasks(端点零改动),对话框内逐笔进度(每行一
+           类型一状态),成功逐笔锚进目标变体;逐笔独立计价独立失败不回滚。 -->
+      <div
+        v-if="bundleOpen"
+        class="sheet-overlay"
+        role="dialog"
+        aria-label="成套生成"
+        @click.self="bundleOpen = false"
+      >
+        <div class="sheet-dialog">
+          <header class="sheet-head">
+            <h4>成套生成</h4>
+            <button
+              type="button"
+              class="mini"
+              title="关闭(任务照常在服务端续跑,产物在素材库可见)"
+              @click="bundleOpen = false"
+            >
+              关闭
+            </button>
+          </header>
+
+          <p class="sheet-hint">
+            为「{{ bundleVariantOf()?.name ?? '' }}」变体逐类型各发一笔:参考图统一取该变体当前最近一张设定图,逐笔独立计费。
+          </p>
+
+          <div class="sheet-field">
+            <span class="sheet-label-text">类型(默认勾视图三类)</span>
+            <div class="bundle-types">
+              <label
+                v-for="t in SHEET_TYPES"
+                :key="t"
+                class="bundle-type"
+              >
+                <input
+                  type="checkbox"
+                  :checked="bundleTypes.includes(t)"
+                  @change="toggleBundleType(t)"
+                >
+                {{ t }}
+              </label>
+            </div>
+          </div>
+          <p
+            v-if="bundleTypes.length === 0"
+            class="sheet-hint"
+            role="alert"
+          >
+            至少勾一个类型。
+          </p>
+
+          <label class="sheet-field">
+            模型
+            <select
+              v-model="bundleModel"
+              :disabled="sheetModelsFailed || imageModels.length === 0"
+              aria-label="生图模型"
+            >
+              <option
+                v-for="m in imageModels"
+                :key="m"
+                :value="m"
+              >
+                {{ m }}
+              </option>
+            </select>
+          </label>
+
+          <div class="sheet-field-row">
+            <label class="sheet-field">
+              比例
+              <select
+                v-model="bundleRatio"
+                aria-label="画面比例"
+              >
+                <option
+                  v-for="p in RATIO_PRESETS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </option>
+              </select>
+            </label>
+            <label class="sheet-field">
+              分辨率
+              <select
+                v-model="bundleResolution"
+                aria-label="分辨率档位"
+              >
+                <option
+                  v-for="p in RESOLUTION_PRESETS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <p
+            v-if="bundleEstimate"
+            class="sheet-hint"
+          >
+            {{ bundleEstimate }}
+          </p>
+
+          <!-- 逐笔进度(83 号票 B4):每行一类型一状态;行内错误就地透出
+               (逐笔独立失败不回滚)。 -->
+          <ul
+            v-if="bundleRows.length > 0"
+            class="bundle-rows"
+          >
+            <li
+              v-for="row in bundleRows"
+              :key="row.type"
+              class="bundle-row"
+            >
+              <span class="bundle-row-type">{{ row.type }}</span>
+              <span
+                class="bundle-row-status"
+                :class="{ ok: row.status === 'succeeded', bad: row.status === 'failed' || row.status === 'canceled' }"
+              >{{ bundleRowStatusText(row) }}</span>
+              <span
+                v-if="row.error"
+                class="bundle-row-error"
+                role="alert"
+              >{{ row.error }}</span>
+            </li>
+          </ul>
+
+          <div class="sheet-actions">
+            <button
+              type="button"
+              class="primary"
+              :disabled="bundleBusy || bundleTypes.length === 0 || !bundleModel || sheetModelsFailed || imageModels.length === 0"
+              title="逐笔串行提交生成任务(每笔独立计费,人工确认后计费)"
+              @click="submitBundle"
+            >
+              {{ bundleBusy ? '进行中…' : `生成 ${bundleTypes.length} 笔` }}
+            </button>
+          </div>
+        </div>
+      </div>
     </template>
 
     <!-- 81 号票:全景球面查看层(Teleport 到 body 单实例),画廊「直接环视」
@@ -1504,7 +1886,9 @@ onUnmounted(() => {
 .field input,
 .field textarea,
 .variant-new input,
-.variant-edit input {
+.variant-edit input,
+.variant-new textarea,
+.variant-edit textarea {
   background: var(--wash-soft);
   border: 1px solid var(--line-control);
   border-radius: var(--r-md);
@@ -1520,7 +1904,9 @@ onUnmounted(() => {
 .field input:focus,
 .field textarea:focus,
 .variant-new input:focus,
-.variant-edit input:focus {
+.variant-edit input:focus,
+.variant-new textarea:focus,
+.variant-edit textarea:focus {
   outline: none;
   border-color: rgba(var(--accent-rgb), 0.85);
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
@@ -1690,6 +2076,16 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
   gap: 6px;
+}
+
+/* 配色 textarea(84 号票):跨整行(名/描述一行、配色一行、按钮一行)。
+ * resize 只留纵向,高度由 rows 定。 */
+.variant-edit .variant-palette,
+.variant-new .variant-palette {
+  grid-column: 1 / -1;
+  resize: vertical;
+  min-height: 0;
+  font-family: inherit;
 }
 
 .gallery-actions {
@@ -1881,5 +2277,70 @@ onUnmounted(() => {
 .sheet-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+/* ---- 成套生成(83 号票 B):类型多选勾选行与逐笔进度列表 ---- */
+
+.bundle-entry {
+  margin-top: 6px;
+}
+
+.bundle-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bundle-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-label);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.bundle-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.bundle-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
+  padding: 5px 8px;
+  font-size: var(--fs-micro);
+}
+
+.bundle-row-type {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.bundle-row-status {
+  color: var(--text-muted);
+}
+
+.bundle-row-status.ok {
+  color: var(--success);
+}
+
+.bundle-row-status.bad {
+  color: var(--danger);
+}
+
+.bundle-row-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--danger);
 }
 </style>

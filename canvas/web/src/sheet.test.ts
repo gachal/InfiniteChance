@@ -16,14 +16,15 @@ import {
   latestVariantImage,
   pickCutCharacterRefs,
   pickVariantAssetId,
+  resolveCutVariant,
 } from './sheet'
 
-describe('五类型模板字面量钉子(与服务端同字面量)', () => {
-  it('五类型固定序,默认三视图', () => {
-    expect(SHEET_TYPES).toEqual(['三视图', '多视图', '表情集', '色板', '姿态'])
+describe('六类型模板字面量钉子(与服务端同字面量)', () => {
+  it('六类型固定序,光照色板插色板之后,默认三视图(84 号票)', () => {
+    expect(SHEET_TYPES).toEqual(['三视图', '多视图', '表情集', '色板', '光照色板', '姿态'])
   })
 
-  it('模板文案与服务端 iptask.go 逐字一致', () => {
+  it('模板文案与服务端 iptask.go 逐字一致(色板补瞳色线色;光照色板四格对照)', () => {
     expect(SHEET_TYPE_TEMPLATES['三视图']).toBe(
       '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
     )
@@ -34,7 +35,10 @@ describe('五类型模板字面量钉子(与服务端同字面量)', () => {
       '角色设定图·表情集:同一角色头部的多种表情对照(喜、怒、哀、惊等),白底,构图整齐,表情差异清晰,标准设定图画风',
     )
     expect(SHEET_TYPE_TEMPLATES['色板']).toBe(
-      '角色设定图·色板:该角色的配色色板展示(发色、肤色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风',
+      '角色设定图·色板:该角色的配色色板展示(发色、肤色、瞳色、线色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风',
+    )
+    expect(SHEET_TYPE_TEMPLATES['光照色板']).toBe(
+      '角色设定图·光照色板:同一角色的昼光、夜色、黄昏、逆光四格配色对照,同站姿同构图,各格光照差异清晰,白底,标注干净,标准设定图画风',
     )
     expect(SHEET_TYPE_TEMPLATES['姿态']).toBe(
       '角色设定图·姿态集:同一角色的多个典型动作与姿态对照,全身,白底,姿态自然清晰,标准设定图画风',
@@ -83,6 +87,30 @@ describe('buildSheetPrompt(与 Go BuildSheetPrompt 同形)', () => {
     }, '')
     expect([...got].length).toBeLessThanOrEqual(MAX_SHEET_PROMPT_RUNES)
   })
+
+  it('配色段(84 号票 B1):palette 非空落「配色:」行插服装行之后,空则整行跳过', () => {
+    const got = buildSheetPrompt('三视图', {
+      name: '林小满',
+      variantName: '冬季制服',
+      variantNote: '深蓝色大衣配红色围巾',
+      palette: '发色:#1A2E;瞳色:#4A90D9',
+    }, '')
+    expect(got).toBe([
+      '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
+      '角色:林小满',
+      '造型:冬季制服',
+      '服装:深蓝色大衣配红色围巾',
+      '配色:发色:#1A2E;瞳色:#4A90D9',
+    ].join('\n'))
+    // 空/缺省 = 无配色行(与改动前逐字节一致)。
+    expect(buildSheetPrompt('三视图', { name: '林小满', variantName: '冬季制服' }, '')).toBe(
+      [
+        '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
+        '角色:林小满',
+        '造型:冬季制服',
+      ].join('\n'),
+    )
+  })
 })
 
 // ---- B3 参考图默认与 cut 注入挑选的测试脚手架 ----
@@ -93,6 +121,7 @@ function variant(id: number, images: { id: number; asset_id: number; label: stri
     character_id: 1,
     name: '默认',
     note: '',
+    palette: '',
     sort: 0,
     images: images.map((im) => ({ id: im.id, character_id: 1, variant_id: id, asset_id: im.asset_id, label: im.label, sort: 0 })),
     created_at: '',
@@ -268,5 +297,72 @@ describe('pickVariantAssetId(按变体取图:视图类最近一张 > 变体任�
       })
       .filter((p) => p.assetId !== 0)
     expect(viaShared).toEqual(picks)
+  })
+})
+
+// ---- 83 号票:cut→变体精确绑定(绑定优先 → 默认变体回落)----
+
+describe('resolveCutVariant(83 号票绑定解析)', () => {
+  it('绑定存在且可解析:取绑定变体,非回落态', () => {
+    const d = variant(21, [])
+    const rain = { ...variant(22, []), name: '雨衣' }
+    const c = character(1, [d, rain])
+    expect(resolveCutVariant(c, 22)).toEqual({ variant: rain, fellBack: false })
+  })
+
+  it('缺省绑定(undefined)即缺映射:默认变体,非回落态', () => {
+    const d = variant(21, [])
+    const w = { ...variant(22, []), name: '冬装' }
+    const c = character(1, [w, d])
+    expect(resolveCutVariant(c, undefined)).toEqual({ variant: d, fellBack: false })
+  })
+
+  it('绑定变体已删:回落默认变体,fellBack 真(回落态显示依据)', () => {
+    const d = variant(21, [])
+    const c = character(1, [d])
+    expect(resolveCutVariant(c, 99)).toEqual({ variant: d, fellBack: true })
+  })
+
+  it('绑定变体已删且角色已无任何变体:回落 undefined,fellBack 真', () => {
+    const c = character(1, [])
+    expect(resolveCutVariant(c, 99)).toEqual({ variant: undefined, fellBack: true })
+  })
+})
+
+describe('pickCutCharacterRefs 变体绑定(83 号票:绑定优先 → 默认变体回落)', () => {
+  const d = variant(21, [{ id: 7, asset_id: 107, label: '三视图' }])
+  const rain = { ...variant(22, [{ id: 8, asset_id: 208, label: '三视图' }]), name: '雨衣' }
+  const chars = [character(1, [d, rain])]
+
+  it('cut 绑定变体优先:取绑定变体的设定图与 variantId', () => {
+    const { picks, dropped } = pickCutCharacterRefs(chars, [1], 9, { 1: 22 })
+    expect(picks).toEqual([{ characterId: 1, assetId: 208, variantId: 22 }])
+    expect(dropped).toBe(0)
+  })
+
+  it('无字段/空映射/缺该角色的映射:三种情况都回落默认变体,与旧契约一致', () => {
+    const expected = [{ characterId: 1, assetId: 107, variantId: 21 }]
+    expect(pickCutCharacterRefs(chars, [1], 9).picks).toEqual(expected)
+    expect(pickCutCharacterRefs(chars, [1], 9, undefined).picks).toEqual(expected)
+    expect(pickCutCharacterRefs(chars, [1], 9, {}).picks).toEqual(expected)
+    expect(pickCutCharacterRefs(chars, [1], 9, { 2: 22 }).picks).toEqual(expected)
+  })
+
+  it('绑定变体已删:回落默认变体(variantId = 默认变体 id)', () => {
+    const { picks } = pickCutCharacterRefs(chars, [1], 9, { 1: 99 })
+    expect(picks).toEqual([{ characterId: 1, assetId: 107, variantId: 21 }])
+  })
+
+  it('绑定生效但绑定变体无图:取图链照旧回落封面投影(只换变体,不改取图优先级)', () => {
+    const rainNoImg = { ...variant(22, []), name: '雨衣' }
+    const cs = [character(1, [d, rainNoImg], 909)]
+    const { picks } = pickCutCharacterRefs(cs, [1], 9, { 1: 22 })
+    expect(picks).toEqual([{ characterId: 1, assetId: 909, variantId: 22 }])
+  })
+
+  it('存量画布行为不变:同输入不带映射的输出与映射缺省路径一致', () => {
+    const withMap = pickCutCharacterRefs(chars, [1], 9, { 1: 21 })
+    const noMap = pickCutCharacterRefs(chars, [1], 9)
+    expect(withMap).toEqual(noMap)
   })
 })
