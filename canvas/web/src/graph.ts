@@ -112,7 +112,12 @@ export interface CharacterNodeData {
  * 多选区分 —— 一个镜头一个景别);character_ids 是出场角色引用(本 IP
  * 角色库角色 id 按选择序,只存引用不存快照,角色改名/换封面随目录刷新
  * 即变 —— 角色引用节点同哲学;标注字段,生成注入二期)。序号不持久
- * —— 显示时生成 1..N,删插自动重排。 */
+ * —— 显示时生成 1..N,删插自动重排。83 号票再扩:character_variants
+ * 是出场角色的变体精确绑定(角色 id → 变体 id),只存引用不存快照,
+ * 随节点 data 整图 JSON 走零迁移(服务端 RawMessage 原样透传);缺省或
+ * 映射缺失、或所指变体已删时,取图回落「默认变体」(sheet.
+ * defaultCharacterVariant 既有规则),存量画布(无该字段)行为逐字节
+ * 不变。 */
 export interface StoryboardCut {
   asset_id: number
   seconds?: number
@@ -120,6 +125,7 @@ export interface StoryboardCut {
   camera_moves: string[]
   shot?: string
   character_ids?: number[]
+  character_variants?: Record<number, number>
   note?: string
 }
 

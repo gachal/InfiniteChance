@@ -159,3 +159,55 @@ describe('buildCutVideoPrefill(cut 无画面 = 按出场角色注入元素 chip)
     expect(got).toEqual({ firstFrameAssetId: 0, refs: [], dropped: 0, skippedInject: false })
   })
 })
+
+describe('buildCutVideoPrefill 变体绑定(83 号票:绑定优先 → 默认变体回落)', () => {
+  const def = variant(21, [{ id: 7, asset_id: 107, label: '三视图' }])
+  const rain = { ...variant(22, [{ id: 8, asset_id: 208, label: '三视图' }]), name: '雨衣' }
+  const chars = [character(1, [def, rain])]
+
+  it('无画面 + 绑定:元素 chip 取绑定变体图,variantId = 绑定变体', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1], character_variants: { 1: 22 } },
+      chars,
+      9,
+    )
+    expect(got.refs).toEqual([
+      {
+        url: '/api/assets/208/content',
+        kind: 'image',
+        role: 'reference_image',
+        asset_id: 208,
+        element: { type: 'character', entityId: 1, variantId: 22 },
+      },
+    ])
+  })
+
+  it('绑定变体已删:回落默认变体(variantId = 默认变体 id)', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1], character_variants: { 1: 99 } },
+      chars,
+      9,
+    )
+    expect(got.refs[0].asset_id).toBe(107)
+    expect(got.refs[0].element).toStrictEqual({ type: 'character', entityId: 1, variantId: 21 })
+  })
+
+  it('无字段(存量画布):行为与改动前逐字节一致', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 0, character_ids: [1] },
+      chars,
+      9,
+    )
+    expect(got.refs[0].asset_id).toBe(107)
+    expect(got.refs[0].element).toStrictEqual({ type: 'character', entityId: 1, variantId: 21 })
+  })
+
+  it('A4 硬约束不动:有画面 + 绑定,仍不注入(skippedInject 真、refs 空)', () => {
+    const got = buildCutVideoPrefill(
+      { asset_id: 55, character_ids: [1], character_variants: { 1: 22 } },
+      chars,
+      9,
+    )
+    expect(got).toEqual({ firstFrameAssetId: 55, refs: [], dropped: 0, skippedInject: true })
+  })
+})
