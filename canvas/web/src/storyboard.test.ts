@@ -361,3 +361,35 @@ describe('totalSeconds / formatDuration', () => {
     expect(formatDuration(3600)).toBe('60:00')
   })
 })
+
+// ---- 84 号票 B2/B3:角色配色段进 sections 首位(风格段顶最前)----
+
+describe('buildCutFramePrompt / buildCutVideoPrompt 配色段(84 号票)', () => {
+  const LINE_SINGLE = '角色配色:小蓝:发色:#1A2E'
+  const LINE_MULTI = '角色配色:\n小蓝:发色:#1A2E\n阿红:发色:#C0392B'
+
+  it('配色段非空:图片直通拼在风格段之后、全片基调段之前', () => {
+    expect(
+      buildCutFramePrompt(cut({ note: '雨夜巷口' }), '基调文本', '水墨', LINE_SINGLE),
+    ).toBe(
+      `画面风格:水墨\n${LINE_SINGLE}\n全片基调:基调文本\n画面描述:雨夜巷口\n${QUALITY_TAIL}`,
+    )
+  })
+
+  it('配色段非空:视频直通同拼(多角色标记行 + 逐角色一行)', () => {
+    expect(
+      buildCutVideoPrompt(cut({ note: '雨夜巷口' }), '', '', LINE_MULTI),
+    ).toBe(`${LINE_MULTI}\n画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+  })
+
+  it('配色段空串:整段跳过,行为与 73 号票逐字节一致(存量调用不传第 4 参)', () => {
+    expect(buildCutFramePrompt(cut({ note: '雨夜巷口' }))).toBe(`画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+    expect(buildCutVideoPrompt(cut({ note: '雨夜巷口' }))).toBe(`画面描述:雨夜巷口\n${QUALITY_TAIL}`)
+  })
+
+  it('段不设总截断(票面 B4):多角色行数随出场角色数,拼装不再截', () => {
+    const many = ['角色配色:', ...Array.from({ length: 6 }, (_, i) => `角色${i + 1}:发色:#1A2E`)].join('\n')
+    const got = buildCutVideoPrompt(cut({ note: '雨夜巷口' }), '', '', many)
+    expect(got.startsWith(`${many}\n画面描述:雨夜巷口`)).toBe(true)
+  })
+})

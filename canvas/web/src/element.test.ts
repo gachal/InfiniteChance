@@ -40,6 +40,7 @@ const variant = (id: number, name: string, characterId = 1): CharacterVariantRec
   character_id: characterId,
   name,
   note: '',
+  palette: '',
   sort: 0,
   images: [],
   created_at: '',

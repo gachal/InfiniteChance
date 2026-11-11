@@ -20,7 +20,7 @@ describe('BUNDLE_DEFAULT_TYPES(83 号票 B1 默认勾选)', () => {
     )
   })
 
-  it('成员全部落在五类型白名单内(勾选面来自 SHEET_TYPES,不发白名单外的类型)', () => {
+  it('成员全部落在生成类型白名单内(勾选面来自 SHEET_TYPES,不发白名单外的类型;84 号票起白名单六类)', () => {
     for (const t of BUNDLE_DEFAULT_TYPES) {
       expect((SHEET_TYPES as readonly string[]).includes(t)).toBe(true)
     }

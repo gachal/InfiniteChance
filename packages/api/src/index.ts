@@ -265,6 +265,9 @@ export interface CharacterVariantRecord {
   name: string
   /** 服装描述,自由文本。 */
   note: string
+  /** 配色指定(84 号票):自由文本 HEX 行,如「发色:#1A2E;肤色:#FFE0D0;
+   * …」,服务端限 500 runes;空串 = 无配色、生成注入面整段跳过。 */
+  palette: string
   sort: number
   images: CharacterImageRecord[]
   created_at: string
@@ -311,12 +314,15 @@ export interface PatchCharacterInput {
 export interface CreateCharacterVariantInput {
   name: string
   note?: string
+  /** 配色指定(84 号票):自由文本 HEX 行,可空;UI 预填抄当前选中变体。 */
+  palette?: string
 }
 
-/** 变体部分更新:改名字/服装描述/展示排序。 */
+/** 变体部分更新:改名字/服装描述/配色/展示排序(空串 = 清除配色)。 */
 export interface PatchCharacterVariantInput {
   name?: string
   note?: string
+  palette?: string
   sort?: number
 }
 

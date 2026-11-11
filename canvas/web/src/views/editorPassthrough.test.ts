@@ -70,3 +70,26 @@ describe('cut 编辑层变体下拉接线(83 号票 A2)', () => {
     expect(layerSource.includes('pruneCutVariantOrphans')).toBe(true)
   })
 })
+
+describe('角色配色段接线(84 号票 B2/B3)', () => {
+  it('cut→画面直通:配色行经 buildPaletteEntries/Line 解析并传 buildCutFramePrompt', () => {
+    const body = fnSource(editorSource, 'onStoryboardGenerateFrame')
+    expect(body.includes('buildPaletteEntries(')).toBe(true)
+    expect(body.includes('buildPaletteLine(')).toBe(true)
+    expect(body.includes('cut.character_variants')).toBe(true)
+    expect(body.includes('buildCutFramePrompt(cut, board?.brief ?? \'\', ipStyle.value, paletteLine)')).toBe(true)
+  })
+
+  it('cut→视频直通:配色行经 prefill 带回传 buildCutVideoPrompt(有画面恒空)', () => {
+    const body = fnSource(editorSource, 'onStoryboardGenerateVideo')
+    expect(body.includes('prefill.paletteLine')).toBe(true)
+    expect(
+      body.includes('buildCutVideoPrompt(cut, board?.brief ?? \'\', ipStyle.value, prefill.paletteLine)'),
+    ).toBe(true)
+  })
+
+  it('角色设定图预填:facts 带变体配色(84 号票 B1 前端同形)', () => {
+    const body = fnSource(editorSource, 'onCharacterGenerateSheet')
+    expect(body.includes('palette: p.variant.palette || undefined')).toBe(true)
+  })
+})

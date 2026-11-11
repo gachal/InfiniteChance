@@ -7,7 +7,7 @@
 // 用 label 表达)。素材行被删的图行落「素材不可用」占位可手动移除。数据
 // 自取自管(get* 拉全树),每次变更 emit('changed', kind, record) 让父级
 // 卡墙同步刷新。
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
   ApiError,
@@ -77,13 +77,16 @@ const descriptionDraft = ref('')
 const detailDraft = ref('')
 const savingFields = ref(false)
 
-// 变体条状态(仅角色):选中变体、行内改名/描述草稿(仅一行处于编辑态)。
+// 变体条状态(仅角色):选中变体、行内改名/描述/配色草稿(仅一行处于
+// 编辑态)。palette 是配色自由文本(84 号票,HEX 行;textarea 手填)。
 const activeVariantId = ref<number>(0)
 const editingVariantId = ref<number>(0)
 const variantNameDraft = ref('')
 const variantNoteDraft = ref('')
+const variantPaletteDraft = ref('')
 const newVariantName = ref('')
 const newVariantNote = ref('')
+const newVariantPalette = ref('')
 const creatingVariant = ref(false)
 
 // 画廊状态:标签下拉直接改、上下移排序、本机上传、从库选。
@@ -136,6 +139,12 @@ const activeVariant = computed<CharacterVariantRecord | null>(() => {
     return null
   }
   return c.variants.find((v) => v.id === activeVariantId.value) ?? c.variants[0] ?? null
+})
+
+// 84 号票 A3:新建变体的配色 UI 预填抄当前选中变体(纯前端预填,后端零
+// 智能继承)—— 换装场景只需改服装色行;随选中变体切换同步刷新草稿。
+watch(activeVariant, (v) => {
+  newVariantPalette.value = v?.palette ?? ''
 })
 
 /** 画廊展示序:主资产置前(角色 = 视图类三视图/多视图;场景 = 全景;
@@ -272,9 +281,13 @@ async function addVariant(): Promise<void> {
     const created = await client.createCharacterVariant(character.value.id, {
       name,
       note: newVariantNote.value.trim(),
+      palette: newVariantPalette.value.trim(),
     })
     newVariantName.value = ''
     newVariantNote.value = ''
+    // 新建表单清空;配色随选中变体切换的 watch 自动预填新建变体的当前值
+    // (84 号票:换装改服装色行即可)。
+    newVariantPalette.value = ''
     activeVariantId.value = created.id
     await refresh()
   } catch (e) {
@@ -288,6 +301,7 @@ function startVariantEdit(v: CharacterVariantRecord): void {
   editingVariantId.value = v.id
   variantNameDraft.value = v.name
   variantNoteDraft.value = v.note
+  variantPaletteDraft.value = v.palette
   actionError.value = ''
 }
 
@@ -300,7 +314,11 @@ async function commitVariantEdit(): Promise<void> {
   }
   actionError.value = ''
   try {
-    await client.patchCharacterVariant(id, { name, note: variantNoteDraft.value.trim() })
+    await client.patchCharacterVariant(id, {
+      name,
+      note: variantNoteDraft.value.trim(),
+      palette: variantPaletteDraft.value.trim(),
+    })
     editingVariantId.value = 0
     await refresh()
   } catch (e) {
@@ -716,7 +734,7 @@ async function anchorSheet(assetId: number): Promise<void> {
 }
 
 // ---- 成套生成(83 号票 B,仅角色):同变体逐类型各一笔的批量编排 ----
-// 类型多选对话框(默认勾视图三类 BUNDLE_DEFAULT_TYPES,表情集/姿态按需
+// 类型多选对话框(默认勾视图三类 BUNDLE_DEFAULT_TYPES,表情集/光照色板/姿态按需
 // 加勾),一次人工确认(含 N 笔总价预估)→ **前端循环串行**逐笔发
 // POST /api/ips/:id/tasks(端点零改动,一笔一类型,不新建批量端点);
 // 逐笔独立计价、独立失败、部分成功不回滚;参考图 = 发起时统一取变体当前
@@ -1079,6 +1097,15 @@ onUnmounted(() => {
                   maxlength="1024"
                   placeholder="服装描述(可选)"
                 >
+                <!-- 配色 textarea(84 号票 A3):自由文本 HEX 行,手填不校验
+                     格式;空串 = 无配色。 -->
+                <textarea
+                  v-model="variantPaletteDraft"
+                  class="variant-palette"
+                  rows="2"
+                  maxlength="500"
+                  placeholder="配色(可选,如 发色:#1A2E;肤色:#FFE0D0)"
+                />
                 <button
                   type="submit"
                   class="mini primary"
@@ -1159,6 +1186,14 @@ onUnmounted(() => {
             maxlength="1024"
             placeholder="服装描述(可选)"
           >
+          <!-- 配色预填抄当前选中变体(84 号票 A3 纯前端预填,可改可清)。 -->
+          <textarea
+            v-model="newVariantPalette"
+            class="variant-palette"
+            rows="2"
+            maxlength="500"
+            placeholder="配色(可选,预填当前变体)"
+          />
           <button
             type="submit"
             class="mini primary"
@@ -1172,7 +1207,7 @@ onUnmounted(() => {
         <button
           type="button"
           class="mini primary bundle-entry"
-          title="为当前选中变体逐类型各发一笔(默认勾三视图/多视图/色板,可加勾表情集/姿态)"
+          title="为当前选中变体逐类型各发一笔(默认勾三视图/多视图/色板,可加勾表情集/光照色板/姿态)"
           @click="openBundleDialog"
         >
           成套生成
@@ -1211,7 +1246,7 @@ onUnmounted(() => {
             v-if="character"
             type="button"
             class="mini primary"
-            title="生成设定图(三视图/多视图/表情集/色板/姿态,服务端拼装提示词)"
+            title="生成设定图(六类型,服务端拼装提示词)"
             @click="openSheetDialog"
           >
             生成设定图
@@ -1851,7 +1886,9 @@ onUnmounted(() => {
 .field input,
 .field textarea,
 .variant-new input,
-.variant-edit input {
+.variant-edit input,
+.variant-new textarea,
+.variant-edit textarea {
   background: var(--wash-soft);
   border: 1px solid var(--line-control);
   border-radius: var(--r-md);
@@ -1867,7 +1904,9 @@ onUnmounted(() => {
 .field input:focus,
 .field textarea:focus,
 .variant-new input:focus,
-.variant-edit input:focus {
+.variant-edit input:focus,
+.variant-new textarea:focus,
+.variant-edit textarea:focus {
   outline: none;
   border-color: rgba(var(--accent-rgb), 0.85);
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
@@ -2037,6 +2076,16 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
   gap: 6px;
+}
+
+/* 配色 textarea(84 号票):跨整行(名/描述一行、配色一行、按钮一行)。
+ * resize 只留纵向,高度由 rows 定。 */
+.variant-edit .variant-palette,
+.variant-new .variant-palette {
+  grid-column: 1 / -1;
+  resize: vertical;
+  min-height: 0;
+  font-family: inherit;
 }
 
 .gallery-actions {

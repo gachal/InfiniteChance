@@ -143,6 +143,7 @@ import {
   elementPickRejectNotice,
 } from '../composerElements'
 import { buildCutVideoPrefill } from '../cutVideo'
+import { buildPaletteEntries, buildPaletteLine } from '../palette'
 import { buildEntrancePrefill, cutPrefillNotice, cutPrefillVideoRefs } from '../videoPrefill'
 import { SHEET_TYPES, buildSheetPrompt, latestVariantImage, pickCutCharacterRefs } from '../sheet'
 import type { SheetCharacterFacts } from '../sheet'
@@ -3032,11 +3033,13 @@ function onStoryboardGenerateVideo(nodeId: string, cutIndex: number): void {
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   // 73 号票:分镜板的 brief 作全片基调段拼在风格段之后(签名新序
   // cut, brief, style;brief 非空恒拼,不受 composer「带 IP 风格」开关管)。
-  videoPrompt.value = buildCutVideoPrompt(cut, board?.brief ?? '', ipStyle.value)
+  // 84 号票 B3:角色配色段(绑定变体配色,无画面路径才拼)经 prefill
+  // 带回,插风格段之后 —— 有画面路径 prefill.paletteLine 恒空(71 互斥)。
+  const prefill = buildCutVideoPrefill(cut, ipCharacters.value, VIDEO_REFS_TOTAL_CAP)
+  videoPrompt.value = buildCutVideoPrompt(cut, board?.brief ?? '', ipStyle.value, prefill.paletteLine)
   videoDuration.value = cut.seconds ? String(cut.seconds) : ''
   // 71 号票 A2(修 70 号票 C 节):首帧与参考互斥判定在纯函数层;角色无图
   // 静默跳过,超上限按序截断,有画面而标了出场角色时说明未注入原因。
-  const prefill = buildCutVideoPrefill(cut, ipCharacters.value, VIDEO_REFS_TOTAL_CAP)
   uploadedVideoRefs.value = cutPrefillVideoRefs(prefill)
   const notice = cutPrefillNotice(prefill)
   if (notice !== '') {
@@ -3085,8 +3088,13 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   cutFramePending.set(newId, { storyboardId: nodeId, cutIndex })
   // 69 号票:IP 已定画面风格时风格段拼在提示词最前(空 = 不拼)。
   // 73 号票:brief 全片基调段 + 画质约束尾段同吃(生图直通与视频直通
-  // 口径一致,签名新序 cut, brief, style)。
-  composerPrompt.value = buildCutFramePrompt(cut, board?.brief ?? '', ipStyle.value)
+  // 口径一致,签名新序 cut, brief, style)。84 号票 B2:出场角色按绑定
+  // 变体配色拼「角色配色」段(与参考图挑选同源解析、互不依赖 —— 无图
+  // 角色的配色照拼,无配色角色跳过不占行)。
+  const paletteLine = buildPaletteLine(
+    buildPaletteEntries(ipCharacters.value, cut.character_ids ?? [], cut.character_variants),
+  )
+  composerPrompt.value = buildCutFramePrompt(cut, board?.brief ?? '', ipStyle.value, paletteLine)
   // 出场角色注入(70 号票 C;83 号票取图规则更新):整条替换参考条 ——
   // 预填序 = character_ids 序(素材内容寻址引用),变体解析 = cut 绑定
   // 优先 → 默认变体回落;预填可手动移除。
@@ -3181,6 +3189,7 @@ function onCharacterGenerateSheet(
     detail: p.character.detail || undefined,
     variantName: p.variant.name,
     variantNote: p.variant.note || undefined,
+    palette: p.variant.palette || undefined,
   }
   sheetPreset.value = { nodeId: newId, characterId: p.character.id, variantId: p.variant.id, facts }
   composerSheetType.value = SHEET_TYPES[0]
