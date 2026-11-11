@@ -17,7 +17,6 @@ import (
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/character"
-	"github.com/gachal/InfiniteChance/internal/migrations"
 	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -130,14 +129,14 @@ func ensureMySQLSchema(ctx context.Context, db *sql.DB) error {
 // 侧是内联约束,由同方言对账兜住)。
 func TestReconcileMySQL(t *testing.T) {
 	ctx := context.Background()
-	chain, err := migrations.Load(migrateDir)
+	chain, err := Load(migrateDir)
 	if err != nil {
 		t.Fatalf("load migrations: %v", err)
 	}
 
 	// 库 A:基线 + 全部增量,真实执行。
 	dbA := openMigrationsMySQL(t, "chain")
-	if err := migrations.ApplyMySQL(ctx, dbA, chain); err != nil {
+	if err := ApplyMySQL(ctx, dbA, chain); err != nil {
 		t.Fatalf("apply chain: %v", err)
 	}
 	// 库 B:全部 EnsureSchema。

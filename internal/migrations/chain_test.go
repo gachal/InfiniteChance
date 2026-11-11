@@ -1,11 +1,9 @@
-// Package migrations 装载 migrations/ 留底文件链并提供其执行原语。
-//
-// 82 号票定案(ADR 0008):migrations/ 是全库 schema 的可读档案,**文件从不
-// 执行** —— 运行时机制仍是各 store 的 EnsureSchema 双方言自愈,无 runner、
-// 无记账表。本包不得被任何启动路径调用;唯一消费方是本包的形状对账测试
-// (真实执行「基线 + 增量链」后与全部 EnsureSchema 终形逐表比对名集合,
-// 持续证明留底与运行时同形),以及未来把文件接上 runner 的翻面票(另立)。
-package migrations
+package migrations_test
+
+// 本文件是原 migrations.go 全部代码的收编处(82 号票评审修复轮):装载原语
+// (Script/Step/Chain/Load/Split)与执行原语(ApplyMySQL/ApplySQLite)只存在
+// 于测试包 —— 生产构建里本包只剩 doc.go,任何启动路径在编译期都无法引用
+// 它们执行迁移文件,「文件从不执行」(ADR 0008)由编译器锁死而非靠约定。
 
 import (
 	"context"
@@ -36,7 +34,6 @@ type Step struct {
 // Chain 是 migrations/ 目录装载后的文件链:两份基线在前,增量按文件名序。
 // 增量链为空是合法态(切换提交零增量)。
 type Chain struct {
-	Dir string
 	// BaselineMySQL / BaselineSQLite 对应 database.sql 与 database.sqlite.sql。
 	BaselineMySQL  Script
 	BaselineSQLite Script
@@ -56,7 +53,7 @@ func Load(dir string) (*Chain, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Chain{Dir: dir}
+	c := &Chain{}
 	steps := map[string]*Step{}
 	for _, e := range entries {
 		if e.IsDir() {
@@ -136,8 +133,10 @@ func loadScript(dir, name string) (Script, error) {
 // Split 把 SQL 脚本按「行尾分号」切成单条语句(返回值不含行尾分号与首尾
 // 空白)。分号只认行尾:基线由 SHOW CREATE TABLE / sqlite_master 导出,增量
 // 按仓库纪律手写,字符串字面量(含 SQLite 默认值里的 strftime 格式串)不出
-// 现行尾分号。独立成行的 -- 注释随其后语句一并保留(两种方言都可执行),
-// 纯注释/空白块丢弃;脚本末尾出现未以分号收束的残余语句时返回 error。
+// 现行尾分号。整行注释(剥空白后以 -- 开头)与空白行在切分时一律丢弃、
+// 不参与执行 —— 独立成行的 -- 注释不随其后语句保留,解释性注释活在 .sql
+// 文件本身;附着在语句行上的行内/行尾注释(如建表列的行内说明)则随语句
+// 原样保留。脚本末尾出现未以分号收束的残余语句时返回 error。
 func Split(script string) ([]string, error) {
 	var out []string
 	var cur []string // 当前语句的行,直到行尾分号收束
@@ -186,7 +185,8 @@ func firstLine(s string) string {
 }
 
 // ApplyMySQL 在 db 上按链序(基线 + 增量)真实执行 MySQL 侧脚本,逐语句
-// Exec。仅供对账测试与未来 runner 翻面使用 —— 启动路径禁止调用。
+// Exec。仅供本包对账测试与未来 runner 翻面使用 —— 它只存在于测试包,
+// 启动路径无从引用。
 func ApplyMySQL(ctx context.Context, db *sql.DB, c *Chain) error {
 	scripts := make([]Script, 0, len(c.Steps)+1)
 	scripts = append(scripts, c.BaselineMySQL)

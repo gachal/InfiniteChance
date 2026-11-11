@@ -15,7 +15,6 @@ import (
 	"github.com/gachal/InfiniteChance/internal/canvastask"
 	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/character"
-	"github.com/gachal/InfiniteChance/internal/migrations"
 	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -88,7 +87,7 @@ func ensureSQLiteSchema(ctx context.Context, db *sql.DB) error {
 // autoindex)两侧确定性一致;MySQL 侧 PRIMARY 的对应口径见 reconcile_mysql_test。
 func TestReconcileSQLite(t *testing.T) {
 	ctx := context.Background()
-	chain, err := migrations.Load(migrateDir)
+	chain, err := Load(migrateDir)
 	if err != nil {
 		t.Fatalf("load migrations: %v", err)
 	}
@@ -99,7 +98,7 @@ func TestReconcileSQLite(t *testing.T) {
 		t.Fatalf("open chain db: %v", err)
 	}
 	defer dbA.Close()
-	if err := migrations.ApplySQLite(ctx, dbA, chain); err != nil {
+	if err := ApplySQLite(ctx, dbA, chain); err != nil {
 		t.Fatalf("apply chain: %v", err)
 	}
 

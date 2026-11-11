@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/gachal/InfiniteChance/internal/migrations"
 )
 
 func writeFile(t *testing.T, dir, name, content string) {
@@ -23,7 +21,7 @@ func baseFiles(t *testing.T, dir string) {
 
 func TestSplitLineEndSemicolon(t *testing.T) {
 	script := "-- 头注释\nCREATE TABLE a (\n  x TEXT DEFAULT 'a;b' -- 行内非行尾分号\n);\n\n-- 尾注释\n"
-	stmts, err := migrations.Split(script)
+	stmts, err := Split(script)
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
@@ -37,11 +35,11 @@ func TestSplitLineEndSemicolon(t *testing.T) {
 }
 
 func TestSplitMissingTrailingSemicolon(t *testing.T) {
-	if _, err := migrations.Split("SELECT 1;\nSELECT 2\n"); err == nil {
+	if _, err := Split("SELECT 1;\nSELECT 2\n"); err == nil {
 		t.Fatal("want error for trailing statement without semicolon")
 	}
 	// 纯注释尾巴不是残余语句。
-	stmts, err := migrations.Split("SELECT 1;\n-- 只是注释\n")
+	stmts, err := Split("SELECT 1;\n-- 只是注释\n")
 	if err != nil {
 		t.Fatalf("comment tail should be legal: %v", err)
 	}
@@ -53,7 +51,7 @@ func TestSplitMissingTrailingSemicolon(t *testing.T) {
 func TestLoadRequiresBaselines(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "database.sql", "SELECT 1;\n")
-	if _, err := migrations.Load(dir); err == nil {
+	if _, err := Load(dir); err == nil {
 		t.Fatal("want error when database.sqlite.sql missing")
 	}
 }
@@ -62,11 +60,11 @@ func TestLoadRejectsUnpairedIncrement(t *testing.T) {
 	dir := t.TempDir()
 	baseFiles(t, dir)
 	writeFile(t, dir, "260101_add_lore.sql", "ALTER TABLE x ADD COLUMN y INT;\n")
-	if _, err := migrations.Load(dir); err == nil {
+	if _, err := Load(dir); err == nil {
 		t.Fatal("want error for unpaired increment (sqlite side missing)")
 	}
 	writeFile(t, dir, "260101_add_lore.sqlite.sql", "ALTER TABLE x ADD COLUMN y INTEGER;\n")
-	c, err := migrations.Load(dir)
+	c, err := Load(dir)
 	if err != nil {
 		t.Fatalf("paired increment should load: %v", err)
 	}
@@ -83,12 +81,14 @@ func TestLoadRejectsBadStem(t *testing.T) {
 	baseFiles(t, dir)
 	writeFile(t, dir, "add_lore.sql", "SELECT 1;\n")
 	writeFile(t, dir, "add_lore.sqlite.sql", "SELECT 1;\n")
-	if _, err := migrations.Load(dir); err == nil {
+	if _, err := Load(dir); err == nil {
 		t.Fatal("want error for stem missing yyMMdd prefix")
 	}
 }
 
-func TestLoadStepsSortedAndExecutableChain(t *testing.T) {
+// TestLoadStepsSorted 只验证增量按文件名序排列(不涉及执行;链的真实执行
+// 由 TestReconcileMySQL / TestReconcileSQLite 两侧兜底)。
+func TestLoadStepsSorted(t *testing.T) {
 	dir := t.TempDir()
 	baseFiles(t, dir)
 	// 故意乱序写文件名,Load 须按文件名序排列。
@@ -96,7 +96,7 @@ func TestLoadStepsSortedAndExecutableChain(t *testing.T) {
 	writeFile(t, dir, "260201_second.sqlite.sql", "SELECT 21;\n")
 	writeFile(t, dir, "260101_first.sql", "SELECT 10;\n")
 	writeFile(t, dir, "260101_first.sqlite.sql", "SELECT 11;\n")
-	c, err := migrations.Load(dir)
+	c, err := Load(dir)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
