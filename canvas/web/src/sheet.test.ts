@@ -16,6 +16,7 @@ import {
   latestVariantImage,
   pickCutCharacterRefs,
   pickVariantAssetId,
+  resolveCutVariant,
 } from './sheet'
 
 describe('五类型模板字面量钉子(与服务端同字面量)', () => {
@@ -268,5 +269,72 @@ describe('pickVariantAssetId(按变体取图:视图类最近一张 > 变体任�
       })
       .filter((p) => p.assetId !== 0)
     expect(viaShared).toEqual(picks)
+  })
+})
+
+// ---- 83 号票:cut→变体精确绑定(绑定优先 → 默认变体回落)----
+
+describe('resolveCutVariant(83 号票绑定解析)', () => {
+  it('绑定存在且可解析:取绑定变体,非回落态', () => {
+    const d = variant(21, [])
+    const rain = { ...variant(22, []), name: '雨衣' }
+    const c = character(1, [d, rain])
+    expect(resolveCutVariant(c, 22)).toEqual({ variant: rain, fellBack: false })
+  })
+
+  it('缺省绑定(undefined)即缺映射:默认变体,非回落态', () => {
+    const d = variant(21, [])
+    const w = { ...variant(22, []), name: '冬装' }
+    const c = character(1, [w, d])
+    expect(resolveCutVariant(c, undefined)).toEqual({ variant: d, fellBack: false })
+  })
+
+  it('绑定变体已删:回落默认变体,fellBack 真(回落态显示依据)', () => {
+    const d = variant(21, [])
+    const c = character(1, [d])
+    expect(resolveCutVariant(c, 99)).toEqual({ variant: d, fellBack: true })
+  })
+
+  it('绑定变体已删且角色已无任何变体:回落 undefined,fellBack 真', () => {
+    const c = character(1, [])
+    expect(resolveCutVariant(c, 99)).toEqual({ variant: undefined, fellBack: true })
+  })
+})
+
+describe('pickCutCharacterRefs 变体绑定(83 号票:绑定优先 → 默认变体回落)', () => {
+  const d = variant(21, [{ id: 7, asset_id: 107, label: '三视图' }])
+  const rain = { ...variant(22, [{ id: 8, asset_id: 208, label: '三视图' }]), name: '雨衣' }
+  const chars = [character(1, [d, rain])]
+
+  it('cut 绑定变体优先:取绑定变体的设定图与 variantId', () => {
+    const { picks, dropped } = pickCutCharacterRefs(chars, [1], 9, { 1: 22 })
+    expect(picks).toEqual([{ characterId: 1, assetId: 208, variantId: 22 }])
+    expect(dropped).toBe(0)
+  })
+
+  it('无字段/空映射/缺该角色的映射:三种情况都回落默认变体,与旧契约一致', () => {
+    const expected = [{ characterId: 1, assetId: 107, variantId: 21 }]
+    expect(pickCutCharacterRefs(chars, [1], 9).picks).toEqual(expected)
+    expect(pickCutCharacterRefs(chars, [1], 9, undefined).picks).toEqual(expected)
+    expect(pickCutCharacterRefs(chars, [1], 9, {}).picks).toEqual(expected)
+    expect(pickCutCharacterRefs(chars, [1], 9, { 2: 22 }).picks).toEqual(expected)
+  })
+
+  it('绑定变体已删:回落默认变体(variantId = 默认变体 id)', () => {
+    const { picks } = pickCutCharacterRefs(chars, [1], 9, { 1: 99 })
+    expect(picks).toEqual([{ characterId: 1, assetId: 107, variantId: 21 }])
+  })
+
+  it('绑定生效但绑定变体无图:取图链照旧回落封面投影(只换变体,不改取图优先级)', () => {
+    const rainNoImg = { ...variant(22, []), name: '雨衣' }
+    const cs = [character(1, [d, rainNoImg], 909)]
+    const { picks } = pickCutCharacterRefs(cs, [1], 9, { 1: 22 })
+    expect(picks).toEqual([{ characterId: 1, assetId: 909, variantId: 22 }])
+  })
+
+  it('存量画布行为不变:同输入不带映射的输出与映射缺省路径一致', () => {
+    const withMap = pickCutCharacterRefs(chars, [1], 9, { 1: 21 })
+    const noMap = pickCutCharacterRefs(chars, [1], 9)
+    expect(withMap).toEqual(noMap)
   })
 })

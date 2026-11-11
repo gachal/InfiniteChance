@@ -3087,12 +3087,14 @@ function onStoryboardGenerateFrame(nodeId: string, cutIndex: number): void {
   // 73 号票:brief 全片基调段 + 画质约束尾段同吃(生图直通与视频直通
   // 口径一致,签名新序 cut, brief, style)。
   composerPrompt.value = buildCutFramePrompt(cut, board?.brief ?? '', ipStyle.value)
-  // 出场角色注入(70 号票 C):整条替换参考条 —— 预填序 = character_ids
-  // 序(素材内容寻址引用);预填可手动移除。
+  // 出场角色注入(70 号票 C;83 号票取图规则更新):整条替换参考条 ——
+  // 预填序 = character_ids 序(素材内容寻址引用),变体解析 = cut 绑定
+  // 优先 → 默认变体回落;预填可手动移除。
   const { picks, dropped } = pickCutCharacterRefs(
     ipCharacters.value,
     cut.character_ids ?? [],
     MAX_COMPOSER_REFS,
+    cut.character_variants,
   )
   uploadedRefs.value = picks.map((p) => ({
     url: characterImageContentURL(p.assetId),

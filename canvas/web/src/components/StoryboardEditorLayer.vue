@@ -11,6 +11,8 @@
 // 工作件非库实体);排序用按钮不做拖拽(40 号票编辑层手势冲突教训)。
 // 73 号票:cut 列表之前加板级「全片基调」多行文本域(brief,三段写法
 // 视觉基调/场景与空间坐标/音效总纲),随 scene-change 整包落盘。
+// 83 号票:出场角色 chip 内逐角色变体下拉(cut→变体精确绑定,只存引用
+// 不存快照;所选变体已删解析回落默认变体并显示回落态)。
 // Esc/返回按钮双路等价,Esc 刻意走元素级(层上可再开编辑器级灯箱,两层
 // 同听 window 会一次全关)。素材挑选面板(AssetPicker)挂在层右缘:点选
 // 即设为本 cut 画面,再点取消。
@@ -25,11 +27,14 @@ import {
   appendCut,
   clampSecondsInput,
   moveCut,
+  pruneCutVariantOrphans,
   removeCut,
+  setCutVariantBinding,
   setShotSize,
   toggleCameraMove,
 } from '../storyboard'
 import { toggleCharacterChip } from '../characters'
+import { resolveCutVariant } from '../sheet'
 import { followMove, followRemove } from '../list'
 import AssetPicker from './AssetPicker.vue'
 import StoryboardFrameSlot from './StoryboardFrameSlot.vue'
@@ -119,6 +124,9 @@ function onShotChip(index: number, shot: string): void {
 // chip 同范式),点选即标注、再点取消,连选保持浮层开着;chip 可删。
 // 只存角色 id 不存快照 —— 目录里已删/跨 IP 的悬空 id 随目录刷新收回
 // (AgentNode 悬空收回同语义)。生成注入二期,本票只落标注字段。
+// 83 号票:chip 内逐角色加变体下拉(cut→变体精确绑定),选项按本 IP
+// 角色目录实时取;所选变体已删时解析回落默认变体(resolveCutVariant)
+// 并显示回落态,悬空绑定键保留待用户换档覆写(不静默清洗)。
 
 /** 正在标注出场角色的 cut 下标(null = 浮层关着)。 */
 const castFor = ref<number | null>(null)
@@ -142,13 +150,51 @@ function castCharacters(cut: StoryboardCut): CharacterRecord[] {
 
 function onCastChip(index: number, characterId: number): void {
   const cut = props.data.cuts[index]
-  if (cut) {
-    patchCut(index, { character_ids: toggleCharacterChip(cut.character_ids ?? [], characterId) })
+  if (!cut) {
+    return
   }
+  const removing = (cut.character_ids ?? []).includes(characterId)
+  // 移除角色标注时随手清掉它的变体绑定(setCutVariantBinding 清到空整键
+  // 不落);新增标注不动绑定簿(无映射 = 跟随默认变体)。
+  patchCut(index, {
+    character_ids: toggleCharacterChip(cut.character_ids ?? [], characterId),
+    ...(removing
+      ? { character_variants: setCutVariantBinding(cut.character_variants, characterId, 0) }
+      : {}),
+  })
+}
+
+/** 角色 chip 变体下拉的当前档:0 = 跟随默认变体(无绑定);绑定可解析 =
+ * 绑定变体 id;绑定已删 = 0 + 回落态徽记(castVariantFellBack)。 */
+function castVariantValue(cut: StoryboardCut, c: CharacterRecord): number {
+  const bound = cut.character_variants?.[c.id]
+  if (bound === undefined) {
+    return 0
+  }
+  const { variant, fellBack } = resolveCutVariant(c, bound)
+  return fellBack ? 0 : variant?.id ?? 0
+}
+
+/** 回落态:有绑定但所指变体已删(解析已回落默认变体)。 */
+function castVariantFellBack(cut: StoryboardCut, c: CharacterRecord): boolean {
+  const bound = cut.character_variants?.[c.id]
+  return bound !== undefined && resolveCutVariant(c, bound).fellBack
+}
+
+function onCastVariantChange(index: number, characterId: number, raw: string): void {
+  const cut = props.data.cuts[index]
+  if (!cut) {
+    return
+  }
+  patchCut(index, {
+    character_variants: setCutVariantBinding(cut.character_variants, characterId, Number(raw)),
+  })
 }
 
 // 目录刷新后把各 cut 的悬空角色 id 收回(只在真有悬空时整包上抛,避免
-// 无谓落盘)。
+// 无谓落盘)。83 号票:角色标注被收回时,其变体绑定条目随之孤儿收回
+// (pruneCutVariantOrphans,角色不在场绑定无主);「变体已删但角色仍在
+// 场」的绑定键保留 —— 编辑层要显示回落态,不在此清洗。
 watch(
   () => props.characters,
   (list) => {
@@ -165,7 +211,10 @@ watch(
           return c
         }
         const kept = ids.filter((id) => list.some((ch) => ch.id === id))
-        return kept.length === ids.length ? c : { ...c, character_ids: kept }
+        const variants = pruneCutVariantOrphans(c.character_variants, kept)
+        return kept.length === ids.length && variants === c.character_variants
+          ? c
+          : { ...c, character_ids: kept, character_variants: variants }
       }),
     })
   },
@@ -398,7 +447,9 @@ onBeforeUnmount(() => {
 
                 <!-- 出场角色(67 号票):标注入口 = 多选浮层,点选即标注
                      (连选不收浮层),已选成可删 chip;引用角色库不存快照,
-                     生成注入二期。 -->
+                     生成注入二期。83 号票:chip 内逐角色变体下拉(cut→变体
+                     精确绑定,「默认变体」档 = 清绑定;所选变体已删显示
+                     回落徽记,解析已回落默认变体)。 -->
                 <div class="field cast">
                   <span>出场角色</span>
                   <div class="cast-row">
@@ -420,6 +471,32 @@ onBeforeUnmount(() => {
                         class="cast-name"
                         :title="c.alias ? `${c.name}(${c.alias})` : c.name"
                       >{{ c.name }}</span>
+                      <select
+                        class="cast-variant"
+                        :value="castVariantValue(cut, c)"
+                        :aria-label="`${c.name}的变体`"
+                        :title="castVariantFellBack(cut, c) ? '所选变体已删,取图已回落默认变体' : '本镜头取该变体的设定图;默认变体 = 不指定'"
+                        @change="onCastVariantChange(i, c.id, ($event.target as HTMLSelectElement).value)"
+                      >
+                        <option
+                          :value="0"
+                          title="不指定变体,取图跟随默认变体"
+                        >
+                          默认变体
+                        </option>
+                        <option
+                          v-for="v in c.variants"
+                          :key="v.id"
+                          :value="v.id"
+                        >
+                          {{ v.name }}
+                        </option>
+                      </select>
+                      <span
+                        v-if="castVariantFellBack(cut, c)"
+                        class="cast-fallback"
+                        title="所选变体已删,取图已回落默认变体;换档后解除"
+                      >回落</span>
                       <button
                         type="button"
                         class="cast-x"
@@ -770,6 +847,34 @@ onBeforeUnmount(() => {
   font-size: var(--fs-body);
   line-height: 1;
   padding: 0 4px;
+}
+
+/* 83 号票:chip 内变体下拉(轻量原生 select,与 cast-chip 同族配色)+
+ * 回落态徽记(所选变体已删,解析已回落默认变体)。 */
+.cast-variant {
+  max-width: 96px;
+  border: 1px solid rgba(var(--orange-rgb), 0.35);
+  border-radius: var(--r-pill);
+  padding: 1px 4px;
+  font-size: var(--fs-micro);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cast-variant:focus {
+  outline: none;
+  border-color: rgba(var(--orange-rgb), 0.7);
+}
+
+.cast-fallback {
+  flex-shrink: 0;
+  border-radius: var(--r-pill);
+  padding: 0 6px;
+  font-size: var(--fs-micro);
+  background: rgba(var(--danger-rgb), 0.16);
+  color: var(--danger);
+  cursor: help;
 }
 
 .cast-overlay {

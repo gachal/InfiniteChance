@@ -36,13 +36,16 @@ export interface CutVideoPrefill {
   skippedInject: boolean
 }
 
-/** cut→视频预填(71 号票 A2/A4)。只消费 cut 的 asset_id(0 = 无画面)与
- * character_ids;cap 是 reference_* 合计上限(VIDEO_REFS_TOTAL_CAP = 9),首帧
- * 不计入。角色挑选整体复用 sheet.pickCutCharacterRefs(默认变体取图 + 无图
- * 静默跳过 + 上限截断计数,与 cut→图片直通同一实现;取图规则与角色卡登场
- * 直通同源);元素标注带命中变体的 variantId,角色无变体(防御路径)不带。 */
+/** cut→视频预填(71 号票 A2/A4;83 号票取图规则更新)。只消费 cut 的
+ * asset_id(0 = 无画面)、character_ids 与 character_variants(83 号票变体
+ * 绑定映射,可缺省);cap 是 reference_* 合计上限(VIDEO_REFS_TOTAL_CAP = 9),
+ * 首帧不计入。角色挑选整体复用 sheet.pickCutCharacterRefs(**cut 绑定变体
+ * 优先 → 默认变体回落**,83 号票 + 无图静默跳过 + 上限截断计数,与 cut→
+ * 图片直通同一实现;变体绑定只影响「取哪张参考」,不影响「注不注入」——
+ * 有画面路径维持不注入,71 号票互斥硬约束);元素标注带命中变体的
+ * variantId,角色无变体(防御路径)不带。 */
 export function buildCutVideoPrefill(
-  cut: Pick<StoryboardCut, 'asset_id' | 'character_ids'>,
+  cut: Pick<StoryboardCut, 'asset_id' | 'character_ids' | 'character_variants'>,
   characters: CharacterRecord[],
   cap: number,
 ): CutVideoPrefill {
@@ -56,7 +59,7 @@ export function buildCutVideoPrefill(
       skippedInject: characterIds.length > 0,
     }
   }
-  const { picks, dropped } = pickCutCharacterRefs(characters, characterIds, cap)
+  const { picks, dropped } = pickCutCharacterRefs(characters, characterIds, cap, cut.character_variants)
   const refs: VideoComposerRef[] = picks.map((p) => ({
     url: assetContentURL(p.assetId),
     kind: 'image',

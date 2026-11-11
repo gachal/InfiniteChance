@@ -13,7 +13,9 @@ import {
   emptyStoryboardCut,
   formatDuration,
   moveCut,
+  pruneCutVariantOrphans,
   removeCut,
+  setCutVariantBinding,
   setShotSize,
   toggleCameraMove,
   totalSeconds,
@@ -45,6 +47,46 @@ describe('defaultStoryboard / emptyStoryboardCut', () => {
 
   it('does not share the cuts array between boards', () => {
     expect(defaultStoryboard().cuts).not.toBe(defaultStoryboard().cuts)
+  })
+
+  it('83 号票:新空 cut 不落 character_variants 键(缺省回落默认变体)', () => {
+    const c = emptyStoryboardCut()
+    expect('character_variants' in c).toBe(false)
+  })
+})
+
+describe('setCutVariantBinding(83 号票 cut→变体绑定映射的纯操作)', () => {
+  it('设置绑定:换新对象,不改入参', () => {
+    const seed: Record<number, number> = { 1: 21 }
+    const next = setCutVariantBinding(seed, 2, 22)
+    expect(next).toEqual({ 1: 21, 2: 22 })
+    expect(seed).toEqual({ 1: 21 })
+  })
+
+  it('缺省映射(undefined)首次设置:从空簿建起', () => {
+    expect(setCutVariantBinding(undefined, 3, 23)).toEqual({ 3: 23 })
+  })
+
+  it('清绑定(variantId ≤ 0):删该角色键;清到空整键不落(undefined)', () => {
+    expect(setCutVariantBinding({ 1: 21, 2: 22 }, 1, 0)).toEqual({ 2: 22 })
+    expect(setCutVariantBinding({ 1: 21 }, 1, 0)).toBeUndefined()
+    expect(setCutVariantBinding(undefined, 1, 0)).toBeUndefined()
+  })
+})
+
+describe('pruneCutVariantOrphans(83 号票孤儿绑定收回)', () => {
+  it('角色不在出场清单的绑定条目收回(目录级悬空收回同语义)', () => {
+    expect(pruneCutVariantOrphans({ 1: 21, 2: 22 }, [2])).toEqual({ 2: 22 })
+  })
+
+  it('无孤儿:返回原引用(不产生无谓落盘);缺省簿原样 undefined', () => {
+    const m = { 1: 21 }
+    expect(pruneCutVariantOrphans(m, [1])).toBe(m)
+    expect(pruneCutVariantOrphans(undefined, [])).toBeUndefined()
+  })
+
+  it('清到空整键不落(undefined)', () => {
+    expect(pruneCutVariantOrphans({ 1: 21 }, [])).toBeUndefined()
   })
 })
 

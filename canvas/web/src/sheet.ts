@@ -3,7 +3,8 @@
  * (类型模板 + 角色四件套 + 变体名/服装描述 + IP 风格段,≤2000 runes)、
  * B3 参考图默认(变体已存设定图默认带最近一张)与 cut 出场角色参考挑选
  * (C:按 character_ids 序取默认变体,优先视图类 > 任意图 > 封面投影,
- * 无图静默跳过,上限截断计数)。
+ * 无图静默跳过,上限截断计数)。83 号票:取图规则改「cut 绑定变体优先 →
+ * 默认变体回落」(resolveCutVariant),存量画布(无映射)行为逐字节不变。
  *
  * 模板字面量与服务端 internal/canvastask/iptask.go 逐字一致,两侧测试各自
  * 钉住同一组字面量防漂移 —— 改任何一段文案必须两侧同改。入口一(composer
@@ -107,6 +108,24 @@ export function defaultCharacterVariant(
   return c.variants.find((v) => v.name === '默认') ?? c.variants[0]
 }
 
+/** cut 出场角色本次取图的变体解析(83 号票):cut 绑定变体优先
+ * (character_variants 映射),绑定缺失 / 映射缺该角色、或所指变体已删时
+ * 回落「默认变体」(defaultCharacterVariant);fellBack 标记「有绑定但没
+ * 解析到」—— 编辑层据此显示回落态(绑定键保留在 cut 数据里,不静默清洗)。 */
+export function resolveCutVariant(
+  c: Pick<CharacterRecord, 'variants'>,
+  boundVariantId?: number,
+): { variant: CharacterVariantRecord | undefined; fellBack: boolean } {
+  if (boundVariantId !== undefined) {
+    const bound = c.variants.find((v) => v.id === boundVariantId)
+    if (bound) {
+      return { variant: bound, fellBack: false }
+    }
+    return { variant: defaultCharacterVariant(c), fellBack: true }
+  }
+  return { variant: defaultCharacterVariant(c), fellBack: false }
+}
+
 /** 按变体取图(71 号票 D1 共享函数:cut 出场角色注入与角色卡「生成登场
  * 视频」直通两处共用,保证同一角色同一变体两路取到同一张图)。优先级 =
  * 该变体最近一张视图类(label ∈ 五类型)> 该变体任意设定图 > 角色任意图
@@ -133,16 +152,20 @@ export function pickVariantAssetId(
   return assetId
 }
 
-/** cut 出场角色参考挑选(70 号票 C):按 character_ids 序逐角色取「默认
- * 变体」(defaultCharacterVariant)的设定图,取图走 pickVariantAssetId
- * (71 号票 D1 共享);角色无任何图静默跳过(不报错不阻塞,画面描述兜底)。
- * cap 是与既有参考合并后的总上限:超出按序截断,dropped = 未带上数量
- * (toast 文案用)。picks 附带命中的默认变体 variantId(71 号票 cut→视频
- * 注入的元素标注用;角色无变体时缺省)。 */
+/** cut 出场角色参考挑选(70 号票 C;83 号票改取图规则):按 character_ids
+ * 序逐角色取设定图 —— 变体解析走 resolveCutVariant(**cut 绑定变体优先 →
+ * 默认变体回落**,characterVariants 即 cut.character_variants 映射,可缺省),
+ * 取图走 pickVariantAssetId(71 号票 D1 共享;绑定只换「取哪个变体」,
+ * 视图类 > 任意图 > 封面投影的取图优先级不变);角色无任何图静默跳过
+ * (不报错不阻塞,画面描述兜底)。cap 是与既有参考合并后的总上限:超出
+ * 按序截断,dropped = 未带上数量(toast 文案用)。picks 附带命中变体的
+ * variantId(71 号票 cut→视频注入的元素标注用;角色无变体时缺省)。
+ * 不传 characterVariants 时行为与 70 号票契约逐字节一致(存量画布路径)。 */
 export function pickCutCharacterRefs(
   characters: CharacterRecord[],
   characterIds: number[],
   cap: number,
+  characterVariants?: Record<number, number>,
 ): { picks: SheetRefPick[]; dropped: number } {
   const picks: SheetRefPick[] = []
   let dropped = 0
@@ -151,7 +174,7 @@ export function pickCutCharacterRefs(
     if (!c) {
       continue
     }
-    const variant = defaultCharacterVariant(c)
+    const variant = resolveCutVariant(c, characterVariants?.[id]).variant
     const assetId = pickVariantAssetId(c, variant)
     if (assetId === 0) {
       continue

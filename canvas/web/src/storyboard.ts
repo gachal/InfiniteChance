@@ -77,6 +77,49 @@ export function setShotSize(cut: StoryboardCut, shot: string): StoryboardCut {
   return { ...cut, shot }
 }
 
+/** cut 出场角色的变体绑定映射(83 号票,角色 id → 变体 id)的纯操作:
+ * variantId ≤ 0 = 清除该角色绑定(下拉回「默认变体」档);清到空整键
+ * 不落(undefined,缺省回落默认变体,数据不留空壳);换新对象不改入参。
+ * 已删变体的悬空键**不在此处清洗** —— 保留才能在编辑层显示回落态,
+ * 用户在下拉换档时自然覆写(sheet.resolveCutVariant 负责解析回落)。 */
+export function setCutVariantBinding(
+  map: Record<number, number> | undefined,
+  characterId: number,
+  variantId: number,
+): Record<number, number> | undefined {
+  const next: Record<number, number> = { ...(map ?? {}) }
+  if (variantId <= 0) {
+    delete next[characterId]
+  } else {
+    next[characterId] = variantId
+  }
+  return Object.keys(next).length === 0 ? undefined : next
+}
+
+/** 变体绑定簿的孤儿收回(83 号票,目录刷新的悬空收回链):角色已不在
+ * 出场清单(character_ids,keptCharacterIds 即收回后的清单)的绑定条目
+ * 删掉 —— 角色标注被收回时其绑定随之无主,不把孤儿键留在整图 JSON;
+ * 清到空整键不落(undefined)。无孤儿时返回原引用(编辑层不产生无谓
+ * 落盘)。注意与「变体已删但角色仍在场」不同:那种绑定键**保留**,编辑
+ * 展示回落态(用户换档自然覆写),不在此清洗。 */
+export function pruneCutVariantOrphans(
+  map: Record<number, number> | undefined,
+  keptCharacterIds: number[],
+): Record<number, number> | undefined {
+  if (!map) {
+    return undefined
+  }
+  const kept = new Set(keptCharacterIds)
+  const next: Record<number, number> = {}
+  for (const [k, v] of Object.entries(map)) {
+    if (kept.has(Number(k))) {
+      next[Number(k)] = v
+    }
+  }
+  const count = Object.keys(next).length
+  return count === Object.keys(map).length ? map : count === 0 ? undefined : next
+}
+
 // ---- 直通预填拼装(67 号票;73 号票按 Seedance 2.0 官方公式重排) ----
 
 /** 全片基调段标签(73 号票定案 B):半角冒号,拼在 brief trim 后文本前,
