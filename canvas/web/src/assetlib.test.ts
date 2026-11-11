@@ -23,7 +23,8 @@ describe('assetlib labels', () => {
   it('returns the whitelist of the requested kind', () => {
     expect(imageLabelsForKind('scene')).toBe(SCENE_IMAGE_LABELS)
     expect(imageLabelsForKind('prop')).toBe(PROP_IMAGE_LABELS)
-    expect(imageLabelsForKind('character')).toHaveLength(6)
+    // 84 号票:六生成类型 + 「其他」= 七类白名单。
+    expect(imageLabelsForKind('character')).toHaveLength(7)
   })
 })
 

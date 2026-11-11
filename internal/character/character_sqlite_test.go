@@ -73,7 +73,7 @@ func TestSQLiteVariantLifecycle(t *testing.T) {
 		t.Fatalf("delete last variant = %v, want ErrLastVariant", err)
 	}
 
-	v, err := store.CreateVariant(ctx, c.ID, "校服", "藏青色水手服")
+	v, err := store.CreateVariant(ctx, c.ID, "校服", "藏青色水手服", "")
 	if err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestSQLiteImageLifecycle(t *testing.T) {
 
 	c := mustCreateCharacter(t, store, 1, "小星")
 	def := c.Variants[0]
-	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "")
+	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "", "")
 	if err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestSQLiteListCharactersTree(t *testing.T) {
 
 	c := mustCreateCharacter(t, store, 5, "小星")
 	def := c.Variants[0]
-	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "")
+	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "", "")
 	if err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestSQLiteMissingSentinels(t *testing.T) {
 	if _, err := store.GetCharacter(ctx, 99); err != character.ErrCharacterNotFound {
 		t.Fatalf("missing character = %v, want ErrCharacterNotFound", err)
 	}
-	if _, err := store.CreateVariant(ctx, 99, "x", ""); err != character.ErrCharacterNotFound {
+	if _, err := store.CreateVariant(ctx, 99, "x", "", ""); err != character.ErrCharacterNotFound {
 		t.Fatalf("variant under missing character = %v, want ErrCharacterNotFound", err)
 	}
 	if _, err := store.CreateImage(ctx, 99, character.ImageInput{VariantID: 1, AssetID: 1}); err != character.ErrCharacterNotFound {
@@ -346,3 +346,153 @@ func TestSQLiteListCharactersMultiRowTree(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// ---- 84 号票:变体配色(palette,自由文本 HEX 行,≤500 runes 在 handler
+// 层拒绝;store 只存取,不做格式校验)----
+
+// 配色字段的存取链:CreateVariant 带 palette 落列、UpdateVariant 改与清
+// (空串 = 清除,可空字段既有语义)、单行读(GetVariant)与树装载
+// (GetCharacter/ListCharacters)全链带出;默认变体 palette 空 = 无注入。
+func TestSQLiteVariantPaletteRoundTrip(t *testing.T) {
+	store, _ := newSQLiteWorld(t)
+	ctx := context.Background()
+
+	c := mustCreateCharacter(t, store, 1, "小星")
+
+	// 建角色自动带的「默认」变体 palette 空(存量行为逐字节不变的一半)。
+	got, err := store.GetCharacter(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetCharacter: %v", err)
+	}
+	if got.Variants[0].Palette != "" {
+		t.Fatalf("default variant palette = %q, want empty", got.Variants[0].Palette)
+	}
+
+	const hex = "发色:#1A2E;肤色:#FFE0D0;瞳色:#4A90D9;线色:#2B2B2B;服装主色:#C0392B;服装辅色:#F5E9DA"
+	v, err := store.CreateVariant(ctx, c.ID, "校服", "藏青色水手服", hex)
+	if err != nil {
+		t.Fatalf("create variant: %v", err)
+	}
+	if v.Palette != hex {
+		t.Fatalf("created palette = %q, want %q", v.Palette, hex)
+	}
+
+	one, err := store.GetVariant(ctx, v.ID)
+	if err != nil || one.Palette != hex {
+		t.Fatalf("GetVariant palette = %q, %v, want %q", one.Palette, err, hex)
+	}
+	tree, err := store.GetCharacter(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetCharacter: %v", err)
+	}
+	found := false
+	for _, cv := range tree.Variants {
+		if cv.ID == v.ID && cv.Palette != hex {
+			t.Fatalf("tree palette = %q, want %q", cv.Palette, hex)
+		}
+		if cv.ID == v.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("variant %d missing from tree", v.ID)
+	}
+
+	// 空串 = 清除;再写回 = 改色。
+	cleared := ""
+	updated, err := store.UpdateVariant(ctx, v.ID, &character.VariantUpdate{Palette: &cleared})
+	if err != nil || updated.Palette != "" {
+		t.Fatalf("clear palette = %+v, %v", updated, err)
+	}
+	if one, err = store.GetVariant(ctx, v.ID); err != nil || one.Palette != "" {
+		t.Fatalf("palette after clear = %q, %v", one.Palette, err)
+	}
+	back := hex
+	if updated, err = store.UpdateVariant(ctx, v.ID, &character.VariantUpdate{Palette: &back}); err != nil || updated.Palette != hex {
+		t.Fatalf("set palette = %+v, %v", updated, err)
+	}
+}
+
+// 加列存在性检查按表参数化(84 号票勘察修正):旧形状库(characters 无
+// voice_id、character_variants 无 palette)EnsureSchema 后两条加列各自
+// 落位 —— 检查若仍钉死 characters 表,variants 侧的加列会被误跳;存量
+// 行的新列读回空值(voice_id NULL、palette ''),行为与升级前一致。
+func TestSQLiteEnsureSchemaWidenLegacyTables(t *testing.T) {
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	// 57 号票之前的形状(无 voice_id)+ 84 号票之前的形状(无 palette),
+	// 并预插一行存量变体。
+	seed := []string{
+		`CREATE TABLE characters (
+			id          INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+			ip_id       INTEGER NOT NULL,
+			name        TEXT    NOT NULL,
+			alias       TEXT    NOT NULL DEFAULT '',
+			description TEXT    NOT NULL DEFAULT '',
+			detail      TEXT    NOT NULL DEFAULT '',
+			created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+			updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+		)`,
+		`CREATE TABLE character_variants (
+			id           INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+			character_id INTEGER NOT NULL,
+			name         TEXT    NOT NULL,
+			note         TEXT    NOT NULL DEFAULT '',
+			sort         INTEGER NOT NULL DEFAULT 0,
+			created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+			updated_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+		)`,
+		`CREATE TABLE character_images (
+			id           INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+			character_id INTEGER NOT NULL,
+			variant_id   INTEGER NOT NULL,
+			asset_id     INTEGER NOT NULL,
+			label        TEXT    NOT NULL DEFAULT '',
+			sort         INTEGER NOT NULL DEFAULT 0
+		)`,
+		// 存量行模拟真实形态(store 写入永远显式带 9 位时间,DEFAULT 只是
+		// 建表兜底):挂孤立角色 id,避免与新角色的自增行撞树;不带 palette
+		// 列,由加列补默认 ''。
+		`INSERT INTO character_variants (character_id, name, created_at, updated_at)
+			VALUES (99, '默认', '2026-01-02T03:04:05.000000000Z', '2026-01-02T03:04:05.000000000Z')`,
+	}
+	for _, ddl := range seed {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+	store := character.NewSQLiteStore(db)
+	ctx := context.Background()
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema over legacy tables: %v", err)
+	}
+
+	// 存量行不因加列而破:预插的旧变体行 palette 读回空 = 无注入(新列
+	// 有默认值,旧行自动落 '')。
+	var legacyPalette string
+	if err := db.QueryRow(`SELECT palette FROM character_variants WHERE character_id = 99 AND name = '默认'`).Scan(&legacyPalette); err != nil {
+		t.Fatalf("legacy row palette column: %v", err)
+	}
+	if legacyPalette != "" {
+		t.Fatalf("legacy palette = %q, want empty", legacyPalette)
+	}
+
+	c, err := store.CreateCharacter(ctx, 1, character.CharacterInput{Name: "新人"})
+	if err != nil {
+		t.Fatalf("create character after widen: %v", err)
+	}
+	if len(c.Variants) != 1 {
+		t.Fatalf("variants = %+v, want exactly one", c.Variants)
+	}
+	v, err := store.CreateVariant(ctx, c.ID, "校服", "", "发色:#1A2E")
+	if err != nil {
+		t.Fatalf("create variant with palette after widen: %v", err)
+	}
+	got, err := store.GetVariant(ctx, v.ID)
+	if err != nil || got.Palette != "发色:#1A2E" {
+		t.Fatalf("palette after widen = %q, %v", got.Palette, err)
+	}
+}

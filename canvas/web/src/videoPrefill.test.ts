@@ -22,6 +22,7 @@ const variant = (id: number, name: string, images: CharacterImageRecord[] = []):
   character_id: 1,
   name,
   note: '',
+  palette: '',
   sort: 0,
   images,
   created_at: '',

@@ -19,12 +19,12 @@ import {
   resolveCutVariant,
 } from './sheet'
 
-describe('五类型模板字面量钉子(与服务端同字面量)', () => {
-  it('五类型固定序,默认三视图', () => {
-    expect(SHEET_TYPES).toEqual(['三视图', '多视图', '表情集', '色板', '姿态'])
+describe('六类型模板字面量钉子(与服务端同字面量)', () => {
+  it('六类型固定序,光照色板插色板之后,默认三视图(84 号票)', () => {
+    expect(SHEET_TYPES).toEqual(['三视图', '多视图', '表情集', '色板', '光照色板', '姿态'])
   })
 
-  it('模板文案与服务端 iptask.go 逐字一致', () => {
+  it('模板文案与服务端 iptask.go 逐字一致(色板补瞳色线色;光照色板四格对照)', () => {
     expect(SHEET_TYPE_TEMPLATES['三视图']).toBe(
       '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
     )
@@ -35,7 +35,10 @@ describe('五类型模板字面量钉子(与服务端同字面量)', () => {
       '角色设定图·表情集:同一角色头部的多种表情对照(喜、怒、哀、惊等),白底,构图整齐,表情差异清晰,标准设定图画风',
     )
     expect(SHEET_TYPE_TEMPLATES['色板']).toBe(
-      '角色设定图·色板:该角色的配色色板展示(发色、肤色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风',
+      '角色设定图·色板:该角色的配色色板展示(发色、肤色、瞳色、线色、服装主色与辅色色块并列),白底,标注干净,标准设定图画风',
+    )
+    expect(SHEET_TYPE_TEMPLATES['光照色板']).toBe(
+      '角色设定图·光照色板:同一角色的昼光、夜色、黄昏、逆光四格配色对照,同站姿同构图,各格光照差异清晰,白底,标注干净,标准设定图画风',
     )
     expect(SHEET_TYPE_TEMPLATES['姿态']).toBe(
       '角色设定图·姿态集:同一角色的多个典型动作与姿态对照,全身,白底,姿态自然清晰,标准设定图画风',
@@ -84,6 +87,30 @@ describe('buildSheetPrompt(与 Go BuildSheetPrompt 同形)', () => {
     }, '')
     expect([...got].length).toBeLessThanOrEqual(MAX_SHEET_PROMPT_RUNES)
   })
+
+  it('配色段(84 号票 B1):palette 非空落「配色:」行插服装行之后,空则整行跳过', () => {
+    const got = buildSheetPrompt('三视图', {
+      name: '林小满',
+      variantName: '冬季制服',
+      variantNote: '深蓝色大衣配红色围巾',
+      palette: '发色:#1A2E;瞳色:#4A90D9',
+    }, '')
+    expect(got).toBe([
+      '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
+      '角色:林小满',
+      '造型:冬季制服',
+      '服装:深蓝色大衣配红色围巾',
+      '配色:发色:#1A2E;瞳色:#4A90D9',
+    ].join('\n'))
+    // 空/缺省 = 无配色行(与改动前逐字节一致)。
+    expect(buildSheetPrompt('三视图', { name: '林小满', variantName: '冬季制服' }, '')).toBe(
+      [
+        '角色设定图·三视图:同一角色的全身站姿正面、侧面、背面三视图对照,白底,全身完整无裁切,各视角比例一致,标准设定图画风',
+        '角色:林小满',
+        '造型:冬季制服',
+      ].join('\n'),
+    )
+  })
 })
 
 // ---- B3 参考图默认与 cut 注入挑选的测试脚手架 ----
@@ -94,6 +121,7 @@ function variant(id: number, images: { id: number; asset_id: number; label: stri
     character_id: 1,
     name: '默认',
     note: '',
+    palette: '',
     sort: 0,
     images: images.map((im) => ({ id: im.id, character_id: 1, variant_id: id, asset_id: im.asset_id, label: im.label, sort: 0 })),
     created_at: '',

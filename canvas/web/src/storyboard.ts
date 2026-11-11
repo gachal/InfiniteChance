@@ -144,12 +144,20 @@ export const QUALITY_TAIL =
  *   是空串而是尾段一行(旧「全空返回空串」行为按 73 号票定案 D.1/D.4
  *   调整);有风格则风格段照旧在最前。
  * - 画面描述取 note(53 号票备注字段;66 号票 save_storyboard 产物的
- *   note 即画面内容描述,工具产物与人工 cut 同规),信息密度最高,排
- *   基调段之后的首位;台词/音效段标签、运镜顿号连接、cut.seconds 不进
- *   prompt 照旧(秒数参照由导演写进 note,73 号票定案 D.7)。
- * 纯函数便于单测;出场角色不进提示词(70 号票已走参考图注入)。 */
-export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = ''): string {
+ *   note 即画面内容描述,信息密度最高,排基调段之后的首位;台词/音效段
+ *   标签、运镜顿号连接、cut.seconds 不进 prompt 照旧(秒数参照由导演写
+ *   进 note,73 号票定案 D.7)。
+ * - 84 号票 B3:角色配色段(paletteLine,palette.buildPaletteLine 产物)
+ *   非空进 sections 首位 —— 风格段最后由 prependStyleSegment 顶到最前,
+ *   最终序 = 画面风格 → 角色配色 → 全片基调 → …;发送链的绑定行
+ *   (「出场元素:」)经 insertElementLine 插风格段之后、配色段之前,
+ *   即票面「配色段插在绑定行之后」。有画面路径不传(71 号票互斥不注入)。
+ * 纯函数便于单测;参考图注入不进提示词照旧(70 号票,配色段是 84 另加)。 */
+export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = '', paletteLine = ''): string {
   const sections: string[] = []
+  if (paletteLine !== '') {
+    sections.push(paletteLine)
+  }
   const briefText = brief.trim()
   if (briefText !== '') {
     sections.push(`${BRIEF_SEGMENT_LABEL}${briefText}`)
@@ -173,13 +181,16 @@ export function buildCutVideoPrompt(cut: StoryboardCut, brief = '', style = ''):
 }
 
 /** cut → 图片提示词拼装(分镜画面直通生成;73 号票定案 D.5 生图直通
- * 同吃):画面风格段 → 全片基调段 → 画面描述 → 景别 → 画质约束尾段 ——
- * 分镜画面是视频首帧种子,同需基调一致与画面干净,两直通口径一致;不拼
- * 运镜/台词照旧(那是视频语汇)。基调段/尾段/风格段的拼装口径与
- * buildCutVideoPrompt 逐条一致(含尾段恒拼、brief 不受开关管)。纯函数
- * 便于单测。 */
-export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = ''): string {
+ * 同吃):画面风格段 → 角色配色段(84 号票 B2,非空才拼)→ 全片基调段
+ * → 画面描述 → 景别 → 画质约束尾段 —— 分镜画面是视频首帧种子,同需基调
+ * 一致与画面干净,两直通口径一致;不拼运镜/台词照旧(那是视频语汇)。
+ * 基调段/尾段/风格段/配色段的拼装口径与 buildCutVideoPrompt 逐条一致
+ * (含尾段恒拼、brief 不受开关管)。纯函数便于单测。 */
+export function buildCutFramePrompt(cut: StoryboardCut, brief = '', style = '', paletteLine = ''): string {
   const sections: string[] = []
+  if (paletteLine !== '') {
+    sections.push(paletteLine)
+  }
   const briefText = brief.trim()
   if (briefText !== '') {
     sections.push(`${BRIEF_SEGMENT_LABEL}${briefText}`)

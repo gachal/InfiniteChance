@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS character_variants (
 	character_id BIGINT UNSIGNED NOT NULL,
 	name         VARCHAR(255) NOT NULL,
 	note         VARCHAR(1024) NOT NULL DEFAULT '',
+	palette      TEXT NOT NULL,
 	sort         INT NOT NULL DEFAULT 0,
 	created_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 	updated_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -62,15 +63,21 @@ CREATE TABLE IF NOT EXISTS character_images (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`
 
 // migrations widens tables created by earlier tickets in place (57 号票的
-// 角色绑定音色列):CREATE TABLE IF NOT EXISTS never widens an existing
-// table, an already-deployed canvas DB must upgrade without a rebuild.
-// Idempotent(canvases.ip_id 的 information_schema 先例)。
-var migrations = []struct{ column, ddl string }{
-	{"voice_id", "ALTER TABLE characters ADD COLUMN voice_id BIGINT UNSIGNED NULL"},
+// 角色绑定音色列、84 号票的变体配色列):CREATE TABLE IF NOT EXISTS never
+// widens an existing table, an already-deployed canvas DB must upgrade
+// without a rebuild. table/column 拼 existence 检查、ddl 落列 —— **检查
+// 必须按表参数化**(84 号票勘察修正:曾把 TABLE_NAME 钉死 characters,
+// 第二张表的加列会被误跳),表名全部是本文件的编译期常量。Idempotent
+// (canvases.ip_id 的 information_schema 先例)。
+var migrations = []struct{ table, column, ddl string }{
+	{"characters", "voice_id", "ALTER TABLE characters ADD COLUMN voice_id BIGINT UNSIGNED NULL"},
+	// TEXT NOT NULL 无显式默认(MySQL TEXT 列不支持字面 DEFAULT):加列时
+	// 存量行按隐式默认 '' 填充,读回空串 = 无配色(84 号票空值语义)。
+	{"character_variants", "palette", "ALTER TABLE character_variants ADD COLUMN palette TEXT NOT NULL"},
 }
 
-// EnsureSchema creates the three tables when missing and widens an existing
-// characters table in place. Idempotent; 空起步无同序依赖(表自含,装配
+// EnsureSchema creates the three tables when missing and widens already
+// deployed tables in place. Idempotent; 空起步无同序依赖(表自含,装配
 // 位置随意,服务器侧随 ips 之后)。
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	for _, ddl := range []string{charactersSchema, variantsSchema, imagesSchema} {
@@ -82,8 +89,8 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 		var count int
 		if err := s.DB.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM information_schema.COLUMNS
-			 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'characters' AND COLUMN_NAME = ?`,
-			m.column).Scan(&count); err != nil {
+			 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+			m.table, m.column).Scan(&count); err != nil {
 			return err
 		}
 		if count > 0 {
@@ -118,7 +125,7 @@ func (s *MySQLStore) touchCharacter(ctx context.Context, id int64) {
 
 // loadTree assembles one character's variants and images (sort+id 序)。
 func (s *MySQLStore) loadTree(ctx context.Context, c *Character) error {
-	vrows, err := s.DB.QueryContext(ctx, `SELECT id, character_id, name, note, sort, created_at, updated_at
+	vrows, err := s.DB.QueryContext(ctx, `SELECT id, character_id, name, note, palette, sort, created_at, updated_at
 		FROM character_variants WHERE character_id = ? ORDER BY sort ASC, id ASC`, c.ID)
 	if err != nil {
 		return err
@@ -126,7 +133,7 @@ func (s *MySQLStore) loadTree(ctx context.Context, c *Character) error {
 	defer vrows.Close()
 	for vrows.Next() {
 		var v Variant
-		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Sort, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Palette, &v.Sort, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return err
 		}
 		v.Images = []Image{}
@@ -170,7 +177,7 @@ func (s *MySQLStore) CreateCharacter(ctx context.Context, ipID int64, in Charact
 	}
 	// 变体纪律:建角色自动带「默认」变体(可改名;最后一个不可删)。
 	if _, err := s.DB.ExecContext(ctx,
-		`INSERT INTO character_variants (character_id, name, note, sort) VALUES (?, '默认', '', 0)`, id); err != nil {
+		`INSERT INTO character_variants (character_id, name, note, palette, sort) VALUES (?, '默认', '', '', 0)`, id); err != nil {
 		return Character{}, err
 	}
 	return s.GetCharacter(ctx, id)
@@ -221,7 +228,7 @@ func (s *MySQLStore) attachTree(ctx context.Context, ipID int64, byID map[int64]
 	if len(byID) == 0 {
 		return nil
 	}
-	vrows, err := s.DB.QueryContext(ctx, `SELECT v.id, v.character_id, v.name, v.note, v.sort, v.created_at, v.updated_at
+	vrows, err := s.DB.QueryContext(ctx, `SELECT v.id, v.character_id, v.name, v.note, v.palette, v.sort, v.created_at, v.updated_at
 		FROM character_variants v JOIN characters c ON v.character_id = c.id
 		WHERE c.ip_id = ? ORDER BY v.sort ASC, v.id ASC`, ipID)
 	if err != nil {
@@ -233,7 +240,7 @@ func (s *MySQLStore) attachTree(ctx context.Context, ipID int64, byID map[int64]
 	order := map[int64][]int64{}
 	for vrows.Next() {
 		var v Variant
-		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Sort, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := vrows.Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Palette, &v.Sort, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return err
 		}
 		if _, ok := byID[v.CharacterID]; !ok {
@@ -365,9 +372,9 @@ func (s *MySQLStore) DeleteCharacter(ctx context.Context, id int64) error {
 // loadVariantRow reads one variant row (无图,不组树)。
 func (s *MySQLStore) loadVariantRow(ctx context.Context, id int64) (Variant, error) {
 	var v Variant
-	err := s.DB.QueryRowContext(ctx, `SELECT id, character_id, name, note, sort, created_at, updated_at
+	err := s.DB.QueryRowContext(ctx, `SELECT id, character_id, name, note, palette, sort, created_at, updated_at
 		FROM character_variants WHERE id = ?`, id).
-		Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Sort, &v.CreatedAt, &v.UpdatedAt)
+		Scan(&v.ID, &v.CharacterID, &v.Name, &v.Note, &v.Palette, &v.Sort, &v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Variant{}, ErrVariantNotFound
 	}
@@ -378,7 +385,7 @@ func (s *MySQLStore) GetVariant(ctx context.Context, id int64) (Variant, error) 
 	return s.loadVariantRow(ctx, id)
 }
 
-func (s *MySQLStore) CreateVariant(ctx context.Context, characterID int64, name, note string) (Variant, error) {
+func (s *MySQLStore) CreateVariant(ctx context.Context, characterID int64, name, note, palette string) (Variant, error) {
 	var one int
 	if err := s.DB.QueryRowContext(ctx, `SELECT 1 FROM characters WHERE id = ?`, characterID).Scan(&one); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -387,8 +394,8 @@ func (s *MySQLStore) CreateVariant(ctx context.Context, characterID int64, name,
 		return Variant{}, err
 	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO character_variants (character_id, name, note, sort) VALUES (?, ?, ?, 0)`,
-		characterID, name, note)
+		`INSERT INTO character_variants (character_id, name, note, palette, sort) VALUES (?, ?, ?, ?, 0)`,
+		characterID, name, note, palette)
 	if err != nil {
 		return Variant{}, err
 	}
@@ -416,6 +423,10 @@ func (s *MySQLStore) UpdateVariant(ctx context.Context, id int64, u *VariantUpda
 	if u.Note != nil {
 		sets = append(sets, "note = ?")
 		args = append(args, *u.Note)
+	}
+	if u.Palette != nil {
+		sets = append(sets, "palette = ?")
+		args = append(args, *u.Palette)
 	}
 	if u.Sort != nil {
 		sets = append(sets, "sort = ?")

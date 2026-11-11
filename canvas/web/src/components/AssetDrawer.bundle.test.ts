@@ -71,3 +71,25 @@ describe('成套生成入口与对话框(83 号票 B)', () => {
     expect(drawerSource.includes('bundleEstimateText')).toBe(true)
   })
 })
+
+// ---- 84 号票 A3:变体配色表单(手填 textarea + 新建预填抄当前变体)----
+
+describe('变体配色表单(84 号票 A3)', () => {
+  it('编辑表单带配色 textarea,提交带 palette(空串 = 清除)', () => {
+    const edit = fnSource(drawerSource, 'commitVariantEdit')
+    expect(drawerSource.includes('variantPaletteDraft')).toBe(true)
+    expect(edit.includes('palette: variantPaletteDraft.value.trim()')).toBe(true)
+  })
+
+  it('新建表单带配色 textarea,提交带 palette;预填抄当前选中变体(纯前端)', () => {
+    const add = fnSource(drawerSource, 'addVariant')
+    expect(drawerSource.includes('newVariantPalette')).toBe(true)
+    expect(add.includes('palette: newVariantPalette.value.trim()')).toBe(true)
+    // 预填是 watch(activeVariant) 的纯前端同步,后端零智能继承。
+    expect(drawerSource.includes('newVariantPalette.value = v?.palette ?? \'\'')).toBe(true)
+  })
+
+  it('配色上限 500:textarea maxlength 与服务端 runes 校验同值', () => {
+    expect(drawerSource.includes('maxlength="500"')).toBe(true)
+  })
+})

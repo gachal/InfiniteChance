@@ -105,7 +105,7 @@ func TestMySQLVariantLifecycle(t *testing.T) {
 		t.Fatalf("delete last variant = %v, want ErrLastVariant", err)
 	}
 
-	v, err := store.CreateVariant(ctx, c.ID, "校服", "藏青色水手服")
+	v, err := store.CreateVariant(ctx, c.ID, "校服", "藏青色水手服", "")
 	if err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestMySQLImageLifecycle(t *testing.T) {
 
 	c := mustCreateMySQLCharacter(t, store, 1, "小星")
 	def := c.Variants[0]
-	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "")
+	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "", "")
 	if err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestMySQLListCharactersTree(t *testing.T) {
 
 	c := mustCreateMySQLCharacter(t, store, 5, "小星")
 	def := c.Variants[0]
-	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "")
+	v2, err := store.CreateVariant(ctx, c.ID, "战斗形态", "", "")
 	if err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestMySQLMissingSentinels(t *testing.T) {
 	if _, err := store.GetCharacter(ctx, 99); err != character.ErrCharacterNotFound {
 		t.Fatalf("missing character = %v, want ErrCharacterNotFound", err)
 	}
-	if _, err := store.CreateVariant(ctx, 99, "x", ""); err != character.ErrCharacterNotFound {
+	if _, err := store.CreateVariant(ctx, 99, "x", "", ""); err != character.ErrCharacterNotFound {
 		t.Fatalf("variant under missing character = %v, want ErrCharacterNotFound", err)
 	}
 	if _, err := store.CreateImage(ctx, 99, character.ImageInput{VariantID: 1, AssetID: 1}); err != character.ErrCharacterNotFound {
@@ -361,3 +361,145 @@ func TestMySQLListCharactersMultiRowTree(t *testing.T) {
 }
 
 func mysqlPtr[T any](v T) *T { return &v }
+
+// ---- 84 号票:变体配色(palette)MySQL 侧(与 SQLite 侧同款断言)----
+
+// 配色存取链:CreateVariant 落列、Update 改与清、单行与树装载全链带出;
+// 默认变体 palette 空。
+func TestMySQLVariantPaletteRoundTrip(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+
+	c := mustCreateMySQLCharacter(t, store, 1, "小星")
+
+	got, err := store.GetCharacter(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetCharacter: %v", err)
+	}
+	if got.Variants[0].Palette != "" {
+		t.Fatalf("default variant palette = %q, want empty", got.Variants[0].Palette)
+	}
+
+	const hex = "发色:#1A2E;肤色:#FFE0D0;瞳色:#4A90D9;线色:#2B2B2B"
+	v, err := store.CreateVariant(ctx, c.ID, "校服", "藏青色水手服", hex)
+	if err != nil {
+		t.Fatalf("create variant: %v", err)
+	}
+	if v.Palette != hex {
+		t.Fatalf("created palette = %q, want %q", v.Palette, hex)
+	}
+
+	one, err := store.GetVariant(ctx, v.ID)
+	if err != nil || one.Palette != hex {
+		t.Fatalf("GetVariant palette = %q, %v, want %q", one.Palette, err, hex)
+	}
+	tree, err := store.GetCharacter(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetCharacter: %v", err)
+	}
+	found := false
+	for _, cv := range tree.Variants {
+		if cv.ID == v.ID && cv.Palette != hex {
+			t.Fatalf("tree palette = %q, want %q", cv.Palette, hex)
+		}
+		if cv.ID == v.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("variant %d missing from tree", v.ID)
+	}
+
+	cleared := ""
+	updated, err := store.UpdateVariant(ctx, v.ID, &character.VariantUpdate{Palette: &cleared})
+	if err != nil || updated.Palette != "" {
+		t.Fatalf("clear palette = %+v, %v", updated, err)
+	}
+	back := hex
+	if updated, err = store.UpdateVariant(ctx, v.ID, &character.VariantUpdate{Palette: &back}); err != nil || updated.Palette != hex {
+		t.Fatalf("set palette = %+v, %v", updated, err)
+	}
+}
+
+// 加列检查按表参数化(84 号票勘察修正):旧形状库(characters 无
+// voice_id、character_variants 无 palette)EnsureSchema 后两条加列各自
+// 落位;存量行 palette 隐式默认 '' 读回空。
+func TestMySQLEnsureSchemaWidenLegacyTables(t *testing.T) {
+	store, db := openTestStore(t)
+	ctx := context.Background()
+
+	// openTestStore 已 EnsureSchema(新形状),重建为 57 号票之前的形状
+	// (无 voice_id)+ 84 号票之前的形状(无 palette),再验一次自愈。
+	for _, ddl := range []string{
+		`DROP TABLE character_images`,
+		`DROP TABLE character_variants`,
+		`DROP TABLE characters`,
+		`CREATE TABLE characters (
+			id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+			ip_id       BIGINT UNSIGNED NOT NULL,
+			name        VARCHAR(255) NOT NULL,
+			alias       VARCHAR(255) NOT NULL DEFAULT '',
+			description VARCHAR(1024) NOT NULL DEFAULT '',
+			detail      TEXT NOT NULL,
+			created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+			updated_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+			KEY idx_characters_ip (ip_id, id)
+		) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`,
+		`CREATE TABLE character_variants (
+			id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+			character_id BIGINT UNSIGNED NOT NULL,
+			name         VARCHAR(255) NOT NULL,
+			note         VARCHAR(1024) NOT NULL DEFAULT '',
+			sort         INT NOT NULL DEFAULT 0,
+			created_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+			updated_at   TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+			KEY idx_character_variants_character (character_id, sort, id)
+		) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`,
+		`CREATE TABLE character_images (
+			id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+			character_id BIGINT UNSIGNED NOT NULL,
+			variant_id   BIGINT UNSIGNED NOT NULL,
+			asset_id     BIGINT UNSIGNED NOT NULL,
+			label        VARCHAR(32) NOT NULL DEFAULT '',
+			sort         INT NOT NULL DEFAULT 0,
+			KEY idx_character_images_character (character_id, sort, id),
+			KEY idx_character_images_variant (variant_id)
+		) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4`,
+	} {
+		if _, err := db.ExecContext(ctx, ddl); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO character_variants (character_id, name) VALUES (99, '默认')`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema over legacy tables: %v", err)
+	}
+	var legacyPalette string
+	if err := db.QueryRowContext(ctx,
+		`SELECT palette FROM character_variants WHERE character_id = 99`).Scan(&legacyPalette); err != nil {
+		t.Fatalf("legacy row palette column: %v", err)
+	}
+	if legacyPalette != "" {
+		t.Fatalf("legacy palette = %q, want empty", legacyPalette)
+	}
+
+	c, err := store.CreateCharacter(ctx, 1, character.CharacterInput{Name: "新人"})
+	if err != nil {
+		t.Fatalf("create character after widen: %v", err)
+	}
+	if len(c.Variants) != 1 {
+		t.Fatalf("variants = %+v, want exactly one", c.Variants)
+	}
+	v, err := store.CreateVariant(ctx, c.ID, "校服", "", "发色:#1A2E")
+	if err != nil {
+		t.Fatalf("create variant with palette after widen: %v", err)
+	}
+	gotV, err := store.GetVariant(ctx, v.ID)
+	if err != nil || gotV.Palette != "发色:#1A2E" {
+		t.Fatalf("palette after widen = %q, %v", gotV.Palette, err)
+	}
+}
