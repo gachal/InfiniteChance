@@ -11,10 +11,18 @@
     -apple-system,
     sans-serif;
 
-  /* ==== 设计 Token(58 号票地基)====
+  /* ==== 设计 Token(58 号票地基;86 号票氛围层增补)====
      同名 token 是对应色值/档位的唯一事实源。阶段二起描边收敛为三档、
      底纹收敛为四档(DESIGN.md「描边即轮廓规则」);
      rgb 三元组 token 供 rgba(var(--x-rgb), α) 派生透明度用。 */
+
+  /* 品牌展示字(86 号票):自托管 Latin 展示字,只用于品牌时刻
+     (登录页字标、IP masthead display);中文界面仍走上面的系统栈。
+     woff2 在 public/fonts/,index.html preload。 */
+  --font-display: 'Instrument Sans', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas,
+    monospace;
 
   /* 深夜三层底(只作页面底,不作面板) */
   --bg-deep: #090c14;
@@ -57,15 +65,29 @@
   --w-panel: 380px;
   --w-drawer: 400px;
 
-  /* 基础过渡包:面板滑入/浮层出现用 slow,控件 hover 用 fast */
-  --dur-fast: 120ms;
+  /* 基础过渡包(86 号票对齐 skill 节奏):面板滑入/浮层出现用 slow,
+     控件 hover 用 fast(150 in),hover 收回用 out(120),按下用 press(90);
+     图像缩放(封面海报呼吸)用 image/image-out(600/400);
+     --ease-enter 是入场专用 settle 曲线(skill 的 entrance ease),
+     普通过渡仍走 --ease。 */
+  --dur-fast: 150ms;
+  --dur-out: 120ms;
+  --dur-press: 90ms;
   --dur: 180ms;
   --dur-slow: 260ms;
+  --dur-image: 600ms;
+  --dur-image-out: 400ms;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* 玻璃受光面:顶缘 1px 内高光,深夜玻璃质感的通用一层
      (box-shadow 列表里与其他阴影逗号组合使用) */
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* 细噪贴片(86 号票,skill 的 grain 配方):全站唯一 effect——静态
+     SVG feTurbulence 白噪(3.5% alpha 已烘进贴片),加载即成、永不动画,
+     reduced-motion 无关。body 底与品牌面 ground 复用同一贴片。 */
+  --noise-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
 
   /* 工作灯蓝:唯一的全局交互色 */
   --accent: #7aa2f7;
@@ -218,8 +240,45 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(1200px 800px at 80% -10%, var(--bg-glow) 0%, var(--bg-navy) 55%, var(--bg-deep) 100%);
+  /* 86 号票氛围层:主光仍在右上(glow 不挪窝),新增左下 accent 微光
+     (skill corner-glow 配方)与整幅细噪(--noise-tile,最上层贴片);
+     噪是全站唯一 effect,静态、永不动画。 */
+  background-color: var(--bg-deep);
+  background-image: var(--noise-tile),
+    radial-gradient(1100px 720px at 82% -8%, rgba(var(--bg-glow-rgb), 0.6) 0%, transparent 62%),
+    radial-gradient(920px 640px at -8% 106%, rgba(var(--accent-rgb), 0.06) 0%, transparent 58%),
+    radial-gradient(1500px 950px at 50% 42%, var(--bg-navy) 0%, var(--bg-deep) 78%);
+  background-attachment: fixed;
   color: var(--text-primary);
+}
+
+/* ---- 品牌展示字(86 号票)----
+   自托管 woff2(public/fonts/,latin 子集):Instrument Sans 可变字
+   (wdth+wght 轴)作 display,DM Mono 作 mono 点缀。只给品牌时刻用,
+   中文界面零加载成本不变;display=swap,字体缺席时回落系统栈。 */
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-stretch: 75% 100%;
+  font-display: swap;
+  src: url('/fonts/instrument-sans-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/dm-mono-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/dm-mono-latin-500.woff2') format('woff2');
 }
 
 /* ---- 两击连线(30 号票)----
@@ -261,6 +320,10 @@ body {
   line-height: 1;
   cursor: pointer;
   z-index: var(--z-canvas-float);
+  /* 86 号票:hover 反馈走基础过渡包,不再瞬变。 */
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .port:hover {
@@ -360,4 +423,27 @@ body {
    对 SVG 元素同样生效。 */
 .vue-flow__minimap-node.minimap-group {
   display: none;
+}
+
+/* ---- 画布氛围(86 号票)----
+   背景点阵与默认连线随 token 入夜:点阵从 vue-flow 默认亮灰
+   (#81818a)沉为弱字蓝灰、半径略缩;连线从默认亮灰实线沉为蓝灰
+   1.5px——线是骨架不是主角;选中边从 core 默认 #555(暗底隐形)
+   升为工作灯蓝(选择 = 可交互态,只在值班时亮)。
+   全部零模板改动(86 号票定案),靠 main.ts 的导入顺序压过 core 默认。 */
+.vue-flow__background circle {
+  fill: rgba(var(--text-muted-rgb), 0.32);
+  r: 1.1px;
+}
+
+.vue-flow__edge-path,
+.vue-flow__connection-path {
+  stroke: rgba(var(--text-muted-rgb), 0.38);
+  stroke-width: 1.5;
+}
+
+.vue-flow__edge.selected .vue-flow__edge-path,
+.vue-flow__edge:focus .vue-flow__edge-path,
+.vue-flow__edge:focus-visible .vue-flow__edge-path {
+  stroke: rgba(var(--accent-rgb), 0.9);
 }

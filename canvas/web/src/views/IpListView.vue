@@ -202,7 +202,14 @@ async function logout(): Promise<void> {
   <main class="shell">
     <header class="masthead">
       <div>
+        <p class="kicker">
+          InfiniteChance
+        </p>
         <h1>IP 企划</h1>
+        <span
+          class="brand-bar"
+          aria-hidden="true"
+        />
         <p class="subtitle">
           打造 ACG IP:企划 → 画布 → 素材
           <template v-if="username">
@@ -257,12 +264,32 @@ async function logout(): Promise<void> {
         重试
       </button>
     </p>
-    <p
+    <div
       v-else-if="ips.length === 0"
-      class="feedback"
+      class="empty-state"
     >
-      还没有 IP 企划,从上面新建一个开始创作。
-    </p>
+      <!-- 空态画面:hairline 迷你画布(三枚类型色节点 + 虚线连线),
+         替代纯文字;装饰件 aria-hidden。 -->
+      <div
+        class="empty-canvas"
+        aria-hidden="true"
+      >
+        <svg
+          class="ec-wires"
+          viewBox="0 0 420 150"
+          preserveAspectRatio="none"
+        >
+          <path d="M97 81 C 140 81, 150 39, 193 39" />
+          <path d="M257 39 C 300 39, 285 111, 322 111" />
+        </svg>
+        <span class="ec-node ec-a">图</span>
+        <span class="ec-node ec-b">视</span>
+        <span class="ec-node ec-c">剧</span>
+      </div>
+      <p class="feedback">
+        还没有 IP 企划,从上面新建一个开始创作。
+      </p>
+    </div>
 
     <ul class="ip-grid">
       <li
@@ -457,8 +484,10 @@ async function logout(): Promise<void> {
 </template>
 
 <style scoped>
-/* 卡片墙海报感(58 号票阶段三):1920 基准下壳放宽到 1200,封面更大、
-   悬浮有呼吸,企划渐变只留在封面与徽标(DESIGN.md IP 身份时刻)。 */
+/* 卡片墙海报感(58 号票阶段三;86 号票升级):壳 1200;masthead 升
+   display 时刻——band 面板(86 号票 deal 的 bg-band 暗页内缩形态:
+   角光 + 细噪 + hairline)、Latin 字标 kicker、企划渐变 bar(渐变只
+   出现在 IP 身份时刻);封面呼吸对齐 skill 图像节奏 600/400。 */
 .shell {
   max-width: 1200px;
   margin: 0 auto;
@@ -470,16 +499,46 @@ async function logout(): Promise<void> {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--sp-lg);
+  padding: 26px 28px;
+  border: 1px solid var(--line-section);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background-image: var(--noise-tile),
+    radial-gradient(66% 130% at 0% 0%, rgba(var(--accent-rgb), 0.09), transparent 72%),
+    radial-gradient(52% 100% at 100% 0%, rgba(var(--indigo-soft-rgb), 0.07), transparent 76%),
+    radial-gradient(64% 110% at 100% 100%, color-mix(in oklab, var(--ip-violet) 14%, transparent), transparent 78%);
+}
+
+.kicker {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .masthead h1 {
   margin: 0;
-  font-size: 28px;
-  letter-spacing: 0.5px;
+  font-size: clamp(30px, 3vw, 40px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+}
+
+/* 企划渐变 bar:IP 身份时刻的品牌笔触(DESIGN.md 渐变用途约束)。 */
+.brand-bar {
+  display: block;
+  width: 64px;
+  height: 3px;
+  margin: 12px 0 0;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
 }
 
 .subtitle {
-  margin: 6px 0 0;
+  margin: 10px 0 0;
   color: var(--text-muted);
   font-size: var(--fs-body);
 }
@@ -487,7 +546,7 @@ async function logout(): Promise<void> {
 .toolbar {
   display: flex;
   gap: 10px;
-  margin: 32px 0 12px;
+  margin: 24px 0 12px;
 }
 
 .toolbar button,
@@ -501,13 +560,29 @@ async function logout(): Promise<void> {
   transition:
     background-color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+/* skill 微动效:实心主按钮 hover 上步 1px、按下回沉(skill 150/90)。 */
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  .toolbar button:active:not(:disabled),
+  .ghost:active:not(:disabled),
+  .danger:active:not(:disabled) {
+    transform: translateY(0) scale(0.985);
+    transition-duration: var(--dur-press);
+  }
 }
 
 .primary {
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 700;
+  padding: 12px 18px;
 }
 
 .primary:hover:not(:disabled) {
@@ -551,6 +626,71 @@ async function logout(): Promise<void> {
 
 .error {
   color: var(--danger);
+}
+
+/* 空态画面(skill:短内容给它它的画面):hairline 迷你画布,
+   三枚类型色节点卡 + 虚线连线,静止零动画。 */
+.empty-state {
+  margin-top: 24px;
+  padding: 40px 32px;
+  border: 1px dashed var(--line-control);
+  border-radius: var(--r-xl);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.empty-canvas {
+  position: relative;
+  width: min(420px, 100%);
+  aspect-ratio: 420 / 150;
+}
+
+.ec-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.ec-wires path {
+  fill: none;
+  stroke: rgba(var(--text-muted-rgb), 0.45);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+}
+
+.ec-node {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 42px;
+  border-radius: var(--r-lg);
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid var(--line-control);
+  box-shadow: var(--glass-highlight);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+}
+
+.ec-a {
+  left: 8%;
+  top: 40%;
+  border-color: rgba(var(--success-rgb), 0.42);
+}
+
+.ec-b {
+  left: 46%;
+  top: 12%;
+  border-color: rgba(var(--amber-rgb), 0.45);
+}
+
+.ec-c {
+  right: 8%;
+  bottom: 12%;
+  border-color: rgba(var(--gold-rgb), 0.45);
 }
 
 .ip-grid {
@@ -609,12 +749,14 @@ async function logout(): Promise<void> {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--dur-slow) var(--ease);
+  /* 呼吸节奏对齐 skill 图像缩放:进入 600ms,收回 400ms。 */
+  transition: transform var(--dur-image-out) var(--ease);
 }
 
 /* 海报呼吸:悬浮时封面极缓放大一档,像海报被拿近看。 */
 .ip-card:hover .cover-img {
   transform: scale(1.03);
+  transition-duration: var(--dur-image);
 }
 
 .cover-fallback {

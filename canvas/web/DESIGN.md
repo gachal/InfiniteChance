@@ -32,7 +32,7 @@ colors:
   ip-wine: "#8a2f5c"
 typography:
   display:
-    fontFamily: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif"
+    fontFamily: "'Instrument Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif"
     fontSize: "clamp(28px, 4vw, 42px)"
     fontWeight: 700
     lineHeight: 1.2
@@ -107,10 +107,10 @@ components:
 
 **Key Characteristics:**
 
-- 深夜蓝黑径向渐变打底,`color-scheme: dark`,全程无纯黑纯白
+- 深夜蓝黑径向渐变打底(86 号票增补:左下 accent 微光 + 整幅静态细噪),`color-scheme: dark`,全程无纯黑纯白
 - 半透明深色面板(`rgba(20,26,43,0.92)`)+ 白系透明 hairline 描边,平面靠描边不靠阴影
 - 11 种节点类型色板(描边 0.4–0.45 透明度),色彩即身份
-- 高密度小字(11–13px)、600 字重层级、系统中文字体栈零加载
+- 高密度小字(11–13px)、600 字重层级、系统中文字体栈零加载;品牌时刻另有一支自托管 Latin 展示字(见 Typography)
 - 阴影只给真正浮起的层(灯箱/侧滑/编辑层),浮起即模态
 - 8px 圆角为骨、999px 胶囊为饰,圆而不泡
 
@@ -144,7 +144,7 @@ components:
 
 ### Neutral
 
-- **深夜三层底**:bg-glow #14284b(径向高光)→ bg-navy #0d1524(主底)→ bg-deep #090c14(渐变末端),只作页面底,不作面板;全屏编辑层另有更沉一级的工作台底 --bg-layer #10162a
+- **深夜三层底**:bg-glow #14284b(径向高光)→ bg-navy #0d1524(主底)→ bg-deep #090c14(渐变末端),只作页面底,不作面板;全屏编辑层另有更沉一级的工作台底 --bg-layer #10162a。86 号票氛围层:主光仍在右上,左下补一层 6% accent 微光(skill corner-glow),整幅叠静态细噪(--noise-tile,全站唯一 effect,永不动画)。品牌面 ground 另有两支 deal 产:halo(登录页标后光晕,accent 色相三层径向、上下渐隐)与 band(IP masthead 暗页内缩亮带:角光 + 细噪 + hairline),每页至多一支。
 - **卡面玻璃** surface-card rgba(20, 26, 43, 0.92):节点卡面
 - **面板玻璃** surface-panel rgba(13, 21, 36, 0.92):控件、小地图、端口圆点
 - **提亮面** surface-raised rgba(28, 40, 68):hover 反馈与浮起小件(控件 hover、chip 删除钮、灯箱按钮)——比面板亮半档的「被照到」
@@ -162,10 +162,11 @@ components:
 ## Typography
 
 **Display Font:** 系统中文栈——'PingFang SC' / 'Hiragino Sans GB' / 'Microsoft YaHei' / system-ui
-**Body Font:** 同上(全站单一字体栈,无 webfont,零加载成本,桌面版与浏览器渲染一致)
-**Label/Mono Font:** 无独立等宽;数字与代码沿用同栈
+**Body Font:** 同上(界面单一字体栈,零加载成本,桌面版与浏览器渲染一致)
+**Brand Display Font(86 号票增补):** 'Instrument Sans'(可变字 wdth+wght,自托管 woff2 latin 子集,`--font-display`)——只用于品牌时刻:登录页字标、IP 列表 masthead kicker;500 字重、-2.8% 字距、96% stretch,中文不落web字体
+**Label/Mono Font(86 号票增补):** 'DM Mono'(自托管 400/500,`--font-mono`)——点缀用:登录页拼贴的参数 pill、mono 数字时刻;界面正文与代码不换栈
 
-**Character:** 务实的工具字体姿态——不追字体的表现力,靠字号与字重做层级。中文界面在 11–13px 的小字号下依然清晰,是整个高密度布局成立的前提。
+**Character:** 务实的工具字体姿态——不追字体的表现力,靠字号与字重做层级。中文界面在 11–13px 的小字号下依然清晰,是整个高密度布局成立的前提。品牌展示字只在品牌时刻点亮,不进入任何工具面。
 
 ### Hierarchy
 
@@ -212,11 +213,13 @@ components:
 
 ## Motion(基础过渡包)
 
-深夜工作室不表演动效——东西只是「被灯照到」和「就位」。全套过渡统一走 58 号票基础过渡包的四个 token(`style.css` `:root`),组件不得自造 duration/easing:
+深夜工作室不表演动效——东西只是「被灯照到」和「就位」。全套过渡统一走 58 号票立的基础过渡包(86 号票对齐 skill 节奏并增补,`style.css` `:root`),组件不得自造 duration/easing:
 
-- **时长三档**:`--dur-fast` 120ms(hover/按下/描边与底色反馈)、`--dur` 180ms(灯箱遮罩淡入、toast、编辑层淡入)、`--dur-slow` 260ms(面板滑入、对话框弹入、封面海报呼吸)。
-- **缓动一档**:`--ease` cubic-bezier(0.22, 0.61, 0.36, 1)——深夜缓出,只出不动进。
+- **时长档**:`--dur-fast` 150ms(hover 进入/描边与底色反馈)、`--dur-out` 120ms(hover 收回)、`--dur-press` 90ms(按下)、`--dur` 180ms(灯箱遮罩淡入、toast、编辑层淡入)、`--dur-slow` 260ms(面板滑入、对话框弹入)、`--dur-image` 600ms / `--dur-image-out` 400ms(封面海报呼吸,skill 图像节奏)。
+- **缓动两档**:`--ease` cubic-bezier(0.22, 0.61, 0.36, 1)——深夜缓出,只出不动进;`--ease-enter` cubic-bezier(0.22, 1, 0.36, 1)——入场专用 settle 曲线,普通过渡不走它。
 - **入场语义**:滑入的从右来(translateX 24px),弹入的轻轻上浮归位(translateY 8px + scale 0.98),遮罩类只做透明度;退场不做动画(工具要快关)。
+- **按钮微动效(skill 数字)**:实心主按钮 hover 上步 1px、按下回沉 scale 0.985;链接卡 lift 2px、封面 zoom 1.02–1.03;只在 `(hover: hover) and (pointer: fine)` 生效。
+- **常动件必配暂停**:任何持续 >5s 的循环动画(登录页拼贴轮换)必须带暂停盘,reduced-motion 下静止显示首帧组。
 - **编排级动效(连线动画、入场编排)不在本体系内,另票处理。**
 
 ## Shapes
@@ -264,7 +267,11 @@ components:
 
 ### IP 企划面(签名时刻)
 
-IP 卡片墙与详情页是全站唯一允许"海报感"的地方:企划渐变(#243b8f → #57348a → #8a2f5c,135°)铺封面与空态徽标,Display 档大字(28–42px)在此出现。离开 IP 身份时刻,渐变与大字都不该再出现。
+IP 卡片墙与详情页是全站唯一允许"海报感"的地方:企划渐变(#243b8f → #57348a → #8a2f5c,135°)铺封面与空态徽标,Display 档大字(28–42px)在此出现。86 号票升级:masthead 升 band 面板(暗页内缩亮带:accent/雾靛/企划紫角光 + 细噪 + hairline),kicker 用品牌展示字(Instrument Sans 大写字距),h1 下一条 64px 企划渐变 bar——渐变的品牌笔触收束成一条线,不再漫漶。空态给画面:hairline 迷你画布(三枚类型色节点 + 虚线连线),替代纯文字。离开 IP 身份时刻,渐变与大字都不该再出现。
+
+### 登录面(品牌门面,86 号票)
+
+登录/初始化共用 triptych 外壳(deal.mjs software 产):左 headline 列(字标 Instrument Sans 逐行出罩入场 + 中文宽字距行 + 一句 claim)、中作品拼贴(两组件 2.8s 交叉淡化轮换,件 = 画布自家节点卡缩微景:类型色描边 + 端口圆点 + glass 高光,件内零动画;暂停盘 32px 右下常驻)、右表单列(平板玻璃面板)。ground = halo(标后光晕)。拼贴是页面唯一常动物,「show the real thing」——展示的永远是画布自己的 UI 语汇,不放虚构插画。
 
 ## Do's and Don'ts
 
@@ -283,5 +290,7 @@ IP 卡片墙与详情页是全站唯一允许"海报感"的地方:企划渐变(#
 - **Don't** 把企划渐变(#243b8f→#57348a→#8a2f5c)用于按钮、状态或 IP 时刻之外的任何地方
 - **Don't** 在静止卡片上加阴影,或用阴影替代描边做层级
 - **Don't** 混用两支红:失败绯 #ff8f8f 是错误/失败,警报红 #f87171 是关卡卡类型色
-- **Don't** 引入 webfont 或在 15px 以上再加界面字级;字重只用 400/600/700 三档
+- **Don't** 在界面字上引入 webfont 或在 15px 以上再加界面字级;字重只用 400/600/700 三档(86 号票修订:品牌时刻的 Latin 展示字 'Instrument Sans' 与点缀 mono 'DM Mono' 例外——自托管、latin 子集、永不进入工具面正文字)
 - **Don't** 使用纯黑(#000)或纯白(#fff)作大面积底色/文字;深底与浅字都在蓝调色域内
+- **Don't** 给 hover 中的卡片加阴影:lift 2px + 描边升档就是悬浮反馈的全部,阴影仍只属于模态(浮起即模态不因 hover 破例,86 号票裁定)
+- **Don't** 让常动的东西没有暂停盘,或在 reduced-motion 下不停(86 号票增补)

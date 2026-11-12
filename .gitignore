@@ -28,3 +28,6 @@ desktop/web/canvas/*
 
 # 桌面版构建产物(二进制,不入库)
 desktop/build/
+
+# taste-skill dealer 历史(设计工具本地状态,不入库)
+.taste-skill/
