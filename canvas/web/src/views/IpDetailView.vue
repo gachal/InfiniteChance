@@ -493,6 +493,7 @@ function back(): void {
 
 <template>
   <main class="shell">
+    <!-- 素工具行(87 号票):主操作「新建画布」移入 ip-head band 升 primary。 -->
     <header class="masthead">
       <button
         class="ghost"
@@ -500,13 +501,6 @@ function back(): void {
         @click="back"
       >
         ← IP 列表
-      </button>
-      <button
-        class="ghost"
-        type="button"
-        @click="openCreate()"
-      >
-        + 新建画布
       </button>
     </header>
 
@@ -541,7 +535,14 @@ function back(): void {
           >{{ ip.name.slice(0, 1) }}</span>
         </span>
         <div class="head-info">
+          <p class="kicker">
+            InfiniteChance
+          </p>
           <h1>{{ ip.name }}</h1>
+          <span
+            class="brand-bar"
+            aria-hidden="true"
+          />
           <p class="description">
             {{ ip.description || '(还没有一句话简介)' }}
           </p>
@@ -552,8 +553,15 @@ function back(): void {
             画面风格:{{ ip.style }}
           </p>
           <p class="meta">
-            {{ ip.canvas_count }} 张画布 · 更新于 {{ formatTime(ip.latest_at) }}
+            {{ ip.canvas_count }} 张画布 · 更新于 <span class="meta-time">{{ formatTime(ip.latest_at) }}</span>
           </p>
+          <button
+            type="button"
+            class="primary head-cta"
+            @click="openCreate()"
+          >
+            + 新建画布
+          </button>
         </div>
         <span class="head-actions">
           <button
@@ -605,19 +613,39 @@ function back(): void {
         {{ loadError }}
       </p>
 
-      <!-- 画布区(53 号票 A 段平铺):接口本就按 updated_at 新到旧,直接
-           单列表展示,不再按类型分组。 -->
+      <!-- 画布区(53 号票 A 段平铺;87 号票双列网格卡):接口本就按
+           updated_at 新到旧,平铺双列卡片,不再按类型分组。 -->
       <section class="canvas-section">
         <h2>
           画布
           <span class="count">{{ canvases.length }}</span>
         </h2>
-        <p
+        <div
           v-if="canvases.length === 0"
-          class="feedback"
+          class="empty-state"
         >
-          还没有画布 —— 新建一张,从第一格分镜开始。
-        </p>
+          <!-- 空态画面:hairline 迷你画布(三枚类型色节点 + 虚线连线),
+               装饰件 aria-hidden、零动画(86 号票 IpListView 空态同款)。 -->
+          <div
+            class="empty-canvas"
+            aria-hidden="true"
+          >
+            <svg
+              class="ec-wires"
+              viewBox="0 0 420 150"
+              preserveAspectRatio="none"
+            >
+              <path d="M97 81 C 140 81, 150 39, 193 39" />
+              <path d="M257 39 C 300 39, 285 111, 322 111" />
+            </svg>
+            <span class="ec-node ec-a">图</span>
+            <span class="ec-node ec-b">视</span>
+            <span class="ec-node ec-c">剧</span>
+          </div>
+          <p class="feedback">
+            还没有画布 —— 新建一张,从第一格分镜开始。
+          </p>
+        </div>
         <ul
           v-else
           class="list"
@@ -659,7 +687,7 @@ function back(): void {
                 @click="openIPDetail(c)"
               >
                 <span class="name">{{ c.name }}</span>
-                <span class="meta">更新于 {{ formatTime(c.updated_at) }}</span>
+                <span class="meta">更新于 <span class="meta-time">{{ formatTime(c.updated_at) }}</span></span>
               </button>
               <span class="row-actions">
                 <button
@@ -726,6 +754,7 @@ function back(): void {
            cover_asset_id + 名称/别名/计数),切 tab 惰性拉目录。 -->
       <section class="character-section">
         <div class="section-head">
+          <h2>资产库</h2>
           <div
             class="library-tabs"
             role="tablist"
@@ -1105,10 +1134,12 @@ function back(): void {
 </template>
 
 <style scoped>
-/* 详情页改版(58 号票阶段三):1080 壳、IP 头升格海报位(28px 展示档
-   属于 IP 身份时刻)、区块节奏 token 化。 */
+/* 详情页改版(58 号票阶段三;87 号票升 display 时刻):壳 1200 对齐
+   列表页家族;ip-head 升 band 海报位(角光 + 细噪 + hairline + kicker
+   + 企划渐变 bar,展示档大字属 IP 身份时刻);画布区双列网格卡;
+   封面呼吸 600/400;按钮微动效走 skill 数字。 */
 .shell {
-  max-width: 1080px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 40px 32px 64px;
 }
@@ -1132,7 +1163,8 @@ function back(): void {
   transition:
     background-color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .ghost {
@@ -1174,25 +1206,78 @@ function back(): void {
   cursor: default;
 }
 
-/* IP 头:全站唯一的海报位之一,玻璃顶缘受光 + 展示档标题。 */
-.ip-head {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-  background: var(--wash-subtle);
-  border: 1px solid var(--line-section);
-  border-radius: var(--r-xl);
-  padding: 20px;
-  box-shadow: var(--glass-highlight);
+/* skill 微动效(87 号票):实心主按钮 hover 上步 1px、按下回沉(150/90)。 */
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  .primary:active:not(:disabled),
+  .ghost:active:not(:disabled),
+  .danger:active:not(:disabled) {
+    transform: translateY(0) scale(0.985);
+    transition-duration: var(--dur-press);
+  }
 }
 
+/* IP 头:全站唯一的海报位之一(87 号票升 band——本页唯一一支 band:
+   角光 + 细噪 + hairline,配方照 IpListView masthead)。 */
+.ip-head {
+  position: relative;
+  display: flex;
+  gap: 24px;
+  align-items: stretch;
+  border: 1px solid var(--line-section);
+  border-radius: var(--r-xl);
+  padding: 24px 26px;
+  overflow: hidden;
+  box-shadow: var(--glass-highlight);
+  background-image: var(--noise-tile),
+    radial-gradient(66% 130% at 0% 0%, rgba(var(--accent-rgb), 0.09), transparent 72%),
+    radial-gradient(52% 100% at 100% 0%, rgba(var(--indigo-soft-rgb), 0.07), transparent 76%),
+    radial-gradient(64% 110% at 100% 100%, color-mix(in oklab, var(--ip-violet) 14%, transparent), transparent 78%);
+  /* band 一次性入场(skill:hero enters once on load),非编排级。 */
+  animation: band-in 520ms var(--ease-enter);
+}
+
+@keyframes band-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ip-head {
+    animation: none;
+  }
+
+  .cover-img,
+  .character-cover img {
+    transition: none;
+  }
+
+  .list li:hover,
+  .character-card:hover {
+    transform: none;
+  }
+}
+
+/* 封面:框内大海报(87 号票 168→320),hover 呼吸对齐 skill 图像节奏
+   (进入 600ms,收回 400ms)。 */
 .cover {
   display: block;
-  width: 168px;
+  width: 320px;
   aspect-ratio: 16 / 9;
   border-radius: var(--r-lg);
   overflow: hidden;
   flex-shrink: 0;
+  align-self: flex-start;
   background: var(--wash-soft);
 }
 
@@ -1200,6 +1285,12 @@ function back(): void {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform var(--dur-image-out) var(--ease);
+}
+
+.cover:hover .cover-img {
+  transform: scale(1.03);
+  transition-duration: var(--dur-image);
 }
 
 .cover-fallback {
@@ -1207,7 +1298,7 @@ function back(): void {
   place-items: center;
   width: 100%;
   height: 100%;
-  font-size: 40px;
+  font-size: 56px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.82);
   background: linear-gradient(135deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
@@ -1218,14 +1309,36 @@ function back(): void {
   min-width: 0;
 }
 
+/* kicker 品牌字 + 企划渐变 bar(87 号票,IP 企划面语法照 IpListView)。 */
+.kicker {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .head-info h1 {
   margin: 0;
-  font-size: 28px;
-  letter-spacing: 0.5px;
+  font-size: clamp(28px, 3vw, 36px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+}
+
+.brand-bar {
+  display: block;
+  width: 64px;
+  height: 3px;
+  margin: 12px 0 0;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--ip-indigo) 0%, var(--ip-violet) 55%, var(--ip-wine) 100%);
 }
 
 .description {
-  margin: 6px 0 0;
+  margin: 10px 0 0;
   color: var(--text-muted);
   font-size: var(--fs-body);
 }
@@ -1244,10 +1357,21 @@ function back(): void {
   font-size: var(--fs-label);
 }
 
+/* 时间戳 mono 点缀(87 号票):DM Mono 只走数字时刻,不进正文。 */
+.meta-time {
+  font-family: var(--font-mono);
+}
+
+.head-cta {
+  margin-top: 14px;
+  padding: 10px 16px;
+}
+
 .head-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  align-self: flex-start;
 }
 
 .canvas-section {
@@ -1268,39 +1392,46 @@ function back(): void {
   font-weight: 400;
 }
 
+/* 画布双列网格卡(87 号票):平铺序不变(仍 updated_at 新到旧),只是
+   视觉网格化;hover lift 2px + 描边升档,无阴影(浮起即模态)。 */
 .list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: var(--sp-sm);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-md);
 }
 
 .list li {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-md);
+  flex-direction: column;
+  gap: 4px;
   background: var(--wash-subtle);
   border: 1px solid var(--line-section);
   border-radius: var(--r-xl);
-  padding: 8px 12px;
-  transition: border-color var(--dur-fast) var(--ease);
+  padding: 10px 12px;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
 }
 
 .list li:hover {
+  transform: translateY(-2px);
   border-color: var(--line-action);
+  background: var(--wash-soft);
 }
 
 .open {
   flex: 1;
   display: grid;
-  gap: 2px;
+  gap: 4px;
   text-align: left;
   background: transparent;
   border: none;
   color: inherit;
-  padding: 6px 8px;
+  padding: 6px 8px 2px;
   border-radius: var(--r-md);
   cursor: pointer;
 }
@@ -1347,6 +1478,7 @@ function back(): void {
   flex: 1;
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .rename-form input {
@@ -1363,6 +1495,70 @@ function back(): void {
   margin: 14px 0 0;
   color: var(--text-muted);
   font-size: var(--fs-body);
+}
+
+/* 空态画面(87 号票,86 号票 IpListView 空态同款):hairline 迷你画布,
+   三枚类型色节点卡 + 虚线连线,静止零动画。 */
+.empty-state {
+  padding: 36px 32px;
+  border: 1px dashed var(--line-control);
+  border-radius: var(--r-xl);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.empty-canvas {
+  position: relative;
+  width: min(420px, 100%);
+  aspect-ratio: 420 / 150;
+}
+
+.ec-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.ec-wires path {
+  fill: none;
+  stroke: rgba(var(--text-muted-rgb), 0.45);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+}
+
+.ec-node {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 42px;
+  border-radius: var(--r-lg);
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid var(--line-control);
+  box-shadow: var(--glass-highlight);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+}
+
+.ec-a {
+  left: 8%;
+  top: 40%;
+  border-color: rgba(var(--success-rgb), 0.42);
+}
+
+.ec-b {
+  left: 46%;
+  top: 12%;
+  border-color: rgba(var(--amber-rgb), 0.45);
+}
+
+.ec-c {
+  right: 8%;
+  bottom: 12%;
+  border-color: rgba(var(--gold-rgb), 0.45);
 }
 
 .error {
@@ -1382,7 +1578,7 @@ function back(): void {
 .section-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
@@ -1472,11 +1668,13 @@ function back(): void {
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform var(--dur-slow) var(--ease);
+  /* 呼吸节奏对齐 skill 图像缩放(87 号票):进入 600ms,收回 400ms。 */
+  transition: transform var(--dur-image-out) var(--ease);
 }
 
 .character-card:hover .character-cover img {
   transform: scale(1.03);
+  transition-duration: var(--dur-image);
 }
 
 .cover-fallback.small {
@@ -1525,7 +1723,7 @@ function back(): void {
 
 .asset-section h2 {
   margin: 0 0 10px;
-  font-size: 16px;
+  font-size: var(--fs-title);
 }
 
 .asset-holder {
