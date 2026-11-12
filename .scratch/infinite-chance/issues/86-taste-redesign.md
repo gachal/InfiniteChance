@@ -1,7 +1,7 @@
 # 86 taste-skill 品牌面重设计(登录页分屏 hero + IP 列表 display 时刻 + 画布氛围层)(2026-11-12 定案)
 
 Type: feat
-Status: 实现中(feat/86-taste-redesign)。
+Status: 已实现(2026-11-12,feat/86-taste-redesign 并 main c94ff35,未 push)。实现注记:登录拼贴两组件轮换的负 delay 必须写在 animation 简写之后(简写重置 delay 曾致两组同相空窗);暂停盘原被 aria-hidden 容器吞掉,已下沉 aria-hidden 到装饰件、控件对读屏可达;字标 14 字在 56px 溢出左列被 mask 裁断,收为 clamp(40px,3.3vw,52px)+nowrap;窄屏拼贴 max-height 320px 保表单探出首屏;点阵/连线覆写经 computed style 钉验(dots rgba(139,145,167,.32)/edges rgba(139,145,167,.38)@1.5px)。
 
 ## Question
 
