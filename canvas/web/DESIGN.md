@@ -267,7 +267,7 @@ components:
 
 ### IP 企划面(签名时刻)
 
-IP 卡片墙与详情页是全站唯一允许"海报感"的地方:企划渐变(#243b8f → #57348a → #8a2f5c,135°)铺封面与空态徽标,Display 档大字(28–42px)在此出现。86 号票升级:masthead 升 band 面板(暗页内缩亮带:accent/雾靛/企划紫角光 + 细噪 + hairline),kicker 用品牌展示字(Instrument Sans 大写字距),h1 下一条 64px 企划渐变 bar——渐变的品牌笔触收束成一条线,不再漫漶。空态给画面:hairline 迷你画布(三枚类型色节点 + 虚线连线),替代纯文字。离开 IP 身份时刻,渐变与大字都不该再出现。
+IP 卡片墙与详情页是全站唯一允许"海报感"的地方:企划渐变(#243b8f → #57348a → #8a2f5c,135°)铺封面与空态徽标,Display 档大字(28–42px)在此出现。86 号票升级:masthead 升 band 面板(暗页内缩亮带:accent/雾靛/企划紫角光 + 细噪 + hairline),kicker 用品牌展示字(Instrument Sans 大写字距),h1 下一条 64px 企划渐变 bar——渐变的品牌笔触收束成一条线,不再漫漶。空态给画面:hairline 迷你画布(三枚类型色节点 + 虚线连线),替代纯文字。离开 IP 身份时刻,渐变与大字都不该再出现。87 号票补详情页:ip-head 升本页唯一一支 band(配方同 masthead),kicker + 64px 渐变 bar 照用;封面升 320px 框内大海报,hover 呼吸 600/400;画布区双列网格卡(lift 2px + 描边升档,hover 无影)、空态沿用迷你画布;时间戳 meta 用 DM Mono 点缀(mono 数字时刻);band 一次性入场(520ms `--ease-enter`),reduced-motion 静止。
 
 ### 登录面(品牌门面,86 号票)
 
