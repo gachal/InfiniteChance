@@ -1,7 +1,7 @@
 # 87 IP 详情页 display 时刻升格(taste-skill 续章:band 海报位 + 画布网格)(2026-11-12 定案)
 
 Type: feat
-Status: 定案
+Status: 已实现(2026-11-12,feat/87-ip-detail-display 并 main 2dbc998,未 push)。实现注记:band 配方照抄 IpListView masthead(细噪 + 三层角光),glass-highlight 顶缘受光保留;「+ 新建画布」入 band 升 primary 后 masthead 只剩返回;画布网格 repeat(2, minmax(0,1fr)),重命名表单态卡内展开加垂直居中;空态迷你画布 SVG 内联复制自 IpListView(装饰件 aria-hidden、零动画);DM Mono 时间戳覆盖 IP 头与画布卡两处(toLocaleString('zh-CN') 为纯数字斜杠串,latin 子集覆盖无回落);验证用 dev 栈自签 JWT(dev 缺省密钥,公开常量)临时会话实看,1440 实数据 + 1920 空态两档,DOM computed style 断言钉验 band 配方/字体/320px 封面/双列网格,空态验证 IP 用后即删。
 
 ## Question
 
