@@ -136,7 +136,7 @@ func (e *relayEnv) seedMPSChannelPrio(t *testing.T, baseURL, publicModel, upstre
 func (e *relayEnv) seedMusicPrice(t *testing.T, publicModel string) {
 	t.Helper()
 	_, err := e.stores.prices.Upsert(context.Background(), pricing.Price{
-		PublicModel: publicModel, Unit: pricing.UnitCall,
+		PublicModel: publicModel, Unit: pricing.UnitCall, Capabilities: []string{"music"},
 		Call: &pricing.CallPrice{CNYPerCallMicros: 200_000},
 	})
 	if err != nil {
@@ -406,5 +406,35 @@ func TestRelayMusicModelsCatalogIntersectsCallPricing(t *testing.T) {
 	}
 	if _, ok := parsed.Prices["bgm-call"]; !ok {
 		t.Errorf("prices = %v, want the price summary attached", parsed.Prices)
+	}
+	// 88 号票不变量:无能力声明的按次轨行不进 models,prices 摘要维持
+	// 轨道投影不按能力收窄。
+	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
+		PublicModel: "bare-bgm", Unit: pricing.UnitCall,
+		Call: &pricing.CallPrice{CNYPerCallMicros: 50_000},
+	}); err != nil {
+		t.Fatalf("seed bare call price: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/v1/audio/music-models", nil)
+	req.Header.Set("Authorization", "Bearer "+full)
+	w = httptest.NewRecorder()
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second catalog status = %d", w.Code)
+	}
+	var reparsed struct {
+		Models []string                        `json:"models"`
+		Prices map[string]pricing.PriceSummary `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &reparsed); err != nil {
+		t.Fatalf("second catalog body: %v", err)
+	}
+	for _, m := range reparsed.Models {
+		if m == "bare-bgm" {
+			t.Errorf("capability-less model listed: bare-bgm must stay out of models")
+		}
+	}
+	if _, ok := reparsed.Prices["bare-bgm"]; !ok {
+		t.Errorf("prices = %v, want bare-bgm summary kept (track projection, not narrowed)", reparsed.Prices)
 	}
 }

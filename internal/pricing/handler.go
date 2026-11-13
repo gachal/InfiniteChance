@@ -49,16 +49,19 @@ type priceJSON struct {
 	CNYPerCall             float64            `json:"cny_per_call"`
 	SizeFactors            map[string]float64 `json:"size_factors,omitempty"`
 	CNYPer10KChars         float64            `json:"cny_per_10k_chars"`
-	CreatedAt              time.Time          `json:"created_at"`
-	UpdatedAt              time.Time          `json:"updated_at"`
+	// Capabilities 是模型能力声明(88 号票):空 = 不出现在任何目录下拉。
+	Capabilities []string  `json:"capabilities,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func toPriceJSON(p Price) priceJSON {
 	body := priceJSON{
-		PublicModel: p.PublicModel,
-		Unit:        p.Unit,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
+		PublicModel:  p.PublicModel,
+		Unit:         p.Unit,
+		Capabilities: p.Capabilities,
+		CreatedAt:    p.CreatedAt,
+		UpdatedAt:    p.UpdatedAt,
 	}
 	switch p.Unit {
 	case UnitToken:
@@ -145,6 +148,9 @@ type priceInputJSON struct {
 	CNYPerCall             float64            `json:"cny_per_call"`
 	SizeFactors            map[string]float64 `json:"size_factors"`
 	CNYPer10KChars         float64            `json:"cny_per_10k_chars"`
+	// Capabilities 是模型能力声明(88 号票):空合法 = 不出现在任何目录
+	// 下拉;非空时 Normalize 校验为轨道允许集子集,越轨 400。
+	Capabilities []string `json:"capabilities"`
 }
 
 type listResponse struct {
@@ -170,7 +176,7 @@ func (h *Handlers) Upsert(c *gin.Context) {
 		apierr.InvalidRequest(c, "请求体不是合法的模型价格 JSON")
 		return
 	}
-	p := Price{PublicModel: raw.PublicModel, Unit: raw.Unit}
+	p := Price{PublicModel: raw.PublicModel, Unit: raw.Unit, Capabilities: raw.Capabilities}
 	switch raw.Unit {
 	case UnitToken:
 		ratio := 1.0

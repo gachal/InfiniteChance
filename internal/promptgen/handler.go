@@ -16,6 +16,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/asset"
+	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/pricing"
@@ -1160,9 +1161,20 @@ func (h *CatalogHandlers) List(c *gin.Context) {
 
 // ModelHandlers serves the chat-model catalog for the editor's generate UI:
 // the public models priced on the token track — exactly what a prompt
-// generation may use.
+// generation may use. 88 号票起目录口径 = 渠道能力 ∩ 计价轨道 ∩ 模型能力
+// 三重交集。
 type ModelHandlers struct {
 	Prices ModelPricer
+	// Channels 是渠道目录的只读依赖(88 号票):目录只列「启用且具备 chat
+	// 渠道能力、model_map 含该模型」的渠道可服务的模型。nil = 装配缺口,
+	// 目录以 500 暴露(生产装配恒非 nil)。
+	Channels ChannelLister
+}
+
+// ChannelLister is the slice of the channel store the catalog needs. 内存
+// 过滤启用渠道是既有惯例(relay 同款),不新加 SQL 查询。
+type ChannelLister interface {
+	List(ctx context.Context) ([]channel.Channel, error)
 }
 
 // RegisterModelRoutes mounts (relative to the group, mounted at
@@ -1180,15 +1192,48 @@ func (h *ModelHandlers) List(c *gin.Context) {
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
+	capable, err := h.capableChannels(c.Request.Context())
+	if err != nil {
+		log.Printf("promptgen: list channels: %v", err)
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return
+	}
 	models := make([]string, 0, len(prices))
 	summaries := make(map[string]pricing.PriceSummary, len(prices))
 	for _, p := range prices {
 		// 带折算表的是视频 token 价(25 号票),不进聊天目录。
-		if p.Unit == pricing.UnitToken && p.Token != nil && !p.Token.HasVideoRates() {
-			models = append(models, p.PublicModel)
-			summaries[p.PublicModel] = p.Summary() // 38 号票:目录随行带价
+		if p.Unit != pricing.UnitToken || p.Token == nil || p.Token.HasVideoRates() {
+			continue
 		}
+		summaries[p.PublicModel] = p.Summary() // 38 号票:目录随行带价
+		// 88 号票:prices 维持轨道投影不按能力/渠道收窄,只收窄 models。
+		if !p.HasCapability(pricing.CapChat) || !capable[p.PublicModel] {
+			continue
+		}
+		models = append(models, p.PublicModel)
 	}
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
+}
+
+// capableChannels unions the model_map of enabled channels carrying the chat
+// capability. Channels 为 nil = 装配缺口,报错由调用方以 500 暴露。
+func (h *ModelHandlers) capableChannels(ctx context.Context) (map[string]bool, error) {
+	if h.Channels == nil {
+		return nil, errors.New("promptgen: prompt-model catalog has no channel store wired")
+	}
+	channels, err := h.Channels.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	capable := make(map[string]bool, len(channels))
+	for _, ch := range channels {
+		if !ch.Enabled || !ch.HasCapability(channel.CapChat) {
+			continue
+		}
+		for public := range ch.ModelMap {
+			capable[public] = true
+		}
+	}
+	return capable, nil
 }

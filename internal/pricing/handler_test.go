@@ -320,3 +320,99 @@ func TestPricingCharacterTrackRoundTrip(t *testing.T) {
 		t.Fatalf("list = %+v, want the character row at 1.4", list.Prices)
 	}
 }
+
+// 88 号票:价格行的模型能力声明 —— PUT 随行走 priceInputJSON.capabilities,
+// 响应回显;越轨组合 400(管理面统一错误形状),空合法。
+func TestPricingUpsertCapabilitiesRoundTrip(t *testing.T) {
+	r := newPricingServer(newFakeStore())
+
+	// call 轨合法子集:回显 + 落库。
+	w := doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model": "og-image-2.5",
+		"unit":         "call",
+		"cny_per_call": 0.04,
+		"capabilities": []string{"images", "panorama"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("Upsert status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var wire struct {
+		PublicModel  string   `json:"public_model"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("decode upsert response: %v", err)
+	}
+	if len(wire.Capabilities) != 2 || wire.Capabilities[0] != "images" || wire.Capabilities[1] != "panorama" {
+		t.Fatalf("capabilities echoed = %v, want [images panorama]", wire.Capabilities)
+	}
+
+	// 空数组:合法(= 不出现在任何下拉),回显 null/空。
+	w = doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model": "plain-img", "unit": "call", "cny_per_call": 0.01, "capabilities": []string{},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty capabilities status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+
+	// 越轨组合:call 轨勾 chat → 400 + 统一错误形状。
+	w = doPricingJSON(r, "PUT", "/admin/prices", map[string]any{
+		"public_model": "bad-m", "unit": "call", "cny_per_call": 0.01, "capabilities": []string{"chat"},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("out-of-track capabilities status = %d body %s, want 400", w.Code, w.Body.String())
+	}
+	var errShape struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &errShape); err != nil {
+		t.Fatalf("error body not the admin shape: %v", err)
+	}
+	if errShape.Error.Code == "" || errShape.Error.Message == "" {
+		t.Fatalf("error shape = %+v, want non-empty code+message", errShape.Error)
+	}
+}
+
+// 列表回显能力:GET /admin/prices 每行带 capabilities(88 号票,价格页
+// 能力列的数据源)。
+func TestPricingListEchoesCapabilities(t *testing.T) {
+	store := newFakeStore()
+	store.mu.Lock()
+	store.prices["og-image-2.5"] = pricing.Price{
+		PublicModel: "og-image-2.5", Unit: pricing.UnitCall,
+		Call:         &pricing.CallPrice{CNYPerCallMicros: 40_000},
+		Capabilities: []string{"images"},
+	}
+	store.prices["plain-img"] = pricing.Price{
+		PublicModel: "plain-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{},
+	}
+	store.mu.Unlock()
+
+	r := newPricingServer(store)
+	w := doPricingJSON(r, "GET", "/admin/prices", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("List status = %d, want 200", w.Code)
+	}
+	var list struct {
+		Prices []struct {
+			PublicModel  string   `json:"public_model"`
+			Capabilities []string `json:"capabilities"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	seen := map[string][]string{}
+	for _, p := range list.Prices {
+		seen[p.PublicModel] = p.Capabilities
+	}
+	if len(seen["og-image-2.5"]) != 1 || seen["og-image-2.5"][0] != "images" {
+		t.Fatalf("og-image-2.5 capabilities = %v, want [images]", seen["og-image-2.5"])
+	}
+	if len(seen["plain-img"]) != 0 {
+		t.Fatalf("plain-img capabilities = %v, want empty", seen["plain-img"])
+	}
+}

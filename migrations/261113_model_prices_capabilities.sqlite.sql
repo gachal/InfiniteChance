@@ -1,0 +1,15 @@
+-- 88 号票(模型级能力登记):model_prices 加 capabilities 列 —— 价格行即
+-- 模型注册行,能力是公开模型自身的客观属性、与挂在哪个渠道无关(SQLite
+-- TEXT NULL,与渠道 capabilities 列同款;能力编解码与 MySQL 侧同为 JSON
+-- 数组文本)。能力枚举 7 值:chat / images / videos / audio / music / sfx /
+-- panorama(第 7 值模型层独有);轨道允许集 token→{chat,videos}、
+-- character→{audio}、call→{images,music,panorama}、second→{videos,sfx},
+-- 非空时必须是允许集子集(校验在 Price.Normalize)。空 = 不出现在任何
+-- 目录下拉(合法状态,显式开启原则)。加列同时做一次性回填:启用渠道
+-- 能力位并集,hunyuan-world-panorama 特判仅 ["panorama"],不在任何启用
+-- 渠道 model_map 的行保持 NULL。
+--
+-- 本文件是留底,从不执行(ADR 0008):运行时加列与回填由
+-- internal/pricing 的 EnsureSchema 幂等自愈(加列分支一次性回填,列已
+-- 存在绝不重放 —— 管理员事后的人工收窄不被启动覆盖)。
+ALTER TABLE model_prices ADD COLUMN capabilities TEXT;

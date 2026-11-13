@@ -125,6 +125,8 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 // Scenes/Props 承载 IP 级场景库/道具库(65 号票):/api/ips/:id/scenes、
 // /api/ips/:id/props 目录与 /scenes、/props 系 CRUD,与 Characters 同用
 // IP 存在性裁决 —— 资产库三类实体的第二、三类。
+// Channels 承载目录端点的渠道交集只读面(88 号票):与网关同库共享同一
+// channels 表,目录过滤只读启用渠道,不参与写路径。
 type CanvasStores struct {
 	Auth       auth.Store
 	Canvases   canvas.Store
@@ -135,6 +137,7 @@ type CanvasStores struct {
 	Voices     voice.Store
 	Assets     asset.Store
 	Prices     pricing.Store
+	Channels   channel.Store
 	Tasks      canvastask.Store
 	Templates  prompttemplate.Store
 	Settings   settings.Store
@@ -246,11 +249,12 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 
 	// 目录面:图像/视频/音频模型与提示词模板、提示词聊天模型,全挂 JWT
 	// 会话。/audio-models 以服务级 key 代理网关 /v1/audio/models(57 号票
-	// —— audio 能力过滤维度在渠道表,归网关管)。
+	// —— audio 能力过滤维度在渠道表,归网关管)。/image-models 与
+	// /video-models(88 号票)三重交集的渠道维度用同一 channels store。
 	canvastask.RegisterModelRoutes(r.Group("/image-models", auth.RequireAuth(issuer)),
-		&canvastask.ModelHandlers{Prices: s.Prices})
+		&canvastask.ModelHandlers{Prices: s.Prices, Channels: s.Channels})
 	canvastask.RegisterVideoModelRoutes(r.Group("/video-models", auth.RequireAuth(issuer)),
-		&canvastask.ModelHandlers{Prices: s.Prices})
+		&canvastask.ModelHandlers{Prices: s.Prices, Channels: s.Channels})
 	canvastask.RegisterAudioModelRoutes(r.Group("/audio-models", auth.RequireAuth(issuer)),
 		&canvastask.Handlers{Gateway: gateway, Voices: s.Voices})
 	// /music-models 以服务级 key 代理网关 /v1/audio/music-models(60 号票
@@ -264,7 +268,7 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	promptgen.RegisterCatalogRoutes(r.Group("/prompt-templates", auth.RequireAuth(issuer)),
 		&promptgen.CatalogHandlers{Templates: s.Templates})
 	promptgen.RegisterModelRoutes(r.Group("/prompt-models", auth.RequireAuth(issuer)),
-		&promptgen.ModelHandlers{Prices: s.Prices})
+		&promptgen.ModelHandlers{Prices: s.Prices, Channels: s.Channels})
 
 	// 素材内容寻址例外 —— 节点用 <img>/<video> 预览,带不了
 	// Authorization 头(见 asset 包);素材库的列表/删除挂 JWT 会话,

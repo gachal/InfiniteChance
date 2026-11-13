@@ -4,8 +4,9 @@
 // · 创作态:内联表单(ADR 0002 显式例外,全参数固定进对话框等于全禁用
 //   控件;音频系同族先例)—— 参考图 chip 必填恰好 1(本机上传 + 素材库
 //   挑选双入口;chip 旁注记「须为场景图,人像/物体会被上游拒绝」)+
-//   模型下拉(/image-models 全量,缺省 hunyuan-world-panorama,不按模型
-//   特判 —— 选非全景名由上游 400 透出)+ 生成按钮;**无描述框、无尺寸/
+//   模型下拉(/image-models 全景档,88 号票起目录按模型能力过滤 —— 全景
+//   只进这里、不进普通图片下拉;缺省 hunyuan-world-panorama)+ 生成按钮;
+//   **无描述框、无尺寸/
 //   比例/透明选项**(上游固定 8K 2:1,原生不吃提示词)。选中不唤起生成
 //   对话框(编辑器 composerNode 只认 image/video)。
 // · 在途/失败:任务徽章(排队/生成中)+ 失败原因 + 原地重试(编辑器链)。
@@ -32,8 +33,9 @@ const props = defineProps<{
   task?: CanvasTask | null
   /** 重试请求在途时禁用重试按钮。 */
   retrying: boolean
-  /** /image-models 全量目录:模型下拉(不按全景名过滤,选非全景名由
-   * 上游 400 透出)与按次预估共用。 */
+  /** /image-models?capability=panorama 全景档名单(88 号票起目录端点按
+   * 模型能力过滤,普通图片下拉不再混入全景;这里吃专用档,模型下拉与
+   * 按次预估共用)。 */
   imageModels: string[]
   imagePrices: Record<string, ModelPriceSummary>
   /** 全景提交请求在途(编辑器级,禁提交按钮)。 */
@@ -110,7 +112,7 @@ function onRefInputChange(e: Event): void {
   }
 }
 
-// ---- 模型下拉(/image-models 全量,缺省 hunyuan-world-panorama)----
+// ---- 模型下拉(/image-models 全景档,缺省 hunyuan-world-panorama)----
 
 // 缺省物化(cover 创作态同款):创作态且节点尚未选模型时落一次 —— 目录
 // 里有全景公开名用它,没有落目录首项(下拉不出现悬空值);目录到齐后

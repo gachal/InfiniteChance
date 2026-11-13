@@ -120,6 +120,7 @@ func main() {
 			Voices:     voices,
 			Assets:     assets,
 			Prices:     prices,
+			Channels:   channels,
 			Tasks:      tasks,
 			Templates:  templates,
 			Settings:   settingsStore,

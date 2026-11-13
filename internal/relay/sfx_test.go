@@ -111,7 +111,7 @@ func (e *relayEnv) seedVODSfxChannel(t *testing.T, baseURL, publicModel, upstrea
 func (e *relayEnv) seedSfxPrice(t *testing.T, publicModel string) {
 	t.Helper()
 	_, err := e.stores.prices.Upsert(context.Background(), pricing.Price{
-		PublicModel: publicModel, Unit: pricing.UnitSecond,
+		PublicModel: publicModel, Unit: pricing.UnitSecond, Capabilities: []string{"sfx"},
 		Call: &pricing.CallPrice{CNYPerCallMicros: 100_000},
 	})
 	if err != nil {
@@ -297,11 +297,9 @@ func TestRelaySfxModelsCatalog(t *testing.T) {
 	env.seedVODSfxChannel(t, vendor.server.URL, "sfx-call-priced", "Kling sfx", 0)
 	env.seedMusicPrice(t, "sfx-call-priced")
 
+	_, fullKey := env.seedKey(t, 1_000_000)
 	req := httptest.NewRequest(http.MethodGet, "/v1/audio/sfx-models", nil)
-	req.Header.Set("Authorization", "Bearer "+func() string {
-		_, full := env.seedKey(t, 1_000_000)
-		return full
-	}())
+	req.Header.Set("Authorization", "Bearer "+fullKey)
 	w := httptest.NewRecorder()
 	env.engine.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -322,5 +320,37 @@ func TestRelaySfxModelsCatalog(t *testing.T) {
 	}
 	if p := catalog.Prices["vod-kling-sfx"]; p.Unit != "second" || p.CNYPerCall != 0.1 {
 		t.Fatalf("price = %+v, want second track at ¥0.10/秒", p)
+	}
+	// 88 号票不变量:无能力声明的按秒轨行不进 models,prices 摘要维持
+	// 轨道投影不按能力收窄。
+	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
+		PublicModel: "bare-sfx", Unit: pricing.UnitSecond,
+		Call: &pricing.CallPrice{CNYPerCallMicros: 10_000},
+	}); err != nil {
+		t.Fatalf("seed bare second price: %v", err)
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/audio/sfx-models", nil)
+	req.Header.Set("Authorization", "Bearer "+fullKey)
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second sfx catalog status = %d", w.Code)
+	}
+	var recatalog struct {
+		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit string `json:"unit"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &recatalog); err != nil {
+		t.Fatalf("second sfx catalog body: %v", err)
+	}
+	for _, m := range recatalog.Models {
+		if m == "bare-sfx" {
+			t.Errorf("capability-less model listed: bare-sfx must stay out of models")
+		}
+	}
+	if _, ok := recatalog.Prices["bare-sfx"]; !ok {
+		t.Errorf("prices = %v, want bare-sfx summary kept (track projection, not narrowed)", recatalog.Prices)
 	}
 }

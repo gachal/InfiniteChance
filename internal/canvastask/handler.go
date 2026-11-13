@@ -18,6 +18,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/apierr"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/voice"
 )
@@ -922,15 +923,24 @@ func (h *Handlers) failStore(c *gin.Context, err error) {
 
 // ModelHandlers serves the editor's model catalogs: the call-track models a
 // text-to-image submit may use (10 号票) and the second-track models an
-// image-to-video submit may use (12 号票).
+// image-to-video submit may use (12 号票). 88 号票起目录口径 = 渠道能力 ∩
+// 计价轨道 ∩ 模型能力 三重交集。
 type ModelHandlers struct {
 	Prices ModelPricer
+	// Channels 是渠道目录的只读依赖(88 号票):目录只列「启用且具备目标
+	// 渠道能力、model_map 含该模型」的渠道可服务的模型。复用 worker.go 的
+	// ChannelLister 接口(同一形状)。nil = 装配缺口,目录以 500 暴露
+	// (生产装配恒非 nil,Voices 同款纪律)。
+	Channels ChannelLister
 }
 
 // RegisterModelRoutes mounts (relative to the group, mounted at
 // /image-models behind the JWT middleware):
 //
-//	GET / — list image-capable public model names
+//	GET / — list image-capable public model names; the optional
+//	        ?capability=panorama switches to the panorama profile (88 号票,
+//	        未知值 400;参数只此一档 —— call 轨下图片/全景是仅有的两个
+//	        兄弟域)
 func RegisterModelRoutes(group *gin.RouterGroup, h *ModelHandlers) {
 	group.GET("", h.List)
 }
@@ -944,7 +954,18 @@ func RegisterVideoModelRoutes(group *gin.RouterGroup, h *ModelHandlers) {
 }
 
 func (h *ModelHandlers) List(c *gin.Context) {
-	h.listTrack(c, pricing.UnitCall)
+	capability := pricing.CapImages
+	switch v := c.Query("capability"); v {
+	case "":
+		// 缺省档 = images。
+	case string(pricing.CapPanorama):
+		capability = pricing.CapPanorama
+	default:
+		apierr.InvalidRequest(c, fmt.Sprintf("未知 capability %q,仅支持 panorama(缺省档为 images)", v))
+		return
+	}
+	// 渠道维度:全景模型同样走 images 渠道。
+	h.listTrack(c, pricing.UnitCall, capability, channel.CapImages)
 }
 
 func (h *ModelHandlers) ListVideos(c *gin.Context) {
@@ -956,43 +977,96 @@ func (h *ModelHandlers) ListVideos(c *gin.Context) {
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
-	models := make([]string, 0, len(prices))
-	summaries := make(map[string]pricing.PriceSummary, len(prices))
-	for _, p := range prices {
-		switch {
-		case p.Unit == pricing.UnitSecond && p.Call != nil:
-		case p.Unit == pricing.UnitToken && p.Token != nil && p.Token.HasVideoRates():
-		default:
-			continue
-		}
-		models = append(models, p.PublicModel)
-		summaries[p.PublicModel] = p.Summary() // 38 号票:目录随行带价,前端做预估
-	}
-	sort.Strings(models)
-	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
-}
-
-// listTrack answers the public model names priced on one item track, sorted
-// — the catalog is the pricing table's projection, nothing more (渠道侧的
-// capabilities 在网关调度时兜底,这里不重复校验). prices 映射随名单带
-// 人类人民币单价与系数(38 号票),models 字段形状不变、旧消费者不受扰。
-func (h *ModelHandlers) listTrack(c *gin.Context, unit pricing.Unit) {
-	prices, err := h.Prices.List(c.Request.Context())
+	capable, err := h.capableChannels(c.Request.Context(), channel.CapVideos)
 	if err != nil {
-		log.Printf("canvastask: list prices: %v", err)
+		log.Printf("canvastask: list channels: %v", err)
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
 	models := make([]string, 0, len(prices))
 	summaries := make(map[string]pricing.PriceSummary, len(prices))
 	for _, p := range prices {
-		if p.Unit == unit && p.Call != nil {
-			models = append(models, p.PublicModel)
-			summaries[p.PublicModel] = p.Summary()
+		trackMatch := false
+		switch {
+		case p.Unit == pricing.UnitSecond && p.Call != nil:
+			trackMatch = true
+		case p.Unit == pricing.UnitToken && p.Token != nil && p.Token.HasVideoRates():
+			trackMatch = true
 		}
+		if !trackMatch {
+			continue
+		}
+		summaries[p.PublicModel] = p.Summary() // 38 号票:目录随行带价,前端做预估
+		// 88 号票:prices 维持轨道投影不按能力/渠道收窄,只收窄 models。
+		if !p.HasCapability(pricing.CapVideos) || !capable[p.PublicModel] {
+			continue
+		}
+		models = append(models, p.PublicModel)
 	}
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
+}
+
+// listTrack answers the public model names on one item track that declare
+// the requested model capability and are servable by an enabled channel with
+// the requested channel capability (88 号票三重交集;旧语义是「计价表按轨道
+// 的纯投影」,渠道侧只在网关调度兜底 —— 混列病根,已推翻)。prices 映射
+// 随行带人类人民币单价与系数(38 号票),维持该端点的轨道投影、不按能力
+// /渠道收窄(旁路消费者 enrollmentPrice = imagePrices['voice-enrollment']
+// 等依赖它),只收窄 models 名单、形状不变。
+func (h *ModelHandlers) listTrack(c *gin.Context, unit pricing.Unit, capability pricing.Capability, channelCap channel.Capability) {
+	prices, err := h.Prices.List(c.Request.Context())
+	if err != nil {
+		log.Printf("canvastask: list prices: %v", err)
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return
+	}
+	capable, err := h.capableChannels(c.Request.Context(), channelCap)
+	if err != nil {
+		log.Printf("canvastask: list channels: %v", err)
+		apierr.Internal(c, "服务内部错误,请稍后再试")
+		return
+	}
+	models := make([]string, 0, len(prices))
+	summaries := make(map[string]pricing.PriceSummary, len(prices))
+	for _, p := range prices {
+		if p.Unit != unit || p.Call == nil {
+			continue
+		}
+		summaries[p.PublicModel] = p.Summary() // 轨道投影,不按能力/渠道收窄
+		if !p.HasCapability(capability) {
+			continue
+		}
+		if !capable[p.PublicModel] {
+			continue
+		}
+		models = append(models, p.PublicModel)
+	}
+	sort.Strings(models)
+	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
+}
+
+// capableChannels unions the model_map of enabled channels carrying the
+// requested channel capability. 缺一行都是装配缺口:Channels 为 nil 以 500
+// 暴露(生产装配恒非 nil)。
+func (h *ModelHandlers) capableChannels(ctx context.Context, need channel.Capability) (map[string]bool, error) {
+	if h.Channels == nil {
+		return nil, errors.New("canvastask: model catalog has no channel store wired")
+	}
+	channels, err := h.Channels.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	capable := make(map[string]bool, len(channels))
+	for _, ch := range channels {
+		if !ch.Enabled || !ch.HasCapability(need) {
+			continue
+		}
+		for public := range ch.ModelMap {
+			capable[public] = true
+		}
+	}
+	return capable, nil
 }
 
 // createVoiceTask lands one 音色创建 task (57 号票):表单事实就地校验

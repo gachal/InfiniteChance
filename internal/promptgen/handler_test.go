@@ -17,6 +17,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
+	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/character"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
@@ -86,6 +87,21 @@ func (f fakePrices) List(context.Context) ([]pricing.Price, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// fakeChannels 是目录端点的渠道只读桩(88 号票):缺省一条启用 chat 能力
+// 渠道,map 覆盖会进聊天目录的模型;换桩用例另构造。
+type fakeChannels struct{ chans []channel.Channel }
+
+func (f fakeChannels) List(context.Context) ([]channel.Channel, error) {
+	if len(f.chans) > 0 {
+		return f.chans, nil
+	}
+	return []channel.Channel{{
+		Name: "chat-chan", Type: channel.TypeOpenAI, Enabled: true,
+		Capabilities: []channel.Capability{channel.CapChat},
+		ModelMap:     map[string]string{"chat-a": "up", "chat-b": "up"},
+	}}, nil
 }
 
 func (f fakePrices) ByModel(_ context.Context, model string) (pricing.Price, error) {
@@ -226,10 +242,13 @@ func newHandlerEnv(t *testing.T, mutate func(*envParams)) handlerEnv {
 		&promptgen.CatalogHandlers{Templates: params.templates})
 	promptgen.RegisterModelRoutes(engine.Group("/prompt-models"),
 		&promptgen.ModelHandlers{Prices: fakePrices{byModel: map[string]pricing.Price{
-			"chat-b": {PublicModel: "chat-b", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
-			"chat-a": {PublicModel: "chat-a", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
-			"img-m":  {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
-		}}})
+			// 88 号票:chat 能力声明进聊天目录;bare-token 无声明不进,
+			// prices 轨道投影保留。
+			"chat-b":      {PublicModel: "chat-b", Unit: pricing.UnitToken, Capabilities: []string{"chat"}, Token: &pricing.TokenPrice{}},
+			"chat-a":      {PublicModel: "chat-a", Unit: pricing.UnitToken, Capabilities: []string{"chat"}, Token: &pricing.TokenPrice{}},
+			"bare-token":  {PublicModel: "bare-token", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
+			"img-m":       {PublicModel: "img-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
+		}}, Channels: fakeChannels{}})
 
 	server := httptest.NewServer(engine)
 	t.Cleanup(server.Close)
@@ -2057,5 +2076,85 @@ func TestAnalyzeUploadedAssetWithoutPublicBaseAnswers400(t *testing.T) {
 	code, _ := errorBody(t, raw)
 	if code != "asset_not_image" {
 		t.Errorf("code = %q, want asset_not_image (还没有可用的产物地址)", code)
+	}
+}
+
+// ---- 88 号票:聊天目录三重交集(渠道能力 ∩ 计价轨道 ∩ 模型能力)----
+
+// 无能力声明的 token 行不进 models;prices 摘要维持轨道投影不收窄。
+func TestPromptModelCatalogKeepsTrackProjection(t *testing.T) {
+	env := newHandlerEnv(t, nil)
+	res, raw := env.do(t, http.MethodGet, "/prompt-models", nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var got struct {
+		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit string `json:"unit"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if len(got.Models) != 2 || got.Models[0] != "chat-a" || got.Models[1] != "chat-b" {
+		t.Fatalf("models = %+v, want chat-capable token models only", got.Models)
+	}
+	for _, m := range got.Models {
+		if m == "bare-token" {
+			t.Errorf("capability-less model listed: bare-token must stay out of models")
+		}
+	}
+	if _, ok := got.Prices["bare-token"]; !ok {
+		t.Errorf("prices = %+v, want bare-token summary kept (track projection, not narrowed)", got.Prices)
+	}
+}
+
+// 渠道交集:chat 模型若不被任何启用 + chat 能力渠道映射,不进名单;
+// prices 轨道投影不受渠道影响。
+func TestPromptModelCatalogChannelIntersection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	promptgen.RegisterModelRoutes(engine.Group("/prompt-models"),
+		&promptgen.ModelHandlers{Prices: fakePrices{byModel: map[string]pricing.Price{
+			"chat-a": {PublicModel: "chat-a", Unit: pricing.UnitToken, Capabilities: []string{"chat"}, Token: &pricing.TokenPrice{}},
+		}}, Channels: fakeChannels{chans: []channel.Channel{
+			{
+				Name: "img-only", Type: channel.TypeOpenAI, Enabled: true,
+				Capabilities: []channel.Capability{channel.CapImages},
+				ModelMap:     map[string]string{"chat-a": "up"},
+			},
+			{
+				Name: "off-chat", Type: channel.TypeOpenAI, Enabled: false,
+				Capabilities: []channel.Capability{channel.CapChat},
+				ModelMap:     map[string]string{"chat-a": "up"},
+			},
+		}}})
+	server := httptest.NewServer(engine)
+	t.Cleanup(server.Close)
+
+	res, err := http.Get(server.URL + "/prompt-models")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body %s", res.StatusCode, raw)
+	}
+	var got struct {
+		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit string `json:"unit"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if len(got.Models) != 0 {
+		t.Fatalf("models = %+v, want empty (no chat-capable enabled channel)", got.Models)
+	}
+	if _, ok := got.Prices["chat-a"]; !ok {
+		t.Errorf("prices = %+v, want chat-a summary kept (track projection)", got.Prices)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -191,16 +192,69 @@ func (p CharacterPrice) ChargeMicros(chars int64) int64 {
 	return q.Int64()
 }
 
+// Capability is a model-level capability (88 号票): the price row doubles as
+// the model's registry row, so capability is an objective property of the
+// public model itself, independent of which channel it hangs on. The first
+// six values share the channel capability words (channel capability bits stay
+// the /v1 scheduling coarse filter, untouched); the seventh, panorama, is
+// model-layer only — panorama models go through images channels with
+// scene_type=3d_panorama but list only in the panorama node dropdown, never
+// in the plain image dropdown.
+type Capability string
+
+const (
+	CapChat     Capability = "chat"
+	CapImages   Capability = "images"
+	CapVideos   Capability = "videos"
+	CapAudio    Capability = "audio"
+	CapMusic    Capability = "music"
+	CapSfx      Capability = "sfx"
+	CapPanorama Capability = "panorama" // 模型层独有,渠道能力位没有此值
+)
+
+// SupportedCapabilities lists what a price row may declare.
+var SupportedCapabilities = []Capability{CapChat, CapImages, CapVideos, CapAudio, CapMusic, CapSfx, CapPanorama}
+
+// capabilitiesForUnit is the per-track allowed set (Q7a): non-empty
+// capabilities must be a subset of the row's track set. Cross-track
+// multi-capability models cannot exist under one-model-one-row billing, so
+// anything the validation catches is a config slip. The four sets are
+// disjoint and their union is exactly the seven supported values — an
+// out-of-track value is by definition an unknown one.
+func capabilitiesForUnit(u Unit) []Capability {
+	switch u {
+	case UnitToken:
+		return []Capability{CapChat, CapVideos}
+	case UnitCharacter:
+		return []Capability{CapAudio}
+	case UnitCall:
+		return []Capability{CapImages, CapMusic, CapPanorama}
+	case UnitSecond:
+		return []Capability{CapVideos, CapSfx}
+	}
+	return nil
+}
+
 // Price is one public model's price row: the track discriminator plus
 // exactly one track payload.
 type Price struct {
 	PublicModel string
 	Unit        Unit
-	Token       *TokenPrice     // Unit == UnitToken 时非 nil
-	Call        *CallPrice      // Unit == UnitCall/UnitSecond 时非 nil
-	Character   *CharacterPrice // Unit == UnitCharacter 时非 nil(56 号票)
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Capabilities 是模型能力声明(88 号票):空 = 合法状态,模型不出现在
+	// 任何目录下拉(显式开启原则);非空时 Normalize 校验为轨道允许集子集。
+	Capabilities []string
+	Token        *TokenPrice     // Unit == UnitToken 时非 nil
+	Call         *CallPrice      // Unit == UnitCall/UnitSecond 时非 nil
+	Character    *CharacterPrice // Unit == UnitCharacter 时非 nil(56 号票)
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// HasCapability reports whether the price row declares c. Empty capabilities
+// declare nothing — the model shows up in no catalog dropdown until an
+// admin opts it in.
+func (p Price) HasCapability(c Capability) bool {
+	return slices.Contains(p.Capabilities, string(c))
 }
 
 // ChargeMicros computes what a request costs the key: ceil of upstream cost
@@ -398,7 +452,43 @@ func (p Price) Normalize() (Price, error) {
 	default:
 		return p, fmt.Errorf("未知计价单位:%s", p.Unit)
 	}
+	// 88 号票:能力声明校验放在轨道校验之后 —— 未知单位先被轨道分支拒绝,
+	// 能力校验只对合法轨道生效。空合法,非空必须 ⊆ 轨道允许集。
+	caps, err := normalizeCapabilities(p.Capabilities, p.Unit)
+	if err != nil {
+		return p, err
+	}
+	p.Capabilities = caps
 	return p, nil
+}
+
+// normalizeCapabilities validates and canonicalizes a capability declaration
+// (88 号票): trim, per-value check against the track's allowed set, dedupe
+// keeping first occurrence. Empty stays empty — that is the legal "list in no
+// dropdown" state, not an error.
+func normalizeCapabilities(raw []string, u Unit) ([]string, error) {
+	allowed := capabilitiesForUnit(u)
+	caps := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, c := range raw {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			return nil, fmt.Errorf("能力值不能为空")
+		}
+		if !slices.Contains(allowed, Capability(c)) {
+			allowedStr := make([]string, 0, len(allowed))
+			for _, a := range allowed {
+				allowedStr = append(allowedStr, string(a))
+			}
+			return nil, fmt.Errorf("能力 %q 不在 %s 轨允许集内(允许:%s)", c, u, strings.Join(allowedStr, ", "))
+		}
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		caps = append(caps, c)
+	}
+	return caps, nil
 }
 
 // maxFactorEntries bounds the size-coefficient table like the channel

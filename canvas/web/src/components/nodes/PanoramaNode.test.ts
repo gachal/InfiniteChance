@@ -76,6 +76,16 @@ describe('PanoramaNode 卡面(81 号票)', () => {
     expect(nodeSource.includes('PANO_DEFAULT_MODEL')).toBe(true)
     expect(PANO_DEFAULT_MODEL).toBe('hunyuan-world-panorama')
   })
+
+  it('模型下拉吃全景档名单(88 号票):编辑器分流 capability=panorama 目录,不吃全量 imageModels', () => {
+    // 编辑器拉取处分流:panoramaModels ref 专吃全景档,失败静默兜底。
+    expect(editorSource.includes("listImageModels({ capability: 'panorama' })")).toBe(true)
+    expect(editorSource.includes('panoramaModels')).toBe(true)
+    // 节点传参换全景档;prices 仍走缺省档投影(88 号票不变量:prices 不
+    // 按能力收窄,预估与 enrollmentPrice 旁路消费者不受扰)。
+    expect(editorSource.includes(':image-models="panoramaModels"')).toBe(true)
+    expect(editorSource.includes(':image-prices="imagePrices"')).toBe(true)
+  })
 })
 
 describe('编辑器全景提交链(81 号票固定契约)', () => {

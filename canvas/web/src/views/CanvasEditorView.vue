@@ -355,6 +355,9 @@ const imageModels = ref<string[]>([])
 const videoModels = ref<string[]>([])
 const imagePrices = ref<Record<string, ModelPriceSummary>>({})
 const videoPrices = ref<Record<string, ModelPriceSummary>>({})
+// 全景档目录(88 号票):/image-models?capability=panorama 只含声明
+// panorama 能力的模型,全景节点下拉专用;缺省物化 watch 兜住空名单过渡。
+const panoramaModels = ref<string[]>([])
 const imageCatalogFailed = ref(false)
 const videoCatalogFailed = ref(false)
 const modelCatalogsLoaded = ref(false)
@@ -397,6 +400,16 @@ function refreshModelCatalogs(): void {
     })
     .catch(() => {
       videoCatalogFailed.value = true
+    })
+  // 全景档(88 号票):失败静默 —— 全景下拉可能为空,缺省物化 watch
+  // 兜住(不在册回落首项;全空则等目录到齐),不拦主 composer。
+  void client
+    .listImageModels({ capability: 'panorama' })
+    .then((catalog) => {
+      panoramaModels.value = catalog.models
+    })
+    .catch(() => {
+      /* 目录失败静默保持旧值:全景下拉可能为空,重试随窗口聚焦 */
     })
   void client
     .listAudioModels()
@@ -5048,7 +5061,7 @@ function backToList(): void {
             :data="nodeProps.data"
             :task="taskSync.byNode.get(nodeProps.id) ?? null"
             :retrying="retryingNode === nodeProps.id"
-            :image-models="imageModels"
+            :image-models="panoramaModels"
             :image-prices="imagePrices"
             :submitting="panoramaSubmitting"
             :ref-uploading="panoramaRefUploading"

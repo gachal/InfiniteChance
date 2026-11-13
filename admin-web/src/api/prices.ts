@@ -14,7 +14,8 @@ export type PriceUnit = 'call' | 'character' | 'second' | 'token';
 
 /** 一条模型价格(GET 列表行 / PUT 响应)。哪些字段有意义随 unit 而定:
  * token 行用 per-mtokens/ratio 族,call/second 行用 cny_per_call/size_factors 族;
- * 视频 token 行(25 号票)另带秒折算表。 */
+ * 视频 token 行(25 号票)另带秒折算表。capabilities 是模型能力声明
+ * (88 号票):空 = 不出现在任何目录下拉,非空必须是轨道允许集子集。 */
 export interface ModelPrice {
   public_model: string;
   unit: PriceUnit;
@@ -26,12 +27,14 @@ export interface ModelPrice {
   cny_per_call: number;
   size_factors?: Record<string, number>;
   cny_per_10k_chars: number;
+  capabilities?: string[];
   created_at: string;
   updated_at: string;
 }
 
 /** PUT 请求体:服务端按 unit 只读对应字段族并做 Normalize 校验
- * (未配价模型在 /v1 一律 model_not_priced 拒绝,本模块不改变该语义)。 */
+ * (未配价模型在 /v1 一律 model_not_priced 拒绝,本模块不改变该语义;
+ * capabilities 越轨组合被服务端 400 拒绝,88 号票)。 */
 export interface ModelPriceInput {
   public_model: string;
   unit: PriceUnit;
@@ -43,6 +46,7 @@ export interface ModelPriceInput {
   cny_per_call?: number;
   size_factors?: Record<string, number>;
   cny_per_10k_chars?: number;
+  capabilities?: string[];
 }
 
 export async function listModelPrices(): Promise<ModelPrice[]> {
