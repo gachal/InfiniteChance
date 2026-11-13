@@ -111,8 +111,14 @@ const CAPABILITY_LABEL: Record<string, string> = {
   panorama: '全景',
 };
 
-/** 表单能力选项:按当前轨道只显示允许集内的项。 */
-const capabilityOptions = computed(() => CAPABILITIES_BY_UNIT[formState.unit] ?? []);
+/** 表单能力选项:按当前轨道只显示允许集内的项;中文标签与列表列同源,
+ * 勾选值仍存英文原值(88 号票)。 */
+const capabilityOptions = computed(() =>
+  (CAPABILITIES_BY_UNIT[formState.unit] ?? []).map((v) => ({
+    label: CAPABILITY_LABEL[v] ?? v,
+    value: v,
+  })),
+);
 
 // 切轨道时剥掉越界勾选:允许集互不相交,换轨道后旧勾选必然越轨
 // (服务端会 400,前端先兜一层)。
