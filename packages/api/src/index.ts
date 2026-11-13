@@ -1622,10 +1622,14 @@ export class ApiClient {
   }
 
   /** 模型价格摘要(38 号票):目录随行携带,人类人民币单位,仅作展示
-   * 与发送前预估,不带任何计费语义(计费永远读服务端价格行)。 */
-  async listImageModels(): Promise<ModelCatalog> {
+   * 与发送前预估,不带任何计费语义(计费永远读服务端价格行)。
+   * 88 号票:目录按模型能力过滤 —— 不传 capability = images 档(普通
+   * 图片下拉),`{ capability: 'panorama' }` = 全景档(只含声明 panorama
+   * 能力的模型,全景节点下拉专用);prices 摘要两档都不按能力收窄。 */
+  async listImageModels(opts?: { capability?: 'panorama' }): Promise<ModelCatalog> {
+    const query = opts?.capability ? `?capability=${encodeURIComponent(opts.capability)}` : ''
     const body = await this.request<{ models: string[]; prices?: Record<string, ModelPriceSummary> }>(
-      '/image-models',
+      `/image-models${query}`,
     )
     return { models: body.models, prices: body.prices ?? {} }
   }
