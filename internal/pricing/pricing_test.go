@@ -489,3 +489,94 @@ func TestCharacterSnapshots(t *testing.T) {
 		t.Errorf("CallSnapshot of character price = nil error, want failure")
 	}
 }
+
+// 88 号票:模型级能力声明 —— 价格行即模型注册行,能力是公开模型自身的
+// 客观属性。校验口径(Q7a):空合法 = 不出现在任何下拉;非空必须是该行
+// 轨道允许集的子集,越轨与未知值一并拒绝。
+func TestPriceNormalizeCapabilities(t *testing.T) {
+	callBase := Price{PublicModel: "og-image-2.5", Unit: UnitCall,
+		Call: &CallPrice{CNYPerCallMicros: 40_000}}
+	tokenBase := Price{PublicModel: "deepseek-chat", Unit: UnitToken,
+		Token: &TokenPrice{InputMicrosPerMTokens: 1, OutputMicrosPerMTokens: 2, RatioMicros: 1_000_000}}
+	secondBase := Price{PublicModel: "wan2.2", Unit: UnitSecond,
+		Call: &CallPrice{CNYPerCallMicros: 5_000}}
+	characterBase := Price{PublicModel: "tts", Unit: UnitCharacter,
+		Character: &CharacterPrice{CNYPer10KCharsMicros: 1_400_000}}
+
+	for _, tc := range []struct {
+		name  string
+		price Price
+		want  []string
+	}{
+		{"empty legal on call", func() Price { p := callBase; p.Capabilities = nil; return p }(), nil},
+		{"empty slice legal on token", func() Price { p := tokenBase; p.Capabilities = []string{}; return p }(), nil},
+		{"call images", func() Price { p := callBase; p.Capabilities = []string{"images"}; return p }(), []string{"images"}},
+		{"call panorama", func() Price { p := callBase; p.Capabilities = []string{"panorama"}; return p }(), []string{"panorama"}},
+		{"call music", func() Price { p := callBase; p.Capabilities = []string{"music"}; return p }(), []string{"music"}},
+		{"call images+panorama dedup+trim", func() Price {
+			p := callBase
+			p.Capabilities = []string{" images ", "panorama", "images"}
+			return p
+		}(), []string{"images", "panorama"}},
+		{"token chat", func() Price { p := tokenBase; p.Capabilities = []string{"chat"}; return p }(), []string{"chat"}},
+		{"token chat+videos", func() Price { p := tokenBase; p.Capabilities = []string{"chat", "videos"}; return p }(), []string{"chat", "videos"}},
+		{"second videos", func() Price { p := secondBase; p.Capabilities = []string{"videos"}; return p }(), []string{"videos"}},
+		{"second sfx", func() Price { p := secondBase; p.Capabilities = []string{"sfx"}; return p }(), []string{"sfx"}},
+		{"character audio", func() Price { p := characterBase; p.Capabilities = []string{"audio"}; return p }(), []string{"audio"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.price.Normalize()
+			if err != nil {
+				t.Fatalf("Normalize: %v", err)
+			}
+			if len(got.Capabilities) != len(tc.want) {
+				t.Fatalf("capabilities = %v, want %v", got.Capabilities, tc.want)
+			}
+			for i := range tc.want {
+				if got.Capabilities[i] != tc.want[i] {
+					t.Fatalf("capabilities = %v, want %v", got.Capabilities, tc.want)
+				}
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name  string
+		price Price
+	}{
+		{"call with chat (越轨)", func() Price { p := callBase; p.Capabilities = []string{"chat"}; return p }()},
+		{"call with videos (越轨)", func() Price { p := callBase; p.Capabilities = []string{"videos"}; return p }()},
+		{"call with audio (越轨)", func() Price { p := callBase; p.Capabilities = []string{"audio"}; return p }()},
+		{"token with images (越轨)", func() Price { p := tokenBase; p.Capabilities = []string{"images"}; return p }()},
+		{"token with audio (越轨)", func() Price { p := tokenBase; p.Capabilities = []string{"audio"}; return p }()},
+		{"second with music (越轨)", func() Price { p := secondBase; p.Capabilities = []string{"music"}; return p }()},
+		{"second with panorama (越轨)", func() Price { p := secondBase; p.Capabilities = []string{"panorama"}; return p }()},
+		{"character with chat (越轨)", func() Price { p := characterBase; p.Capabilities = []string{"chat"}; return p }()},
+		{"unknown value", func() Price { p := callBase; p.Capabilities = []string{"bogus"}; return p }()},
+		{"blank value", func() Price { p := callBase; p.Capabilities = []string{"  "}; return p }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.price.Normalize(); err == nil {
+				t.Fatalf("Normalize = nil error, want rejection")
+			}
+		})
+	}
+}
+
+func TestPriceHasCapability(t *testing.T) {
+	p := Price{PublicModel: "og-image-2.5", Unit: UnitCall,
+		Call: &CallPrice{}, Capabilities: []string{"images"}}
+	if !p.HasCapability(CapImages) {
+		t.Errorf("HasCapability(images) = false, want true")
+	}
+	if p.HasCapability(CapPanorama) || p.HasCapability(CapChat) {
+		t.Errorf("undeclared capability = true, want false")
+	}
+	// 空 = 不出现在任何下拉(合法状态,显式开启原则)。
+	empty := Price{Unit: UnitCall, Call: &CallPrice{}}
+	for _, c := range SupportedCapabilities {
+		if empty.HasCapability(c) {
+			t.Errorf("empty capabilities HasCapability(%s) = true, want false", c)
+		}
+	}
+}
