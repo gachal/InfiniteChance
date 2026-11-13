@@ -83,7 +83,7 @@ func (s *MySQLStore) backfillCapabilities(ctx context.Context) error {
 		return nil
 	}
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT model_map, capabilities, enabled FROM channels WHERE enabled <> 0`)
+		`SELECT model_map, capabilities FROM channels WHERE enabled <> 0`)
 	if err != nil {
 		return err
 	}

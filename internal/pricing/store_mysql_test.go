@@ -262,9 +262,10 @@ func TestMySQLPriceCapabilitiesRoundTrip(t *testing.T) {
 }
 
 // 88 号票一次性回填(加列分支):存量库(无 capabilities 列)跑
-// EnsureSchema → 加列 + 按「启用渠道能力位并集」回填;panorama 单名特判;
-// 不在任何启用渠道 model_map 的行保持 NULL;重复 EnsureSchema 不重放
-// (人工收窄不被覆盖)。
+// EnsureSchema → 加列 + 按「启用渠道能力位并集」回填;NULL 能力渠道按
+// 07 号票生效集口径贡献 chat(聊天模型得 ["chat"],非聊天模型保持
+// NULL);panorama 单名特判;不在任何启用渠道 model_map 的行保持 NULL;
+// 重复 EnsureSchema 不重放(人工收窄不被覆盖)。
 func TestMySQLEnsureSchemaBackfillsCapabilitiesOnce(t *testing.T) {
 	_, db := openPricingTestDB(t)
 	ctx := context.Background()
@@ -313,6 +314,7 @@ INSERT INTO model_prices (public_model, unit, config) VALUES
 	('hunyuan-world-panorama', 'call', '{"cny_per_call_micros":50000}'),
 	('vod-minimax-music-2.0-cover', 'call', '{"cny_per_call_micros":250000}'),
 	('qwen-plus', 'token', '{}'),
+	('nullcap-img', 'call', '{"cny_per_call_micros":30000}'),
 	('orphan-m', 'call', '{"cny_per_call_micros":1000}')`); err != nil {
 		t.Fatalf("seed legacy prices: %v", err)
 	}
@@ -320,7 +322,7 @@ INSERT INTO model_prices (public_model, unit, config) VALUES
 INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, enabled) VALUES
 	('img', 'openai', 'https://a.example', 'k', '{"og-image-2.5":"og-image-2.5","hunyuan-world-panorama":"hunyuan-world-panorama"}', '["images"]', 1),
 	('bgm', 'tencent-vod', 'https://b.example', 'k', '{"vod-minimax-music-2.0-cover":"Music 2.0"}', '["music","sfx"]', 1),
-	('chat', 'openai', 'https://c.example', 'k', '{"qwen-plus":"qwen-plus"}', NULL, 1),
+	('chat', 'openai', 'https://c.example', 'k', '{"qwen-plus":"qwen-plus","nullcap-img":"nullcap-img"}', NULL, 1),
 	('off', 'openai', 'https://d.example', 'k', '{"og-image-2.5":"og-image-2.5"}', '["chat"]', 0)`); err != nil {
 		t.Fatalf("seed channels: %v", err)
 	}
@@ -334,7 +336,8 @@ INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, en
 		"og-image-2.5":                {"images"},       // 启用 images 渠道映射(停用渠道不计)
 		"hunyuan-world-panorama":      {"panorama"},     // 单名特判(照并集会得 images)
 		"vod-minimax-music-2.0-cover": {"music", "sfx"}, // 并集排序
-		"qwen-plus":                   nil,              // 渠道能力位 NULL 不贡献并集 → 保持空
+		"qwen-plus":                   {"chat"},         // NULL 能力渠道按生效集贡献 chat(07 号票)
+		"nullcap-img":                 nil,              // 非聊天模型剥掉默认 chat 后无并集 → 保持 NULL(显式开启原则)
 		"orphan-m":                    nil,              // 不在任何启用渠道 model_map → 保持空
 	}
 	for model, caps := range want {

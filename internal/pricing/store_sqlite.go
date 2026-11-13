@@ -107,10 +107,10 @@ func (s *SQLiteStore) backfillCapabilities(ctx context.Context) error {
 }
 
 // channelCapabilities reads (model_map → capabilities) facts of enabled
-// channels for the one-shot backfill. 渠道能力位 NULL 的历史行不贡献并集
-// (只继承显式声明的能力位)。
+// channels for the one-shot backfill. 渠道能力位 NULL 的历史行按 07 号票
+// 生效集口径贡献 chat(scanChannelCaps 置默认集,见 backfill.go)。
 func (s *SQLiteStore) channelCapabilities(ctx context.Context) ([]channelCaps, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT model_map, capabilities, enabled FROM channels WHERE enabled <> 0`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT model_map, capabilities FROM channels WHERE enabled <> 0`)
 	if err != nil {
 		return nil, err
 	}
@@ -219,15 +219,18 @@ func (s *SQLiteStore) Upsert(ctx context.Context, p Price) (Price, error) {
 	// MySQL 在新值与旧值完全一致时不算更改、updated_at 保持不动,
 	// DO UPDATE 的 WHERE 复刻这一语义。时间戳显式写入,对应 MySQL 的
 	// DEFAULT/ON UPDATE CURRENT_TIMESTAMP(6)。88 号票 WHERE 守卫扩入
-	// capabilities 列:只改能力的更新也要前进 updated_at(NULL 与 NULL
-	// 比较得 NULL = 不算更改,与值全同一致)。
+	// capabilities 列:只改能力的更新也要前进 updated_at。capabilities
+	// 可空,三值逻辑下 `<>` 不行——NULL <> 'x' 得 NULL,整条 WHERE 不
+	// 成立,勾能力/清能力的更新会静默不落库;该列用 NULL 安全不等
+	// `IS NOT`(NULL↔值 = true、NULL↔NULL = false,恰为「有变化」),
+	// unit/config 两列 NOT NULL,`<>` 与 `IS NOT` 等价。
 	if _, err := s.DB.ExecContext(ctx,
 		`INSERT INTO model_prices (public_model, unit, config, capabilities, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(public_model) DO UPDATE SET
 			unit = excluded.unit, config = excluded.config, capabilities = excluded.capabilities,
 			updated_at = ?
-		 WHERE unit <> excluded.unit OR config <> excluded.config OR capabilities <> excluded.capabilities`,
+		 WHERE unit <> excluded.unit OR config <> excluded.config OR capabilities IS NOT excluded.capabilities`,
 		p.PublicModel, string(p.Unit), config, capabilities, now, now, now); err != nil {
 		return Price{}, err
 	}

@@ -120,12 +120,66 @@ func TestSQLiteUpsertCapabilitiesOnlyChangeBumpsUpdatedAt(t *testing.T) {
 	if !third.UpdatedAt.Equal(second.UpdatedAt) {
 		t.Fatalf("updated_at moved on identical upsert: %v → %v", second.UpdatedAt, third.UpdatedAt)
 	}
+
+	// NULL 三值逻辑三方向(守卫列可空,<> 在 NULL 下静默不落库,须用
+	// IS NOT):(a) 存量 NULL 能力勾上能力 → 落库且 updated_at 前进。
+	nullCap := seedSQLiteCallRow(t, s, "null-cap-m", nil)
+	if nullCap.Capabilities != nil {
+		t.Fatalf("seeded null-cap-m capabilities = %v, want nil", nullCap.Capabilities)
+	}
+	time.Sleep(5 * time.Millisecond)
+	granted, err := s.Upsert(ctx, Price{
+		PublicModel: "null-cap-m", Unit: UnitCall, Capabilities: []string{"images"},
+		Call: &CallPrice{CNYPerCallMicros: 40_000},
+	})
+	if err != nil {
+		t.Fatalf("upsert NULL→images: %v", err)
+	}
+	if len(granted.Capabilities) != 1 || granted.Capabilities[0] != "images" {
+		t.Fatalf("NULL→images capabilities = %v, want [images]", granted.Capabilities)
+	}
+	if !granted.UpdatedAt.After(nullCap.UpdatedAt) {
+		t.Fatalf("updated_at %v not bumped after NULL→images (first %v)", granted.UpdatedAt, nullCap.UpdatedAt)
+	}
+
+	// (b) 有能力清成空(nil→NULL)→ 落库且 updated_at 前进,读回 nil。
+	time.Sleep(5 * time.Millisecond)
+	cleared, err := s.Upsert(ctx, Price{
+		PublicModel: "null-cap-m", Unit: UnitCall, Capabilities: nil,
+		Call: &CallPrice{CNYPerCallMicros: 40_000},
+	})
+	if err != nil {
+		t.Fatalf("upsert images→NULL: %v", err)
+	}
+	if cleared.Capabilities != nil {
+		t.Fatalf("images→NULL capabilities = %v, want nil", cleared.Capabilities)
+	}
+	if !cleared.UpdatedAt.After(granted.UpdatedAt) {
+		t.Fatalf("updated_at %v not bumped after images→NULL (first %v)", cleared.UpdatedAt, granted.UpdatedAt)
+	}
+
+	// (c) NULL→NULL(值全同含能力双空)→ 不算更改,updated_at 不动。
+	time.Sleep(5 * time.Millisecond)
+	sameNull, err := s.Upsert(ctx, Price{
+		PublicModel: "null-cap-m", Unit: UnitCall, Capabilities: nil,
+		Call: &CallPrice{CNYPerCallMicros: 40_000},
+	})
+	if err != nil {
+		t.Fatalf("idempotent NULL→NULL upsert: %v", err)
+	}
+	if sameNull.Capabilities != nil {
+		t.Fatalf("NULL→NULL capabilities = %v, want nil", sameNull.Capabilities)
+	}
+	if !sameNull.UpdatedAt.Equal(cleared.UpdatedAt) {
+		t.Fatalf("updated_at moved on identical NULL→NULL upsert: %v → %v", cleared.UpdatedAt, sameNull.UpdatedAt)
+	}
 }
 
 // 88 号票一次性回填(加列分支):存量库(无 capabilities 列)跑
-// EnsureSchema → 加列 + 按「启用渠道能力位并集」回填;panorama 单名特判;
-// 不在任何启用渠道 model_map 的行保持 NULL;重复 EnsureSchema 不重放
-// (人工收窄不被覆盖)。
+// EnsureSchema → 加列 + 按「启用渠道能力位并集」回填;NULL 能力渠道按
+// 07 号票生效集口径贡献 chat(聊天模型得 ["chat"],非聊天模型保持
+// NULL);panorama 单名特判;不在任何启用渠道 model_map 的行保持 NULL;
+// 重复 EnsureSchema 不重放(人工收窄不被覆盖)。
 func TestSQLiteEnsureSchemaBackfillsCapabilitiesOnce(t *testing.T) {
 	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "legacy.db"))
 	if err != nil {
@@ -155,8 +209,9 @@ INSERT INTO model_prices (public_model, unit, config, created_at, updated_at) VA
 	('hunyuan-world-panorama', 'call', '{"cny_per_call_micros":50000}', ?, ?),
 	('vod-minimax-music-2.0-cover', 'call', '{"cny_per_call_micros":250000}', ?, ?),
 	('qwen-plus', 'token', '{}', ?, ?),
+	('nullcap-img', 'call', '{"cny_per_call_micros":30000}', ?, ?),
 	('orphan-m', 'call', '{"cny_per_call_micros":1000}', ?, ?)`,
-		now, now, now, now, now, now, now, now, now, now); err != nil {
+		now, now, now, now, now, now, now, now, now, now, now, now); err != nil {
 		t.Fatalf("seed legacy prices: %v", err)
 	}
 	channelSchema := `
@@ -182,7 +237,7 @@ CREATE TABLE IF NOT EXISTS channels (
 INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, enabled) VALUES
 	('img', 'openai', 'https://a.example', 'k', '{"og-image-2.5":"og-image-2.5","hunyuan-world-panorama":"hunyuan-world-panorama"}', '["images"]', 1),
 	('bgm', 'tencent-vod', 'https://b.example', 'k', '{"vod-minimax-music-2.0-cover":"Music 2.0"}', '["music","sfx"]', 1),
-	('chat', 'openai', 'https://c.example', 'k', '{"qwen-plus":"qwen-plus"}', NULL, 1),
+	('chat', 'openai', 'https://c.example', 'k', '{"qwen-plus":"qwen-plus","nullcap-img":"nullcap-img"}', NULL, 1),
 	('off', 'openai', 'https://d.example', 'k', '{"og-image-2.5":"og-image-2.5"}', '["chat"]', 0)`); err != nil {
 		t.Fatalf("seed channels: %v", err)
 	}
@@ -196,7 +251,8 @@ INSERT INTO channels (name, type, base_url, api_key, model_map, capabilities, en
 		"og-image-2.5":                {"images"},       // 启用 images 渠道映射(停用渠道不计)
 		"hunyuan-world-panorama":      {"panorama"},     // 单名特判(照并集会得 images)
 		"vod-minimax-music-2.0-cover": {"music", "sfx"}, // 并集排序
-		"qwen-plus":                   nil,              // 渠道能力位 NULL 不贡献并集 → 保持空
+		"qwen-plus":                   {"chat"},         // NULL 能力渠道按生效集贡献 chat(07 号票)
+		"nullcap-img":                 nil,              // 非聊天模型剥掉默认 chat 后无并集 → 保持 NULL(显式开启原则)
 		"orphan-m":                    nil,              // 不在任何启用渠道 model_map → 保持空
 	}
 	for model, caps := range want {
