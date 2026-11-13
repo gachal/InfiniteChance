@@ -6,13 +6,14 @@
 // 服务端 handler。数据走本应用的 requestClient(共享包按票定案不动)。
 import type { FormInstance } from 'ant-design-vue';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
 import {
   Alert,
   Button,
+  CheckboxGroup,
   Divider,
   Form,
   FormItem,
@@ -47,6 +48,7 @@ const saving = ref(false);
 const formError = ref('');
 
 interface PriceForm {
+  capabilities: string[];
   defaultTokensPerSecond: number | undefined;
   inputCny: number | undefined;
   outputCny: number | undefined;
@@ -61,6 +63,8 @@ interface PriceForm {
 
 function blankForm(): PriceForm {
   return {
+    // 88 号票:新建缺省空 = 暂不列任何下拉,配好才亮。
+    capabilities: [],
     defaultTokensPerSecond: undefined,
     inputCny: undefined,
     outputCny: undefined,
@@ -82,9 +86,43 @@ const columns = [
   { key: 'unit', title: '轨道', width: 100 },
   { key: 'price', title: '单价' },
   { key: 'table', title: '尺寸表' },
+  { key: 'capabilities', title: '能力', width: 210 },
   { key: 'updated_at', title: '更新时间', width: 170 },
   { key: 'actions', title: '操作', width: 110 },
 ];
+
+// 模型能力(88 号票):轨道允许集(与服务端 Price.Normalize 同一口径,
+// 越轨组合服务端 400)。token→{chat,videos}、character→{audio}、
+// call→{images,music,panorama}、second→{videos,sfx}。
+const CAPABILITIES_BY_UNIT: Record<PriceUnit, string[]> = {
+  token: ['chat', 'videos'],
+  character: ['audio'],
+  call: ['images', 'music', 'panorama'],
+  second: ['videos', 'sfx'],
+};
+
+const CAPABILITY_LABEL: Record<string, string> = {
+  chat: '聊天',
+  images: '生图',
+  videos: '视频',
+  audio: '音频',
+  music: '配乐',
+  sfx: '音效',
+  panorama: '全景',
+};
+
+/** 表单能力选项:按当前轨道只显示允许集内的项。 */
+const capabilityOptions = computed(() => CAPABILITIES_BY_UNIT[formState.unit] ?? []);
+
+// 切轨道时剥掉越界勾选:允许集互不相交,换轨道后旧勾选必然越轨
+// (服务端会 400,前端先兜一层)。
+watch(
+  () => formState.unit,
+  (unit) => {
+    const allowed = CAPABILITIES_BY_UNIT[unit] ?? [];
+    formState.capabilities = formState.capabilities.filter((c) => allowed.includes(c));
+  },
+);
 
 const UNIT_LABEL: Record<PriceUnit, string> = {
   call: '按次',
@@ -124,6 +162,7 @@ function openCreate(): void {
 function openEdit(p: ModelPrice): void {
   editingModel.value = p.public_model;
   Object.assign(formState, {
+    capabilities: [...(p.capabilities ?? [])],
     defaultTokensPerSecond: p.default_tokens_per_second || undefined,
     inputCny: p.input_cny_per_mtokens,
     outputCny: p.output_cny_per_mtokens,
@@ -163,6 +202,7 @@ function buildInput() {
       ratio: formState.ratio,
       size_tokens_per_second: rates,
       default_tokens_per_second: formState.defaultTokensPerSecond ?? 0,
+      capabilities: [...formState.capabilities],
     };
   }
   if (formState.unit === 'character') {
@@ -170,6 +210,7 @@ function buildInput() {
       public_model: publicModel,
       unit: formState.unit,
       cny_per_10k_chars: formState.cnyPer10KChars ?? 0,
+      capabilities: [...formState.capabilities],
     };
   }
   const factors: Record<string, number> = {};
@@ -183,6 +224,7 @@ function buildInput() {
     unit: formState.unit,
     cny_per_call: formState.cnyPerCall ?? 0,
     size_factors: factors,
+    capabilities: [...formState.capabilities],
   };
 }
 
@@ -274,6 +316,15 @@ function tableSummary(p: ModelPrice): string {
   return shown.join('、') + (rest > 0 ? ` 等 ${entries.length} 条` : '');
 }
 
+/** 能力列:轨道允许集内的中文标签;空 = 不出现在任何目录下拉。 */
+function capabilitySummary(p: ModelPrice): string {
+  const caps = p.capabilities ?? [];
+  if (caps.length === 0) {
+    return '—';
+  }
+  return caps.map((c) => CAPABILITY_LABEL[c] ?? c).join('、');
+}
+
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleString('zh-CN', { hour12: false });
 }
@@ -336,6 +387,18 @@ const modalTitle = computed(() =>
               v-else
               class="text-neutral-400"
             >—</span>
+          </template>
+
+          <template v-else-if="column.key === 'capabilities'">
+            <span
+              v-if="capabilitySummary(record as ModelPrice) !== '—'"
+            >{{ capabilitySummary(record as ModelPrice) }}</span>
+            <Tooltip
+              v-else
+              title="未声明能力:该模型暂不出现在任何生成对话框下拉(88 号票显式开启原则)"
+            >
+              <span class="text-neutral-400">—</span>
+            </Tooltip>
           </template>
 
           <template v-else-if="column.key === 'updated_at'">
@@ -591,6 +654,18 @@ const modalTitle = computed(() =>
             </div>
           </FormItem>
         </template>
+
+        <!-- 能力(88 号票):按当前轨道只显示允许集内的项;空 = 合法,
+             模型暂不出现在任何目录下拉。 -->
+        <FormItem>
+          <template #label>
+            能力(决定出现在哪些生成对话框下拉;留空 = 暂不列任何下拉)
+          </template>
+          <CheckboxGroup
+            v-model:value="formState.capabilities"
+            :options="capabilityOptions"
+          />
+        </FormItem>
 
         <Alert
           v-if="formError"
