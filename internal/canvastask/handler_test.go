@@ -16,6 +16,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/canvas"
 	"github.com/gachal/InfiniteChance/internal/canvastask"
+	"github.com/gachal/InfiniteChance/internal/channel"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/voice"
 )
@@ -277,16 +278,46 @@ func (fakePrices) ByModel(_ context.Context, model string) (pricing.Price, error
 
 func (fakePrices) List(_ context.Context) ([]pricing.Price, error) {
 	return []pricing.Price{
-		{PublicModel: "chat-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{}},
-		{PublicModel: "sd-m", Unit: pricing.UnitToken, Token: &pricing.TokenPrice{DefaultTokensPerSecond: 21_465}},
-		{PublicModel: "zeta-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{}},
-		{PublicModel: "alpha-img", Unit: pricing.UnitCall, Call: &pricing.CallPrice{
+		{PublicModel: "chat-m", Unit: pricing.UnitToken, Capabilities: []string{"chat"}, Token: &pricing.TokenPrice{}},
+		{PublicModel: "sd-m", Unit: pricing.UnitToken, Capabilities: []string{"videos"}, Token: &pricing.TokenPrice{DefaultTokensPerSecond: 21_465}},
+		{PublicModel: "zeta-img", Unit: pricing.UnitCall, Capabilities: []string{"images"}, Call: &pricing.CallPrice{}},
+		{PublicModel: "alpha-img", Unit: pricing.UnitCall, Capabilities: []string{"images"}, Call: &pricing.CallPrice{
 			CNYPerCallMicros: 350_000, // ¥0.35/张(38 号票目录带价断言用)
 			SizeFactorMicros: map[string]int64{"1024x1024": 1_000_000, "2048x2048": 2_000_000},
 		}},
-		{PublicModel: "vid-m", Unit: pricing.UnitSecond, Call: &pricing.CallPrice{}},
-		{PublicModel: "zed-vid", Unit: pricing.UnitSecond, Call: &pricing.CallPrice{}},
+		{PublicModel: "vid-m", Unit: pricing.UnitSecond, Capabilities: []string{"videos"}, Call: &pricing.CallPrice{}},
+		{PublicModel: "zed-vid", Unit: pricing.UnitSecond, Capabilities: []string{"videos"}, Call: &pricing.CallPrice{}},
+		// 88 号票:全景档(只进 ?capability=panorama,不进缺省 images 档)。
+		{PublicModel: "pano-m", Unit: pricing.UnitCall, Capabilities: []string{"panorama"}, Call: &pricing.CallPrice{CNYPerCallMicros: 50_000}},
+		// 无能力声明 = 不出现在任何下拉,但 prices 轨道投影保留(不变量)。
+		{PublicModel: "bare-call-m", Unit: pricing.UnitCall, Call: &pricing.CallPrice{CNYPerCallMicros: 10_000}},
+		// music 能力的按次行(混列病根样本):不进图片下拉,prices 保留。
+		{PublicModel: "enroll-m", Unit: pricing.UnitCall, Capabilities: []string{"music"}, Call: &pricing.CallPrice{CNYPerCallMicros: 20_000}},
 	}, nil
+}
+
+// fakeChannels 是目录端点的渠道只读桩(88 号票):缺省一条启用渠道、
+// 能力位齐全,model_map 覆盖 fakePrices 里会进目录的模型 —— 既有目录
+// 断言的渠道交集恒真;渠道过滤的行为用例另起测试换桩。bare-call-m 与
+// enroll-m 故意不在映射里:它们靠能力位/轨道先被排除,钉 prices 投影
+// 与渠道无关。
+type fakeChannels struct{ chans []channel.Channel }
+
+func (f fakeChannels) List(context.Context) ([]channel.Channel, error) {
+	if len(f.chans) > 0 {
+		return f.chans, nil
+	}
+	return []channel.Channel{{
+		Name: "all-chan", Type: channel.TypeOpenAI, Enabled: true,
+		Capabilities: []channel.Capability{
+			channel.CapChat, channel.CapImages, channel.CapVideos,
+			channel.CapAudio, channel.CapMusic, channel.CapSfx,
+		},
+		ModelMap: map[string]string{
+			"chat-m": "up", "sd-m": "up", "zeta-img": "up", "alpha-img": "up",
+			"vid-m": "up", "zed-vid": "up", "pano-m": "up",
+		},
+	}}, nil
 }
 
 // handlerEnv wires the /canvases and model-catalog routes the way the binary
@@ -322,8 +353,10 @@ func newHandlerEnvWith(gateway *okGateway, assets *fakeAssets, publicBase string
 		Tasks: tasks, Canvases: fakeCanvases{}, Models: fakePrices{}, Assets: assets, Gateway: gw,
 		PublicBaseURL: publicBaseURL,
 	})
-	canvastask.RegisterModelRoutes(r.Group("/image-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
-	canvastask.RegisterVideoModelRoutes(r.Group("/video-models"), &canvastask.ModelHandlers{Prices: fakePrices{}})
+	canvastask.RegisterModelRoutes(r.Group("/image-models"),
+		&canvastask.ModelHandlers{Prices: fakePrices{}, Channels: fakeChannels{}})
+	canvastask.RegisterVideoModelRoutes(r.Group("/video-models"),
+		&canvastask.ModelHandlers{Prices: fakePrices{}, Channels: fakeChannels{}})
 	return &handlerEnv{engine: r, tasks: tasks, assets: assets, gateway: gateway}
 }
 
@@ -851,11 +884,16 @@ func TestHandlerImageModelsListsCallTrackOnly(t *testing.T) {
 		t.Fatalf("not JSON: %v", err)
 	}
 	if len(resp.Models) != 2 || resp.Models[0] != "alpha-img" || resp.Models[1] != "zeta-img" {
-		t.Errorf("models = %v, want the two call-track models sorted", resp.Models)
+		t.Errorf("models = %v, want the two images-capable call-track models sorted", resp.Models)
 	}
-	// 38 号票:目录随行带 prices 摘要(人类元单位与系数)。
-	if len(resp.Prices) != 2 {
-		t.Fatalf("prices = %v, want one summary per call-track model", resp.Prices)
+	// 38 号票:目录随行带 prices 摘要(人类元单位与系数)。88 号票不变量:
+	// prices 维持该端点轨道投影、不按能力/渠道收窄 —— 全部 5 个 call 行
+	// (含 pano-m/bare-call-m/enroll-m)都在,只收窄 models 名单。
+	if len(resp.Prices) != 5 {
+		t.Fatalf("prices = %v, want the full call-track projection (5 rows)", resp.Prices)
+	}
+	if _, ok := resp.Prices["enroll-m"]; !ok {
+		t.Errorf("prices missing enroll-m: track projection must not be narrowed by capability")
 	}
 	if p := resp.Prices["alpha-img"]; p.Unit != "call" || p.CNYPerCall <= 0 || len(p.SizeFactors) == 0 {
 		t.Errorf("alpha-img summary = %+v, want call track with CNY unit price and factors", p)
@@ -1673,5 +1711,117 @@ func TestHandlerCreateMusicTaskCoverStrength(t *testing.T) {
 	}
 	if stored, ok := env.tasks.tasks[plainResp.Task.ID]; !ok || stored.CoverStrength != nil {
 		t.Fatalf("plain stored = %+v ok=%v, want nil cover_strength", stored, ok)
+	}
+}
+
+// ---- 88 号票:目录端点三重交集(渠道能力 ∩ 计价轨道 ∩ 模型能力)----
+
+// ?capability=panorama 全景档:call 轨 ∩ panorama 能力;缺省档不混入全景。
+func TestHandlerImageModelsPanoramaCapabilityParam(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "x"})
+	w := env.do(t, http.MethodGet, "/image-models?capability=panorama", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit string `json:"unit"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0] != "pano-m" {
+		t.Fatalf("models = %v, want [pano-m] only", resp.Models)
+	}
+	// prices 维持轨道投影:全景档的 prices 也不收窄(5 个 call 行)。
+	if len(resp.Prices) != 5 {
+		t.Fatalf("prices = %v, want the full call-track projection (5 rows)", resp.Prices)
+	}
+	if _, ok := resp.Prices["alpha-img"]; !ok {
+		t.Errorf("prices missing alpha-img: projection must not be narrowed by capability param")
+	}
+}
+
+// 未知 capability 值 400(参数只此一档:缺省 images、显式 panorama)。
+func TestHandlerImageModelsRejectsUnknownCapability(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "x"})
+	for _, q := range []string{"?capability=bogus", "?capability=images", "?capability=chat"} {
+		w := env.do(t, http.MethodGet, "/image-models"+q, "")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("GET %s = %d body %s, want 400", q, w.Code, w.Body.String())
+		}
+	}
+}
+
+// 渠道交集:images 能力行若不被任何启用 + images 能力渠道映射,不进名单;
+// prices 轨道投影不受渠道影响;停用渠道的映射不进名单。
+func TestHandlerImageModelsChannelIntersection(t *testing.T) {
+	// 换桩:只留一条仅 chat 能力的启用渠道(映射所有模型)+ 一条停用的
+	// images 渠道。
+	r := gin.New()
+	canvastask.RegisterModelRoutes(r.Group("/image-models"),
+		&canvastask.ModelHandlers{Prices: fakePrices{}, Channels: fakeChannels{chans: []channel.Channel{
+			{
+				Name: "chat-only", Type: channel.TypeOpenAI, Enabled: true,
+				Capabilities: []channel.Capability{channel.CapChat},
+				ModelMap: map[string]string{
+					"alpha-img": "up", "zeta-img": "up", "pano-m": "up",
+					"vid-m": "up", "zed-vid": "up", "sd-m": "up", "chat-m": "up",
+				},
+			},
+			{
+				Name: "off-img", Type: channel.TypeOpenAI, Enabled: false,
+				Capabilities: []channel.Capability{channel.CapImages},
+				ModelMap:     map[string]string{"alpha-img": "up", "zeta-img": "up"},
+			},
+		}}})
+	req := httptest.NewRequest(http.MethodGet, "/image-models", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit string `json:"unit"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(resp.Models) != 0 {
+		t.Fatalf("models = %v, want empty (no images-capable enabled channel)", resp.Models)
+	}
+	// prices 是轨道投影,渠道交集不收窄它(5 个 call 行仍在)。
+	if len(resp.Prices) != 5 {
+		t.Fatalf("prices = %v, want the full call-track projection (5 rows)", resp.Prices)
+	}
+}
+
+// 视频目录的能力位:无 videos 声明的 second/token 行不进名单,prices 投影
+// 保留全部视频轨行(second 两行 + 视频折算 token 一行)。
+func TestHandlerVideoModelsCapabilityIntersection(t *testing.T) {
+	env := newHandlerEnv(&okGateway{url: "x"})
+	w := env.do(t, http.MethodGet, "/video-models", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s, want 200", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Models []string `json:"models"`
+		Prices map[string]struct {
+			Unit string `json:"unit"`
+		} `json:"prices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(resp.Models) != 3 || resp.Models[0] != "sd-m" || resp.Models[1] != "vid-m" || resp.Models[2] != "zed-vid" {
+		t.Fatalf("models = %v, want [sd-m vid-m zed-vid]", resp.Models)
+	}
+	if len(resp.Prices) != 3 {
+		t.Fatalf("prices = %v, want full video-track projection (sd-m/vid-m/zed-vid)", resp.Prices)
 	}
 }

@@ -212,6 +212,7 @@ func NewDesktop() (*Desktop, error) {
 			Voices:     voices,
 			Assets:     assets,
 			Prices:     prices,
+			Channels:   channels,
 			Tasks:      tasks,
 			Templates:  templates,
 			Settings:   settingsStore,
