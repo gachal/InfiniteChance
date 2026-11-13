@@ -157,7 +157,7 @@ func (e *relayEnv) seedEnrollmentPrice(t *testing.T) {
 func (e *relayEnv) seedSpeechPrice(t *testing.T) {
 	t.Helper()
 	if _, err := e.stores.prices.Upsert(context.Background(), pricing.Price{
-		PublicModel: testTTSModel, Unit: pricing.UnitCharacter,
+		PublicModel: testTTSModel, Unit: pricing.UnitCharacter, Capabilities: []string{"audio"},
 		Character: &pricing.CharacterPrice{CNYPer10KCharsMicros: 1_400_000},
 	}); err != nil {
 		t.Fatalf("seed speech price: %v", err)
@@ -796,6 +796,33 @@ func TestRelayAudioModelsCatalog(t *testing.T) {
 	summary, ok := resp.Prices[testTTSModel]
 	if !ok || summary.Unit != string(pricing.UnitCharacter) || summary.CNYPer10KChars == 0 {
 		t.Fatalf("price summary = %+v, want character-track with cny_per_10k_chars", summary)
+	}
+	// 88 号票不变量:无能力声明的字符轨行不进 models,但 prices 摘要
+	// 维持该端点的轨道投影、不按能力收窄。
+	if _, err := env.stores.prices.Upsert(context.Background(), pricing.Price{
+		PublicModel: "bare-tts", Unit: pricing.UnitCharacter,
+		Character: &pricing.CharacterPrice{CNYPer10KCharsMicros: 900_000},
+	}); err != nil {
+		t.Fatalf("seed bare character price: %v", err)
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/audio/models", nil)
+	req.Header.Set("Authorization", "Bearer "+fullKey)
+	env.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second catalog status = %d", w.Code)
+	}
+	resp2 := resp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp2); err != nil {
+		t.Fatalf("second body not JSON: %v", err)
+	}
+	for _, m := range resp2.Models {
+		if m == "bare-tts" {
+			t.Errorf("capability-less model listed: bare-tts must stay out of models")
+		}
+	}
+	if _, ok := resp2.Prices["bare-tts"]; !ok {
+		t.Errorf("prices = %v, want bare-tts summary kept (track projection, not narrowed)", resp2.Prices)
 	}
 	_ = audio
 }

@@ -67,10 +67,12 @@ func (h *Handlers) ListModels(c *gin.Context) {
 
 // AudioModels answers GET /v1/audio/models (57 号票):启用渠道中带 audio
 // 能力的 model_map 并集,与字符轨配价(unit=character)取交集 —— 目录只列
-// 「能被某条 audio 渠道服务且已按字符配价」的合成模型,价格随行走
-// PriceSummary(38 号票),画布的 /audio-models 以服务级 key 代理本端点。
-// voice-enrollment(定制的调度与计费键,次轨)不进目录 —— 它不是合成模型,
-// 音色创建的表单按 target_model 选型。
+// 「能被某条 audio 渠道服务、已按字符配价且声明了 audio 模型能力」的合成
+// 模型,价格随行走 PriceSummary(38 号票),画布的 /audio-models 以服务级
+// key 代理本端点。voice-enrollment(定制的调度与计费键,次轨)不进目录
+// —— 它不是合成模型,音色创建的表单按 target_model 选型。
+// 88 号票:三重交集 = 渠道能力 ∩ 计价轨道 ∩ 模型能力;prices 摘要维持
+// 该端点的轨道投影、不按能力收窄,只收窄 models 名单。
 func (h *Handlers) AudioModels(c *gin.Context) {
 	channels, err := h.listChannels(c.Request.Context())
 	if err != nil {
@@ -97,11 +99,14 @@ func (h *Handlers) AudioModels(c *gin.Context) {
 		if p.Unit != pricing.UnitCharacter || p.Character == nil {
 			continue
 		}
+		summaries[p.PublicModel] = p.Summary() // 轨道投影,不按能力/渠道收窄
+		if !p.HasCapability(pricing.CapAudio) {
+			continue
+		}
 		if !capable[p.PublicModel] {
 			continue
 		}
 		models = append(models, p.PublicModel)
-		summaries[p.PublicModel] = p.Summary()
 	}
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
@@ -109,9 +114,10 @@ func (h *Handlers) AudioModels(c *gin.Context) {
 
 // MusicModels answers GET /v1/audio/music-models (60 号票):启用渠道中带
 // music 能力的 model_map 并集,与按次轨配价(unit=call)取交集 —— 目录只
-// 列「能被某条 music 渠道服务且已按次配价」的配乐模型,价格随行走
-// PriceSummary(38 号票),画布的 /music-models 以服务级 key 代理本端点。
-// 不动 /v1/audio/models 的 character 过滤(TTS 下拉不混入音乐模型)。
+// 列「能被某条 music 渠道服务、已按次配价且声明了 music 模型能力」的配乐
+// 模型,价格随行走 PriceSummary(38 号票),画布的 /music-models 以服务级
+// key 代理本端点。不动 /v1/audio/models 的 character 过滤(TTS 下拉不混入
+// 音乐模型)。88 号票:prices 维持轨道投影,只收窄 models 名单。
 func (h *Handlers) MusicModels(c *gin.Context) {
 	channels, err := h.listChannels(c.Request.Context())
 	if err != nil {
@@ -138,11 +144,14 @@ func (h *Handlers) MusicModels(c *gin.Context) {
 		if p.Unit != pricing.UnitCall || p.Call == nil {
 			continue
 		}
+		summaries[p.PublicModel] = p.Summary() // 轨道投影,不按能力/渠道收窄
+		if !p.HasCapability(pricing.CapMusic) {
+			continue
+		}
 		if !capable[p.PublicModel] {
 			continue
 		}
 		models = append(models, p.PublicModel)
-		summaries[p.PublicModel] = p.Summary()
 	}
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
@@ -150,10 +159,11 @@ func (h *Handlers) MusicModels(c *gin.Context) {
 
 // SfxModels answers GET /v1/audio/sfx-models (61 号票):启用渠道中带 sfx
 // 能力的 model_map 并集,与按秒轨配价(unit=second)取交集 —— 目录只列
-// 「能被某条 sfx 渠道服务且已按秒配价」的音效模型,价格随行走
-// PriceSummary(38 号票;second 轨复用 cny_per_call 字段,语义 = 元/秒),
-// 画布的 /sfx-models 以服务级 key 代理本端点。不动 /v1/audio/models 的
-// character 过滤与 /v1/audio/music-models 的 call 过滤(三个下拉互不混)。
+// 「能被某条 sfx 渠道服务、已按秒配价且声明了 sfx 模型能力」的音效模型,
+// 价格随行走 PriceSummary(38 号票;second 轨复用 cny_per_call 字段,语义
+// = 元/秒),画布的 /sfx-models 以服务级 key 代理本端点。不动
+// /v1/audio/models 的 character 过滤与 /v1/audio/music-models 的 call
+// 过滤(三个下拉互不混)。88 号票:prices 维持轨道投影,只收窄 models 名单。
 func (h *Handlers) SfxModels(c *gin.Context) {
 	channels, err := h.listChannels(c.Request.Context())
 	if err != nil {
@@ -180,11 +190,14 @@ func (h *Handlers) SfxModels(c *gin.Context) {
 		if p.Unit != pricing.UnitSecond || p.Call == nil {
 			continue
 		}
+		summaries[p.PublicModel] = p.Summary() // 轨道投影,不按能力/渠道收窄
+		if !p.HasCapability(pricing.CapSfx) {
+			continue
+		}
 		if !capable[p.PublicModel] {
 			continue
 		}
 		models = append(models, p.PublicModel)
-		summaries[p.PublicModel] = p.Summary()
 	}
 	sort.Strings(models)
 	c.JSON(http.StatusOK, gin.H{"models": models, "prices": summaries})
