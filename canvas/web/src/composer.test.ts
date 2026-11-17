@@ -15,6 +15,7 @@ import {
   durationRangeFor,
   isReferenceRole,
   isRelayableRef,
+  IMAGE_RATIO_PRESETS,
   MAX_COMPOSER_REFS,
   mediaSyncPatch,
   nodeDraftFor,
@@ -99,14 +100,30 @@ describe('composeSize / 预设', () => {
     expect(RESOLUTION_PRESETS.map((p) => p.value)).toEqual(['', '1k', '2k', '4k'])
   })
 
+  it('image ratio presets extend the shared list with 3:2/2:3, video list stays untouched', () => {
+    expect(IMAGE_RATIO_PRESETS.slice(0, RATIO_PRESETS.length)).toEqual(RATIO_PRESETS)
+    expect(IMAGE_RATIO_PRESETS.map((p) => p.value)).toEqual([
+      '',
+      '1:1',
+      '16:9',
+      '9:16',
+      '4:3',
+      '3:4',
+      '3:2',
+      '2:3',
+    ])
+  })
+
   it('both auto = no size (vendor default preserved)', () => {
     expect(composeSize('', '')).toBe('')
   })
 
   it('composes concrete pixels for every ratio × resolution pair', () => {
-    for (const r of RATIO_PRESETS.slice(1)) {
-      for (const res of RESOLUTION_PRESETS.slice(1)) {
-        expect(composeSize(r.value, res.value), `${r.value}@${res.value}`).toMatch(/^\d+x\d+$/)
+    for (const list of [RATIO_PRESETS, IMAGE_RATIO_PRESETS]) {
+      for (const r of list.slice(1)) {
+        for (const res of RESOLUTION_PRESETS.slice(1)) {
+          expect(composeSize(r.value, res.value), `${r.value}@${res.value}`).toMatch(/^\d+x\d+$/)
+        }
       }
     }
   })
@@ -121,6 +138,8 @@ describe('composeSize / 预设', () => {
     expect(composeSize('3:4', '2k')).toBe('1536x2048')
     expect(composeSize('16:9', '4k')).toBe('3840x2160')
     expect(composeSize('1:1', '2k')).toBe('2048x2048')
+    expect(composeSize('3:2', '1k')).toBe('1536x1024')
+    expect(composeSize('2:3', '2k')).toBe('1536x2304')
   })
 
   it('unknown combinations degrade to no size instead of inventing one', () => {

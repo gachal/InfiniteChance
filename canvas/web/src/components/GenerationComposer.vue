@@ -10,6 +10,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import type { ModelPriceSummary } from '@infinitechance/api'
 
 import {
+  IMAGE_RATIO_PRESETS,
   MAX_COMPOSER_REFS,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
@@ -132,6 +133,10 @@ const thumbs = useThumbFallback()
 
 const isVideo = computed(() => props.mode === 'video')
 const activeModels = computed(() => (isVideo.value ? props.videoModels : props.imageModels))
+
+/** 比例列表按模式拆分:图片模式用扩展档(多 3:2/2:3),视频沿用
+ * RATIO_PRESETS;两模式 sticky 各存一份,不存在跨模式孤儿值。 */
+const ratioPresets = computed(() => (isVideo.value ? RATIO_PRESETS : IMAGE_RATIO_PRESETS))
 
 /** IP 已定画面风格才出「带 IP 风格」开关(69 号票:未配风格不显示)。 */
 const styleAvailable = computed(() => styleSegment(props.ipStyle) !== '')
@@ -839,7 +844,7 @@ function onFileChange(e: Event): void {
         @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
       >
         <option
-          v-for="p in RATIO_PRESETS"
+          v-for="p in ratioPresets"
           :key="p.value"
           :value="p.value"
         >

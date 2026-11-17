@@ -27,7 +27,7 @@ import { useThumbFallback, assetContentURL } from '../thumbnail'
 import type { AssetKind } from '../assetlib'
 import { imageLabelsForKind, isPrimaryLabel, orderedImages } from '../assetlib'
 import { characterImageContentURL, characterImageThumbURL, isViewLabel } from '../characters'
-import { composeSize, RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
+import { composeSize, IMAGE_RATIO_PRESETS, RESOLUTION_PRESETS } from '../composer'
 import { isPanoRatio, uploadPanoramaCapture } from '../panorama'
 import PanoramaViewer from './PanoramaViewer.vue'
 import { SHEET_TYPES, latestVariantImage } from '../sheet'
@@ -1482,7 +1482,7 @@ onUnmounted(() => {
                 aria-label="画面比例"
               >
                 <option
-                  v-for="p in RATIO_PRESETS"
+                  v-for="p in IMAGE_RATIO_PRESETS"
                   :key="p.value"
                   :value="p.value"
                 >
@@ -1665,7 +1665,7 @@ onUnmounted(() => {
                 aria-label="画面比例"
               >
                 <option
-                  v-for="p in RATIO_PRESETS"
+                  v-for="p in IMAGE_RATIO_PRESETS"
                   :key="p.value"
                   :value="p.value"
                 >

@@ -95,6 +95,14 @@ export const RATIO_PRESETS: PresetOption[] = [
   { label: '3:4', value: '3:4' },
 ]
 
+/** 图片模式专用扩展档:3:2/2:3 只进图片下拉;视频模式沿用 RATIO_PRESETS
+ * (视频上游宽高比枚举普遍不含 3:2,不往视频侧扩散)。 */
+export const IMAGE_RATIO_PRESETS: PresetOption[] = [
+  ...RATIO_PRESETS,
+  { label: '3:2', value: '3:2' },
+  { label: '2:3', value: '2:3' },
+]
+
 export const RESOLUTION_PRESETS: PresetOption[] = [
   { label: '自动尺寸', value: '' },
   { label: '1K', value: '1k' },
@@ -111,6 +119,8 @@ const SIZE_TABLE: Record<string, Record<string, string>> = {
   '9:16': { '1k': '1080x1920', '2k': '1440x2560', '4k': '2160x3840' },
   '4:3': { '1k': '1440x1080', '2k': '2048x1536', '4k': '4096x3072' },
   '3:4': { '1k': '1080x1440', '2k': '1536x2048', '4k': '3072x4096' },
+  '3:2': { '1k': '1536x1024', '2k': '2304x1536', '4k': '4608x3072' },
+  '2:3': { '1k': '1024x1536', '2k': '1536x2304', '4k': '3072x4608' },
 }
 
 /** 兜底档:只选了一轴时另一轴落这里 —— 选了比例给 1K,选了分辨率给
