@@ -1,6 +1,7 @@
 package canvas
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -27,9 +28,20 @@ const maxNameRunes = 128
 // under an authed group — every route requires a gateway-issued session.
 // IPs 支撑创建/移动时的 IP 存在性校验(50 号票:画布必归属 IP);nil 时
 // 校验退化为直接落库(仅测试形态,生产装配恒非 nil)。
+// SessionCleanup 是删画布的级联清理口(91 号票画布助手):会话绑死画布,
+// 删画布必须先清 canvas_assistant_sessions 行,不留孤儿。接口在 canvas 包
+// 声明、assistant 包实现(wiring 装配传入),canvas 包不反向依赖助手域;
+// nil = 无会话面(测试/宽容装配),行为与升级前一致。
 type Handlers struct {
 	Store Store
 	IPs   IPStore
+	// SessionCleanup 非 nil 时 Delete 先清该画布的助手会话行;清理失败
+	// 画布行保留(500 重试)—— 宁可不删,不做「画布没了、会话还在」的
+	// 孤儿状态。与既有删路径一致,无跨表事务(现状零级联先例,91 号票
+	// 只对自己这张表负责)。
+	SessionCleanup interface {
+		DeleteByCanvas(ctx context.Context, canvasID int64) error
+	}
 }
 
 // DefaultCanvasType is the create-time default when the request omits type
@@ -267,6 +279,14 @@ func (h *Handlers) Delete(c *gin.Context) {
 	id, ok := bindID(c)
 	if !ok {
 		return
+	}
+	// 91 号票级联:先清该画布的助手会话行再删画布行;清理失败保留画布
+	// (failStore 500),让客户端重试而不是留下孤儿会话。
+	if h.SessionCleanup != nil {
+		if err := h.SessionCleanup.DeleteByCanvas(c.Request.Context(), id); err != nil {
+			h.failStore(c, err)
+			return
+		}
 	}
 	if err := h.Store.Delete(c.Request.Context(), id); err != nil {
 		h.failStore(c, err)

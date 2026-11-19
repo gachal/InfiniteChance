@@ -237,6 +237,10 @@ type listAssetsTool struct {
 
 func newListAssets(deps Deps) promptgen.AgentTool { return listAssetsTool{deps: deps} }
 
+// NewListAssets 是 list_assets 的导出构造器(91 号票画布助手按名复用
+// 同一实现,零复制;作用域绑定照旧经 AgentScope)。
+func NewListAssets(deps Deps) promptgen.AgentTool { return newListAssets(deps) }
+
 func (t listAssetsTool) Name() string { return "list_assets" }
 
 func (t listAssetsTool) Definition() json.RawMessage {

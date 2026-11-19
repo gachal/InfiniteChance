@@ -16,6 +16,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/apikey"
 	"github.com/gachal/InfiniteChance/internal/app"
+	"github.com/gachal/InfiniteChance/internal/assistant"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
@@ -112,10 +113,13 @@ func NewDesktop() (*Desktop, error) {
 	// 在各自 EnsureSchema 里幂等跑。
 	voices := voice.NewSQLiteStore(db)
 	tasks := canvastask.NewSQLiteStore(db, assets)
+	// 画布助手会话(91 号票):单表空起步无迁移,无同序依赖,随 tasks
+	// 之后(与 internal/migrations 对账装配清单同位)。
+	assistantSessions := assistant.NewSQLiteStore(db)
 	for _, s := range []interface {
 		EnsureSchema(ctx context.Context) error
 	}{
-		auths, channels, keys, prices, usageLogs, videoTasks, musicTasks, templates, settingsStore, canvases, assets, ipStore, characters, scenes, props, voices, tasks,
+		auths, channels, keys, prices, usageLogs, videoTasks, musicTasks, templates, settingsStore, canvases, assets, ipStore, characters, scenes, props, voices, tasks, assistantSessions,
 	} {
 		if err := s.EnsureSchema(ctx); err != nil {
 			db.Close()
@@ -216,6 +220,8 @@ func NewDesktop() (*Desktop, error) {
 			Tasks:      tasks,
 			Templates:  templates,
 			Settings:   settingsStore,
+
+			AssistantSessions: assistantSessions,
 		}, canvastask.NewClient(gatewayURL, cfg.CanvasServiceKey), storage)
 	}, app.WithConfig(ccfg), app.WithDB(db), app.WithPingers(pingers),
 		app.WithHTTPHandler(func(h http.Handler) http.Handler {

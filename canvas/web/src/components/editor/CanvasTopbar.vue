@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 画布顶栏(58 号票阶段一自 CanvasEditorView 抽出):面包屑「IP 名 / 画布名」
 // + 画布改名(表单态内聚在本组件)+ 自动保存状态 + 在途任务计数。
-// 改名提交上抛给视图调 API;返回上抛由视图路由。
+// 改名提交上抛给视图调 API;返回上抛由视图路由。91 号票 +「助手」按钮:
+// 桌宠(92 号票)缺位时的画布助手面板入口,点击上抛由视图开关面板。
 import { computed, ref } from 'vue'
 
 const props = defineProps<{
@@ -15,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   back: []
   rename: [draft: string]
+  assistant: []
 }>()
 
 const renaming = ref(false)
@@ -109,6 +111,15 @@ defineExpose({ cancelRenaming })
       </button>
     </template>
 
+    <button
+      class="ghost assistant-toggle"
+      type="button"
+      title="画布助手:对话修改画布(建/改/删节点、连线、触发生成)"
+      @click="emit('assistant')"
+    >
+      助手
+    </button>
+
     <span
       class="save-state"
       :data-state="saveState"
@@ -187,8 +198,13 @@ defineExpose({ cancelRenaming })
   outline: none;
 }
 
-.save-state {
+.assistant-toggle {
   margin-left: auto;
+  font-weight: 600;
+}
+
+.save-state {
+  margin-left: 0;
   color: var(--text-muted);
   font-size: var(--fs-body);
 }
