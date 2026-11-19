@@ -328,7 +328,7 @@ function submitForm(): void {
 
 <template>
   <div
-    class="node audio"
+    class="node media audio"
     :class="connectState ? `connect-${connectState}` : undefined"
     :data-task="status ?? 'none'"
   >
@@ -845,21 +845,20 @@ function submitForm(): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题/任务态/占位/失败件走 style.css 节点共享骨架段,
+   组件只留宽度、网格布局与独有内部件;内部紫罗兰残留全部单色化——
+   表单标签落次级字阶、交互 accent 走工作灯蓝、chip 中性 wash。 */
 .node {
   width: 300px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--violet-rgb), 0.45);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
   display: grid;
   gap: 8px;
 }
 
-header {
+/* 卡内标题比其他节点小半档(label 档),保持 78/80/61 号票的密度;
+   margin-bottom 归零,间距交给 grid gap(全局 header 的 8px 外距会叠)。 */
+.node header {
   font-size: var(--fs-label);
-  font-weight: 600;
-  color: var(--violet);
+  margin-bottom: 0;
 }
 
 audio {
@@ -881,9 +880,10 @@ audio {
   resize: vertical;
 }
 
+/* 焦点即灯亮:与 composer textarea 同款 accent 焦点。 */
 .field:focus {
   outline: none;
-  border-color: rgba(var(--violet-rgb), 0.6);
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .field::placeholder {
@@ -912,7 +912,7 @@ select.field option {
 
 .seconds-row span {
   font-weight: 600;
-  color: var(--violet);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -927,8 +927,8 @@ select.field option {
 }
 
 /* 旋律保持强度行(80 号票):标签 + 滑杆 + 实时数值一行排开(音效秒数
- * 行同款布局);滑杆 accent 走紫罗兰 token 与「人声歌曲」开关一致,
- * 数值 tabular-nums 对齐,语义小注单独一行落微字号。 */
+ * 行同款布局);滑杆走工作灯蓝(全局交互色),数值 tabular-nums 对齐,
+ * 语义小注单独一行落微字号。 */
 .strength-row {
   display: flex;
   align-items: center;
@@ -939,19 +939,19 @@ select.field option {
 
 .strength-row span {
   font-weight: 600;
-  color: var(--violet);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .strength-input {
   flex: 1;
   min-width: 0;
-  accent-color: var(--violet);
+  accent-color: var(--accent);
 }
 
 .strength-value {
   font-variant-numeric: tabular-nums;
-  color: var(--violet);
+  color: var(--text-bright);
   white-space: nowrap;
 }
 
@@ -975,8 +975,8 @@ select.field option {
   align-items: center;
   gap: 4px;
   border-radius: var(--r-pill);
-  background: rgba(var(--violet-rgb), 0.14);
-  color: var(--violet);
+  background: var(--wash-fill);
+  color: var(--text-bright);
   padding: 4px 8px 4px 10px;
   font-size: var(--fs-micro);
   max-width: 100%;
@@ -1009,7 +1009,7 @@ select.field option {
 .lyrics-label {
   font-size: var(--fs-label);
   font-weight: 600;
-  color: var(--violet);
+  color: var(--text-secondary);
 }
 
 .action.translate {
@@ -1029,13 +1029,13 @@ select.field option {
 
 .song-toggle input {
   align-self: center;
-  accent-color: var(--violet);
+  accent-color: var(--accent);
 }
 
 .song-toggle span {
   font-size: var(--fs-label);
   font-weight: 600;
-  color: var(--violet);
+  color: var(--text-secondary);
 }
 
 .song-toggle small {
@@ -1070,9 +1070,16 @@ select.field option {
   cursor: default;
 }
 
+/* 主动作(生成)升工作灯蓝实心:与 composer 发送键同一语义。 */
 .action.primary {
-  background: rgba(var(--violet-rgb), 0.18);
-  color: var(--violet);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.action.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 .form-error {
@@ -1090,66 +1097,12 @@ select.field option {
   white-space: nowrap;
 }
 
-.placeholder {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  padding: 22px 8px;
-  border: 1px dashed var(--line-action);
-  border-radius: var(--r-md);
-  color: var(--text-muted);
-}
-
-.placeholder span {
-  font-weight: 600;
-}
-
-.placeholder small {
-  font-size: var(--fs-micro);
-}
-
-.placeholder.missing {
-  border-color: rgba(var(--danger-rgb), 0.4);
-  color: var(--danger);
-}
-
-.pill {
-  border-radius: var(--r-pill);
-  background: rgba(var(--accent-rgb), 0.18);
-  color: var(--accent);
-  padding: 3px 10px;
-  font-size: var(--fs-label);
-}
-
-.failed {
-  display: grid;
-  gap: 6px;
-}
-
-.error {
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--fs-label);
-  word-break: break-word;
+/* 长错误三行截断是本节点独有(其余媒体族由共享段接管整体样式);
+   运行 pill 胶囊样式已收编进共享段,本地不再声明。 */
+.node .failed .error {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.retry {
-  justify-self: start;
-  border: none;
-  border-radius: var(--r-md);
-  background: rgba(var(--accent-rgb), 0.2);
-  color: var(--accent);
-  padding: 6px 12px;
-  cursor: pointer;
-  font-size: var(--fs-label);
-}
-
-.retry:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 </style>

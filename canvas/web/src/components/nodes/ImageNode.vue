@@ -214,39 +214,12 @@ function submitAnalyze(): void {
 
 <style scoped>
 /* 21 号票的媒体卡片:更宽、大图圆角;图生视频表单已收编进生成对话框的
- * 视频模式(24 号票),分析入口留在卡片底部。 */
+ * 视频模式(24 号票),分析入口留在卡片底部。89 号票起卡面骨架/标题/
+ * 任务态/占位/失败件全部走 style.css 节点共享骨架段,本组件只留宽度
+ * 与独有内部件;选中态由全局 accent halo 承担(原 media-frame outline
+ * 已并入)。 */
 .node {
   width: 280px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--success-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
-}
-
-.node header {
-  font-weight: 600;
-  color: var(--success);
-  margin-bottom: 8px;
-}
-
-.node[data-task='queued'] {
-  border-style: dashed;
-}
-
-.node[data-task='running'] {
-  border-color: rgba(var(--success-rgb), 0.85);
-}
-
-.node[data-task='failed'] {
-  border-color: rgba(var(--danger-rgb), 0.6);
-}
-
-/* vue-flow 把选中态标在节点包装层(本组件根的祖先),作用域样式以
-   前置 :global 够到它 —— 编译为 .vue-flow__node.selected .media-frame[data-v]。 */
-:global(.vue-flow__node.selected) .media-frame {
-  outline: 2px solid rgba(var(--accent-rgb), 0.8);
-  outline-offset: 2px;
 }
 
 .media-frame {
@@ -284,70 +257,7 @@ function submitAnalyze(): void {
   opacity: 1;
 }
 
-.placeholder {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  padding: 26px 8px;
-  border: 1px dashed var(--line-action);
-  border-radius: var(--r-md);
-  color: var(--text-muted);
-}
-
-.placeholder span {
-  font-weight: 600;
-}
-
-.placeholder small {
-  font-size: var(--fs-micro);
-}
-
-.placeholder.missing {
-  border-color: rgba(var(--danger-rgb), 0.4);
-  color: var(--danger);
-}
-
-.working .pill {
-  color: var(--success);
-}
-
-.node[data-task='running'] .pill {
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-.failed {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
-  padding: 10px;
-  border: 1px solid rgba(var(--danger-rgb), 0.35);
-  border-radius: var(--r-md);
-}
-
-.failed .error {
-  margin: 0;
-  font-size: var(--fs-label);
-  color: var(--danger);
-  word-break: break-all;
-}
-
-.retry {
-  border: none;
-  border-radius: var(--r-md);
-  padding: 6px 14px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  cursor: pointer;
-  background: var(--wash-fill);
-  color: inherit;
-}
-
-.retry:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 分析动作(17 号票):模型选择 + 触发按钮,描边用分析节点的淡紫。 */
+/* 分析动作(17 号票):模型选择 + 触发按钮;89 号票单色化为中性 ghost。 */
 .analyze {
   margin-top: 8px;
 }
@@ -371,13 +281,21 @@ function submitAnalyze(): void {
 .analyze-btn {
   flex-shrink: 0;
   background: transparent;
-  border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
-  color: var(--indigo-soft);
+  color: var(--text-secondary);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.analyze-btn:hover:not(:disabled) {
+  border-color: var(--line-action);
+  color: var(--text-primary);
 }
 
 .analyze-btn:disabled {

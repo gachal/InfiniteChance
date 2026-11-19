@@ -410,13 +410,10 @@ function onCardClick(): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题/任务态/占位/失败件走 style.css 节点共享
+   骨架段(本节点 81 号票时的硬编码青 #67e8f9 一并单色化清零)。 */
 .node {
   width: 280px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(103, 232, 249, 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
 }
 
 /* 产物态整卡可点(创作态整卡即表单,点击落空)。 */
@@ -425,32 +422,17 @@ function onCardClick(): void {
 }
 
 .node header {
-  font-weight: 600;
-  color: #67e8f9;
-  margin-bottom: 8px;
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.node[data-task='queued'] {
-  border-style: dashed;
-}
-
-.node[data-task='running'] {
-  border-color: rgba(103, 232, 249, 0.85);
-}
-
-.node[data-task='failed'] {
-  border-color: rgba(var(--danger-rgb), 0.6);
 }
 
 /* 360° 角标:卡头与产物缩略各一枚(卡面不跑 3D 渲染,40 号票纪律)。 */
 .badge-360 {
   padding: 0 6px;
   border-radius: var(--r-sm);
-  background: rgba(103, 232, 249, 0.16);
-  color: #67e8f9;
+  background: var(--wash-fill);
+  color: var(--text-bright);
   font-size: var(--fs-micro);
   font-weight: 600;
   letter-spacing: 0.5px;
@@ -504,73 +486,10 @@ function onCardClick(): void {
 .ratio-hint {
   margin: 8px 0 0;
   padding: 6px 8px;
-  border: 1px solid rgba(250, 204, 21, 0.4);
+  border: 1px solid rgba(var(--amber-rgb), 0.4);
   border-radius: var(--r-md);
   color: var(--text-muted);
   font-size: var(--fs-micro);
-}
-
-.placeholder {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  padding: 26px 8px;
-  border: 1px dashed var(--line-action);
-  border-radius: var(--r-md);
-  color: var(--text-muted);
-}
-
-.placeholder span {
-  font-weight: 600;
-}
-
-.placeholder small {
-  font-size: var(--fs-micro);
-}
-
-.placeholder.missing {
-  border-color: rgba(var(--danger-rgb), 0.4);
-  color: var(--danger);
-}
-
-.working .pill {
-  color: #67e8f9;
-}
-
-.node[data-task='running'] .pill {
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-.failed {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
-  padding: 10px;
-  border: 1px solid rgba(var(--danger-rgb), 0.35);
-  border-radius: var(--r-md);
-}
-
-.failed .error {
-  margin: 0;
-  font-size: var(--fs-label);
-  color: var(--danger);
-  word-break: break-all;
-}
-
-.retry {
-  border: none;
-  border-radius: var(--r-md);
-  padding: 6px 14px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  cursor: pointer;
-  background: var(--wash-fill);
-  color: inherit;
-}
-
-.retry:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* 创作态表单(产物态保留作重新生成入口)。 */
@@ -647,18 +566,25 @@ function onCardClick(): void {
 }
 
 .action:hover:not(:disabled) {
-  border-color: rgba(103, 232, 249, 0.6);
+  border-color: var(--line-action);
 }
 
-/* 直接环视:青色实底,与生成按钮区分(一个不花钱、一个花钱)。 */
+/* 直接环视:中性 ghost,与生成按钮区分(一个不花钱、一个花钱);
+   付费生成键升工作灯蓝实心——花钱的动作亮灯,89 号票词汇表。 */
 .action.direct-view {
-  border-color: rgba(103, 232, 249, 0.55);
-  color: #67e8f9;
+  background: var(--wash-fill);
+  border-color: var(--line-control);
+  color: var(--text-bright);
 }
 
 .action.primary {
-  background: rgba(103, 232, 249, 0.18);
-  border-color: rgba(103, 232, 249, 0.55);
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+.action.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 .field {

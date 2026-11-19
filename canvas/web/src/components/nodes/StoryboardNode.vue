@@ -145,13 +145,10 @@ function markBroken(assetId: number): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架走 style.css 节点共享骨架段;标题是输入框,
+   单色化后落标准字阶,焦点反馈归工作灯蓝。 */
 .node {
   width: 340px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--orange-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
   cursor: pointer;
 }
 
@@ -163,24 +160,23 @@ function markBroken(assetId: number): void {
   border-bottom: 1px solid transparent;
   border-radius: var(--r-sm);
   padding: 2px 4px;
-  color: var(--orange);
+  color: var(--text-bright);
   font-size: var(--fs-body);
   font-weight: 600;
 }
 
 .board-title::placeholder {
-  color: var(--orange);
-  opacity: 0.9;
+  color: var(--text-faint);
 }
 
 .board-title:hover {
-  border-bottom-color: rgba(var(--orange-rgb), 0.35);
+  border-bottom-color: var(--line-action);
 }
 
 .board-title:focus {
   outline: none;
   background: var(--wash-soft);
-  border-bottom-color: rgba(var(--orange-rgb), 0.6);
+  border-bottom-color: rgba(var(--accent-rgb), 0.85);
   color: inherit;
 }
 
@@ -235,11 +231,8 @@ function markBroken(assetId: number): void {
   color: var(--danger);
 }
 
-:global(.vue-flow__node.selected) .thumb.filled {
-  outline: 2px solid rgba(var(--accent-rgb), 0.8);
-  outline-offset: 1px;
-}
-
+/* 89 号票:节点选中态统一由全局 accent halo 承担,
+   原 thumb 逐帧 outline 已并入移除。 */
 .placeholder {
   display: grid;
   gap: 4px;

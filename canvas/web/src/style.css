@@ -297,10 +297,137 @@ body {
    边缘外半枚;样式全局一份,四个节点组件共用。 */
 .vue-flow__node .node {
   position: relative;
+  /* 89 号票单色卡面骨架:12 个节点组件逐字拷贝的卡面声明收编为全局
+     一份——统一深色玻璃卡面 + 白系描边,组件 scoped 只留 width 与
+     真正独有的内部件。类型色描边协议(「描边色=这张卡是谁」)自本票
+     退役,颜色只留语义:accent=可交互/运行中/选中,danger=失败。 */
+  background: rgba(var(--surface-card-rgb), 0.92);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-xl);
+  padding: 10px 12px;
+  font-size: var(--fs-body);
   /* 玻璃受光面(--glass-highlight)+ 描边过渡(58 号票阶段二质感层)。
      连接态的 glow 规则会整体覆写 box-shadow,连线期间不要玻璃高光。 */
   box-shadow: var(--glass-highlight);
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+/* ---- 节点共享骨架(89 号票单色画布)----
+   单色词汇表:静止 --line-control / hover --line-action(沿用既有三档,
+   不发明新档)/ 选中与运行 accent / 失败 danger。 */
+
+/* 标题:全节点统一亮字 600,不再读类型色、不加灯牌点。 */
+.vue-flow__node .node header {
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: var(--sp-sm);
+}
+
+/* 指针必答(skill):hover 描边升 action 档。本规则须在连线态之前,
+   连线拖拽中的 origin/valid/dimmed 同权重靠源序后置压过它。 */
+@media (hover: hover) and (pointer: fine) {
+  .vue-flow__node:hover .node {
+    border-color: var(--line-action);
+  }
+}
+
+/* 任务态(data-task 驱动,媒体族四节点共用;AudioNode 此前绑了
+   data-task 却无规则,运行/失败自此有描边反馈)。 */
+.vue-flow__node .node[data-task='queued'] {
+  border-style: dashed;
+}
+
+.vue-flow__node .node[data-task='running'] {
+  border-color: rgba(var(--accent-rgb), 0.85);
+}
+
+.vue-flow__node .node[data-task='failed'] {
+  border-color: rgba(var(--danger-rgb), 0.6);
+}
+
+/* 选中(全局交互蓝):工作灯照到谁,谁亮。放在 hover 之后——
+   同权重源序后置,既悬停又选中时选中态说话。 */
+.vue-flow__node.selected .node {
+  border-color: rgba(var(--accent-rgb), 0.9);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.3);
+}
+
+/* ---- 媒体族共享件(89 号票收编)----
+   Image/Video/Panorama/Audio 四节点的占位/失败/重试/运行 pill 原是
+   三~四份近似拷贝且细节漂移(retry 底色两版、pill 色三种写法、占位
+   padding 两版),归一为一处;`.node.media` 限命名空间——Character/
+   Analysis 各有语义不同的同名 .placeholder,不得波及。 */
+.node.media .placeholder {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 26px 8px;
+  border: 1px dashed var(--line-action);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
+}
+
+.node.media .placeholder span {
+  font-weight: 600;
+}
+
+.node.media .placeholder small {
+  font-size: var(--fs-micro);
+}
+
+.node.media .placeholder.missing {
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
+}
+
+.node.media .working .pill {
+  /* 运行 pill 归一为 accent 胶囊(原三节点只有颜色无形状,仅 AudioNode
+     有胶囊底;89 号票取胶囊为唯一形态)。 */
+  border-radius: var(--r-pill);
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent);
+  padding: 3px 10px;
+  font-size: var(--fs-label);
+}
+
+.node.media[data-task='running'] .pill {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.node.media .failed {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 10px;
+  border: 1px solid rgba(var(--danger-rgb), 0.35);
+  border-radius: var(--r-md);
+}
+
+.node.media .failed .error {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--danger);
+  word-break: break-all;
+}
+
+.node.media .retry {
+  border: none;
+  border-radius: var(--r-md);
+  padding: 6px 14px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--wash-fill);
+  color: inherit;
+}
+
+.node.media .retry:hover:not(:disabled) {
+  background: var(--wash-active);
+}
+
+.node.media .retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .port {
@@ -329,6 +456,8 @@ body {
 .port:hover {
   border-color: rgba(var(--accent-rgb), 0.85);
   color: var(--text-primary);
+  /* 89 号票:skill 按钮 step 语义,叠在既有 translateY(-50%) 之上。 */
+  transform: translateY(-50%) scale(1.06);
 }
 
 .port-left {

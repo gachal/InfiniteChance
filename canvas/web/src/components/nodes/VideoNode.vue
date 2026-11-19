@@ -241,31 +241,10 @@ function submitAnalyze(): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题/任务态/占位/失败件全部走 style.css 节点共享
+   骨架段,本组件只留宽度与独有内部件;内联动作按钮统一中性 ghost。 */
 .node {
   width: 220px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--amber-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
-}
-
-.node header {
-  font-weight: 600;
-  color: var(--amber);
-  margin-bottom: 8px;
-}
-
-.node[data-task='queued'] {
-  border-style: dashed;
-}
-
-.node[data-task='running'] {
-  border-color: rgba(var(--amber-rgb), 0.85);
-}
-
-.node[data-task='failed'] {
-  border-color: rgba(var(--danger-rgb), 0.6);
 }
 
 video {
@@ -297,37 +276,6 @@ video {
   pointer-events: none;
 }
 
-.placeholder {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  padding: 26px 8px;
-  border: 1px dashed var(--line-action);
-  border-radius: var(--r-md);
-  color: var(--text-muted);
-}
-
-.placeholder span {
-  font-weight: 600;
-}
-
-.placeholder small {
-  font-size: var(--fs-micro);
-}
-
-.placeholder.missing {
-  border-color: rgba(var(--danger-rgb), 0.4);
-  color: var(--danger);
-}
-
-.working .pill {
-  color: var(--amber);
-}
-
-.node[data-task='running'] .pill {
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
 .cancel {
   margin-top: 6px;
   border: 1px solid var(--line-control);
@@ -337,41 +285,17 @@ video {
   cursor: pointer;
   background: transparent;
   color: var(--text-secondary);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.cancel:hover:not(:disabled) {
+  border-color: var(--line-action);
+  color: var(--text-primary);
 }
 
 .cancel:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.failed {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
-  padding: 10px;
-  border: 1px solid rgba(var(--danger-rgb), 0.35);
-  border-radius: var(--r-md);
-}
-
-.failed .error {
-  margin: 0;
-  font-size: var(--fs-label);
-  color: var(--danger);
-  word-break: break-all;
-}
-
-.retry {
-  border: none;
-  border-radius: var(--r-md);
-  padding: 6px 14px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  cursor: pointer;
-  background: var(--wash-fill);
-  color: inherit;
-}
-
-.retry:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -394,8 +318,8 @@ video {
   font-size: var(--fs-micro);
 }
 
-/* 反推提示词入口(13 号票):模型选择 + 触发按钮,描边样式与提示词
- * 节点的生成提示词动作一致(同为提示词生成类动作)。 */
+/* 反推提示词入口(13 号票)与分析动作(17 号票):同为内联动作,
+   89 号票统一中性 ghost(hover 描边升档),不再用 accent/类型色。 */
 .reverse {
   margin-top: 8px;
 }
@@ -416,37 +340,36 @@ video {
   font-size: var(--fs-label);
 }
 
+.reverse-btn,
+.analyze-btn {
+  background: transparent;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
+  padding: 6px 12px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
 .reverse-btn {
   flex-shrink: 0;
-  background: transparent;
-  border: 1px solid rgba(var(--accent-rgb), 0.55);
-  border-radius: var(--r-md);
-  padding: 6px 12px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--accent);
 }
 
-.reverse-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-/* 分析动作(17 号票):整行按钮,描边用分析节点的淡紫 —— 与反推同属
- * 聊天驱动动作,但落点是分析节点而非提示词节点。 */
 .analyze-btn {
   width: 100%;
-  background: transparent;
-  border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
-  border-radius: var(--r-md);
-  padding: 6px 12px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--indigo-soft);
 }
 
+.reverse-btn:hover:not(:disabled),
+.analyze-btn:hover:not(:disabled) {
+  border-color: var(--line-action);
+  color: var(--text-primary);
+}
+
+.reverse-btn:disabled,
 .analyze-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;

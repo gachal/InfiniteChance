@@ -87,18 +87,15 @@ const excess = computed(() => scriptExcessChars(props.data.text))
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架走 style.css 节点共享骨架段;标题不是 header 元素,
+   落 scoped——单色化后与全局标题同字色。 */
 .node {
   width: 340px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--gold-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
   cursor: pointer;
 }
 
 .card-title {
-  color: var(--gold);
+  color: var(--text-bright);
   font-size: var(--fs-body);
   font-weight: 600;
   overflow: hidden;

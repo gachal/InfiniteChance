@@ -23,7 +23,7 @@ export function useComposerPlacement(opts: {
     const wrapW = wrapEl.value?.clientWidth ?? 0
     const wrapH = wrapEl.value?.clientHeight ?? 0
     const halfW = 280
-    const estH = mode.value === 'video' ? 360 : 260
+    const estH = mode.value === 'video' ? 372 : 272
     const dims = n.dimensions
     const left = vp.x + (n.position.x + (dims?.width ?? 200) / 2) * vp.zoom
     const top = vp.y + (n.position.y + (dims?.height ?? 160)) * vp.zoom + 12

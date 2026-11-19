@@ -160,24 +160,16 @@ async function copyText(): Promise<void> {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题走 style.css 节点共享骨架段;本节点用
+   data-state(非媒体族的 data-task),工作态保留 scoped 规则、
+   色彩归工作灯蓝。 */
 .node {
   width: 260px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--indigo-soft-rgb), 0.45);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
-}
-
-.node header {
-  font-weight: 600;
-  color: var(--indigo-soft);
-  margin-bottom: 8px;
 }
 
 .node[data-state='working'] {
   border-style: dashed;
-  border-color: rgba(var(--indigo-soft-rgb), 0.85);
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 /* 报告只读展示:pre-wrap 保留模型输出的 markdown 换行与缩进。 */
@@ -244,7 +236,7 @@ async function copyText(): Promise<void> {
 }
 
 .placeholder .pill {
-  color: var(--indigo-soft);
+  color: var(--accent);
   animation: pulse 1.4s ease-in-out infinite;
 }
 
@@ -269,13 +261,21 @@ async function copyText(): Promise<void> {
 .redo {
   flex-shrink: 0;
   background: transparent;
-  border: 1px solid rgba(var(--indigo-soft-rgb), 0.55);
+  border: 1px solid var(--line-control);
   border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
-  color: var(--indigo-soft);
+  color: var(--text-secondary);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.redo:hover:not(:disabled) {
+  border-color: var(--line-action);
+  color: var(--text-primary);
 }
 
 .redo:disabled {

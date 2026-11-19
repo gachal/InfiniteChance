@@ -127,25 +127,11 @@ watch(
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题走 style.css 节点共享骨架段;选中态由全局
+   accent halo 承担(原 media-frame outline 已并入移除)。 */
 .node {
   width: 340px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--pink-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
   cursor: pointer;
-}
-
-.node header {
-  font-weight: 600;
-  color: var(--pink);
-  margin-bottom: 8px;
-}
-
-:global(.vue-flow__node.selected) .media-frame {
-  outline: 2px solid rgba(var(--accent-rgb), 0.8);
-  outline-offset: 2px;
 }
 
 .media-frame {

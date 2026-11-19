@@ -340,13 +340,11 @@ function onUploadChange(event: Event): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架走 style.css 节点共享骨架段;标题是输入框,
+   单色化后落标准字阶,焦点反馈归工作灯蓝(警报红从此只留给
+   真正的告警语义,不再兼作关卡卡身份)。 */
 .node {
   width: 340px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--red-signal-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
 }
 
 .level-name {
@@ -357,24 +355,23 @@ function onUploadChange(event: Event): void {
   border-bottom: 1px solid transparent;
   border-radius: var(--r-sm);
   padding: 2px 4px;
-  color: var(--red-signal);
+  color: var(--text-bright);
   font-size: var(--fs-body);
   font-weight: 600;
 }
 
 .level-name::placeholder {
-  color: var(--red-signal);
-  opacity: 0.9;
+  color: var(--text-faint);
 }
 
 .level-name:hover {
-  border-bottom-color: rgba(var(--red-signal-rgb), 0.35);
+  border-bottom-color: var(--line-action);
 }
 
 .level-name:focus {
   outline: none;
   background: var(--wash-soft);
-  border-bottom-color: rgba(var(--red-signal-rgb), 0.6);
+  border-bottom-color: rgba(var(--accent-rgb), 0.85);
   color: inherit;
 }
 
@@ -439,12 +436,8 @@ function onUploadChange(event: Event): void {
   color: var(--danger);
 }
 
-:global(.vue-flow__node.selected) .thumb.filled,
-:global(.vue-flow__node.selected) .slot {
-  outline: 2px solid rgba(var(--accent-rgb), 0.8);
-  outline-offset: 1px;
-}
-
+/* 89 号票:节点选中态统一由全局 accent halo 承担,
+   原 thumb/slot 逐格 outline 已并入移除。 */
 .placeholder {
   display: grid;
   gap: 4px;
@@ -475,7 +468,7 @@ function onUploadChange(event: Event): void {
 }
 
 .toggle:hover {
-  border-color: rgba(var(--red-signal-rgb), 0.5);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -507,7 +500,7 @@ function onUploadChange(event: Event): void {
 
 .field-input:focus {
   outline: none;
-  border-color: rgba(var(--red-signal-rgb), 0.5);
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .field-input.detail {
@@ -551,7 +544,7 @@ function onUploadChange(event: Event): void {
 
 .beat-text:focus {
   outline: none;
-  border-color: rgba(var(--red-signal-rgb), 0.5);
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .beat-actions {
@@ -573,7 +566,7 @@ function onUploadChange(event: Event): void {
 }
 
 .beat-actions button:hover:not(:disabled) {
-  border-color: rgba(var(--red-signal-rgb), 0.5);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -594,7 +587,7 @@ function onUploadChange(event: Event): void {
 }
 
 .add-beat:hover {
-  border-color: rgba(var(--red-signal-rgb), 0.5);
+  border-color: var(--line-action);
   color: inherit;
 }
 
@@ -670,7 +663,7 @@ function onUploadChange(event: Event): void {
 }
 
 .slot-entries .entry:hover:not(:disabled) {
-  border-color: rgba(var(--red-signal-rgb), 0.5);
+  border-color: var(--line-action);
   color: inherit;
 }
 

@@ -796,149 +796,152 @@ function onFileChange(e: Event): void {
       </select>
     </div>
 
-    <!-- 成本预估(38 号票):有价才显示,随参数联动。 -->
-    <p
-      v-if="estimate"
-      class="estimate"
-    >
-      {{ estimate }}
-    </p>
+    <!-- 89 号票:预估 + 参数栏收进底部 hairline 分组,参考条/输入区/
+         参数栏三段秩序一眼可辨。成本预估(38 号票)有价才显示,随参数联动。 -->
+    <div class="composer-foot">
+      <p
+        v-if="estimate"
+        class="estimate"
+      >
+        {{ estimate }}
+      </p>
 
-    <div class="controls">
-      <select
-        :value="mode"
-        class="mode"
-        :disabled="disabledReason !== ''"
-        title="生成模式(选中视频节点时锁定视频生成)"
-        @change="emit('update:mode', ($event.target as HTMLSelectElement).value as 'image' | 'video')"
-      >
-        <option
-          value="image"
-          :disabled="modeLocked"
-        >
-          图片生成
-        </option>
-        <option value="video">
-          视频生成
-        </option>
-      </select>
-      <input
-        v-if="isVideo"
-        :value="duration"
-        type="number"
-        class="duration"
-        :min="durationRange.min"
-        :max="durationRange.max"
-        step="1"
-        placeholder="自动"
-        :disabled="disabledReason !== ''"
-        :title="`时长(秒):留空 = 自动由模型裁决;本模型支持 ${durationRange.min}–${durationRange.max} 秒`"
-        @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
-        @blur="onDurationBlur"
-      >
-      <select
-        :value="ratio"
-        class="ratio"
-        :disabled="disabledReason !== ''"
-        title="画面比例(自动 = 由模型缺省裁决)"
-        @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
-      >
-        <option
-          v-for="p in ratioPresets"
-          :key="p.value"
-          :value="p.value"
-        >
-          {{ p.label }}
-        </option>
-      </select>
-      <select
-        v-if="isVideo"
-        :value="resolution"
-        class="resolution"
-        :disabled="disabledReason !== ''"
-        title="分辨率档位(自动 = 由模型缺省裁决;档位串直传上游)"
-        @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
-      >
-        <option
-          v-for="p in videoResolutionPresets"
-          :key="p.value"
-          :value="p.value"
-        >
-          {{ p.label }}
-        </option>
-      </select>
-      <select
-        v-else
-        :value="resolution"
-        class="resolution"
-        :disabled="disabledReason !== ''"
-        title="分辨率档位(自动 = 由模型缺省裁决;单选分辨率按 1:1 兜底)"
-        @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
-      >
-        <option
-          v-for="p in RESOLUTION_PRESETS"
-          :key="p.value"
-          :value="p.value"
-        >
-          {{ p.label }}
-        </option>
-      </select>
-      <!-- 透明背景开关(37 号票):仅图片模式、所有生图模型显示,不按
-           模型特判 —— 上游不认时 4xx 原样透出、节点可见可重试。 -->
-      <label
-        v-if="!isVideo"
-        class="transparent"
-        title="透明背景(产物为带 alpha 通道的 PNG;上游不支持时错误原样透出)"
-      >
-        <input
-          type="checkbox"
-          :checked="transparent"
+      <div class="controls">
+        <select
+          :value="mode"
+          class="mode"
           :disabled="disabledReason !== ''"
-          @change="emit('update:transparent', ($event.target as HTMLInputElement).checked)"
+          title="生成模式(选中视频节点时锁定视频生成)"
+          @change="emit('update:mode', ($event.target as HTMLSelectElement).value as 'image' | 'video')"
         >
-        透明背景
-      </label>
-      <!-- 带 IP 风格开关(69 号票):图片/视频两模式都有、默认关;IP 未定
-           风格时不显示。开 = 发送时风格段拼在提示词前部(任务行可审计),
-           手写 prompt 不被偷改。 -->
-      <label
-        v-if="styleAvailable"
-        class="with-style"
-        :title="`发送时在提示词前拼「${styleSegment(ipStyle)}」(在 IP 编辑里可改风格)`"
-      >
+          <option
+            value="image"
+            :disabled="modeLocked"
+          >
+            图片生成
+          </option>
+          <option value="video">
+            视频生成
+          </option>
+        </select>
         <input
-          type="checkbox"
-          :checked="withStyle"
+          v-if="isVideo"
+          :value="duration"
+          type="number"
+          class="duration"
+          :min="durationRange.min"
+          :max="durationRange.max"
+          step="1"
+          placeholder="自动"
           :disabled="disabledReason !== ''"
-          @change="emit('update:withStyle', ($event.target as HTMLInputElement).checked)"
+          :title="`时长(秒):留空 = 自动由模型裁决;本模型支持 ${durationRange.min}–${durationRange.max} 秒`"
+          @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
+          @blur="onDurationBlur"
         >
-        带 IP 风格
-      </label>
-      <select
-        :value="model"
-        class="model"
-        :disabled="disabledReason !== ''"
-        :title="isVideo ? '视频模型' : '生图模型'"
-        @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
-      >
-        <option
-          v-for="m in activeModels"
-          :key="m"
-          :value="m"
+        <select
+          :value="ratio"
+          class="ratio"
+          :disabled="disabledReason !== ''"
+          title="画面比例(自动 = 由模型缺省裁决)"
+          @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
         >
-          {{ modelOptionLabel(m) }}
-        </option>
-      </select>
-      <button
-        class="send"
-        type="button"
-        :disabled="!canSend"
-        :title="canSend ? '生成(Enter 发送,Shift+Enter 换行)' : '先写提示词并选模型'"
-        aria-label="生成"
-        @click="emit('send')"
-      >
-        {{ generating ? '…' : '↑' }}
-      </button>
+          <option
+            v-for="p in ratioPresets"
+            :key="p.value"
+            :value="p.value"
+          >
+            {{ p.label }}
+          </option>
+        </select>
+        <select
+          v-if="isVideo"
+          :value="resolution"
+          class="resolution"
+          :disabled="disabledReason !== ''"
+          title="分辨率档位(自动 = 由模型缺省裁决;档位串直传上游)"
+          @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
+        >
+          <option
+            v-for="p in videoResolutionPresets"
+            :key="p.value"
+            :value="p.value"
+          >
+            {{ p.label }}
+          </option>
+        </select>
+        <select
+          v-else
+          :value="resolution"
+          class="resolution"
+          :disabled="disabledReason !== ''"
+          title="分辨率档位(自动 = 由模型缺省裁决;单选分辨率按 1:1 兜底)"
+          @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
+        >
+          <option
+            v-for="p in RESOLUTION_PRESETS"
+            :key="p.value"
+            :value="p.value"
+          >
+            {{ p.label }}
+          </option>
+        </select>
+        <!-- 透明背景开关(37 号票):仅图片模式、所有生图模型显示,不按
+             模型特判 —— 上游不认时 4xx 原样透出、节点可见可重试。 -->
+        <label
+          v-if="!isVideo"
+          class="transparent"
+          title="透明背景(产物为带 alpha 通道的 PNG;上游不支持时错误原样透出)"
+        >
+          <input
+            type="checkbox"
+            :checked="transparent"
+            :disabled="disabledReason !== ''"
+            @change="emit('update:transparent', ($event.target as HTMLInputElement).checked)"
+          >
+          透明背景
+        </label>
+        <!-- 带 IP 风格开关(69 号票):图片/视频两模式都有、默认关;IP 未定
+             风格时不显示。开 = 发送时风格段拼在提示词前部(任务行可审计),
+             手写 prompt 不被偷改。 -->
+        <label
+          v-if="styleAvailable"
+          class="with-style"
+          :title="`发送时在提示词前拼「${styleSegment(ipStyle)}」(在 IP 编辑里可改风格)`"
+        >
+          <input
+            type="checkbox"
+            :checked="withStyle"
+            :disabled="disabledReason !== ''"
+            @change="emit('update:withStyle', ($event.target as HTMLInputElement).checked)"
+          >
+          带 IP 风格
+        </label>
+        <select
+          :value="model"
+          class="model"
+          :disabled="disabledReason !== ''"
+          :title="isVideo ? '视频模型' : '生图模型'"
+          @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
+        >
+          <option
+            v-for="m in activeModels"
+            :key="m"
+            :value="m"
+          >
+            {{ modelOptionLabel(m) }}
+          </option>
+        </select>
+        <button
+          class="send"
+          type="button"
+          :disabled="!canSend"
+          :title="canSend ? '生成(Enter 发送,Shift+Enter 换行)' : '先写提示词并选模型'"
+          aria-label="生成"
+          @click="emit('send')"
+        >
+          {{ generating ? '…' : '↑' }}
+        </button>
+      </div>
     </div>
   </section>
 </template>
@@ -1387,6 +1390,15 @@ button.vref-icon:hover {
   text-overflow: ellipsis;
 }
 
+/* 89 号票:底部 hairline 分组——预估与参数栏同属一拍,与参考条/
+   输入区拉开三段秩序;hairline 用分区档,不带语义色。 */
+.composer-foot {
+  display: grid;
+  gap: var(--sp-sm);
+  padding-top: var(--sp-sm);
+  border-top: 1px solid var(--line-section);
+}
+
 textarea {
   width: 100%;
   resize: vertical;
@@ -1501,16 +1513,23 @@ textarea:focus {
   padding: 0;
   transition:
     background-color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease);
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
-.send:hover:not(:disabled) {
-  background: var(--accent-soft);
-  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.35);
+/* skill 微动效数字:hover 上步 1px、按下回沉 0.985;
+   只在真指针环境生效,触屏不表演。 */
+@media (hover: hover) and (pointer: fine) {
+  .send:hover:not(:disabled) {
+    background: var(--accent-soft);
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.35);
+    transform: translateY(-1px);
+  }
 }
 
 .send:active:not(:disabled) {
   box-shadow: none;
+  transform: scale(0.985);
 }
 
 .send:disabled {

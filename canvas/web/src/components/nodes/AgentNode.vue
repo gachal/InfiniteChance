@@ -887,19 +887,10 @@ function onDeliver(): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题走 style.css 节点共享骨架段;内部 chat/
+ * chips/timeline 维持 29/32/52/59 号票既有形态,不在本票范围。 */
 .node {
   width: 380px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--accent-rgb), 0.45);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
-}
-
-.node header {
-  font-weight: 600;
-  color: var(--accent);
-  margin-bottom: 8px;
 }
 
 textarea {

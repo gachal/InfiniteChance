@@ -513,24 +513,20 @@ const previewBroken = ref(false)
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题走 style.css 节点共享骨架段;grid 布局与
+   头部行内徽章布局留 scoped,青浅色残留全部单色化。 */
 .node {
   width: 340px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--teal-light-rgb), 0.4);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
   display: grid;
   gap: 8px;
 }
 
-header {
+.node header {
   font-size: var(--fs-label);
-  font-weight: 600;
-  color: var(--teal-light);
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 0;
 }
 
 .badge {
@@ -550,9 +546,10 @@ header {
   color: var(--success);
 }
 
+/* 驳回归失败绯(与 CharacterNode 同裁定,两支红混淆清掉)。 */
 .badge.rejected {
-  background: rgba(var(--red-signal-rgb), 0.16);
-  color: var(--red-signal);
+  background: rgba(var(--danger-rgb), 0.16);
+  color: var(--danger);
 }
 
 .ledger-name {
@@ -593,10 +590,11 @@ audio {
   font-size: var(--fs-label);
 }
 
+/* 选中 mode 归工作灯蓝:选中 = 可交互态。 */
 .mode-row button.on {
-  border-color: rgba(var(--teal-light-rgb), 0.6);
-  background: rgba(var(--teal-light-rgb), 0.12);
-  color: var(--teal-light);
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
 }
 
 .field {
@@ -612,9 +610,10 @@ audio {
   resize: vertical;
 }
 
+/* 焦点即灯亮:与全站输入一致。 */
 .field:focus {
   outline: none;
-  border-color: rgba(var(--teal-light-rgb), 0.6);
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .field::placeholder {
@@ -648,8 +647,8 @@ select.field option {
   align-items: center;
   gap: 4px;
   border-radius: var(--r-pill);
-  background: rgba(var(--teal-light-rgb), 0.12);
-  color: var(--teal-light);
+  background: var(--wash-fill);
+  color: var(--text-bright);
   padding: 3px 10px;
   font-size: var(--fs-label);
   max-width: 100%;
@@ -688,14 +687,21 @@ select.field option {
   cursor: default;
 }
 
+/* 主动作升工作灯蓝实心(与 AudioNode 生成键同款语义)。 */
 .action.primary {
-  background: rgba(var(--teal-light-rgb), 0.18);
-  color: var(--teal-light);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.action.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 .action.danger {
-  background: rgba(var(--red-signal-rgb), 0.12);
-  color: var(--red-signal);
+  background: rgba(var(--danger-rgb), 0.12);
+  color: var(--danger);
 }
 
 .form-foot {
@@ -738,7 +744,7 @@ select.field option {
 .speech-form textarea:focus,
 .speech-form input:focus {
   outline: none;
-  border-color: rgba(var(--teal-light-rgb), 0.6);
+  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .card-foot {

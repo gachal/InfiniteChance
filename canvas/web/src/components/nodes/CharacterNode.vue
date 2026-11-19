@@ -380,20 +380,15 @@ function onGenerateEntrance(): void {
 </template>
 
 <style scoped>
+/* 89 号票起卡面骨架/标题走 style.css 节点共享骨架段;grid 布局与
+   头部零外距(间距交给 grid gap)是本节点独有,留 scoped 覆写。 */
 .node {
   width: 280px;
-  background: rgba(var(--surface-card-rgb), 0.92);
-  border: 1px solid rgba(var(--teal-rgb), 0.45);
-  border-radius: var(--r-xl);
-  padding: 10px 12px;
-  font-size: var(--fs-body);
   display: grid;
   gap: 8px;
 }
 
 .node header {
-  font-weight: 600;
-  color: var(--teal);
   margin-bottom: 0;
 }
 
@@ -452,8 +447,8 @@ function onGenerateEntrance(): void {
   place-items: center;
   font-size: 40px;
   font-weight: 700;
-  color: rgba(var(--teal-rgb), 0.55);
-  background: linear-gradient(135deg, rgba(var(--teal-rgb), 0.12), rgba(var(--accent-rgb), 0.1));
+  color: rgba(var(--text-muted-rgb), 0.55);
+  background: linear-gradient(135deg, var(--wash-soft), rgba(var(--accent-rgb), 0.06));
 }
 
 .name {
@@ -473,7 +468,7 @@ function onGenerateEntrance(): void {
   align-items: center;
   margin: 6px 0 0;
   padding: 6px 8px;
-  border: 1px dashed rgba(var(--teal-light-rgb), 0.35);
+  border: 1px dashed var(--line-action);
   border-radius: var(--r-md);
 }
 
@@ -481,8 +476,8 @@ function onGenerateEntrance(): void {
   border-radius: var(--r-pill);
   padding: 1px 8px;
   font-size: var(--fs-micro);
-  background: rgba(var(--teal-light-rgb), 0.12);
-  color: var(--teal-light);
+  background: var(--wash-fill);
+  color: var(--text-secondary);
   justify-self: start;
 }
 
@@ -496,9 +491,11 @@ function onGenerateEntrance(): void {
   color: var(--amber);
 }
 
+/* 驳回是失败语义:89 号票从警报红(关卡卡身份色)改归失败绯,
+   两支红的混淆就此清掉。 */
 .voice-badge.rejected {
-  background: rgba(var(--red-signal-rgb), 0.16);
-  color: var(--red-signal);
+  background: rgba(var(--danger-rgb), 0.16);
+  color: var(--danger);
 }
 
 .voice-name {
@@ -544,10 +541,11 @@ function onGenerateEntrance(): void {
   white-space: nowrap;
 }
 
+/* 选中 tab 归工作灯蓝:选中 = 可交互态,单色词汇表统一语义。 */
 .variant-tabs button.on {
-  border-color: rgba(var(--teal-rgb), 0.7);
-  color: var(--teal);
-  background: rgba(var(--teal-rgb), 0.1);
+  border-color: rgba(var(--accent-rgb), 0.7);
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 
 .gallery {
@@ -605,24 +603,28 @@ function onGenerateEntrance(): void {
 }
 
 .label-badge.view {
-  border-color: rgba(var(--teal-rgb), 0.8);
-  color: var(--teal-light);
+  border-color: var(--line-action);
+  color: var(--text-bright);
 }
 
 .land {
   flex-shrink: 0;
-  border: 1px solid rgba(var(--teal-rgb), 0.55);
+  border: 1px solid var(--line-control);
   background: transparent;
-  color: var(--teal);
+  color: var(--text-secondary);
   border-radius: 7px;
   padding: 3px 8px;
   font-size: var(--fs-micro);
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .land:hover {
-  background: rgba(var(--teal-rgb), 0.12);
+  border-color: var(--line-action);
+  color: var(--text-primary);
 }
 
 .rebind {
@@ -639,17 +641,21 @@ function onGenerateEntrance(): void {
 .gen-sheet {
   flex: 1;
   min-width: 0;
-  border: 1px solid rgba(var(--teal-rgb), 0.55);
-  background: rgba(var(--teal-rgb), 0.08);
-  color: var(--teal);
+  border: 1px solid var(--line-control);
+  background: var(--wash-soft);
+  color: var(--text-secondary);
   border-radius: var(--r-md);
   padding: 5px 8px;
   font-size: var(--fs-label);
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .gen-sheet:hover {
-  background: rgba(var(--teal-rgb), 0.16);
+  border-color: var(--line-action);
+  color: var(--text-primary);
 }
 </style>

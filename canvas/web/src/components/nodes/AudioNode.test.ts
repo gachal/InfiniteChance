@@ -66,8 +66,8 @@ describe('AudioNode 旋律保持强度滑杆(80 号票)', () => {
     expect(source.includes('strength: props.data.strength ?? RELYRIC_STRENGTH_DEFAULT')).toBe(true)
   })
 
-  it('滑杆 accent 走紫罗兰 token(与「人声歌曲」开关同款,面板 token 纪律)', () => {
+  it('滑杆 accent 走工作灯蓝 token(89 号票单色画布:交互 accent 是唯一交互色)', () => {
     expect(source.includes('.strength-input')).toBe(true)
-    expect(source.includes('accent-color: var(--violet)')).toBe(true)
+    expect(source.includes('accent-color: var(--accent)')).toBe(true)
   })
 })

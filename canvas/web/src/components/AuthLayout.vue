@@ -233,32 +233,30 @@ const collagePaused = ref(false)
   right: -5px;
 }
 
+/* 89 号票:画布节点单色化后,拼贴缩微件同步回到 .pc 基类的
+   line-control 描边——拼贴展示的永远是画布自己的 UI 语汇。 */
 .pc-image {
   left: 3%;
   top: 5%;
   width: 46%;
-  border-color: rgba(var(--success-rgb), 0.4);
 }
 
 .pc-video {
   right: 4%;
   bottom: 4%;
   width: 50%;
-  border-color: rgba(var(--amber-rgb), 0.42);
 }
 
 .pc-script {
   right: 4%;
   top: 6%;
   width: 42%;
-  border-color: rgba(var(--gold-rgb), 0.42);
 }
 
 .pc-character {
   right: 4%;
   bottom: 4%;
   width: 54%;
-  border-color: rgba(var(--teal-rgb), 0.42);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -268,7 +266,6 @@ const collagePaused = ref(false)
   left: 3%;
   bottom: 6%;
   width: 50%;
-  border-color: rgba(var(--accent-rgb), 0.42);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -291,7 +288,6 @@ const collagePaused = ref(false)
   left: 3%;
   top: 5%;
   width: 52%;
-  border-color: rgba(var(--orange-rgb), 0.42);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
@@ -365,7 +361,8 @@ const collagePaused = ref(false)
   width: 34px;
   height: 34px;
   border-radius: var(--r-pill);
-  background: linear-gradient(135deg, rgba(var(--teal-rgb), 0.4), rgba(var(--teal-light-rgb), 0.3));
+  /* 89 号票:与 CharacterNode 封面回落同款中性渐变。 */
+  background: linear-gradient(135deg, var(--wash-soft), rgba(var(--accent-rgb), 0.06));
 }
 
 .char-meta {
@@ -391,7 +388,7 @@ const collagePaused = ref(false)
   aspect-ratio: 16 / 10;
   border-radius: var(--r-sm);
   background: var(--wash-soft);
-  border: 1px solid rgba(var(--orange-rgb), 0.3);
+  border: 1px solid var(--line-section);
 }
 
 .mini-node {
