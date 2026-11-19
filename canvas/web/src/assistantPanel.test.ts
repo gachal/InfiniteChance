@@ -1,15 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   appendAssistantTurn,
+  assistantSessionKey,
   ASSISTANT_MAX_LOCAL_MESSAGES,
+  ASSISTANT_SESSION_KEY_PREFIX,
   describeDraft,
   isAssistantDraftTool,
+  loadSavedAssistantSessionId,
   parseCreateNodesDraft,
   parseDeleteNodesDraft,
   parseEdgePairsDraft,
   parseTriggerTaskDraft,
   parseUpdateNodesDraft,
+  restoreAssistantSessionTarget,
+  saveAssistantSessionId,
 } from './assistantPanel'
 
 describe('assistantPanel 草案定形(91 号票)', () => {
@@ -114,5 +119,77 @@ describe('assistantPanel 草案定形(91 号票)', () => {
     const again = appendAssistantTurn(next, '再改', { content: 'ok' })
     expect(again).toHaveLength(ASSISTANT_MAX_LOCAL_MESSAGES)
     expect(again[0]).toEqual({ role: 'assistant', content: 'm3' })
+  })
+})
+
+describe('assistantPanel 会话保持(2026-11-19 增补)', () => {
+  const mem = new Map<string, string>()
+
+  afterEach(() => {
+    mem.clear()
+    vi.unstubAllGlobals()
+  })
+
+  function stubStorage(): void {
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+      removeItem: (k: string) => void mem.delete(k),
+    })
+  }
+
+  it('session key carries the canvas id', () => {
+    expect(assistantSessionKey(7)).toBe(`${ASSISTANT_SESSION_KEY_PREFIX}7`)
+  })
+
+  it('save/load round-trips per canvas; null clears the memory', () => {
+    stubStorage()
+    expect(loadSavedAssistantSessionId(7)).toBeNull()
+    saveAssistantSessionId(7, 42)
+    saveAssistantSessionId(9, 43)
+    expect(loadSavedAssistantSessionId(7)).toBe(42)
+    expect(loadSavedAssistantSessionId(9)).toBe(43) // 互不串台(键含画布 id)
+    expect(mem.get(assistantSessionKey(7))).toBe('42')
+    saveAssistantSessionId(7, null)
+    expect(loadSavedAssistantSessionId(7)).toBeNull()
+    expect(mem.has(assistantSessionKey(7))).toBe(false)
+  })
+
+  it('ignores corrupt saved values', () => {
+    stubStorage()
+    mem.set(assistantSessionKey(3), 'not-a-number')
+    expect(loadSavedAssistantSessionId(3)).toBeNull()
+    mem.set(assistantSessionKey(3), '0')
+    expect(loadSavedAssistantSessionId(3)).toBeNull()
+  })
+
+  it('storage failures degrade silently (privacy mode)', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied')
+      },
+      setItem: () => {
+        throw new Error('denied')
+      },
+      removeItem: () => {
+        throw new Error('denied')
+      },
+    })
+    expect(loadSavedAssistantSessionId(1)).toBeNull()
+    expect(() => saveAssistantSessionId(1, 5)).not.toThrow()
+    expect(() => saveAssistantSessionId(1, null)).not.toThrow()
+  })
+
+  it('restoreAssistantSessionTarget opens the saved session when still listed', () => {
+    const sessions = [{ id: 42 }, { id: 17 }, { id: 3 }]
+    expect(restoreAssistantSessionTarget(sessions, 17)).toEqual({ kind: 'open', id: 17 })
+    expect(restoreAssistantSessionTarget(sessions, 42)).toEqual({ kind: 'open', id: 42 })
+  })
+
+  it('restoreAssistantSessionTarget falls back to create on missing memory or a stale id', () => {
+    const sessions = [{ id: 42 }]
+    expect(restoreAssistantSessionTarget(sessions, null)).toEqual({ kind: 'create' })
+    expect(restoreAssistantSessionTarget(sessions, 999)).toEqual({ kind: 'create' }) // 失靶(他端删除等)
+    expect(restoreAssistantSessionTarget([], 42)).toEqual({ kind: 'create' })
   })
 })

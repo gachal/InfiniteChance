@@ -7,6 +7,11 @@
 // 族引用 style.css 共享段,与 AgentNode 同源)、
 // 「先询问我」的变更清单确认卡(整批批准/拒绝,不做逐项勾选)。
 //
+// 会话保持(2026-11-19 增补):打开面板即续会话 —— 上次活跃会话按画布记
+// localStorage(assistantPanel.ts),挂载回读续用;无记忆/失靶自动建新
+// 会话。「默认打开就是新会话,除非手动新建,一直是该会话」。授权档与
+// 模型下拉在 composer 下方(2026-11-19 移位)。
+//
 // 协议(91 号票 SSE + 回执):草案工具 tool_call 到达时,完全授权档直接
 // 经 host 应用并发回执;先询问我档出确认卡等用户裁决。建议 chips/问候语
 // 是 92 号票桌宠的职责 —— 新会话首屏空态即本票的接缝。
@@ -28,11 +33,14 @@ import {
   appendAssistantTurn,
   describeDraft,
   isAssistantDraftTool,
+  loadSavedAssistantSessionId,
   parseCreateNodesDraft,
   parseDeleteNodesDraft,
   parseEdgePairsDraft,
   parseTriggerTaskDraft,
   parseUpdateNodesDraft,
+  restoreAssistantSessionTarget,
+  saveAssistantSessionId,
   type AssistantHost,
   type AssistantMode,
 } from '../assistantPanel'
@@ -105,8 +113,21 @@ function fail(e: unknown, fallback: string): void {
 
 onMounted(() => {
   applyDefaultModel()
-  void refreshSessions()
+  void restoreSession()
 })
+
+/** 挂载即续会话:记忆的会话还在列表 → 直接续用;无记忆/失靶(他端删除
+ * 等)→ 自动建新会话(见 assistantPanel.ts 会话保持段)。 */
+async function restoreSession(): Promise<void> {
+  await refreshSessions()
+  const saved = loadSavedAssistantSessionId(props.canvasId)
+  const target = restoreAssistantSessionTarget(sessions.value, saved)
+  if (target.kind === 'open') {
+    await openSession(target.id)
+  } else {
+    await createSession()
+  }
+}
 
 // 模型目录异步到达时兜底(编辑器加载顺序不保证目录先于面板);仍按
 // 「缺省模型优先、回落首项」口径,不让目录时序吞掉桌宠配置的初值。
@@ -134,6 +155,7 @@ async function refreshSessions(): Promise<void> {
     if (activeId.value !== null && !body.sessions.some((s) => s.id === activeId.value)) {
       activeId.value = null
       messages.value = []
+      saveAssistantSessionId(props.canvasId, null) // 活跃会话失靶,记忆一并清
     }
   } catch (e) {
     fail(e, '无法加载会话列表,请稍后再试')
@@ -154,6 +176,7 @@ async function openSession(id: number): Promise<void> {
     const body = await client.getAssistantSession(props.canvasId, id)
     messages.value = body.session.messages
     mode.value = body.session.mode === 'full' ? 'full' : 'ask'
+    saveAssistantSessionId(props.canvasId, id) // 记住活跃会话,下次打开续用
   } catch (e) {
     fail(e, '无法加载会话,请稍后再试')
   } finally {
@@ -187,11 +210,16 @@ async function deleteSession(): Promise<void> {
   messages.value = []
   try {
     await client.deleteAssistantSession(props.canvasId, id)
-    await refreshSessions()
   } catch (e) {
     fail(e, '删除会话失败,请稍后再试')
     await openSession(id)
+    return
   }
+  saveAssistantSessionId(props.canvasId, null)
+  await refreshSessions()
+  // 删除即回「新会话」缺省态:自动建新会话,保持面板恒有会话(会话保持
+  // 增补;建失败时留在空态,placeholder 兜底提示)。
+  await createSession()
 }
 
 /** 切授权档:本地立即生效(下一轮草案走新档),会话侧 PATCH 持久。 */
@@ -461,44 +489,6 @@ async function send(): Promise<void> {
       </button>
     </div>
 
-    <div class="controls-row">
-      <label class="control">
-        <span>授权</span>
-        <select
-          class="mode-select"
-          :value="mode"
-          @change="switchMode"
-        >
-          <option value="ask">先询问我</option>
-          <option value="full">完全授权</option>
-        </select>
-      </label>
-      <label class="control">
-        <span>模型</span>
-        <select
-          v-model="model"
-          class="model-select"
-          :disabled="promptModels.length === 0"
-        >
-          <option
-            v-if="promptModels.length === 0"
-            value=""
-          >无可用模型</option>
-          <option
-            v-for="m in promptModels"
-            :key="m"
-            :value="m"
-          >{{ m }}</option>
-        </select>
-      </label>
-    </div>
-    <p
-      v-if="promptModels.length === 0"
-      class="catalog-missing"
-    >
-      聊天模型目录为空或未加载:请确认管理端已配置 token 计价的聊天模型后刷新。
-    </p>
-
     <p
       v-if="error"
       class="panel-error"
@@ -651,6 +641,45 @@ async function send(): Promise<void> {
         发送
       </button>
     </div>
+
+    <!-- 授权档与模型下拉在提示词框下方(2026-11-19 移位,自线程上方迁来)。 -->
+    <div class="controls-row">
+      <label class="control">
+        <span>授权</span>
+        <select
+          class="mode-select"
+          :value="mode"
+          @change="switchMode"
+        >
+          <option value="ask">先询问我</option>
+          <option value="full">完全授权</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>模型</span>
+        <select
+          v-model="model"
+          class="model-select"
+          :disabled="promptModels.length === 0"
+        >
+          <option
+            v-if="promptModels.length === 0"
+            value=""
+          >无可用模型</option>
+          <option
+            v-for="m in promptModels"
+            :key="m"
+            :value="m"
+          >{{ m }}</option>
+        </select>
+      </label>
+    </div>
+    <p
+      v-if="promptModels.length === 0"
+      class="catalog-missing"
+    >
+      聊天模型目录为空或未加载:请确认管理端已配置 token 计价的聊天模型后刷新。
+    </p>
   </aside>
 </template>
 

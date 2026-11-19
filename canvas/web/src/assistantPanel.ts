@@ -403,3 +403,57 @@ export function appendAssistantTurn(
   ]
   return next.length <= ASSISTANT_MAX_LOCAL_MESSAGES ? next : next.slice(next.length - ASSISTANT_MAX_LOCAL_MESSAGES)
 }
+
+// ---- 面板打开时的会话保持(2026-11-19 增补):「默认打开就是新会话,
+// 除非手动新建,一直是该会话」——上次活跃会话按画布记 localStorage(键含
+// 画布 id,不进库不同步多端),面板每次挂载回读;存取照 canvasPet.ts 同款
+// try/catch 纪律(隐私模式静默退化,只是不记忆)。----
+
+export const ASSISTANT_SESSION_KEY_PREFIX = 'infinitechance.canvas.assistant.session.'
+
+export function assistantSessionKey(canvasId: number): string {
+  return `${ASSISTANT_SESSION_KEY_PREFIX}${canvasId}`
+}
+
+export function loadSavedAssistantSessionId(canvasId: number): number | null {
+  try {
+    const raw = localStorage.getItem(assistantSessionKey(canvasId))
+    if (raw === null) {
+      return null
+    }
+    const parsed = Number(raw)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** id 为 null = 清记忆(删除当前会话/列表里失靶时)。 */
+export function saveAssistantSessionId(canvasId: number, id: number | null): void {
+  try {
+    if (id === null) {
+      localStorage.removeItem(assistantSessionKey(canvasId))
+    } else {
+      localStorage.setItem(assistantSessionKey(canvasId), String(id))
+    }
+  } catch {
+    // 静默:记忆不可用不影响面板本体。
+  }
+}
+
+export type AssistantSessionRestoreTarget =
+  | { kind: 'open'; id: number }
+  | { kind: 'create' }
+
+/** 面板挂载时的恢复决策:记忆的会话还在列表 → 续用;没有记忆/已失靶
+ * (他端删除等)→ 自动建新会话。sessions 只取 id(结构化最小面,列表
+ * 来自 listAssistantSessions,newest first 与决策无关)。 */
+export function restoreAssistantSessionTarget(
+  sessions: { id: number }[],
+  savedId: number | null,
+): AssistantSessionRestoreTarget {
+  if (savedId !== null && sessions.some((s) => s.id === savedId)) {
+    return { kind: 'open', id: savedId }
+  }
+  return { kind: 'create' }
+}
