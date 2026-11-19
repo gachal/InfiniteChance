@@ -24,10 +24,10 @@ import (
 // 批量上限(护栏钉测对象):一次草案的操作数上限,超出按参数错误拒绝
 // (模型自行分批)。上限量级对单管理员自用已是失控防线,不是业务配额。
 const (
-	maxBatchNodes  = 20 // create_nodes / update_nodes 单批节点数
-	maxBatchIDs    = 50 // delete_nodes 单批节点数
-	maxBatchEdges  = 40 // connect/disconnect 及 create_nodes.edges 单批边数
-	maxTaskRefs    = 9  // trigger_task 参考图/视频参考上限(与画布任务契约同值)
+	maxBatchNodes     = 20   // create_nodes / update_nodes 单批节点数
+	maxBatchIDs       = 50   // delete_nodes 单批节点数
+	maxBatchEdges     = 40   // connect/disconnect 及 create_nodes.edges 单批边数
+	maxTaskRefs       = 9    // trigger_task 参考图/视频参考上限(与画布任务契约同值)
 	maxArgStringRunes = 8000 // 单个字符串参数宽度(prompt/title 等)
 )
 
@@ -176,7 +176,7 @@ func (t draftCore) executeDraft(ctx context.Context, args json.RawMessage, call 
 		}
 		return draftOutcome{summary: msg, feedback: feedbackError(msg)}
 	default:
-		return draftOutcome{summary: "回执状态未知:" + string(r.Status), feedback: feedbackError("回执状态未知: "+string(r.Status))}
+		return draftOutcome{summary: "回执状态未知:" + string(r.Status), feedback: feedbackError("回执状态未知: " + string(r.Status))}
 	}
 }
 

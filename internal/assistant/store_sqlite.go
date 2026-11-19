@@ -42,8 +42,8 @@ func (s *SQLiteStore) EnsureSchema(ctx context.Context) error {
 
 func scanSQLiteSession(scanner func(dest ...any) error) (Session, error) {
 	var (
-		s                   Session
-		rawMsgs             []byte
+		s                    Session
+		rawMsgs              []byte
 		createdAt, updatedAt string
 	)
 	if err := scanner(&s.ID, &s.CanvasID, &s.Title, &s.Mode, &rawMsgs, &createdAt, &updatedAt); err != nil {

@@ -19,29 +19,29 @@ import (
 // 连线),坐标缺省 = 前端视口落位(级联偏移照既有语义)。
 func newCreateNodes(hub *Hub) promptgen.AgentTool {
 	return draftCore{
-		name: "create_nodes",
+		name:        "create_nodes",
 		description: "在当前画布上批量新建节点并可选连线。节点类型:agent(Agent 工作台)/image(图片)/video(视频)/analysis(分析)/previz(预演台)/character(角色)/storyboard(分镜)/name(分镜稿)/level(关卡)/voice(音色)/audio(音频)/script(剧本)/group(分组)/panorama(全景)。图片/视频节点把创作内容放 prompt,剧本系节点放 text;x/y 省略 = 前端在当前视口自动落位。edges 的 from/to 引用本批 nodes 的数组下标(数字)或画布上既有节点的 id(字符串)。一次调用完成一批,不要逐个建。",
 		parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"nodes": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("要新建的节点清单(最多 %d 个)", maxBatchNodes),
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"type":  map[string]any{"type": "string", "description": "节点类型(见工具说明)"},
-							"title": map[string]any{"type": "string", "description": "节点标题,可省略"},
+							"type":   map[string]any{"type": "string", "description": "节点类型(见工具说明)"},
+							"title":  map[string]any{"type": "string", "description": "节点标题,可省略"},
 							"prompt": map[string]any{"type": "string", "description": "创作提示词(image/video/panorama 节点)"},
-							"text":  map[string]any{"type": "string", "description": "正文文本(script/agent 节点)"},
-							"x":     map[string]any{"type": "number", "description": "画布坐标 x,省略 = 自动落位"},
-							"y":     map[string]any{"type": "number", "description": "画布坐标 y,省略 = 自动落位"},
+							"text":   map[string]any{"type": "string", "description": "正文文本(script/agent 节点)"},
+							"x":      map[string]any{"type": "number", "description": "画布坐标 x,省略 = 自动落位"},
+							"y":      map[string]any{"type": "number", "description": "画布坐标 y,省略 = 自动落位"},
 						},
 						"required": []string{"type"},
 					},
 				},
 				"edges": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": "随批建立的连线(最多 %d 条);from/to 是本批下标或既有节点 id",
 					"items": map[string]any{
 						"type": "object",
@@ -145,21 +145,21 @@ func edgeEndpoint(m map[string]any, field, key string, i int) (string, error) {
 // newUpdateNodes wires update_nodes:批量改节点内容。
 func newUpdateNodes(hub *Hub) promptgen.AgentTool {
 	return draftCore{
-		name: "update_nodes",
+		name:        "update_nodes",
 		description: "批量修改画布上既有节点的内容:图片/视频节点改 prompt,剧本系节点改 text,均可改标题 title。每个节点至少给一个要改的字段;整段覆盖而不是追加。改节点时先用 read_canvas 检查与它相连的下游节点,主动向用户提示连带影响。",
 		parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"nodes": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("要修改的节点清单(最多 %d 个)", maxBatchNodes),
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"id":    map[string]any{"type": "string", "description": "目标节点 id(read_canvas 或新建回执给出)"},
-							"title": map[string]any{"type": "string", "description": "改为该标题"},
+							"id":     map[string]any{"type": "string", "description": "目标节点 id(read_canvas 或新建回执给出)"},
+							"title":  map[string]any{"type": "string", "description": "改为该标题"},
 							"prompt": map[string]any{"type": "string", "description": "改为该创作提示词(image/video/panorama)"},
-							"text":  map[string]any{"type": "string", "description": "改为该正文(script/agent)"},
+							"text":   map[string]any{"type": "string", "description": "改为该正文(script/agent)"},
 						},
 						"required": []string{"id"},
 					},
@@ -213,13 +213,13 @@ func newUpdateNodes(hub *Hub) promptgen.AgentTool {
 // 前端应用器处理)。
 func newDeleteNodes(hub *Hub) promptgen.AgentTool {
 	return draftCore{
-		name: "delete_nodes",
+		name:        "delete_nodes",
 		description: "批量删除画布上的节点(与其相连的连线一并移除)。删除前用 read_canvas 确认节点 id;删除影响下游内容生成,谨慎操作。",
 		parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"ids": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("要删除的节点 id 清单(最多 %d 个)", maxBatchIDs),
 					"items":       map[string]any{"type": "string"},
 				},
@@ -251,13 +251,13 @@ func newDeleteNodes(hub *Hub) promptgen.AgentTool {
 // newConnectNodes wires connect_nodes:连边。
 func newConnectNodes(hub *Hub) promptgen.AgentTool {
 	return draftCore{
-		name: "connect_nodes",
+		name:        "connect_nodes",
 		description: "在画布上批量连线(source→target,方向有向)。连线类型组合有创作语义的合法性校验(如剧本可连到图片/视频节点、图片可连到视频首帧),非法组合会在应用时报错回执。",
 		parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"edges": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("要建立的连线(最多 %d 条)", maxBatchEdges),
 					"items": map[string]any{
 						"type": "object",
@@ -281,13 +281,13 @@ func newConnectNodes(hub *Hub) promptgen.AgentTool {
 // newDisconnectNodes wires disconnect_nodes:断边。
 func newDisconnectNodes(hub *Hub) promptgen.AgentTool {
 	return draftCore{
-		name: "disconnect_nodes",
+		name:        "disconnect_nodes",
 		description: "批量断开画布上已有的连线(按 source→target 定位)。",
 		parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"edges": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("要断开的连线(最多 %d 条)", maxBatchEdges),
 					"items": map[string]any{
 						"type": "object",
@@ -340,26 +340,26 @@ func validateSimpleEdges(args map[string]any, verb string) (string, error) {
 // 上限/data: 拒绝/model_not_priced 校验原样生效,本工具只做形状预检。
 func newTriggerTask(hub *Hub) promptgen.AgentTool {
 	return draftCore{
-		name: "trigger_task",
+		name:        "trigger_task",
 		description: "对一个画布节点触发媒体生成任务(kind=image 生图 / kind=video 生视频)。model 必须用目录里的真实模型名,不确定就先问用户;prompt 是任务的创作提示词。图片任务最多 9 条 image_urls 参考图(http(s) 地址或素材内容寻址路径,不能是 data: 内联);视频任务 seconds 1-100、video_refs 结构化参考 {url,kind,role}(kind: image/video/audio;role: first_frame/last_frame/reference_image/reference_video/reference_audio)。触发生成会真实消耗额度,只在用户明确要求时调用。",
 		parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"node_id": map[string]any{"type": "string", "description": "目标节点 id(产物会写回该节点)"},
-				"kind":    map[string]any{"type": "string", "description": "image | video,缺省 image"},
-				"prompt":  map[string]any{"type": "string", "description": "生成提示词"},
-				"model":   map[string]any{"type": "string", "description": "模型名(与节点生成对话框目录一致)"},
-				"size":    map[string]any{"type": "string", "description": "分辨率档位,如 2048x2048(与对话框档位一致)"},
-				"ratio":   map[string]any{"type": "string", "description": "视频画幅比,如 16:9"},
+				"node_id":    map[string]any{"type": "string", "description": "目标节点 id(产物会写回该节点)"},
+				"kind":       map[string]any{"type": "string", "description": "image | video,缺省 image"},
+				"prompt":     map[string]any{"type": "string", "description": "生成提示词"},
+				"model":      map[string]any{"type": "string", "description": "模型名(与节点生成对话框目录一致)"},
+				"size":       map[string]any{"type": "string", "description": "分辨率档位,如 2048x2048(与对话框档位一致)"},
+				"ratio":      map[string]any{"type": "string", "description": "视频画幅比,如 16:9"},
 				"background": map[string]any{"type": "string", "description": "仅 image:transparent = 透明背景"},
-				"seconds": map[string]any{"type": "number", "description": "仅 video:时长(秒,1-100)"},
+				"seconds":    map[string]any{"type": "number", "description": "仅 video:时长(秒,1-100)"},
 				"image_urls": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("仅 image:参考图清单(最多 %d 条)", maxTaskRefs),
 					"items":       map[string]any{"type": "string"},
 				},
 				"video_refs": map[string]any{
-					"type": "array",
+					"type":        "array",
 					"description": fmt.Sprintf("仅 video:结构化参考清单(合计最多 %d 条)", maxTaskRefs),
 					"items": map[string]any{
 						"type": "object",

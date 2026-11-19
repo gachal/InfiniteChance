@@ -170,11 +170,11 @@ func decodePetImage(t *testing.T, w *httptest.ResponseRecorder) petImageJSON {
 func TestUploadPetImageSniffsMagicAndLandsUploadsPrefix(t *testing.T) {
 	env := newPetEnv()
 	cases := []struct {
-		name        string
-		filename    string // 故意给假扩展名:类型由魔数裁决,声明不受信
-		content     []byte
-		wantType    string
-		wantExt     string
+		name     string
+		filename string // 故意给假扩展名:类型由魔数裁决,声明不受信
+		content  []byte
+		wantType string
+		wantExt  string
 	}{
 		{"GIF 动图", "x.txt", gifBytes, "image/gif", ".gif"},
 		{"WebP 动图", "y.bin", webpBytes, "image/webp", ".webp"},

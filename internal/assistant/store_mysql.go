@@ -43,8 +43,8 @@ const sessionColumns = `id, canvas_id, title, mode, messages, created_at, update
 
 func scanSession(scanner func(dest ...any) error) (Session, error) {
 	var (
-		s                   Session
-		rawMsgs             []byte
+		s                    Session
+		rawMsgs              []byte
 		createdAt, updatedAt sql.NullTime
 	)
 	if err := scanner(&s.ID, &s.CanvasID, &s.Title, &s.Mode, &rawMsgs, &createdAt, &updatedAt); err != nil {

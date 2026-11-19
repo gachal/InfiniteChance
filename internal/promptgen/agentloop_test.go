@@ -236,7 +236,7 @@ func TestAgentLoopGuardrailWrapUpAt15ToolRounds(t *testing.T) {
 	registry.Register(tool)
 
 	turner := &scriptTurner{rounds: func(n int, _ ChatRequest, onDelta func(string)) (StreamTurn, error) {
-		if n < agentMaxToolRounds {
+		if n < AgentMaxToolRounds {
 			return toolTurn("", fmt.Sprintf("call_%d", n), "echo_tool", "{}"), nil
 		}
 		onDelta("已完成 15 步,请继续。")
@@ -248,15 +248,15 @@ func TestAgentLoopGuardrailWrapUpAt15ToolRounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runAgentLoop: %v", err)
 	}
-	if turner.count() != agentMaxToolRounds+1 {
+	if turner.count() != AgentMaxToolRounds+1 {
 		t.Fatalf("gateway calls = %d, want 15 tool rounds + 1 wrap-up", turner.count())
 	}
 	// 前 15 轮都带 tools;收尾轮不带。
 	for i, req := range turner.requests {
-		if i < agentMaxToolRounds && len(req.Tools) != 1 {
+		if i < AgentMaxToolRounds && len(req.Tools) != 1 {
 			t.Fatalf("round %d tools = %v, want definitions present", i, req.Tools)
 		}
-		if i == agentMaxToolRounds {
+		if i == AgentMaxToolRounds {
 			if len(req.Tools) != 0 || req.ToolChoice != "" {
 				t.Fatalf("wrap-up round carries tools = %v / choice = %q, want none", req.Tools, req.ToolChoice)
 			}
@@ -280,7 +280,7 @@ func TestAgentLoopGuardrailWrapUpAt15ToolRounds(t *testing.T) {
 			}
 		}
 	}
-	if toolCalls != agentMaxToolRounds || toolResults != agentMaxToolRounds {
+	if toolCalls != AgentMaxToolRounds || toolResults != AgentMaxToolRounds {
 		t.Errorf("tool events = %d calls / %d results, want 15 each", toolCalls, toolResults)
 	}
 }

@@ -1877,27 +1877,25 @@ export class ApiClient {
     throw new ApiError(502, 'upstream_error', '生成流中断,未收到完成标记')
   }
 
-  /** Agent 工具循环的流式消费(63 号票):POST /canvases/:id/agent/stream,
-   * 请求体与 generatePromptStream 相同。事件协议五形状(ADR 0006):delta
-   * 逐帧交 onDelta,tool_call/tool_result 交对应回调,done 收尾时返回
-   * { text: 最终回答全文, summary?: 工具摘要行, character_section? };error
-   * 帧抛 ApiError(502)。流前校验失败仍是普通 JSON 错误(非 2xx →
-   * ApiError);流断在半途(无 done)同样抛错,已回调的增量由调用方决定
-   * 去留。 */
-  async agentStream(
-    canvasId: number,
-    input: GeneratePromptInput,
-    handlers: AgentStreamHandlers = {},
+  /** Agent 五形状 SSE 读循环共享件(91/92 号票评审修复:agentStream 与
+   * assistantStream 此前 ~110 行逐字复制,收敛为此私有方法;两公开 API
+   * 签名与行为不变)。差异参数化:端点路径、是否解析流首固化段帧(52 号
+   * 票形状,仅 Agent 流发送)、error 帧与流中断的文案。 */
+  private async agentEventStream(
+    path: string,
+    body: unknown,
+    handlers: AgentStreamHandlers,
+    opts: { sectionFrames: boolean; errorFallback: string; interruptMessage: string },
   ): Promise<AgentStreamResult> {
     const headers = new Headers({ 'Content-Type': 'application/json' })
     const token = this.getToken?.()
     if (token) {
       headers.set('Authorization', `Bearer ${token}`)
     }
-    const res = await this.fetchImpl(`${this.base}/canvases/${canvasId}/agent/stream`, {
+    const res = await this.fetchImpl(`${this.base}${path}`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     })
     if (res.status < 200 || res.status > 299) {
       // 校验失败发生在流打开之前:与 request() 同款错误形状。
@@ -1940,11 +1938,14 @@ export class ApiClient {
           finished = true
           break
         }
-        // 流首固化段帧(52 号票):与五形状并存的服务端帧,先于增量。
-        const section = parseCharacterSection(payload)
-        if (section !== undefined) {
-          characterSection = section
-          continue
+        // 流首固化段帧(52 号票):与五形状并存的服务端帧,先于增量;
+        // 仅 Agent 流解析(助手流不发该形状)。
+        if (opts.sectionFrames) {
+          const section = parseCharacterSection(payload)
+          if (section !== undefined) {
+            characterSection = section
+            continue
+          }
         }
         const parsed = parseAgentEvent(payload)
         if (parsed === null) {
@@ -1969,7 +1970,7 @@ export class ApiClient {
             throw new ApiError(
               502,
               parsed.error.code ?? 'upstream_error',
-              parsed.error.message ?? 'Agent 会话失败',
+              parsed.error.message ?? opts.errorFallback,
             )
         }
       }
@@ -1979,7 +1980,7 @@ export class ApiClient {
     }
     if (text === undefined) {
       // 流断在半途(无 done 事件):已交增量不作成功,由调用方决定去留。
-      throw new ApiError(502, 'upstream_error', 'Agent 流中断,未收到完成标记')
+      throw new ApiError(502, 'upstream_error', opts.interruptMessage)
     }
     const result: AgentStreamResult = { text }
     if (summary !== undefined) {
@@ -1989,6 +1990,25 @@ export class ApiClient {
       result.character_section = characterSection
     }
     return result
+  }
+
+  /** Agent 工具循环的流式消费(63 号票):POST /canvases/:id/agent/stream,
+   * 请求体与 generatePromptStream 相同。事件协议五形状(ADR 0006):delta
+   * 逐帧交 onDelta,tool_call/tool_result 交对应回调,done 收尾时返回
+   * { text: 最终回答全文, summary?: 工具摘要行, character_section? };error
+   * 帧抛 ApiError(502)。流前校验失败仍是普通 JSON 错误(非 2xx →
+   * ApiError);流断在半途(无 done)同样抛错,已回调的增量由调用方决定
+   * 去留。 */
+  async agentStream(
+    canvasId: number,
+    input: GeneratePromptInput,
+    handlers: AgentStreamHandlers = {},
+  ): Promise<AgentStreamResult> {
+    return this.agentEventStream(`/canvases/${canvasId}/agent/stream`, input, handlers, {
+      sectionFrames: true,
+      errorFallback: 'Agent 会话失败',
+      interruptMessage: 'Agent 流中断,未收到完成标记',
+    })
   }
 
   /** 建助手会话(91 号票):POST /canvases/:id/assistant/sessions。 */
@@ -2038,101 +2058,18 @@ export class ApiClient {
    * 静默等待前端应用与回执(经 sendAssistantReceipt 投递),回执到即
    * tool_result 续跑;回执超时(约 5 分钟)服务端发 error 帧
    * (receipt_timeout)收尾。done 后调用方无需自行持久 —— 服务端按纪律
-   * 落会话历史,前端只需把流内容并入本地渲染。 */
+   * 落会话历史,前端只需把流内容并入本地渲染。读循环走 agentEventStream
+   * 共享件(不发固化段帧,故不解析)。 */
   async assistantStream(
     canvasId: number,
     input: AssistantStreamInput,
     handlers: AgentStreamHandlers = {},
   ): Promise<AgentStreamResult> {
-    const headers = new Headers({ 'Content-Type': 'application/json' })
-    const token = this.getToken?.()
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`)
-    }
-    const res = await this.fetchImpl(`${this.base}/canvases/${canvasId}/assistant/stream`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(input),
+    return this.agentEventStream(`/canvases/${canvasId}/assistant/stream`, input, handlers, {
+      sectionFrames: false,
+      errorFallback: '画布助手会话失败',
+      interruptMessage: '助手流中断,未收到完成标记',
     })
-    if (res.status < 200 || res.status > 299) {
-      // 校验失败发生在流打开之前:与 request() 同款错误形状。
-      const payload: unknown = await res.json().catch(() => null)
-      const { code, message } = errorInfo(payload, res.status)
-      if (res.status === 401) {
-        throw new UnauthorizedError(code, message)
-      }
-      throw new ApiError(res.status, code, message)
-    }
-    if (!res.body) {
-      throw new ApiError(res.status, 'error', '响应没有内容流')
-    }
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let text: string | undefined
-    let summary: string | undefined
-    let finished = false
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
-      }
-      buffer += decoder.decode(value, { stream: true })
-      let boundary = buffer.indexOf('\n\n')
-      while (boundary >= 0) {
-        const event = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + 2)
-        boundary = buffer.indexOf('\n\n')
-
-        const dataLine = event.split('\n').find((line) => line.startsWith('data:'))
-        if (dataLine === undefined) {
-          continue
-        }
-        const payload = dataLine.slice(5).replace(/^ /, '')
-        if (payload === '[DONE]') {
-          finished = true
-          break
-        }
-        const parsed = parseAgentEvent(payload)
-        if (parsed === null) {
-          // 不可解析的帧:后端只发合法 JSON,出现即跳过不打断。
-          continue
-        }
-        switch (parsed.type) {
-          case 'delta':
-            handlers.onDelta?.(parsed.text)
-            break
-          case 'tool_call':
-            handlers.onToolCall?.(parsed)
-            break
-          case 'tool_result':
-            handlers.onToolResult?.(parsed)
-            break
-          case 'done':
-            text = parsed.text
-            summary = parsed.summary
-            break
-          case 'error':
-            throw new ApiError(
-              502,
-              parsed.error.code ?? 'upstream_error',
-              parsed.error.message ?? '画布助手会话失败',
-            )
-        }
-      }
-      if (finished) {
-        break
-      }
-    }
-    if (text === undefined) {
-      throw new ApiError(502, 'upstream_error', '助手流中断,未收到完成标记')
-    }
-    const result: AgentStreamResult = { text }
-    if (summary !== undefined) {
-      result.summary = summary
-    }
-    return result
   }
 
   /** 视频反推提示词(13 号票):canvas/server 经网关多模态聊天接口分析

@@ -61,7 +61,7 @@ type Handlers struct {
 	// Canvases 读画布行:存在性裁决 + 会话作用域注入(CanvasID/IPID)。
 	Canvases promptgen.CanvasGetter
 	// Models 供开流前的聊天轨配价预检(model_not_priced,硬性约束 3)。
-	Models promptgen.ModelPricer
+	Models  promptgen.ModelPricer
 	Gateway promptgen.Gateway
 	// Tools 是助手工具面(七新 + 三复用);nil = 不带 tools 字段,退化为
 	// 普通流式会话(测试宽容路径)。
@@ -440,20 +440,30 @@ func (h *Handlers) Stream(c *gin.Context) {
 
 	// 持久纪律:整轮成功才落库 —— user 全文 + assistant(最终回答全文 +
 	// 工具调用摘要行),循环中间帧不入库;流中断不持久化,可重试重放。
+	// 标题不在此同步生成(见下):消息先落库,流即时收尾。
 	turns := append(append([]Message{}, s.Messages...),
 		Message{Role: "user", Content: message},
 		Message{Role: "assistant", Content: done.Text, Summary: done.Summary},
 	)
 	u := &UpdateInput{Messages: &turns}
-	if s.Title == "" {
-		title := h.sessionTitle(ctx, model, canvasID, message, done.Text)
-		u.Title = &title
-	}
 	if _, err := h.Sessions.Update(context.Background(), canvasID, s.ID, u); err != nil {
 		// 对话已完整送达前端,落库失败只影响重开页面的历史:记日志不炸流。
 		log.Printf("assistant: persist session %d: %v", s.ID, err)
 	}
 	writeEvent([]byte("[DONE]"))
+
+	// 标题异步生成(91 号票评审修复):首轮 LLM 起标题最长 10s,同步跑会把
+	// [DONE] 拖住、客户端干等 —— 改为流收尾后 goroutine 生成并二次落库
+	// (Update 只写非 nil 字段,与后续轮次的 messages 持久化互不覆盖),
+	// 目录下次拉取即见。请求 ctx 随 handler 返回作废,这里换独立 context。
+	if s.Title == "" {
+		go func() {
+			title := h.sessionTitle(context.Background(), model, canvasID, message, done.Text)
+			if _, err := h.Sessions.Update(context.Background(), canvasID, s.ID, &UpdateInput{Title: &title}); err != nil {
+				log.Printf("assistant: title session %d: %v", s.ID, err)
+			}
+		}()
+	}
 }
 
 // loadCanvas 校验画布存在并带回行(IP 归属给作用域注入)。
@@ -511,8 +521,8 @@ func (h *Handlers) sessionTitle(ctx context.Context, model string, canvasID int6
 		"只输出标题本身,不要引号、句号或任何解释。\n用户:" + truncateRunes(userMessage, 200) +
 		"\n助手:" + truncateRunes(answer, 200)
 	res, err := h.Gateway.GenerateChat(tctx, promptgen.ChatRequest{
-		Model:  model,
-		Source: fmt.Sprintf("canvas=%d gen=assistant", canvasID),
+		Model:   model,
+		Source:  fmt.Sprintf("canvas=%d gen=assistant", canvasID),
 		Content: prompt,
 	})
 	if err != nil {

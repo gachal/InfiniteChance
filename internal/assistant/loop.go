@@ -21,16 +21,18 @@ import (
 )
 
 // assistantMaxToolRounds 与收尾指令照 Agent 循环护栏同规(63 号票定案 15
-// 轮,触顶注入收尾指令强制纯文本收场)。
-const assistantMaxToolRounds = promptgenToolRoundLimit
-
-// promptgenToolRoundLimit 引用公共护栏常量(同值同语义,单点演进)。
-const promptgenToolRoundLimit = 15
+// 轮,触顶注入收尾指令强制纯文本收场)。轮上限真引用 promptgen.AgentMaxToolRounds
+// (91 号票评审修复:此前本地复制同值常量、注释却称「单点演进」失实),
+// 改公共常量两边同时生效。
+const assistantMaxToolRounds = promptgen.AgentMaxToolRounds
 
 // assistantWrapupInstruction 是护栏触顶后的收尾指令(照公共循环文案语义,
-// 面向画布助手口吻微调)。
-const assistantWrapupInstruction = "你已连续完成 15 轮工具调用,达到单次请求的上限。" +
-	"请立即停止调用工具,总结本轮已完成与待用户确认的事项,并告诉用户如何继续。"
+// 面向画布助手口吻微调)。轮数同样从公共常量拼入。
+var assistantWrapupInstruction = fmt.Sprintf(
+	"你已连续完成 %d 轮工具调用,达到单次请求的上限。"+
+		"请立即停止调用工具,总结本轮已完成与待用户确认的事项,并告诉用户如何继续。",
+	promptgen.AgentMaxToolRounds,
+)
 
 // SystemPrompt 是画布助手的「剧本导演」位系统提示词:开场注入,与用户
 // 消息正交。mode 段向模型声明当前授权档,行为不越档。

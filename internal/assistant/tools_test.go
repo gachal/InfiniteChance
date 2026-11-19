@@ -85,7 +85,7 @@ func TestReadCanvasGuardrails(t *testing.T) {
 		} `json:"data"`
 	}
 	var doc struct {
-		Nodes []node `json:"nodes"`
+		Nodes []node           `json:"nodes"`
 		Edges []map[string]any `json:"edges"`
 	}
 	for i := 0; i < 250; i++ {
@@ -111,11 +111,11 @@ func TestReadCanvasGuardrails(t *testing.T) {
 	}
 	var out struct {
 		Nodes []struct {
-			ID      string `json:"id"`
-			Type    string `json:"type"`
-			Prompt  string `json:"prompt"`
+			ID      string  `json:"id"`
+			Type    string  `json:"type"`
+			Prompt  string  `json:"prompt"`
 			X       float64 `json:"x"`
-			CutMore bool   `json:"summary_truncated"`
+			CutMore bool    `json:"summary_truncated"`
 		} `json:"nodes"`
 		Edges     []map[string]any `json:"edges"`
 		NodeCount int              `json:"node_count"`
@@ -188,4 +188,3 @@ func TestSystemPromptDeclaresMode(t *testing.T) {
 		t.Error("full mode prompt wrong")
 	}
 }
-

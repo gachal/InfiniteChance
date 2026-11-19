@@ -379,10 +379,9 @@ func TestAssistantStreamRunsReceiptLoopEndToEnd(t *testing.T) {
 	}
 
 	// 上行:两轮流式 + 一次标题生成;来源标记 canvas=7 gen=assistant(无
-	// node 段,票面计费标记)。
-	if env.relay.count() != 3 {
-		t.Fatalf("relay calls = %d, want 2 loop rounds + 1 title call", env.relay.count())
-	}
+	// node 段,票面计费标记)。标题在 [DONE] 之后由 goroutine 异步生成
+	// (评审修复:不再阻塞流收尾),轮询等它到齐。
+	waitForTitleCall(t, env)
 	for i := 0; i < 2; i++ {
 		if src := env.relay.request(i).Source; src != "canvas=7 gen=assistant" {
 			t.Errorf("round %d source = %q", i, src)
@@ -394,11 +393,8 @@ func TestAssistantStreamRunsReceiptLoopEndToEnd(t *testing.T) {
 	}
 
 	// 持久纪律:GET 会话 = user 全文 + assistant 全文 + 摘要;标题 = LLM
-	// 生成(假中转回了「加主角立绘」)。
-	res2, raw2 := env.do(t, http.MethodGet, fmt.Sprintf("/canvases/7/assistant/sessions/%d", sid), nil)
-	if res2.StatusCode != http.StatusOK {
-		t.Fatalf("get session status = %d (%s)", res2.StatusCode, raw2)
-	}
+	// 生成(假中转回了「加主角立绘」),异步落库 —— 标题轮询等到位;
+	// messages 在 [DONE] 前已同步落库,首拍即应齐。
 	var body struct {
 		Session struct {
 			Title    string `json:"title"`
@@ -409,11 +405,22 @@ func TestAssistantStreamRunsReceiptLoopEndToEnd(t *testing.T) {
 			} `json:"messages"`
 		} `json:"session"`
 	}
-	if err := json.Unmarshal([]byte(raw2), &body); err != nil {
-		t.Fatalf("decode: %v (%s)", err, raw2)
-	}
-	if body.Session.Title != "加主角立绘" {
-		t.Errorf("title = %q, want the LLM-generated one", body.Session.Title)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		res2, raw2 := env.do(t, http.MethodGet, fmt.Sprintf("/canvases/7/assistant/sessions/%d", sid), nil)
+		if res2.StatusCode != http.StatusOK {
+			t.Fatalf("get session status = %d (%s)", res2.StatusCode, raw2)
+		}
+		if err := json.Unmarshal([]byte(raw2), &body); err != nil {
+			t.Fatalf("decode: %v (%s)", err, raw2)
+		}
+		if body.Session.Title == "加主角立绘" {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("title = %q, want the LLM-generated one within 3s", body.Session.Title)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if len(body.Session.Messages) != 2 {
 		t.Fatalf("persisted messages = %d, want user+assistant only", len(body.Session.Messages))
@@ -430,6 +437,21 @@ func TestAssistantStreamRunsReceiptLoopEndToEnd(t *testing.T) {
 func marshalStr(v any) string {
 	raw, _ := json.Marshal(v)
 	return string(raw)
+}
+
+// waitForTitleCall polls until the async title-generation call lands on the
+// fake relay(标题自评审修复起在 [DONE] 后由 goroutine 生成,照 relay 包
+// waitForUsageRow 先例轮询),超时按计数失败。
+func waitForTitleCall(t *testing.T, env testEnv) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if env.relay.count() >= 3 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("relay calls = %d, want 2 loop rounds + 1 title call within 3s", env.relay.count())
 }
 
 // 流前校验纪律:全部 JSON 错误、不开流。
@@ -579,7 +601,7 @@ func TestAssistantSessionLifecycleAndReceiptGuards(t *testing.T) {
 	res, raw = env.do(t, http.MethodGet, "/canvases/7/assistant/sessions", nil)
 	var listed struct {
 		Sessions []struct {
-			ID  int64 `json:"id"`
+			ID   int64  `json:"id"`
 			Mode string `json:"mode"`
 		} `json:"sessions"`
 	}
