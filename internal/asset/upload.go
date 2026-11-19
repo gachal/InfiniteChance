@@ -285,6 +285,13 @@ func sniffMagic(head []byte) (string, bool) {
 	return "", false
 }
 
+// SniffMagic is the exported thin wrapper over sniffMagic(92 号票桌宠形象
+// 上传复用同一张魔数表 —— 单一事实源,新增格式只改 sniffMagic 一处,
+// uploadableMedia 表 292 行注释的同一纪律)。
+func SniffMagic(head []byte) (string, bool) {
+	return sniffMagic(head)
+}
+
 // uploadableMedia 是上传白名单的正典表:扩展名 ↔ 媒体类型。扩展名侧的
 // 佐证查询(extensionContentType)从它派生;键扩展名经 transfer.go 的
 // extensionOf(类型→扩展名)给出 —— 两张方向表由

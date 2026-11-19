@@ -1,7 +1,10 @@
 <script setup lang="ts">
 // 画布顶栏(58 号票阶段一自 CanvasEditorView 抽出):面包屑「IP 名 / 画布名」
 // + 画布改名(表单态内聚在本组件)+ 自动保存状态 + 在途任务计数。
-// 改名提交上抛给视图调 API;返回上抛由视图路由。
+// 改名提交上抛给视图调 API;返回上抛由视图路由。91 号票 +「助手」按钮:
+// 桌宠(92 号票)缺位时的画布助手面板入口,点击上抛由视图开关面板。
+// 92 号票 +「桌宠」开关:收起/唤出桌宠(收起 = 不渲染;状态按画布存
+// localStorage,视图持有 petCollapsed 并持久)。
 import { computed, ref } from 'vue'
 
 const props = defineProps<{
@@ -10,11 +13,15 @@ const props = defineProps<{
   canvasName: string
   saveState: string
   taskActiveCount: number
+  /** 桌宠当前是否收起(按钮文案随之切换)。 */
+  petCollapsed?: boolean
 }>()
 
 const emit = defineEmits<{
   back: []
   rename: [draft: string]
+  assistant: []
+  togglePet: []
 }>()
 
 const renaming = ref(false)
@@ -109,6 +116,25 @@ defineExpose({ cancelRenaming })
       </button>
     </template>
 
+    <button
+      class="ghost assistant-toggle"
+      type="button"
+      title="画布助手:对话修改画布(建/改/删节点、连线、触发生成)"
+      @click="emit('assistant')"
+    >
+      助手
+    </button>
+
+    <!-- 92 号票:桌宠收起/唤出开关(收起 = 不渲染;状态按画布记忆)。 -->
+    <button
+      class="ghost pet-toggle"
+      type="button"
+      :title="petCollapsed ? '唤出画布桌宠' : '收起画布桌宠'"
+      @click="emit('togglePet')"
+    >
+      {{ petCollapsed ? '唤出桌宠' : '收起桌宠' }}
+    </button>
+
     <span
       class="save-state"
       :data-state="saveState"
@@ -187,8 +213,20 @@ defineExpose({ cancelRenaming })
   outline: none;
 }
 
-.save-state {
+.assistant-toggle {
   margin-left: auto;
+  font-weight: 600;
+}
+
+/* 92 号票:桌宠开关紧随助手入口,同族弱按钮 —— 字重与相邻的
+   assistant-toggle 同档 600(两者是顶栏上的一组开关,视觉成对;
+   500 不在 DESIGN.md 字档 400/600/700 内,评审修复归档)。 */
+.pet-toggle {
+  font-weight: 600;
+}
+
+.save-state {
+  margin-left: 0;
   color: var(--text-muted);
   font-size: var(--fs-body);
 }

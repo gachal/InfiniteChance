@@ -14,14 +14,20 @@ import (
 	"strings"
 )
 
-// agentMaxToolRounds 是单次请求的工具轮上限(63 号票定案 6):触顶注入收尾
+// AgentMaxToolRounds 是单次请求的工具轮上限(63 号票定案 15):触顶注入收尾
 // 指令强制 LLM 总结已完成事项并指引用户续跑,保证请求必然有界收敛。
-const agentMaxToolRounds = 15
+// 导出(91 号票评审修复):画布助手循环(assistant.runAssistantLoop)同规
+// 引用同一常量,护栏单点演进,不再各处本地复制。
+const AgentMaxToolRounds = 15
 
 // agentWrapupInstruction 是护栏触顶后的收尾指令(以 user 消息注入):收尾
-// 轮不再带 tools,模型只能用文本总结收场。
-const agentWrapupInstruction = "你已连续完成 15 轮工具调用,达到单次请求的上限。" +
-	"请立即停止调用工具,总结本轮已完成的事项,并告诉用户如何继续(例如再次发送指令即可续跑)。"
+// 轮不再带 tools,模型只能用文本总结收场。轮数从 AgentMaxToolRounds 拼入,
+// 改常量即全链一致(文案断言均以本常量/子串为准)。
+var agentWrapupInstruction = fmt.Sprintf(
+	"你已连续完成 %d 轮工具调用,达到单次请求的上限。"+
+		"请立即停止调用工具,总结本轮已完成的事项,并告诉用户如何继续(例如再次发送指令即可续跑)。",
+	AgentMaxToolRounds,
+)
 
 // AgentEvent is one SSE event of the Agent tool loop (ADR 0006 事件协议,
 // 前后端契约):delta/tool_call/tool_result/done/error 五形状,字段按类型
@@ -124,7 +130,7 @@ func runAgentLoop(
 		}
 
 		// 护栏:第 15 个工具轮执行完即注入收尾指令,下一轮强制纯文本收场。
-		if round >= agentMaxToolRounds {
+		if round >= AgentMaxToolRounds {
 			wrapup = true
 			messages = append(messages, ChatMessage{Role: "user", Content: agentWrapupInstruction})
 		}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/agenttools"
 	"github.com/gachal/InfiniteChance/internal/apikey"
+	"github.com/gachal/InfiniteChance/internal/assistant"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
@@ -22,6 +23,7 @@ import (
 	"github.com/gachal/InfiniteChance/internal/config"
 	"github.com/gachal/InfiniteChance/internal/musictask"
 	"github.com/gachal/InfiniteChance/internal/objectstore"
+	"github.com/gachal/InfiniteChance/internal/pet"
 	"github.com/gachal/InfiniteChance/internal/pricing"
 	"github.com/gachal/InfiniteChance/internal/promptgen"
 	"github.com/gachal/InfiniteChance/internal/prompttemplate"
@@ -73,8 +75,11 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 	pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: s.Prices})
 	// 提示词模板:管理端维护,画布侧经共享库即时读取(11 号票)。
 	prompttemplate.RegisterAdminRoutes(admin, &prompttemplate.Handlers{Store: s.PromptTemplates})
-	// 动态配置:存储驱动的管理面(19 号票),画布侧同库只读。
+	// 动态配置:存储驱动的管理面(19 号票),画布侧同库只读。桌宠配置
+	// CRUD(92 号票)同在 settings 包;形象上传在 pet 包(要吃 asset 嗅探
+	// 与 objectstore,分包防 import 环),与 settings 同组挂载。
 	settings.RegisterAdminRoutes(admin, &settings.Handlers{Store: s.Settings})
+	pet.RegisterAdminRoutes(admin, &pet.Handlers{Storage: s.Storage})
 	// 用量审计:请求级日志列表与按天/模型/渠道汇总(15 号票)。
 	usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: s.UsageLogs})
 	// 素材哈希回填与去重(48 号票):素材行与对象存储都就位才挂;store
@@ -141,6 +146,11 @@ type CanvasStores struct {
 	Tasks      canvastask.Store
 	Templates  prompttemplate.Store
 	Settings   settings.Store
+	// AssistantSessions 承载画布助手会话(91 号票):会话 CRUD/SSE 面挂
+	// /canvases/:id/assistant/*,同时作为删画布级联清理器(canvas 包声明
+	// 接口、本包注入)传给 canvas.Handlers.SessionCleanup。nil 时删画布
+	// 不级联(测试宽容形态,生产装配恒非 nil)。
+	AssistantSessions assistant.Store
 }
 
 // CanvasRoutes mounts the canvas surface: /auth (same account table),
@@ -160,7 +170,8 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 
 	// 画布面:一律先过 JWT 会话,与管理面同一套令牌体系。
 	group := r.Group("/canvases", auth.RequireAuth(issuer))
-	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases, IPs: s.IPs})
+	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases, IPs: s.IPs,
+		SessionCleanup: s.AssistantSessions})
 	taskHandlers := &canvastask.Handlers{
 		Tasks:         s.Tasks,
 		Canvases:      s.Canvases,
@@ -235,6 +246,19 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Canvases:   s.Canvases,
 		IPs:        s.IPs,
 	})
+	// 画布助手工具面(91 号票):read_canvas 吃 Canvases,草案工具挂回执
+	// 中枢;SSE 流与回执端点共享同一 Hub 实例(在途调用按 session+call_id
+	// 匹配)。生产装配恒非 nil sessions;nil 时 handler 侧缺口以 500 暴露
+	// (与各 store 同哲学)。
+	assistantHub := assistant.NewHub()
+	assistantTools := assistant.NewRegistry(assistant.Deps{
+		Canvases:   s.Canvases,
+		Characters: s.Characters,
+		Scenes:     s.Scenes,
+		Props:      s.Props,
+		IPs:        s.IPs,
+		Hub:        assistantHub,
+	})
 	promptgen.RegisterRoutes(group, &promptgen.Handlers{
 		Templates:     s.Templates,
 		Canvases:      s.Canvases,
@@ -245,6 +269,17 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Gateway:       chatGateway,
 		AgentTools:    agentTools,
 		PublicBaseURL: publicBase,
+	})
+	// 画布助手(91 号票):会话 CRUD + SSE 流 + 回执端点,同一 JWT 面、
+	// 同一服务 key client(chatGateway 为 nil 时流以 gateway_unconfigured
+	// 拒绝);工具面吃与 Agent 节点同源的 store 切片,回执中枢随装配单例。
+	assistant.RegisterRoutes(group, &assistant.Handlers{
+		Sessions: s.AssistantSessions,
+		Canvases: s.Canvases,
+		Models:   s.Prices,
+		Gateway:  chatGateway,
+		Tools:    assistantTools,
+		Hub:      assistantHub,
 	})
 
 	// 目录面:图像/视频/音频模型与提示词模板、提示词聊天模型,全挂 JWT
@@ -277,4 +312,11 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	assetHandlers := &asset.Handlers{Store: s.Assets, Storage: storage, PublicBaseURL: publicBase, IPs: s.IPs}
 	asset.RegisterContentRoutes(r.Group("/assets"), assetHandlers)
 	asset.RegisterLibraryRoutes(r.Group("/assets", auth.RequireAuth(issuer)), assetHandlers)
+
+	// 桌宠(92 号票):配置读端点挂 JWT 组(canvas-web 拉 pet 配置,settings
+	// 只读 reader 热生效);对象读端点照 /assets/:id/content 先例**故意不挂
+	// 鉴权** —— <img> 带不了 Authorization 头,且路径只收配置登记过的键。
+	petHandlers := &pet.Handlers{Config: settings.NewPetReader(s.Settings), Storage: storage}
+	pet.RegisterConfigRoutes(r.Group("/pet", auth.RequireAuth(issuer)), petHandlers)
+	pet.RegisterObjectRoutes(r.Group("/pet"), petHandlers)
 }

@@ -881,6 +881,57 @@ export interface AgentStreamHandlers {
   onToolResult?: (event: AgentToolResultEvent) => void
 }
 
+// ---- 画布助手(91 号票)----
+
+/** 一条助手会话持久消息(91 号票持久纪律):user 轮全文;assistant 轮 =
+ * 最终回答全文 + 工具调用摘要行;循环中间帧不入库。 */
+export interface AssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+  summary?: string
+}
+
+/** 画布助手会话(绑死画布,不跨画布移动):mode 是授权档(ask = 先询问
+ * 我 / full = 完全授权,各会话各记各的),messages 是一列 JSON 文档。 */
+export interface AssistantSession {
+  id: number
+  canvas_id: number
+  title: string
+  mode: 'ask' | 'full'
+  messages: AssistantMessage[]
+  created_at: string
+  updated_at: string
+}
+
+/** 建会话入参:mode 缺省 ask(服务端归一)。 */
+export interface CreateAssistantSessionInput {
+  mode?: 'ask' | 'full'
+}
+
+/** 改会话入参:两键皆可选,非空才写(面板切档 = 改 mode)。 */
+export interface UpdateAssistantSessionInput {
+  title?: string
+  mode?: 'ask' | 'full'
+}
+
+/** 前端回执(91 号票协议扩展):call_id 匹配在途草案调用;applied 时
+ * result 是结构化结果(新建节点 id 映射 / 任务提交证据),failed/rejected
+ * 时 message 是人读原因,如实喂回模型。 */
+export interface AssistantReceiptInput {
+  call_id: string
+  status: 'applied' | 'failed' | 'rejected'
+  message?: string
+  result?: unknown
+}
+
+/** 助手会话流入参:session_id 定会话(服务端按它载入历史),message 是
+ * 本轮输入,model 是聊天模型(目录 = GET /prompt-models)。 */
+export interface AssistantStreamInput {
+  session_id: number
+  message: string
+  model: string
+}
+
 /** 视频反推提示词的请求体(13 号票):video_url 是视频节点持有的地址
  * (厂商 http(s) 地址,或素材内容寻址路径 /api/assets/{id}/content),
  * model 是 token 轨聊天模型;node_id 可选,用于用量归因。 */
@@ -1069,6 +1120,43 @@ export interface HashBackfillProgress {
   hashed_rows: number
   repointed_rows: number
   deleted_objects: number
+}
+
+// ---- 网关管理:桌宠设置(挂 /admin/settings/pet,92 号票)----
+
+/** 桌宠配置(92 号票):settings KV `pet` 行的线形。image 字段是对象键
+ * (uploads/ 前缀),不是 URL —— 浏览器取用走画布侧 /pet/object 读端点
+ * (键只认配置登记值)。无密钥字段,原值回显。 */
+export interface PetSettings {
+  name: string
+  greeting: string
+  chips: string[]
+  model: string
+  idle_image: string
+  interactive_image: string
+  updated_at: string
+}
+
+/** PUT 的请求体:未携带的字段沿用已存,显式空串/空数组 = 清空(照
+ * StorageSettingsInput 的合并语义)。 */
+export interface PetSettingsInput {
+  name?: string
+  greeting?: string
+  chips?: string[]
+  model?: string
+  idle_image?: string
+  interactive_image?: string
+}
+
+/** 画布侧桌宠配置(canvas JWT 面 GET /pet/config,热生效):canvas-web
+ * 消费的形状,与 PetSettings 差 updated_at。 */
+export type PetConfigInfo = Omit<PetSettings, 'updated_at'>
+
+/** 形象上传响应(网关 admin 面):对象键 + 嗅探出的内容类型与字节数。 */
+export interface PetImageUpload {
+  key: string
+  content_type: string
+  size_bytes: number
 }
 
 // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
@@ -1789,27 +1877,25 @@ export class ApiClient {
     throw new ApiError(502, 'upstream_error', '生成流中断,未收到完成标记')
   }
 
-  /** Agent 工具循环的流式消费(63 号票):POST /canvases/:id/agent/stream,
-   * 请求体与 generatePromptStream 相同。事件协议五形状(ADR 0006):delta
-   * 逐帧交 onDelta,tool_call/tool_result 交对应回调,done 收尾时返回
-   * { text: 最终回答全文, summary?: 工具摘要行, character_section? };error
-   * 帧抛 ApiError(502)。流前校验失败仍是普通 JSON 错误(非 2xx →
-   * ApiError);流断在半途(无 done)同样抛错,已回调的增量由调用方决定
-   * 去留。 */
-  async agentStream(
-    canvasId: number,
-    input: GeneratePromptInput,
-    handlers: AgentStreamHandlers = {},
+  /** Agent 五形状 SSE 读循环共享件(91/92 号票评审修复:agentStream 与
+   * assistantStream 此前 ~110 行逐字复制,收敛为此私有方法;两公开 API
+   * 签名与行为不变)。差异参数化:端点路径、是否解析流首固化段帧(52 号
+   * 票形状,仅 Agent 流发送)、error 帧与流中断的文案。 */
+  private async agentEventStream(
+    path: string,
+    body: unknown,
+    handlers: AgentStreamHandlers,
+    opts: { sectionFrames: boolean; errorFallback: string; interruptMessage: string },
   ): Promise<AgentStreamResult> {
     const headers = new Headers({ 'Content-Type': 'application/json' })
     const token = this.getToken?.()
     if (token) {
       headers.set('Authorization', `Bearer ${token}`)
     }
-    const res = await this.fetchImpl(`${this.base}/canvases/${canvasId}/agent/stream`, {
+    const res = await this.fetchImpl(`${this.base}${path}`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     })
     if (res.status < 200 || res.status > 299) {
       // 校验失败发生在流打开之前:与 request() 同款错误形状。
@@ -1852,11 +1938,14 @@ export class ApiClient {
           finished = true
           break
         }
-        // 流首固化段帧(52 号票):与五形状并存的服务端帧,先于增量。
-        const section = parseCharacterSection(payload)
-        if (section !== undefined) {
-          characterSection = section
-          continue
+        // 流首固化段帧(52 号票):与五形状并存的服务端帧,先于增量;
+        // 仅 Agent 流解析(助手流不发该形状)。
+        if (opts.sectionFrames) {
+          const section = parseCharacterSection(payload)
+          if (section !== undefined) {
+            characterSection = section
+            continue
+          }
         }
         const parsed = parseAgentEvent(payload)
         if (parsed === null) {
@@ -1881,7 +1970,7 @@ export class ApiClient {
             throw new ApiError(
               502,
               parsed.error.code ?? 'upstream_error',
-              parsed.error.message ?? 'Agent 会话失败',
+              parsed.error.message ?? opts.errorFallback,
             )
         }
       }
@@ -1891,7 +1980,7 @@ export class ApiClient {
     }
     if (text === undefined) {
       // 流断在半途(无 done 事件):已交增量不作成功,由调用方决定去留。
-      throw new ApiError(502, 'upstream_error', 'Agent 流中断,未收到完成标记')
+      throw new ApiError(502, 'upstream_error', opts.interruptMessage)
     }
     const result: AgentStreamResult = { text }
     if (summary !== undefined) {
@@ -1901,6 +1990,86 @@ export class ApiClient {
       result.character_section = characterSection
     }
     return result
+  }
+
+  /** Agent 工具循环的流式消费(63 号票):POST /canvases/:id/agent/stream,
+   * 请求体与 generatePromptStream 相同。事件协议五形状(ADR 0006):delta
+   * 逐帧交 onDelta,tool_call/tool_result 交对应回调,done 收尾时返回
+   * { text: 最终回答全文, summary?: 工具摘要行, character_section? };error
+   * 帧抛 ApiError(502)。流前校验失败仍是普通 JSON 错误(非 2xx →
+   * ApiError);流断在半途(无 done)同样抛错,已回调的增量由调用方决定
+   * 去留。 */
+  async agentStream(
+    canvasId: number,
+    input: GeneratePromptInput,
+    handlers: AgentStreamHandlers = {},
+  ): Promise<AgentStreamResult> {
+    return this.agentEventStream(`/canvases/${canvasId}/agent/stream`, input, handlers, {
+      sectionFrames: true,
+      errorFallback: 'Agent 会话失败',
+      interruptMessage: 'Agent 流中断,未收到完成标记',
+    })
+  }
+
+  /** 建助手会话(91 号票):POST /canvases/:id/assistant/sessions。 */
+  createAssistantSession(canvasId: number, input: CreateAssistantSessionInput = {}): Promise<{ session: AssistantSession }> {
+    return this.request(`/canvases/${canvasId}/assistant/sessions`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 助手会话目录(新在前):GET /canvases/:id/assistant/sessions。 */
+  listAssistantSessions(canvasId: number): Promise<{ sessions: AssistantSession[] }> {
+    return this.request(`/canvases/${canvasId}/assistant/sessions`)
+  }
+
+  /** 助手会话详情(含 messages 全文)。 */
+  getAssistantSession(canvasId: number, sessionId: number): Promise<{ session: AssistantSession }> {
+    return this.request(`/canvases/${canvasId}/assistant/sessions/${sessionId}`)
+  }
+
+  /** 改助手会话(面板切授权档 = 改 mode;标题服务端自动生成,一般不手改)。 */
+  updateAssistantSession(canvasId: number, sessionId: number, input: UpdateAssistantSessionInput): Promise<{ session: AssistantSession }> {
+    return this.request(`/canvases/${canvasId}/assistant/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: input,
+    })
+  }
+
+  /** 删助手会话。 */
+  deleteAssistantSession(canvasId: number, sessionId: number): Promise<void> {
+    return this.request(`/canvases/${canvasId}/assistant/sessions/${sessionId}`, {
+      method: 'DELETE',
+    })
+  }
+
+  /** 前端回执(91 号票协议扩展):POST .../assistant/sessions/:sid/receipts。
+   * 草案工具应用/失败/拒绝后调用;无在途调用答 409 no_pending_call。 */
+  sendAssistantReceipt(canvasId: number, sessionId: number, input: AssistantReceiptInput): Promise<void> {
+    return this.request(`/canvases/${canvasId}/assistant/sessions/${sessionId}/receipts`, {
+      method: 'POST',
+      body: input,
+    })
+  }
+
+  /** 画布助手会话流(91 号票):POST /canvases/:id/assistant/stream。事件
+   * 契约与 agentStream 五形状一致;差异 = 草案工具的 tool_call 之后流会
+   * 静默等待前端应用与回执(经 sendAssistantReceipt 投递),回执到即
+   * tool_result 续跑;回执超时(约 5 分钟)服务端发 error 帧
+   * (receipt_timeout)收尾。done 后调用方无需自行持久 —— 服务端按纪律
+   * 落会话历史,前端只需把流内容并入本地渲染。读循环走 agentEventStream
+   * 共享件(不发固化段帧,故不解析)。 */
+  async assistantStream(
+    canvasId: number,
+    input: AssistantStreamInput,
+    handlers: AgentStreamHandlers = {},
+  ): Promise<AgentStreamResult> {
+    return this.agentEventStream(`/canvases/${canvasId}/assistant/stream`, input, handlers, {
+      sectionFrames: false,
+      errorFallback: '画布助手会话失败',
+      interruptMessage: '助手流中断,未收到完成标记',
+    })
   }
 
   /** 视频反推提示词(13 号票):canvas/server 经网关多模态聊天接口分析
@@ -2021,6 +2190,43 @@ export class ApiClient {
       body: input,
     })
     return body.storage
+  }
+
+  // ---- 网关管理:桌宠设置(挂 /admin/settings/pet,需 JWT 会话,92 号票)----
+
+  /** 桌宠设置;缺行时后端回答缺省配置(全空,chips 为空数组)。 */
+  async getPetSettings(): Promise<PetSettings> {
+    const body = await this.request<{ pet: PetSettings }>('/admin/settings/pet')
+    return body.pet
+  }
+
+  /** 更新桌宠设置(合并语义:未携带字段沿用已存,显式空串/空数组清空);
+   * 保存即时生效,无需重启。 */
+  async updatePetSettings(input: PetSettingsInput): Promise<PetSettings> {
+    const body = await this.request<{ pet: PetSettings }>('/admin/settings/pet', {
+      method: 'PUT',
+      body: input,
+    })
+    return body.pet
+  }
+
+  /** 上传桌宠形象(网关 admin 面,multipart 字段 file):GIF/WebP/PNG(APNG)
+   * 由服务端魔数嗅探裁决,落 uploads/ 前缀返回对象键 —— 桌宠形象是系统
+   * 资产,不进创作素材库(别与创作面 uploadAsset 混用,那个落 assets 行)。 */
+  uploadPetImage(file: File): Promise<PetImageUpload> {
+    const form = new FormData()
+    form.set('file', file)
+    return this.request<{ image: PetImageUpload }>('/admin/settings/pet/image', {
+      method: 'POST',
+      body: form,
+    }).then((body) => body.image)
+  }
+
+  /** 画布侧桌宠配置(canvas JWT 面 GET /pet/config,按请求读表热生效):
+   * canvas-web 消费问候语/chips/缺省模型/形象键。 */
+  async getPetConfig(): Promise<PetConfigInfo> {
+    const body = await this.request<{ pet: PetConfigInfo }>('/pet/config')
+    return body.pet
   }
 
   // ---- 网关管理:素材哈希回填(挂 /admin/assets/hash-backfill,需 JWT 会话,48 号票)----

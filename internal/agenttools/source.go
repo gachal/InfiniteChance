@@ -36,6 +36,9 @@ type readSourceTool struct {
 
 func newReadSource(deps Deps) promptgen.AgentTool { return readSourceTool{deps: deps} }
 
+// NewReadSource 是 read_source 的导出构造器(91 号票画布助手复用)。
+func NewReadSource(deps Deps) promptgen.AgentTool { return newReadSource(deps) }
+
 func (t readSourceTool) Name() string { return "read_source" }
 
 func (t readSourceTool) Definition() json.RawMessage {

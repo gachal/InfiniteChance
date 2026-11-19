@@ -165,6 +165,9 @@
   --z-connect-preview: 4;
   --z-canvas-loading: 5;
   --z-side-panel: 6;
+  /* 画布桌宠(92 号票):画布上自由拖动的化身壳,盖过右缘侧面板(6)
+     —— 面板开合时桌宠仍可拖拽/点击唤出;低于画布浮动控件(10)。 */
+  --z-pet: 7;
   --z-canvas-float: 10;
   --z-dialog-mask: 20;
   --z-drawer: 30;
@@ -481,6 +484,73 @@ body {
 
 .vue-flow__node .node.connect-dimmed {
   opacity: 0.3;
+}
+
+
+/* ---- 工具过程时间线共享件(63 号票范式;91/92 号票评审收编:AgentNode
+   与 AssistantPanel 此前各持一份逐字拷贝,照 89 号票「One card style」
+   收编先例归一全局段,两组件只引用共享类)----
+   running 点闪琥珀、done 青色收口、failed 危险色;摘要换行铺开(超长单行
+   会顶破卡面),完整文案看 title。常动守卫(DESIGN.md 动效协议):running
+   脉冲是随工具调用在途的短时状态件,非装饰常驻,reduced-motion 下静止为
+   琥珀点,状态仍由点色与提示文案承载。 */
+.tool-timeline {
+  display: grid;
+  gap: 2px;
+}
+
+.tool-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.tool-step-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tool-step[data-state='running'] .tool-step-dot {
+    animation: agent-tool-pulse 1.2s ease-in-out infinite;
+  }
+}
+
+.tool-step[data-state='done'] .tool-step-dot {
+  background: var(--teal-light);
+}
+
+.tool-step[data-state='failed'] .tool-step-dot {
+  background: var(--danger);
+}
+
+@keyframes agent-tool-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tool-step-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--indigo-soft);
+}
+
+.tool-step-hint {
+  /* flex 项缺 min-width:0 时最小尺寸=整行宽,nowrap 摘要会顶破卡面;
+   * 改自然换行,长 token(script-<时间戳>-N 之类)也按字符断开。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 

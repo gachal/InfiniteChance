@@ -12,12 +12,18 @@ import {
   type CanvasSummary,
   type Channel,
   type ApiKeyRecord,
+  type AssistantReceiptInput,
+  type AssistantStreamInput,
+  type CreateAssistantSessionInput,
   type CreatedApiKey,
   type GeneratePromptInput,
   type HealthReport,
   type PromptTemplate,
   type PromptTemplateInput,
   type PromptTemplateOption,
+  type PetConfigInfo,
+  type PetSettings,
+  type PetSettingsInput,
   type QuotaEntry,
   type SaveGraphResult,
   type SessionInfo,
@@ -46,6 +52,22 @@ function stubFetch(status: number, body: unknown) {
 
 function clientWith(fetchImpl: ReturnType<typeof stubFetch>): ApiClient {
   return new ApiClient({ fetch: fetchImpl as unknown as typeof fetch })
+}
+
+/** 用 ReadableStream 顶替 Response.body(31 号票流式测试同款,顶层版供
+ * 91 号票助手流测试使用;切块下发验证跨 chunk 粘包缓冲)。 */
+function sseFetch(raw: string, chunks = 2) {
+  const encoder = new TextEncoder()
+  const size = Math.ceil(raw.length / chunks)
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < raw.length; i += size) {
+        controller.enqueue(encoder.encode(raw.slice(i, i + size)))
+      }
+      controller.close()
+    },
+  })
+  return vi.fn().mockResolvedValue({ status: 200, body: stream })
 }
 
 function clientWithBase(fetchImpl: ReturnType<typeof stubFetch>): ApiClient {
@@ -995,5 +1017,182 @@ describe('ApiClient storage settings', () => {
     expect(url).toBe('/api/admin/settings/storage')
     expect((init as RequestInit).method).toBe('PUT')
     expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+})
+
+// ---- 桌宠(92 号票)----
+
+describe('ApiClient pet settings (92 号票)', () => {
+  const pet: PetSettings = {
+    name: '绿毛球',
+    greeting: '画布上有什么想改的?',
+    chips: ['帮我建一组分镜', '读一下画布结构'],
+    model: 'chat-main',
+    idle_image: 'uploads/20261119/aaa.gif',
+    interactive_image: '',
+    updated_at: '2026-11-19T12:00:00Z',
+  }
+
+  it('getPetSettings unwraps the pet envelope from the gateway admin path', async () => {
+    const fetchImpl = stubFetch(200, { pet })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.getPetSettings()).resolves.toEqual(pet)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/pet')
+    expect((init as RequestInit).method).toBe('GET')
+  })
+
+  it('updatePetSettings PUTs the merge input to the gateway admin path', async () => {
+    const fetchImpl = stubFetch(200, { pet })
+    const client = clientWithBase(fetchImpl)
+
+    const input: PetSettingsInput = { greeting: '换个问候', chips: [] }
+    await expect(client.updatePetSettings(input)).resolves.toEqual(pet)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/pet')
+    expect((init as RequestInit).method).toBe('PUT')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('uploadPetImage posts multipart file to the gateway admin path and unwraps the image', async () => {
+    const image = { key: 'uploads/20261119/x.gif', content_type: 'image/gif', size_bytes: 6 }
+    const fetchImpl = stubFetch(201, { image })
+    const client = clientWithBase(fetchImpl)
+
+    const file = new File([new Uint8Array([0x47, 0x49, 0x46, 0x38])], 'pet.gif', { type: 'image/gif' })
+    await expect(client.uploadPetImage(file)).resolves.toEqual(image)
+
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/pet/image')
+    expect((init as RequestInit).method).toBe('POST')
+    const body = (init as RequestInit).body as FormData
+    expect(body).toBeInstanceOf(FormData)
+    expect(body.get('file')).toBe(file)
+    // multipart 的 Content-Type 由 fetch 编码时生成,手工设置会丢 boundary。
+    expect(new Headers((init as RequestInit).headers).has('Content-Type')).toBe(false)
+  })
+
+  it('getPetConfig unwraps the canvas-side pet envelope', async () => {
+    const info: PetConfigInfo = {
+      name: '绿毛球',
+      greeting: '',
+      chips: [],
+      model: '',
+      idle_image: '',
+      interactive_image: '',
+    }
+    const fetchImpl = stubFetch(200, { pet: info })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.getPetConfig()).resolves.toEqual(info)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/pet/config')
+    expect((init as RequestInit).method).toBe('GET')
+  })
+})
+
+// ---- 画布助手(91 号票)----
+
+describe('ApiClient canvas assistant (91 号票)', () => {
+  it('assistantSession CRUD posts/lists/patches/deletes on the assistant paths', async () => {
+    const session = {
+      id: 5, canvas_id: 7, title: '', mode: 'ask',
+      messages: [{ role: 'user', content: '你好' }],
+      created_at: '2026-11-19T00:00:00Z', updated_at: '2026-11-19T00:00:00Z',
+    }
+    const fetchImpl = stubFetch(201, { session })
+    const client = clientWithBase(fetchImpl)
+
+    const input: CreateAssistantSessionInput = {}
+    await expect(client.createAssistantSession(7, input)).resolves.toEqual({ session })
+    let [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/assistant/sessions')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+
+    fetchImpl.mockClear()
+    await client.listAssistantSessions(7)
+    ;[url] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/assistant/sessions')
+
+    fetchImpl.mockClear()
+    await client.updateAssistantSession(7, 5, { mode: 'full' })
+    ;[url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/assistant/sessions/5')
+    expect((init as RequestInit).method).toBe('PATCH')
+    expect((init as RequestInit).body).toBe('{"mode":"full"}')
+
+    fetchImpl.mockClear()
+    await client.deleteAssistantSession(7, 5)
+    ;[url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/assistant/sessions/5')
+    expect((init as RequestInit).method).toBe('DELETE')
+  })
+
+  it('sendAssistantReceipt posts the receipt to the session receipts path', async () => {
+    const fetchImpl = stubFetch(204, null)
+    const client = clientWithBase(fetchImpl)
+
+    const input: AssistantReceiptInput = {
+      call_id: 'call_1',
+      status: 'applied',
+      result: { nodes: [{ index: 0, id: 'image-9' }] },
+    }
+    await client.sendAssistantReceipt(7, 5, input)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/assistant/sessions/5/receipts')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('assistantStream relays the five shapes and resolves with done text', async () => {
+    const raw =
+      'data: {"type":"delta","text":"好的。"}\n\n' +
+      'data: {"type":"tool_call","id":"c1","name":"create_nodes","args":{"nodes":[{"type":"image"}]}}\n\n' +
+      'data: {"type":"tool_result","id":"c1","name":"create_nodes","summary":"已应用","payload":{"nodes":[{"index":0,"id":"image-9"}]}}\n\n' +
+      'data: {"type":"done","text":"好的。","summary":"本轮工具调用:create_nodes(已应用)"}\n\n' +
+      'data: [DONE]\n\n'
+    const fetchImpl = sseFetch(raw)
+    const client = clientWithBase(fetchImpl)
+
+    const calls: unknown[] = []
+    const results: unknown[] = []
+    const input: AssistantStreamInput = { session_id: 5, message: '加一个节点', model: 'chat-m' }
+    await expect(client.assistantStream(7, input, { onToolCall: (ev) => calls.push(ev), onToolResult: (ev) => results.push(ev) })).resolves.toEqual({
+      text: '好的。',
+      summary: '本轮工具调用:create_nodes(已应用)',
+    })
+    expect(calls).toHaveLength(1)
+    expect(results).toHaveLength(1)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/canvases/7/assistant/stream')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('assistantStream surfaces the receipt timeout error frame', async () => {
+    const raw = 'data: {"type":"error","error":{"code":"receipt_timeout","message":"等待前端回执超时"}}\n\n'
+    const client = clientWithBase(sseFetch(raw))
+    const err = await client
+      .assistantStream(7, { session_id: 5, message: '改', model: 'chat-m' })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).code).toBe('receipt_timeout')
+  })
+
+  it('assistantStream throws when the stream ends without done', async () => {
+    const client = clientWithBase(sseFetch('data: {"type":"delta","text":"半句"}\n\n'))
+    const err = await client.assistantStream(7, { session_id: 5, message: 'x', model: 'chat-m' }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).code).toBe('upstream_error')
+  })
+
+  it('assistantStream surfaces pre-stream validation errors as ApiError', async () => {
+    const client = clientWithBase(stubFetch(400, { error: { code: 'model_not_priced', message: '未配置 token 计价' } }))
+    const err = await client.assistantStream(7, { session_id: 5, message: 'x', model: 'img-m' }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(400)
+    expect((err as ApiError).code).toBe('model_not_priced')
   })
 })

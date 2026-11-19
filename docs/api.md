@@ -723,6 +723,38 @@ curl "$GATEWAY/admin/usage/summary?by=model"   -H "Authorization: Bearer $TOKEN"
 curl "$GATEWAY/admin/usage/summary?by=channel" -H "Authorization: Bearer $TOKEN"
 ```
 
+### 4.7 桌宠设置(92 号票)
+
+```bash
+# 读取(缺行回答缺省配置 —— 全空 + chips 空数组;无密钥字段,原值回显)
+curl $GATEWAY/admin/settings/pet -H "Authorization: Bearer $TOKEN"
+# → {"pet":{"name":"","greeting":"","chips":[],"model":"",
+#    "idle_image":"","interactive_image":"","updated_at":""}}
+
+# 保存(合并语义:未携带的字段沿用已存,显式空串/空数组 = 清空;
+# chips 逐条 trim,形象键必须是 uploads/ 前缀的规范键;即时生效)
+curl -X PUT $GATEWAY/admin/settings/pet -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "name":"绿毛球",
+    "greeting":"画布上有什么想改的?",
+    "chips":["帮我建一组分镜","读一下画布结构"],
+    "model":"chat-main"
+  }'
+
+# 上传形象(multipart 字段 file;GIF/WebP/PNG(APNG)魔数嗅探裁决,
+# JPEG 静态图拒收 file_type_mismatch;20 MiB 上限;落 objectstore
+# uploads/ 前缀,不进素材库;响应回对象键,配置存键不存 URL)
+curl -X POST $GATEWAY/admin/settings/pet/image -H "Authorization: Bearer $TOKEN" \
+  -F "file=@pet.gif;type=image/gif"
+# → {"image":{"key":"uploads/20261119/….gif","content_type":"image/gif",
+#    "size_bytes":123456}}
+
+# 键登记进配置(形象对画布可见要再走一次 PUT)
+curl -X PUT $GATEWAY/admin/settings/pet -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"idle_image":"uploads/20261119/….gif"}'
+```
+
 ## 五、画布面(CANVAS 服务,JWT)
 
 ### 5.1 画布 CRUD 与整图保存
@@ -896,6 +928,55 @@ curl -X DELETE $CANVAS/assets/12 -H "Authorization: Bearer $TOKEN"
 # 内容寻址(刻意不挂 JWT:<img>/<video> 带不了 Authorization 头)
 curl $CANVAS/assets/12/content
 curl -OJ "$CANVAS/assets/12/content?download=1"   # 强制下载(attachment)
+```
+
+### 5.6 画布助手(91 号票)
+
+```bash
+# 建会话(mode 缺省 ask=先询问我;full=完全授权;授权档存 session,PATCH 随时切)
+curl -X POST $CANVAS/canvases/7/assistant/sessions -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"mode":"ask"}'
+# → {"session":{"id":5,"canvas_id":7,"title":"","mode":"ask","messages":[],...}}
+
+# 目录 / 详情(详情含 messages 全文)/ 改授权档 / 删除
+curl $CANVAS/canvases/7/assistant/sessions -H "Authorization: Bearer $TOKEN"
+curl $CANVAS/canvases/7/assistant/sessions/5 -H "Authorization: Bearer $TOKEN"
+curl -X PATCH $CANVAS/canvases/7/assistant/sessions/5 -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"mode":"full"}'
+curl -X DELETE $CANVAS/canvases/7/assistant/sessions/5 -H "Authorization: Bearer $TOKEN"
+
+# SSE 会话流(事件五形状与 Agent 循环一致:delta/tool_call/tool_result/
+# done/error,收尾 data: [DONE];写图草案的 tool_call 之后流会静默等待
+# 前端应用与回执,最长 5 分钟)
+curl -N -X POST $CANVAS/canvases/7/assistant/stream -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":5,"message":"帮我在画布上加一个角色节点","model":"chat-m"}'
+
+# 前端回执(应用/失败/拒绝;applied 时 result 带新建节点 id 映射等,
+# 服务端把回执作 tool_result 喂回循环续跑;无在途调用 409 no_pending_call)
+curl -X POST $CANVAS/canvases/7/assistant/sessions/5/receipts -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"call_id":"call_1","status":"applied","result":{"nodes":[{"index":0,"id":"image-9-1"}]}}'
+
+# 对话计费走服务级 key 聊天 token 轨,来源标记 canvas={id} gen=assistant
+# (无 node 段);删画布级联删该画布全部会话行。
+```
+
+### 5.7 桌宠(92 号票)
+
+```bash
+# 桌宠配置(canvas-web 拉取,settings 只读 reader 按请求读表热生效;
+# chips 恒为数组)
+curl $CANVAS/pet/config -H "Authorization: Bearer $TOKEN"
+# → {"pet":{"name":"绿毛球","greeting":"…","chips":["…"],"model":"chat-main",
+#    "idle_image":"uploads/20261119/….gif","interactive_image":""}}
+
+# 形象对象读端点(照 /assets/{id}/content 先例故意不挂鉴权:<img> 带不了
+# Authorization 头);key 只认当前配置登记的 idle_image/interactive_image
+# (未登记键与穿越键一律 404 防遍历);内容类型按魔数回,浏览器可短缓存
+# (键不可变)
+curl -I "$CANVAS/pet/object?key=uploads%2F20261119%2F%E2%80%A6.gif"
+# → 200 Content-Type: image/gif, Cache-Control: private, max-age=3600
 ```
 
 ---

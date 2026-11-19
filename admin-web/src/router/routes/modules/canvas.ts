@@ -32,6 +32,15 @@ const routes: RouteRecordRaw[] = [
           title: $t('page.canvas.assets'),
         },
       },
+      {
+        name: 'Pet',
+        path: '/pet',
+        component: () => import('#/views/PetSettingsView.vue'),
+        meta: {
+          icon: 'lucide:cat',
+          title: $t('page.canvas.pet'),
+        },
+      },
     ],
   },
 ];

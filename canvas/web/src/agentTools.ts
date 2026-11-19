@@ -23,7 +23,8 @@ export interface AgentToolStep {
 
 /** 工具名的中文展示标签(过程展示文案,如 create_character → 「创建角色」
  * —— 「正在创建角色…」式文案由 AgentNode 以 running 态 + 标签拼出)。
- * 与后端注册表九工具一一对应;未映射的原样显示工具名。 */
+ * 与后端两张注册表一一对应:九件 Agent 节点工具 + 91 号票画布助手七件
+ * (助手面板时间线与 Agent 节点共用这张标签表);未映射的原样显示工具名。 */
 export const AGENT_TOOL_LABELS: Record<string, string> = {
   create_character: '创建角色',
   create_scene: '创建场景',
@@ -34,6 +35,14 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   save_storyboard: '保存分镜板',
   read_source: '读取原文',
   set_style: '设定画面风格',
+  // 91 号票画布助手(与 internal/assistant 工具面一一对应)。
+  read_canvas: '读取画布',
+  create_nodes: '新建节点',
+  update_nodes: '修改节点',
+  delete_nodes: '删除节点',
+  connect_nodes: '连线',
+  disconnect_nodes: '断开连线',
+  trigger_task: '触发生成',
 }
 
 export function agentToolLabel(name: string): string {
