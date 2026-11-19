@@ -823,12 +823,20 @@ const videoComposerRefs = computed<VideoComposerRef[]>(() => {
  * 保留但禁用并说明原因(38 号票评审,替换旧的「无模型即隐藏」)。 */
 const composerVisible = computed(() => composerNode.value !== null)
 
-// 对话框消失(取消选中)时素材挑选面板随行关闭 —— 它是对话框的伴生面。
+// 对话框消失(取消选中)时素材挑选面板与参数面板随行关闭 —— 都是对话框
+// 的伴生浮层(90 号票:参数面板开合也在此收口)。
 watch(composerVisible, (visible) => {
   if (!visible) {
     composerPickerOpen.value = false
+    composerPanelOpen.value = false
   }
 })
+
+// 90 号票:对话框的展开态与参数面板开合是编辑器级 UI 状态,不入草稿 ——
+// expanded 喂给 placement 常规/展开两态估高;panelOpen 参与 onGlobalKeydown
+// 的 Esc 浮层退栈(后开先关),组件只渲染 toggle、面板与垫挡层。
+const composerExpanded = ref(false)
+const composerPanelOpen = ref(false)
 
 /** 对话框禁用原因:空 = 正常可用。目录未加载完(首屏竞态)不算失败。 */
 const composerDisabledReason = computed(() => {
@@ -851,12 +859,13 @@ const composerDisabledReason = computed(() => {
 })
 
 /** 悬浮定位:贴选中节点正下方(视口变换 + 节点尺寸换算成画布区坐标,
- * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。视频模式控件更多,
- * clamp 的估算高度按模式取档(评审:旧值一律 240,视频模式会贴边不准)。
+ * 拖动/缩放/图片加载都跟随),并 clamp 在画布区内。90 号票起 clamp 的估算
+ * 高度按 模式 × 常规/展开 两态取档(展开态输入区翻倍,贴边更收紧)。
  * 58 号票阶段一抽到 useComposerPlacement。 */
 const composerStyle = useComposerPlacement({
   node: composerNode,
   mode: composerMode,
+  expanded: composerExpanded,
   wrapEl,
   viewport,
 })
@@ -3645,6 +3654,12 @@ function onGlobalKeydown(e: KeyboardEvent): void {
       recordsPanelOpen.value = false
       return
     }
+    // 90 号票:参数面板是对话框内的浮层,Esc 栈顶先收(垫挡层点击同款);
+    // 它是 composer 的伴生浮层,与素材挑选面板同段位、先于其收。
+    if (composerPanelOpen.value) {
+      composerPanelOpen.value = false
+      return
+    }
     if (composerPickerOpen.value) {
       composerPickerOpen.value = false
       return
@@ -5150,6 +5165,10 @@ function backToList(): void {
         :duration="videoDuration"
         :generating="generating"
         :uploading="refUploading"
+        :expanded="composerExpanded"
+        :panel-open="composerPanelOpen"
+        @update:expanded="composerExpanded = $event"
+        @update:panel-open="composerPanelOpen = $event"
         @update:mode="composerMode = $event"
         @update:prompt="onDraftUpdate(($v) => (videoPrompt = $v), ($v) => (composerPrompt = $v), $event)"
         @update:model="onDraftUpdate(($v) => (videoModel = $v), ($v) => (composerModel = $v), $event)"

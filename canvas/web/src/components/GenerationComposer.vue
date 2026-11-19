@@ -4,7 +4,12 @@
 // 模型/尺寸/时长/参考条)由编辑器按模式独立持有(切换不清空),发送语义
 // = 提交画布任务。视频模式 = 文生视频/图生视频/首尾帧/多参考的组合形态,
 // 参考组合自然成模式,无显式模式 tab;选中视频节点时模式锁定视频(视频
-// 产物不能当生图参考),底栏模式下拉的「图片生成」禁选。
+// 产物不能当生图参考)。
+// 90 号票重排:无边框语言(填充代描边,89 号票 hairline 分组退役)+ 三段
+// 结构(顶部动作行 → 大留白输入区 → 底部 meta 行),参数收纳为「参数摘要
+// 按钮 + 弹出面板」(模式段/比例/分辨率/背景/风格/时长),成本预估收成
+// meta 行 ¥ 胶囊;展开 toggle 与面板开合的状态由编辑器持有(placement
+// 估高与 Esc 浮层退栈同步消费)。
 import { computed, nextTick, ref, watch } from 'vue'
 
 import type { ModelPriceSummary } from '@infinitechance/api'
@@ -14,7 +19,6 @@ import {
   MAX_COMPOSER_REFS,
   RATIO_PRESETS,
   RESOLUTION_PRESETS,
-  composeSize,
   durationRangeFor,
   resolutionPresetsFor,
   rolesForKind,
@@ -25,6 +29,7 @@ import {
   type VideoComposerRef,
   type VideoRefRole,
 } from '../composer'
+import { autoDurationDefault, estimateCost, fmtCNY, paramSummary } from '../composerPanel'
 import { styleSegment } from '../ipStyle'
 import {
   buildElementLine,
@@ -53,7 +58,7 @@ import { useThumbFallback } from '../thumbnail'
 const props = defineProps<{
   /** 当前模式:图片生成或视频生成(编辑器持有,切换不清空两套草稿)。 */
   mode: 'image' | 'video'
-  /** 模式锁定(选中视频节点):模式下拉的图片生成禁选。 */
+  /** 模式锁定(选中视频节点):面板模式段的图片生成禁选。 */
   modeLocked: boolean
   /** 可用的按次计价生图模型(编辑器从 /image-models 拉取)。 */
   imageModels: string[]
@@ -100,6 +105,12 @@ const props = defineProps<{
   generating: boolean
   /** 参考上传在途。 */
   uploading: boolean
+  /** 展开态(90 号票 Q8):输入区大留白两档的档位,编辑器持有并喂给
+   * placement 估高;组件只渲染 toggle 与样式档。 */
+  expanded: boolean
+  /** 参数面板开合(90 号票 Q5a):状态提升到编辑器 —— Esc 关闭归编辑器
+   * onGlobalKeydown 浮层退栈管,组件渲染面板、摘要按钮与垫挡层。 */
+  panelOpen: boolean
 }>()
 
 const emit = defineEmits<{
@@ -112,6 +123,8 @@ const emit = defineEmits<{
   'update:withStyle': [value: boolean]
   'update:sheetType': [value: string]
   'update:duration': [value: string]
+  'update:expanded': [value: boolean]
+  'update:panelOpen': [value: boolean]
   'remove-ref': [index: number]
   'set-ref-role': [index: number, role: VideoRefRole]
   /** 参考条 chip 点击预览:图片看大图、视频进灯箱播放(编辑器级灯箱单
@@ -138,6 +151,17 @@ const activeModels = computed(() => (isVideo.value ? props.videoModels : props.i
  * RATIO_PRESETS;两模式 sticky 各存一份,不存在跨模式孤儿值。 */
 const ratioPresets = computed(() => (isVideo.value ? RATIO_PRESETS : IMAGE_RATIO_PRESETS))
 
+/** 视频分辨率档位随模型收敛(45 号票):MiniMax H3 官方档 768P/2K
+ * (H3-Max 另有 480P),Seedance 及未知模型走默认档;档位串以各厂商官方
+ * 枚举为准直传上游。 */
+const videoResolutionPresets = computed(() => resolutionPresetsFor(props.model))
+
+/** 分辨率列表按模式拆分:图片走全站档,视频按模型收敛(45 号票);
+ * 面板分辨率段与参数摘要共用这一份。 */
+const activeResolutionPresets = computed(() =>
+  isVideo.value ? videoResolutionPresets.value : RESOLUTION_PRESETS,
+)
+
 /** IP 已定画面风格才出「带 IP 风格」开关(69 号票:未配风格不显示)。 */
 const styleAvailable = computed(() => styleSegment(props.ipStyle) !== '')
 
@@ -145,11 +169,6 @@ const styleAvailable = computed(() => styleSegment(props.ipStyle) !== '')
  * minimax-h3 = 4–15、h3-max = 5–15;未知模型保守 4–15)。留空 = 自动
  * (不传 seconds)。 */
 const durationRange = computed(() => durationRangeFor(props.model))
-
-/** 视频分辨率档位随模型收敛(45 号票):MiniMax H3 官方档 768P/2K
- * (H3-Max 另有 480P),Seedance 及未知模型走默认档;档位串以各厂商官方
- * 枚举为准直传上游。 */
-const videoResolutionPresets = computed(() => resolutionPresetsFor(props.model))
 
 // 模型切换后,已选分辨率档可能不属于新模型(如 seedance 720p → H3 只有
 // 768P/2K):回落到「自动分辨率」而非静默持无效档,提交必被上游 400。
@@ -186,13 +205,8 @@ const canSend = computed(
 
 const refsFull = computed(() => props.refs.length >= MAX_COMPOSER_REFS)
 
-// ---- 成本可见性(38 号票):下拉带价、发送前预估 ----
-
-/** 人民币金额的紧凑展示:整数不带小数、最多三位小数、去尾零。 */
-function fmtCNY(n: number): string {
-  const s = n.toFixed(3).replace(/\.?0+$/, '')
-  return `¥${s}`
-}
+// ---- 成本可见性(38 号票):下拉带价、发送前预估(90 号票起拆成 meta 行
+// ¥ 胶囊的短句 + title 原句,数字与文案的实现在 composerPanel.ts 纯函数)----
 
 /** 模型下拉 option 的展示名:带价时缀上人类可读单价,选中即见成本。 */
 function modelOptionLabel(m: string): string {
@@ -213,45 +227,20 @@ function modelOptionLabel(m: string): string {
 }
 
 /** 发送前预估(仅展示,向上取整对齐服务端预扣口径;旧目录无 prices 或
- * 未知轨道时空串退位)。second 轨按 分辨率系数 × 秒数;时长自动时只报
- * 单价;视频 token 轨按 秒折算率 × 秒数 × 输出单价 × 倍率;call 轨按
- * 尺寸系数,不乘参考图数(参考加价各厂商不同,不虚报)。 */
-const estimate = computed<string>(() => {
-  const p = props.prices[props.model]
-  if (!p) {
-    return ''
-  }
-  if (p.unit === 'call' && p.cny_per_call != null) {
-    const size = composeSize(props.ratio, props.resolution)
-    const factor = size ? (p.size_factors?.[size] ?? 1) : 1
-    return `本次预估 ${fmtCNY(Math.ceil(p.cny_per_call * factor * 100) / 100)}`
-  }
-  if (p.unit === 'second' && p.cny_per_call != null) {
-    const factor = props.resolution ? (p.size_factors?.[props.resolution] ?? 1) : 1
-    const per = p.cny_per_call * factor
-    const secs = Number(props.duration)
-    if (props.duration !== '' && Number.isFinite(secs) && secs > 0) {
-      return `本次预估 ${fmtCNY(Math.ceil(per * secs * 100) / 100)}(${fmtCNY(per)}/秒 × ${secs} 秒)`
-    }
-    return `${fmtCNY(per)}/秒,时长自动,按实结算`
-  }
-  if (p.unit === 'token' && p.output_cny_per_mtokens != null) {
-    const secs = Number(props.duration)
-    if (props.duration === '' || !Number.isFinite(secs) || secs <= 0) {
-      return ''
-    }
-    const rate = props.resolution
-      ? (p.size_tokens_per_second?.[props.resolution] ?? p.default_tokens_per_second ?? 0)
-      : (p.default_tokens_per_second ?? 0)
-    if (rate <= 0) {
-      return ''
-    }
-    const tokens = Math.ceil(rate * secs)
-    const cost = (tokens / 1_000_000) * p.output_cny_per_mtokens * (p.ratio ?? 1)
-    return `本次预估 约 ${fmtCNY(Math.ceil(cost * 100) / 100)}(${tokens} tok)`
-  }
-  return ''
-})
+ * 未知轨道时 null 退位 —— 90 号票起 meta 行 ¥ 胶囊整颗隐藏,不显示 ¥0)。
+ * 轨道口径与 38 号票逐字一致:second 轨按 分辨率系数 × 秒数;时长自动时
+ * 只报单价;视频 token 轨按 秒折算率 × 秒数 × 输出单价 × 倍率;call 轨按
+ * 尺寸系数,不乘参考图数(参考加价各厂商不同,不虚报)。text = 「本次
+ * 预估 …」原句(胶囊 title),amount = 胶囊短句。 */
+const estimateInfo = computed(() =>
+  estimateCost(props.prices[props.model], {
+    ratio: props.ratio,
+    resolution: props.resolution,
+    duration: props.duration,
+  }),
+)
+
+const estimate = computed(() => estimateInfo.value?.text ?? '')
 
 // ---- @ 引用浮层(59 号票)----
 
@@ -377,12 +366,53 @@ function onPromptKeydown(e: KeyboardEvent): void {
   }
 }
 
+/** @ 引用按钮(90 号票 Q7):在光标处插入 @ 并唤起既有浮层 —— 纯入口
+ * 增强,零新触发判定;触发与键盘语义全在既有 syncMention/onPromptKeydown。
+ * 插入经 emit 走草稿(:value 绑定),nextTick 后光标落到 @ 之后再同步。 */
+const insertAtMention = (): void => {
+  const el = promptEl.value
+  if (!el || props.disabledReason !== '') {
+    return
+  }
+  el.focus()
+  const pos = el.selectionStart ?? el.value.length
+  emit('update:prompt', `${el.value.slice(0, pos)}@${el.value.slice(pos)}`)
+  void nextTick(() => {
+    el.setSelectionRange(pos + 1, pos + 1)
+    syncMention()
+  })
+}
+
+/** @ 引用按钮的可用面:目录禁态或参考条无可引用条目(视频模式非参考图
+ * 角色不进 @ 口径)时禁用,防插进一个永远弹不出浮层的孤儿 @。 */
+const mentionBtnDisabled = computed(
+  () => props.disabledReason !== '' || mentionCandidates.value.length === 0,
+)
+
+const mentionBtnTitle = computed(() => {
+  if (props.disabledReason !== '') {
+    return '模型目录不可用'
+  }
+  return mentionCandidates.value.length === 0
+    ? '参考条暂无可引用条目'
+    : '在光标处插入 @ 引用参考'
+})
+
 /** 视频参考条还有空位:任一角色未满即可再收(appendVideoRef 会按角色
  * 最终裁决,这里只决定加号按钮的可用态与提示)。 */
 const videoRefsVacant = computed(() =>
   (Object.keys(VIDEO_ROLE_CAPS) as VideoRefRole[]).some(
     (role) => props.videoRefs.filter((r) => r.role === role).length < VIDEO_ROLE_CAPS[role],
   ),
+)
+
+/** 上传/素材库两个入口的共用可用面(90 号票把 89 号票前的 ref-add 与
+ * ref-library 收编为动作行图标钮,禁用表达式逐字随迁):图片模式吃满条
+ * 禁用 + 目录禁态;视频模式只看角色空位。 */
+const addRefDisabled = computed(() =>
+  isVideo.value
+    ? props.uploading || !videoRefsVacant.value
+    : props.uploading || refsFull.value || props.disabledReason !== '',
 )
 
 const placeholder = computed(() =>
@@ -471,12 +501,61 @@ function onFileChange(e: Event): void {
   }
   emit('upload', file)
 }
+
+// ---- 参数摘要与面板(90 号票 Q5a/Q10a)----
+
+/** 参数摘要按钮文案:按当前值实时拼(如图片「自适应 / 1K」、视频
+ * 「5s / 16:9 / 1080p」;透明附「透明」、IP 风格附「风格」),拼装规则
+ * 在 composerPanel.paramSummary 纯函数。 */
+const paramSummaryText = computed(() =>
+  paramSummary(
+    props.mode,
+    {
+      ratio: props.ratio,
+      resolution: props.resolution,
+      duration: props.duration,
+      transparent: props.transparent,
+      withStyle: props.withStyle,
+    },
+    { ratio: ratioPresets.value, resolution: activeResolutionPresets.value },
+  ),
+)
+
+/** 背景段(90 号票:仅图片模式,仅「自动 / 透明」两档 —— 「不透明」不是
+ * 契约值,37 号票 background 只收 transparent)。 */
+const backgroundChips = [
+  { label: '自动', transparent: false },
+  { label: '透明', transparent: true },
+] as const
+
+/** 时长自动档(90 号票 Q11):duration 空串 = 自动(不传 seconds,保
+ * 24 号票「留空 = 不传 = 厂商缺省」语义),滑杆区随之隐藏;取消自动 =
+ * 滑杆出现默认 5s(autoDurationDefault 按模型区间夹紧)。 */
+const durationAuto = computed(() => props.duration === '')
+
+const onAutoChipToggle = (): void => {
+  emit('update:duration', durationAuto.value ? autoDurationDefault(durationRange.value) : '')
+}
+
+/** 比例形状预览(90 号票):按 w:h 把预览块长边收进 22px,短边兜底 6px,
+ * 「自适应」档不参算(模板里另渲染虚线空档)。 */
+function ratioShapeStyle(value: string): Record<string, string> {
+  const [w, h] = value.split(':').map((n) => Number(n))
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    return {}
+  }
+  const scale = 22 / Math.max(w, h)
+  return {
+    width: `${Math.max(Math.round(w * scale), 6)}px`,
+    height: `${Math.max(Math.round(h * scale), 6)}px`,
+  }
+}
 </script>
 
 <template>
   <section
     class="composer"
-    :class="{ disabled: disabledReason !== '' }"
+    :class="{ disabled: disabledReason !== '', expanded }"
     aria-label="生成对话框"
   >
     <!-- 目录不可用禁态(38 号票评审):对话框保留、说明原因、可重试,
@@ -494,7 +573,60 @@ function onFileChange(e: Event): void {
         重试
       </button>
     </div>
-    <!-- 图片模式:参考图缩略条 -->
+
+    <!-- 顶部动作行(90 号票):引用类入口聚左 —— @ 引用(光标处插 @ 唤起
+         既有浮层)/ + 上传 / 库(47 号 AssetPicker 收编为图标钮);右侧
+         展开 toggle(Q8,输入区大留白两档,placement 估高同步消费)。 -->
+    <div class="composer-actions">
+      <button
+        class="action-btn"
+        type="button"
+        aria-label="插入 @ 引用参考"
+        :title="mentionBtnTitle"
+        :disabled="mentionBtnDisabled"
+        @click="insertAtMention"
+      >
+        @
+      </button>
+      <button
+        class="action-btn"
+        type="button"
+        aria-label="上传参考"
+        :title="uploadTitle"
+        :disabled="addRefDisabled"
+        @click="fileInput?.click()"
+      >
+        {{ uploading ? '…' : '+' }}
+      </button>
+      <button
+        class="action-btn"
+        type="button"
+        aria-label="从素材库挑选参考"
+        :title="pickAssetsTitle"
+        :disabled="addRefDisabled"
+        @click="emit('pick-assets')"
+      >
+        库
+      </button>
+      <input
+        ref="fileInput"
+        type="file"
+        :accept="uploadAccept"
+        class="ref-file"
+        @change="onFileChange"
+      >
+      <button
+        class="expand-toggle"
+        type="button"
+        :aria-pressed="expanded"
+        :title="expanded ? '收起输入区' : '展开输入区'"
+        @click="emit('update:expanded', !expanded)"
+      >
+        {{ expanded ? '收起' : '展开' }}
+      </button>
+    </div>
+
+    <!-- 图片模式:参考图缩略条(90 号票起仅 chip,+ / 库 上移动作行) -->
     <div
       v-if="!isVideo"
       class="ref-strip"
@@ -532,33 +664,6 @@ function onFileChange(e: Event): void {
           ×
         </button>
       </div>
-      <button
-        class="ref-add"
-        type="button"
-        :disabled="uploading || refsFull || disabledReason !== ''"
-        :title="uploadTitle"
-        aria-label="上传参考图"
-        @click="fileInput?.click()"
-      >
-        {{ uploading ? '…' : '+' }}
-      </button>
-      <button
-        class="ref-library"
-        type="button"
-        :disabled="uploading || refsFull || disabledReason !== ''"
-        :title="pickAssetsTitle"
-        aria-label="从素材库挑选参考图"
-        @click="emit('pick-assets')"
-      >
-        库
-      </button>
-      <input
-        ref="fileInput"
-        type="file"
-        accept="image/*"
-        class="ref-file"
-        @change="onFileChange"
-      >
     </div>
 
     <!-- 视频模式:全模态参考条,角色标在 chip 上(图缩略,视频/音频图标
@@ -638,58 +743,7 @@ function onFileChange(e: Event): void {
           ×
         </button>
       </div>
-      <button
-        class="ref-add"
-        type="button"
-        :disabled="uploading || !videoRefsVacant"
-        :title="uploadTitle"
-        @click="fileInput?.click()"
-      >
-        {{ uploading ? '…' : '+' }}
-      </button>
-      <button
-        class="ref-library"
-        type="button"
-        :disabled="uploading || !videoRefsVacant"
-        :title="pickAssetsTitle"
-        aria-label="从素材库挑选参考"
-        @click="emit('pick-assets')"
-      >
-        库
-      </button>
-      <input
-        ref="fileInput"
-        type="file"
-        :accept="uploadAccept"
-        class="ref-file"
-        @change="onFileChange"
-      >
     </div>
-
-    <!-- 编辑型契约提示(Seedance 参考视频实测):比例/时长跟随输入视频,
-         强制指定会被上游在生成阶段拒绝;提示用户留空「自动」。 -->
-    <p
-      v-if="isVideo && hasVideoRef"
-      class="vref-hint"
-    >
-      含参考视频:任务可能被识别为「视频编辑」,输出比例与时长将跟随输入视频(需
-      4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
-    </p>
-    <!-- 首帧/参考互斥提示(71 号票 A3):同款安静小字,不拦发送。 -->
-    <p
-      v-if="frameReferenceConflict"
-      class="vref-hint"
-    >
-      首帧/尾帧与参考图/视频/音频不能混用(Seedance、MiniMax H3 会拒);要首帧效果可只传参考图,并在提示词里写明哪张作首帧
-    </p>
-    <!-- 出场角色数提示(71 号票 B7;85 号票 C 泛化文案并扩图片模式):
-         角色元素超阈值时出,不拦发送。 -->
-    <p
-      v-if="tooManyCharacters"
-      class="vref-hint"
-    >
-      出场角色超过 {{ CHARACTER_ELEMENT_HINT_LIMIT }} 个,多角色同框稳定性会下降
-    </p>
 
     <!-- 设定图类型选择(70 号票入口一):预填在途时出现,五类型固定序、
          默认三视图;切换上抛编辑器重拼提示词(模板 + 四件套 + 变体 +
@@ -713,13 +767,14 @@ function onFileChange(e: Event): void {
       </button>
     </div>
 
+    <!-- 大留白输入区(90 号票):占位符顶左,常规 120 / 展开 240 两档,
+         resize 手柄移除(与无边框语言冲突);@ 引用浮层贴输入框上沿。 -->
     <div class="prompt-wrap">
       <textarea
         ref="promptEl"
         :value="prompt"
         :placeholder="placeholder"
         :disabled="disabledReason !== ''"
-        rows="3"
         aria-label="生成提示词"
         @input="onPromptInput"
         @keydown="onPromptKeydown"
@@ -762,6 +817,33 @@ function onFileChange(e: Event): void {
       </div>
     </div>
 
+    <!-- 输入区与 meta 行之间的提示/预览带(90 号票中间件安置,顺序不变):
+         契约提示(vref-hint 族)→ 绑定行预览 + 玩法下拉。 -->
+    <!-- 编辑型契约提示(Seedance 参考视频实测):比例/时长跟随输入视频,
+         强制指定会被上游在生成阶段拒绝;提示用户留空「自动」。 -->
+    <p
+      v-if="isVideo && hasVideoRef"
+      class="vref-hint"
+    >
+      含参考视频:任务可能被识别为「视频编辑」,输出比例与时长将跟随输入视频(需
+      4–30 秒)——比例与时长请留空「自动」,避免生成阶段被上游拒绝。
+    </p>
+    <!-- 首帧/参考互斥提示(71 号票 A3):同款安静小字,不拦发送。 -->
+    <p
+      v-if="frameReferenceConflict"
+      class="vref-hint"
+    >
+      首帧/尾帧与参考图/视频/音频不能混用(Seedance、MiniMax H3 会拒);要首帧效果可只传参考图,并在提示词里写明哪张作首帧
+    </p>
+    <!-- 出场角色数提示(71 号票 B7;85 号票 C 泛化文案并扩图片模式):
+         角色元素超阈值时出,不拦发送。 -->
+    <p
+      v-if="tooManyCharacters"
+      class="vref-hint"
+    >
+      出场角色超过 {{ CHARACTER_ELEMENT_HINT_LIMIT }} 个,多角色同框稳定性会下降
+    </p>
+
     <!-- 提示词框下沿一行:绑定行预览(71 号票 B5:发送时插在风格段之后的
          那一行,只读、不改写输入框;无元素不显示)+「玩法」下拉(71 号票
          C 视频;85 号票 B1 起图片模式同款,选中写提示词,非空先确认替换)。 -->
@@ -796,116 +878,171 @@ function onFileChange(e: Event): void {
       </select>
     </div>
 
-    <!-- 89 号票:预估 + 参数栏收进底部 hairline 分组,参考条/输入区/
-         参数栏三段秩序一眼可辨。成本预估(38 号票)有价才显示,随参数联动。 -->
-    <div class="composer-foot">
-      <p
-        v-if="estimate"
-        class="estimate"
+    <!-- 底部 meta 行(90 号票):模型带价下拉 + 参数摘要按钮 + ¥ 成本胶囊
+         (38 号票人民币口径,无法预估整颗隐藏不显示 ¥0)+ 圆形发送键,
+         单行收纳;独立预估行与参数 select 六件套就此退役。 -->
+    <div class="composer-meta">
+      <select
+        :value="model"
+        class="model"
+        :disabled="disabledReason !== ''"
+        :title="isVideo ? '视频模型' : '生图模型'"
+        @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
       >
-        {{ estimate }}
-      </p>
-
-      <div class="controls">
-        <select
-          :value="mode"
-          class="mode"
-          :disabled="disabledReason !== ''"
-          title="生成模式(选中视频节点时锁定视频生成)"
-          @change="emit('update:mode', ($event.target as HTMLSelectElement).value as 'image' | 'video')"
+        <option
+          v-for="m in activeModels"
+          :key="m"
+          :value="m"
         >
-          <option
-            value="image"
-            :disabled="modeLocked"
+          {{ modelOptionLabel(m) }}
+        </option>
+      </select>
+      <button
+        class="param-summary"
+        type="button"
+        :disabled="disabledReason !== ''"
+        :aria-expanded="panelOpen"
+        title="生成参数(比例/分辨率/时长/背景/风格),点击开合参数面板"
+        @click="emit('update:panelOpen', !panelOpen)"
+      >
+        {{ paramSummaryText }}
+      </button>
+      <span
+        v-if="estimateInfo"
+        class="cost-pill"
+        :title="estimate"
+      >{{ estimateInfo.amount }}</span>
+      <button
+        class="send"
+        type="button"
+        :disabled="!canSend"
+        :title="canSend ? '生成(Enter 发送,Shift+Enter 换行)' : '先写提示词并选模型'"
+        aria-label="生成"
+        @click="emit('send')"
+      >
+        {{ generating ? '…' : '↑' }}
+      </button>
+    </div>
+
+    <!-- 参数面板(90 号票 Q5a/Q10a):composer 内浮层,垫挡层点击即收,
+         Esc 走编辑器 onGlobalKeydown 浮层退栈。段序 = 模式段(顶部,视频
+         节点锁定禁切照旧)→ 比例网格(带形状预览)→ 分辨率通栏分段 →
+         背景段(仅图片)→ 带 IP 风格开关行(未配风格不显示照旧)→ 时长段
+         (仅视频)。不引入截图有但无领域事实的参数(格式/质量/音频/联网
+         搜索等,见票面不引入清单)。 -->
+    <div
+      v-if="panelOpen"
+      class="panel-layer"
+    >
+      <div
+        class="panel-backdrop"
+        @click="emit('update:panelOpen', false)"
+      />
+      <div
+        class="param-panel"
+        role="dialog"
+        aria-label="生成参数面板"
+      >
+        <div
+          class="segment"
+          role="group"
+          aria-label="生成模式"
+        >
+          <button
+            type="button"
+            :class="{ on: mode === 'image' }"
+            :disabled="modeLocked || disabledReason !== ''"
+            title="选中视频节点时锁定视频生成(视频产物不能当生图参考)"
+            @click="emit('update:mode', 'image')"
           >
             图片生成
-          </option>
-          <option value="video">
+          </button>
+          <button
+            type="button"
+            :class="{ on: mode === 'video' }"
+            :disabled="disabledReason !== ''"
+            title="生成模式"
+            @click="emit('update:mode', 'video')"
+          >
             视频生成
-          </option>
-        </select>
-        <input
-          v-if="isVideo"
-          :value="duration"
-          type="number"
-          class="duration"
-          :min="durationRange.min"
-          :max="durationRange.max"
-          step="1"
-          placeholder="自动"
-          :disabled="disabledReason !== ''"
-          :title="`时长(秒):留空 = 自动由模型裁决;本模型支持 ${durationRange.min}–${durationRange.max} 秒`"
-          @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
-          @blur="onDurationBlur"
+          </button>
+        </div>
+
+        <!-- 比例(档位照旧:图片含 3:2/2:3,视频共享 RATIO_PRESETS);空档
+             显示「自适应」。图片模式左列竖块、视频模式网格 tile,形状预览
+             按 w:h 换算。 -->
+        <div
+          class="ratio-picker"
+          :class="{ 'as-grid': isVideo }"
+          role="group"
+          aria-label="画面比例"
         >
-        <select
-          :value="ratio"
-          class="ratio"
-          :disabled="disabledReason !== ''"
-          title="画面比例(自动 = 由模型缺省裁决)"
-          @change="emit('update:ratio', ($event.target as HTMLSelectElement).value)"
-        >
-          <option
+          <button
             v-for="p in ratioPresets"
             :key="p.value"
-            :value="p.value"
-          >
-            {{ p.label }}
-          </option>
-        </select>
-        <select
-          v-if="isVideo"
-          :value="resolution"
-          class="resolution"
-          :disabled="disabledReason !== ''"
-          title="分辨率档位(自动 = 由模型缺省裁决;档位串直传上游)"
-          @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
-        >
-          <option
-            v-for="p in videoResolutionPresets"
-            :key="p.value"
-            :value="p.value"
-          >
-            {{ p.label }}
-          </option>
-        </select>
-        <select
-          v-else
-          :value="resolution"
-          class="resolution"
-          :disabled="disabledReason !== ''"
-          title="分辨率档位(自动 = 由模型缺省裁决;单选分辨率按 1:1 兜底)"
-          @change="emit('update:resolution', ($event.target as HTMLSelectElement).value)"
-        >
-          <option
-            v-for="p in RESOLUTION_PRESETS"
-            :key="p.value"
-            :value="p.value"
-          >
-            {{ p.label }}
-          </option>
-        </select>
-        <!-- 透明背景开关(37 号票):仅图片模式、所有生图模型显示,不按
-             模型特判 —— 上游不认时 4xx 原样透出、节点可见可重试。 -->
-        <label
-          v-if="!isVideo"
-          class="transparent"
-          title="透明背景(产物为带 alpha 通道的 PNG;上游不支持时错误原样透出)"
-        >
-          <input
-            type="checkbox"
-            :checked="transparent"
+            type="button"
+            class="ratio-tile"
+            :class="{ on: ratio === p.value }"
             :disabled="disabledReason !== ''"
-            @change="emit('update:transparent', ($event.target as HTMLInputElement).checked)"
+            :title="p.value === '' ? '自适应(由模型缺省裁决)' : `画面比例 ${p.label}`"
+            @click="emit('update:ratio', p.value)"
           >
-          透明背景
-        </label>
-        <!-- 带 IP 风格开关(69 号票):图片/视频两模式都有、默认关;IP 未定
-             风格时不显示。开 = 发送时风格段拼在提示词前部(任务行可审计),
-             手写 prompt 不被偷改。 -->
+            <span
+              v-if="p.value === ''"
+              class="ratio-shape auto"
+            />
+            <span
+              v-else
+              class="ratio-shape"
+              :style="ratioShapeStyle(p.value)"
+            />
+            <span class="ratio-label">{{ p.value === '' ? '自适应' : p.label }}</span>
+          </button>
+        </div>
+
+        <!-- 分辨率通栏分段(按模型分档照旧;档位串直传上游)。 -->
+        <div
+          class="segment"
+          role="group"
+          aria-label="分辨率档位"
+        >
+          <button
+            v-for="p in activeResolutionPresets"
+            :key="p.value"
+            type="button"
+            :class="{ on: resolution === p.value }"
+            :disabled="disabledReason !== ''"
+            :title="p.value === '' ? '由模型缺省裁决' : `分辨率档位 ${p.label}(档位串直传上游)`"
+            @click="emit('update:resolution', p.value)"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+
+        <!-- 背景段(仅图片,仅「自动 / 透明」两档;「不透明」不是契约值)。 -->
+        <div
+          v-if="!isVideo"
+          class="segment"
+          role="group"
+          aria-label="背景"
+        >
+          <button
+            v-for="c in backgroundChips"
+            :key="c.label"
+            type="button"
+            :class="{ on: transparent === c.transparent }"
+            :disabled="disabledReason !== ''"
+            :title="c.transparent ? '透明背景(产物为带 alpha 通道的 PNG;上游不支持时错误原样透出)' : '背景由模型缺省裁决'"
+            @click="emit('update:transparent', c.transparent)"
+          >
+            {{ c.label }}
+          </button>
+        </div>
+
+        <!-- 带 IP 风格开关行(69 号票:未配风格不显示照旧)。 -->
         <label
           v-if="styleAvailable"
-          class="with-style"
+          class="style-row"
           :title="`发送时在提示词前拼「${styleSegment(ipStyle)}」(在 IP 编辑里可改风格)`"
         >
           <input
@@ -916,39 +1053,67 @@ function onFileChange(e: Event): void {
           >
           带 IP 风格
         </label>
-        <select
-          :value="model"
-          class="model"
-          :disabled="disabledReason !== ''"
-          :title="isVideo ? '视频模型' : '生图模型'"
-          @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
+
+        <!-- 时长段(仅视频):「自动」chip 选中 = 不传 seconds(滑杆区隐藏,
+             保 24 号票「留空 = 不传 = 厂商缺省」);取消自动 = 滑杆出现默认
+             5s。滑杆区间跟随 durationRangeFor、step 1,数字输入失焦夹紧照旧。 -->
+        <div
+          v-if="isVideo"
+          class="duration-section"
+          role="group"
+          aria-label="时长"
         >
-          <option
-            v-for="m in activeModels"
-            :key="m"
-            :value="m"
+          <div class="segment">
+            <button
+              type="button"
+              :class="{ on: durationAuto }"
+              :disabled="disabledReason !== ''"
+              :title="durationAuto ? '时长由模型裁决;点击取消自动,滑杆默认 5 秒' : '回到自动:不传 seconds,时长由模型缺省裁决'"
+              @click="onAutoChipToggle"
+            >
+              自动
+            </button>
+          </div>
+          <div
+            v-if="!durationAuto"
+            class="duration-row"
           >
-            {{ modelOptionLabel(m) }}
-          </option>
-        </select>
-        <button
-          class="send"
-          type="button"
-          :disabled="!canSend"
-          :title="canSend ? '生成(Enter 发送,Shift+Enter 换行)' : '先写提示词并选模型'"
-          aria-label="生成"
-          @click="emit('send')"
-        >
-          {{ generating ? '…' : '↑' }}
-        </button>
+            <input
+              type="range"
+              class="duration-slider"
+              :min="durationRange.min"
+              :max="durationRange.max"
+              step="1"
+              :value="Number(duration)"
+              :aria-label="`时长滑杆(${durationRange.min}–${durationRange.max} 秒)`"
+              :disabled="disabledReason !== ''"
+              @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
+            >
+            <input
+              type="number"
+              class="duration-number"
+              :value="duration"
+              :min="durationRange.min"
+              :max="durationRange.max"
+              step="1"
+              aria-label="时长(秒)"
+              :disabled="disabledReason !== ''"
+              :title="`时长(秒):本模型支持 ${durationRange.min}–${durationRange.max} 秒`"
+              @input="emit('update:duration', ($event.target as HTMLInputElement).value)"
+              @blur="onDurationBlur"
+            >
+          </div>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-/* 即梦式深色面板:参考条 + 输入区 + 参数栏,悬浮在画布上。
-   阶段二:弹层入场(缩放 0.98 + 上浮)、顶缘玻璃受光面。 */
+/* 90 号票无边框协议:填充代描边 —— 更实的面板填充靠色差与画布断开,外
+   描边退役(89 号票底部 hairline 分组一并收编),投影弱化为单层极淡
+   (悬浮层在密集线稿上仍需一点断开,不全去);内部控件同语言:wash 填充
+   代描边,无内部分割线。 */
 .composer {
   position: absolute;
   z-index: var(--z-canvas-float);
@@ -956,35 +1121,11 @@ function onFileChange(e: Event): void {
   display: grid;
   gap: var(--sp-sm);
   padding: var(--sp-md);
-  background: rgba(var(--surface-panel-rgb), 0.96);
-  border: 1px solid var(--line-control);
+  background: rgba(var(--surface-panel-rgb), 0.98);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-overlay), var(--glass-highlight);
+  box-shadow: var(--shadow-control);
   box-sizing: border-box;
   animation: composer-in var(--dur-slow) var(--ease);
-}
-
-/* 设定图五类型选择行(70 号票):chip 组,选中态描边提亮。 */
-.sheet-types {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.sheet-types button {
-  border: 1px solid var(--line-control);
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: var(--r-pill);
-  padding: 2px 10px;
-  font-size: var(--fs-micro);
-  cursor: pointer;
-}
-
-.sheet-types button.on {
-  border-color: rgba(var(--teal-rgb), 0.7);
-  color: var(--teal);
-  background: rgba(var(--teal-rgb), 0.1);
 }
 
 @keyframes composer-in {
@@ -998,12 +1139,70 @@ function onFileChange(e: Event): void {
   }
 }
 
+/* ---- 顶部动作行 ---- */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.action-btn:hover:not(:disabled) {
+  background: var(--wash-fill);
+  color: var(--text-primary);
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 展开 toggle:居右,实底填充与引用类入口拉开一档。 */
+.expand-toggle {
+  margin-left: auto;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--wash-soft);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.expand-toggle:hover {
+  background: var(--wash-active);
+  color: var(--text-primary);
+}
+
+/* ---- 参考条(90 号票仅换肤:+ / 库 上移,条内只留 chip)---- */
 .ref-strip {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   min-height: 48px;
   flex-wrap: wrap;
+}
+
+.ref-strip:empty {
+  min-height: 0;
 }
 
 .ref-chip {
@@ -1019,7 +1218,6 @@ function onFileChange(e: Event): void {
   height: 48px;
   object-fit: cover;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-action);
   display: block;
   cursor: zoom-in;
 }
@@ -1067,7 +1265,6 @@ function onFileChange(e: Event): void {
   height: 48px;
   object-fit: cover;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-action);
   display: block;
   cursor: zoom-in;
 }
@@ -1077,8 +1274,8 @@ function onFileChange(e: Event): void {
   height: 48px;
   display: grid;
   place-items: center;
+  border: none;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-action);
   background: var(--wash-soft);
   color: var(--text-secondary);
   font-size: 18px;
@@ -1099,7 +1296,7 @@ button.vref-icon:hover {
 .vref-role {
   width: 100%;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-sm);
   color: inherit;
   font-size: var(--fs-micro);
@@ -1144,61 +1341,6 @@ button.vref-icon:hover {
   background: rgba(var(--danger-rgb), 0.9);
 }
 
-.ref-add {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  border: 1px dashed var(--line-action);
-  border-radius: var(--r-lg);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 20px;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease),
-    background-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
-}
-
-.ref-add:hover:not(:disabled) {
-  border-color: rgba(var(--accent-rgb), 0.85);
-  color: var(--text-primary);
-  background: rgba(var(--accent-rgb), 0.08);
-}
-
-.ref-add:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* 素材库入口(47 号票):与「+」同尺寸的次级按钮,实线边框区分本机上传。 */
-.ref-library {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  border: 1px solid var(--line-action);
-  border-radius: var(--r-lg);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--fs-body);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease),
-    background-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
-}
-
-.ref-library:hover:not(:disabled) {
-  border-color: rgba(var(--accent-rgb), 0.85);
-  color: var(--text-primary);
-  background: rgba(var(--accent-rgb), 0.08);
-}
-
-.ref-library:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .ref-file {
   display: none;
 }
@@ -1223,11 +1365,58 @@ button.vref-icon:hover {
   pointer-events: none;
 }
 
-/* @ 引用浮层:贴输入框上沿左对齐,列表常显全部可 @ 条目(不做过滤)。 */
+/* ---- 设定图类型 chips(70 号票,无边框换肤:填充代描边)---- */
+.sheet-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sheet-types button {
+  border: none;
+  background: var(--wash-soft);
+  color: var(--text-muted);
+  border-radius: var(--r-pill);
+  padding: 2px 10px;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.sheet-types button.on {
+  color: var(--teal);
+  background: rgba(var(--teal-rgb), 0.16);
+}
+
+/* ---- 大留白输入区(90 号票)---- */
 .prompt-wrap {
   position: relative;
 }
 
+textarea {
+  width: 100%;
+  min-height: 120px;
+  background: var(--wash-subtle);
+  border: none;
+  border-radius: var(--r-lg);
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+  line-height: 1.6;
+  box-sizing: border-box;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.composer.expanded textarea {
+  min-height: 240px;
+}
+
+textarea::placeholder {
+  color: var(--text-faint);
+}
+
+/* @ 引用浮层:贴输入框上沿左对齐,列表常显全部可 @ 条目(不做过滤)。
+   浮层是悬浮件,保留对话框影 + accent 细描边与面板断开(不在壳体无边框
+   协议内)。 */
 .mention-overlay {
   position: absolute;
   left: 0;
@@ -1238,7 +1427,7 @@ button.vref-icon:hover {
   background: rgba(var(--surface-panel-rgb), 0.98);
   border: 1px solid rgba(var(--accent-rgb), 0.45);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-dialog);
 }
 
 .mention-list {
@@ -1269,7 +1458,6 @@ button.vref-icon:hover {
   height: 28px;
   object-fit: cover;
   border-radius: var(--r-sm);
-  border: 1px solid var(--line-action);
   display: block;
 }
 
@@ -1291,7 +1479,9 @@ button.vref-icon:hover {
   color: var(--teal);
 }
 
-/* 提示词框下沿一行(71 号票):绑定行预览靠左省略,「玩法」下拉贴右。 */
+/* ---- 输入区与 meta 行之间的提示/预览带 ---- */
+/* 绑定行预览(71 号票 B5):发送时附加的那一行,只读小字、单行省略;
+   「玩法」下拉(71 号票 C)贴右。 */
 .prompt-meta {
   display: flex;
   align-items: center;
@@ -1299,7 +1489,6 @@ button.vref-icon:hover {
   min-width: 0;
 }
 
-/* 绑定行预览(71 号票 B5):发送时附加的那一行,只读小字、单行省略。 */
 .element-line {
   flex: 1;
   min-width: 0;
@@ -1311,27 +1500,21 @@ button.vref-icon:hover {
   text-overflow: ellipsis;
 }
 
-/* 「玩法」下拉(71 号票 C):与参数栏下拉同款小号控件。 */
 .prompt-meta .preset {
   margin-left: auto;
   flex-shrink: 0;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
-  padding: 4px 6px;
+  padding: 4px 8px;
   color: inherit;
   font-size: var(--fs-label);
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease);
+  transition: background-color var(--dur-fast) var(--ease);
 }
 
 .prompt-meta .preset:hover:not(:disabled) {
-  border-color: var(--line-action);
-}
-
-.prompt-meta .preset:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.85);
+  background: var(--wash-active);
 }
 
 .prompt-meta .preset:disabled {
@@ -1339,7 +1522,15 @@ button.vref-icon:hover {
   cursor: not-allowed;
 }
 
-/* 目录不可用禁态:整体降不透明度,交互面全部 :disabled。 */
+/* 契约提示行:安静的单行小字,琥珀警示色(与目录禁态同族)。 */
+.vref-hint {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--amber);
+  line-height: 1.5;
+}
+
+/* ---- 目录不可用禁态(38 号票评审,语义色描边不属无边框协议)---- */
 .composer.disabled .ref-strip {
   opacity: 0.5;
 }
@@ -1372,129 +1563,74 @@ button.vref-icon:hover {
   background: rgba(var(--amber-rgb), 0.12);
 }
 
-/* 编辑型契约提示:参考视频在场的单行小字,与预估行同款安静的视觉级别。 */
-.vref-hint {
-  margin: 0;
-  font-size: var(--fs-label);
-  color: var(--amber);
-  line-height: 1.5;
+/* ---- 底部 meta 行(90 号票)---- */
+.composer-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
 }
 
-/* 成本预估行:安静的单行小字,参数变化即时刷新。 */
-.estimate {
-  margin: 0;
+.composer-meta .model {
+  flex-shrink: 0;
+  max-width: 172px;
+  background: var(--wash-soft);
+  border: none;
+  border-radius: var(--r-md);
+  padding: 6px 8px;
+  color: inherit;
   font-size: var(--fs-label);
-  color: var(--estimate-ink);
-  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.composer-meta .model:hover:not(:disabled) {
+  background: var(--wash-active);
+}
+
+.composer-meta .model:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 参数摘要按钮:占 meta 行剩余宽度,文案按当前值实时拼。 */
+.param-summary {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* 89 号票:底部 hairline 分组——预估与参数栏同属一拍,与参考条/
-   输入区拉开三段秩序;hairline 用分区档,不带语义色。 */
-.composer-foot {
-  display: grid;
-  gap: var(--sp-sm);
-  padding-top: var(--sp-sm);
-  border-top: 1px solid var(--line-section);
-}
-
-textarea {
-  width: 100%;
-  resize: vertical;
-  min-height: 64px;
-  background: var(--wash-soft);
-  border: 1px solid var(--line-control);
-  border-radius: var(--r-lg);
-  padding: 8px 10px;
-  color: inherit;
-  font: inherit;
-  line-height: 1.5;
-  box-sizing: border-box;
-  transition:
-    border-color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease);
-}
-
-/* 工作灯:焦点即灯亮——描边转交互蓝,一圈极淡的光晕,
-   替代旧的 outline 双指示(键盘导航仍由全局 :focus-visible 兜底)。 */
-textarea:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.85);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
-}
-
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.controls select {
-  background: var(--wash-soft);
-  border: 1px solid var(--line-control);
-  border-radius: var(--r-md);
-  padding: 6px 8px;
-  color: inherit;
-  font-size: var(--fs-label);
-  max-width: 150px;
-  cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease);
-}
-
-.controls select:hover {
-  border-color: var(--line-action);
-}
-
-.controls select:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.85);
-}
-
-.controls .mode,
-.controls .ratio,
-.controls .duration,
-.controls .resolution {
-  flex-shrink: 0;
-  max-width: 110px;
-}
-
-/* 时长数字输入比下拉窄,单位(秒)缀在 placeholder 语义里。 */
-.controls input.duration {
-  width: 64px;
-  background: var(--wash-soft);
-  border: 1px solid var(--line-control);
-  border-radius: var(--r-md);
-  padding: 6px 8px;
-  color: inherit;
-  font-size: var(--fs-label);
-  box-sizing: border-box;
-}
-
-/* 透明背景 / 带 IP 风格开关:与下拉同排的小号复选项。 */
-.controls label.transparent,
-.controls label.with-style {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  font-size: var(--fs-label);
-  color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
   white-space: nowrap;
+  text-align: left;
+  background: var(--wash-soft);
+  border: none;
+  border-radius: var(--r-md);
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
 }
 
-.controls label.transparent input,
-.controls label.with-style input {
-  accent-color: var(--accent);
-  margin: 0;
+.param-summary:hover:not(:disabled) {
+  background: var(--wash-active);
+  color: var(--text-primary);
 }
 
-.controls .model {
-  flex: 1;
-  min-width: 120px;
+.param-summary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ¥ 成本胶囊(38 号票人民币口径):预估灰蓝一族,安静可见不惊扰。 */
+.cost-pill {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  background: rgba(var(--estimate-ink-rgb), 0.14);
+  color: var(--estimate-ink);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: help;
 }
 
 .send {
@@ -1518,7 +1654,7 @@ textarea:focus {
 }
 
 /* skill 微动效数字:hover 上步 1px、按下回沉 0.985;
-   只在真指针环境生效,触屏不表演。 */
+   只在真指针环境生效,触屏不表演(89 号票微动效保留)。 */
 @media (hover: hover) and (pointer: fine) {
   .send:hover:not(:disabled) {
     background: var(--accent-soft);
@@ -1535,5 +1671,187 @@ textarea:focus {
 .send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ---- 参数面板(90 号票):composer 内浮层,垫挡层点击即收 ---- */
+.panel-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+
+.panel-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.param-panel {
+  position: absolute;
+  left: var(--sp-md);
+  right: var(--sp-md);
+  bottom: 48px;
+  display: grid;
+  gap: var(--sp-md);
+  padding: var(--sp-md);
+  max-height: 420px;
+  overflow-y: auto;
+  background: rgba(var(--surface-raised-rgb), 0.98);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-dialog);
+  animation: composer-in var(--dur-fast) var(--ease);
+}
+
+/* 分段 chips 族:选中实心(工作灯蓝),无边框。 */
+.segment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.segment button {
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  background: var(--wash-soft);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.segment button:hover:not(:disabled) {
+  background: var(--wash-active);
+  color: var(--text-primary);
+}
+
+.segment button.on,
+.segment button.on:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.segment button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 比例两形态(90 号票):图片左列竖块、视频网格 tile,形状预览描边随
+   currentColor(选中实心底上自动转深)。 */
+.ratio-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ratio-picker.as-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.ratio-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--wash-soft);
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.ratio-tile:hover:not(:disabled) {
+  background: var(--wash-active);
+  color: var(--text-primary);
+}
+
+.as-grid .ratio-tile {
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 4px;
+}
+
+.ratio-tile.on,
+.ratio-tile.on:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.ratio-tile:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ratio-shape {
+  flex-shrink: 0;
+  display: inline-block;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.ratio-shape.auto {
+  width: 18px;
+  height: 18px;
+  border-style: dashed;
+}
+
+.ratio-label {
+  min-width: 0;
+}
+
+/* 带 IP 风格开关行(69 号票语义,行式复选)。 */
+.style-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-label);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.style-row input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+/* 时长段(仅视频):自动 chip + 滑杆 + 数字输入。 */
+.duration-section {
+  display: grid;
+  gap: var(--sp-sm);
+}
+
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+}
+
+.duration-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.duration-number {
+  width: 64px;
+  flex-shrink: 0;
+  background: var(--wash-soft);
+  border: none;
+  border-radius: var(--r-md);
+  padding: 6px 8px;
+  color: inherit;
+  font-size: var(--fs-label);
+  box-sizing: border-box;
 }
 </style>
