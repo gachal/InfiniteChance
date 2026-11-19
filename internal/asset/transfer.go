@@ -217,6 +217,12 @@ func extensionOf(contentType string) string {
 	}
 }
 
+// ExtensionOf is the exported thin wrapper over extensionOf(92 号票桌宠
+// 形象上传落桶键的扩展名与生成媒体同一张映射表 —— 单一事实源)。
+func ExtensionOf(contentType string) string {
+	return extensionOf(contentType)
+}
+
 func defaultContentType(kind string) string {
 	switch kind {
 	case KindVideo:
