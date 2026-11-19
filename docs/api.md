@@ -898,6 +898,38 @@ curl $CANVAS/assets/12/content
 curl -OJ "$CANVAS/assets/12/content?download=1"   # 强制下载(attachment)
 ```
 
+### 5.6 画布助手(91 号票)
+
+```bash
+# 建会话(mode 缺省 ask=先询问我;full=完全授权;授权档存 session,PATCH 随时切)
+curl -X POST $CANVAS/canvases/7/assistant/sessions -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"mode":"ask"}'
+# → {"session":{"id":5,"canvas_id":7,"title":"","mode":"ask","messages":[],...}}
+
+# 目录 / 详情(详情含 messages 全文)/ 改授权档 / 删除
+curl $CANVAS/canvases/7/assistant/sessions -H "Authorization: Bearer $TOKEN"
+curl $CANVAS/canvases/7/assistant/sessions/5 -H "Authorization: Bearer $TOKEN"
+curl -X PATCH $CANVAS/canvases/7/assistant/sessions/5 -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"mode":"full"}'
+curl -X DELETE $CANVAS/canvases/7/assistant/sessions/5 -H "Authorization: Bearer $TOKEN"
+
+# SSE 会话流(事件五形状与 Agent 循环一致:delta/tool_call/tool_result/
+# done/error,收尾 data: [DONE];写图草案的 tool_call 之后流会静默等待
+# 前端应用与回执,最长 5 分钟)
+curl -N -X POST $CANVAS/canvases/7/assistant/stream -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":5,"message":"帮我在画布上加一个角色节点","model":"chat-m"}'
+
+# 前端回执(应用/失败/拒绝;applied 时 result 带新建节点 id 映射等,
+# 服务端把回执作 tool_result 喂回循环续跑;无在途调用 409 no_pending_call)
+curl -X POST $CANVAS/canvases/7/assistant/sessions/5/receipts -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"call_id":"call_1","status":"applied","result":{"nodes":[{"index":0,"id":"image-9-1"}]}}'
+
+# 对话计费走服务级 key 聊天 token 轨,来源标记 canvas={id} gen=assistant
+# (无 node 段);删画布级联删该画布全部会话行。
+```
+
 ---
 
 ## 附:端口对照
