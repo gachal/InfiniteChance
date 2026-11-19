@@ -13,6 +13,7 @@ import (
 
 	"github.com/gachal/InfiniteChance/internal/agenttools"
 	"github.com/gachal/InfiniteChance/internal/apikey"
+	"github.com/gachal/InfiniteChance/internal/assistant"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
@@ -141,6 +142,11 @@ type CanvasStores struct {
 	Tasks      canvastask.Store
 	Templates  prompttemplate.Store
 	Settings   settings.Store
+	// AssistantSessions 承载画布助手会话(91 号票):会话 CRUD/SSE 面挂
+	// /canvases/:id/assistant/*,同时作为删画布级联清理器(canvas 包声明
+	// 接口、本包注入)传给 canvas.Handlers.SessionCleanup。nil 时删画布
+	// 不级联(测试宽容形态,生产装配恒非 nil)。
+	AssistantSessions assistant.Store
 }
 
 // CanvasRoutes mounts the canvas surface: /auth (same account table),
@@ -160,7 +166,8 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 
 	// 画布面:一律先过 JWT 会话,与管理面同一套令牌体系。
 	group := r.Group("/canvases", auth.RequireAuth(issuer))
-	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases, IPs: s.IPs})
+	canvas.RegisterRoutes(group, &canvas.Handlers{Store: s.Canvases, IPs: s.IPs,
+		SessionCleanup: s.AssistantSessions})
 	taskHandlers := &canvastask.Handlers{
 		Tasks:         s.Tasks,
 		Canvases:      s.Canvases,

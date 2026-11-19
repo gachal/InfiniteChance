@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -616,5 +617,72 @@ func TestMalformedIDAnswers400(t *testing.T) {
 	}
 	if res := do(r, http.MethodPut, "/canvases/abc/graph", `{"graph":{},"version":1}`); res.Code != http.StatusBadRequest {
 		t.Fatalf("PUT /canvases/abc/graph: status = %d, want 400", res.Code)
+	}
+}
+
+// fakeSessionCleanup 是删画布级联的会话清理桩(91 号票):记录调用与顺序,
+// 供「先清会话行、再删画布行」的编排断言。
+type fakeSessionCleanup struct {
+	mu       sync.Mutex
+	cleaned  []int64
+	err      error
+	deleteAt int // store.Delete 发生时的 calls 快照(顺序断言用)
+}
+
+func (f *fakeSessionCleanup) DeleteByCanvas(_ context.Context, canvasID int64) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.cleaned = append(f.cleaned, canvasID)
+	return nil
+}
+
+// 91 号票级联删:删除画布先清该画布的助手会话行,失败则画布不删
+// (宁可不删也不留孤儿会话)。
+func TestDeleteCascadesAssistantSessions(t *testing.T) {
+	store := newFakeStore()
+	c := seed(t, store)
+	cleanup := &fakeSessionCleanup{}
+	h := &canvas.Handlers{Store: store, SessionCleanup: cleanup}
+	r := newTestRouter(h)
+
+	res := do(r, http.MethodDelete, fmt.Sprintf("/canvases/%d", c.ID), "")
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
+	}
+	if len(cleanup.cleaned) != 1 || cleanup.cleaned[0] != c.ID {
+		t.Fatalf("cleaned = %v, want [%d]", cleanup.cleaned, c.ID)
+	}
+	if _, ok := store.canvases[c.ID]; ok {
+		t.Fatal("canvas still stored after delete")
+	}
+}
+
+// 清理失败:画布行保留(500 重试),不产生「画布没了、会话还在」的孤儿。
+func TestDeleteAbortsWhenSessionCleanupFails(t *testing.T) {
+	store := newFakeStore()
+	c := seed(t, store)
+	cleanup := &fakeSessionCleanup{err: errors.New("boom")}
+	h := &canvas.Handlers{Store: store, SessionCleanup: cleanup}
+	r := newTestRouter(h)
+
+	res := do(r, http.MethodDelete, fmt.Sprintf("/canvases/%d", c.ID), "")
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (%s)", res.Code, res.Body)
+	}
+	if _, ok := store.canvases[c.ID]; !ok {
+		t.Fatal("canvas deleted despite cleanup failure; sessions would orphan")
+	}
+}
+
+// nil 清理器(既有装配形态)行为不变。
+func TestDeleteWithoutSessionCleanupStillWorks(t *testing.T) {
+	store, _, h := newHandlers()
+	c := seed(t, store)
+	r := newTestRouter(h)
+
+	res := do(r, http.MethodDelete, fmt.Sprintf("/canvases/%d", c.ID), "")
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/gachal/InfiniteChance/internal/app"
+	"github.com/gachal/InfiniteChance/internal/assistant"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
@@ -98,6 +99,12 @@ func main() {
 		if err := settingsStore.EnsureSchema(context.Background()); err != nil {
 			log.Fatalf("ensure settings schema: %v", err)
 		}
+		// 画布助手会话(91 号票):单表空起步无迁移,无同序依赖,随
+		// settings 之后;同时作为删画布级联清理器经 wiring 注入。
+		assistantSessions := assistant.NewMySQLStore(d.DB)
+		if err := assistantSessions.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("ensure assistant session schema: %v", err)
+		}
 		// 产物对象存储(14 号票):本地卷落地为缺省驱动,19 号票起由 settings
 		// 的 storage 行动态切 OSS(读回退本地、删两头都试);建不出来只影响
 		// 素材转存,不拦整个服务起来 —— 生成任务会以「转存失败」落在任务行
@@ -124,6 +131,8 @@ func main() {
 			Tasks:      tasks,
 			Templates:  templates,
 			Settings:   settingsStore,
+
+			AssistantSessions: assistantSessions,
 		}, gateway, storage)
 
 		lifetime := d.Lifetime
