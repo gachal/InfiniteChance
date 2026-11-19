@@ -19,6 +19,7 @@ import {
   type CharacterRecord,
   type CharacterVariantRecord,
   type ModelPriceSummary,
+  type PetConfigInfo,
   type PromptTemplateOption,
   type PropRecord,
   type SceneRecord,
@@ -162,6 +163,7 @@ import {
 } from '../assistantPanel'
 import { canInsertRecord } from '../records'
 import { cascadeAnchor, newNodeAnchor } from '../placement'
+import { loadPetCollapsed, savePetCollapsed } from '../canvasPet'
 import { useComposerPlacement } from '../composables/useComposerPlacement'
 import { useEditorToast } from '../composables/useEditorToast'
 import CanvasTopbar from '../components/editor/CanvasTopbar.vue'
@@ -171,6 +173,7 @@ import EditorToast from '../components/editor/EditorToast.vue'
 import type { ContextMenuItem } from '../canvasContextMenu'
 import AssetPanel from '../components/AssetPanel.vue'
 import AssistantPanel from '../components/AssistantPanel.vue'
+import CanvasPet from '../components/CanvasPet.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
 import AssetPicker from '../components/AssetPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
@@ -4533,20 +4536,70 @@ function toggleRecordsPanel(): void {
 }
 
 // 画布助手面板(91 号票):同一右缘互斥组。开合入口 = 顶栏「助手」按钮
-// (桌宠 92 号票到位后其点击同开此面板)。
+// 与桌宠单击(92 号票;两者开合语义相区别 —— 顶栏 toggle 反转,桌宠单击
+// 只开不关)。openAssistantPanel 是互斥组唯一的开面板入口:开自己、关
+// 其余全部右缘状态(91 号票曾在此把 assistantPanelOpen 自己关掉,面板
+// 打不开 —— 92 号票接线时修正)。
 const assistantPanelOpen = ref(false)
 
+/** 开助手面板并同步右缘互斥散点(桌宠单击与顶栏开关共用)。 */
+function openAssistantPanel(): void {
+  assistantPanelOpen.value = true
+  assetPanelOpen.value = false
+  recordsPanelOpen.value = false
+  composerPickerOpen.value = false
+  historyNodeId.value = ''
+  pickerNodeId.value = ''
+  levelPickerNodeId.value = ''
+  panoramaPickerNodeId.value = ''
+}
+
 function toggleAssistantPanel(): void {
-  assistantPanelOpen.value = !assistantPanelOpen.value
   if (assistantPanelOpen.value) {
-    assetPanelOpen.value = false
-    recordsPanelOpen.value = false
     assistantPanelOpen.value = false
-    composerPickerOpen.value = false
-    historyNodeId.value = ''
-    pickerNodeId.value = ''
-    levelPickerNodeId.value = ''
-    panoramaPickerNodeId.value = ''
+    return
+  }
+  openAssistantPanel()
+}
+
+// ---- 桌宠(92 号票):化身壳状态 ----
+
+// 配置自 canvas GET /pet/config(settings 只读 reader 按请求读表热生效;
+// 拉取失败保持 null = CSS 缺省形象 + 兜底文案,桌宠是化妆层不打扰画布)。
+const petConfig = ref<PetConfigInfo | null>(null)
+
+// 收起态按画布存 localStorage(键含画布 id;收起 = 不渲染,非仅隐藏),
+// setup 同步读一次(渲染前就位,避免闪现)。
+const petCollapsed = ref(loadPetCollapsed(canvasId))
+
+function togglePetCollapsed(): void {
+  petCollapsed.value = !petCollapsed.value
+  savePetCollapsed(canvasId, petCollapsed.value)
+}
+
+/** 桌宠单击 = 唤出助手面板(只开不关:面板已开时保持开,与顶栏 toggle
+ * 相区别);互斥组同步收在 openAssistantPanel 里。 */
+function openAssistantFromPet(): void {
+  if (!assistantPanelOpen.value) {
+    openAssistantPanel()
+  }
+}
+
+// 桌宠配置加载:失败静默保持现状(桌宠是化妆层,不打扰画布编辑;窗口
+// 重新聚焦时随目录一起刷新 —— 管理端改配置即刻可见,服务端本就按请求
+// 读表热生效)。
+let refreshingPetConfig = false
+async function refreshPetConfig(): Promise<void> {
+  if (refreshingPetConfig) {
+    return
+  }
+  refreshingPetConfig = true
+  try {
+    petConfig.value = await client.getPetConfig()
+  } catch {
+    /* 保持上次配置或 null(CSS 缺省形象),不弹错 */
+  } finally {
+    refreshingPetConfig = false
   }
 }
 
@@ -4970,7 +5023,9 @@ onMounted(() => {
   })
   refreshModelCatalogs()
   void refreshCatalogs()
+  void refreshPetConfig()
   window.addEventListener('focus', refreshCatalogs)
+  window.addEventListener('focus', refreshPetConfig)
   window.addEventListener('focus', refreshIPCharacters)
   window.addEventListener('focus', refreshIPScenesAndProps)
   window.addEventListener('focus', refreshIPStyle)
@@ -4981,6 +5036,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('focus', refreshCatalogs)
+  window.removeEventListener('focus', refreshPetConfig)
   window.removeEventListener('focus', refreshIPCharacters)
   window.removeEventListener('focus', refreshIPScenesAndProps)
   window.removeEventListener('focus', refreshIPStyle)
@@ -5015,9 +5071,11 @@ function backToList(): void {
       :canvas-name="canvasName"
       :save-state="autosave.state.value"
       :task-active-count="taskSync.activeCount.value"
+      :pet-collapsed="petCollapsed"
       @back="backToList"
       @rename="commitRename"
       @assistant="toggleAssistantPanel"
+      @toggle-pet="togglePetCollapsed"
     />
 
     <EditorAlerts
@@ -5314,6 +5372,15 @@ function backToList(): void {
           />
         </template>
       </VueFlow>
+      <!-- 92 号票:画布桌宠(化身壳,右下缺省驻位;收起 = 不渲染)。
+           单击唤出助手面板,拖动改位置(按画布存 localStorage),与
+           vue-flow 无交互、不进节点层(--z-pet 独立档)。 -->
+      <CanvasPet
+        v-if="!petCollapsed"
+        :canvas-id="canvasId"
+        :config="petConfig"
+        @activate="openAssistantFromPet"
+      />
       <!-- 30 号票:连接态预连线(画布区屏幕坐标;pointer-events none,
            不挡任何底层交互)。 -->
       <svg
@@ -5406,12 +5473,16 @@ function backToList(): void {
       />
       <!-- 91 号票:画布助手面板(右缘互斥组)。host = 视图的应用器面
            (落图走 autosave、任务走 composer 提交链);set_style 回执上抛
-           刷新本地风格缓存。 -->
+           刷新本地风格缓存。92 号票接缝:桌宠配置的问候语/建议 chips/
+           缺省模型作新会话首屏与模型初值(热生效)。 -->
       <AssistantPanel
         v-if="assistantPanelOpen"
         :canvas-id="canvasId"
         :prompt-models="promptModels"
         :host="assistantHost"
+        :greeting="petConfig?.greeting ?? ''"
+        :chips="petConfig?.chips ?? []"
+        :default-model="petConfig?.model ?? ''"
         @style-changed="onAssistantStyleChanged"
         @close="assistantPanelOpen = false"
       />

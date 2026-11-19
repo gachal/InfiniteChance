@@ -165,6 +165,9 @@
   --z-connect-preview: 4;
   --z-canvas-loading: 5;
   --z-side-panel: 6;
+  /* 画布桌宠(92 号票):画布上自由拖动的化身壳,盖过右缘侧面板(6)
+     —— 面板开合时桌宠仍可拖拽/点击唤出;低于画布浮动控件(10)。 */
+  --z-pet: 7;
   --z-canvas-float: 10;
   --z-dialog-mask: 20;
   --z-drawer: 30;
