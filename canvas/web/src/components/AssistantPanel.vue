@@ -22,6 +22,7 @@ import {
 
 import { useAuth } from '../auth'
 import { agentToolLabel, styleFromPayload, upsertAgentToolStep, type AgentToolStep } from '../agentTools'
+import { petChipPage, petDefaultModel, PET_CHIP_PAGE_SIZE } from '../canvasPet'
 import {
   appendAssistantTurn,
   describeDraft,
@@ -42,6 +43,13 @@ const props = defineProps<{
   /** 视图提供的图应用回调(ADR 0006 前端唯一写者:落图走 useVueFlow +
    * autosave,任务提交走既有 createCanvasTask 同链路)。 */
   host: AssistantHost
+  /** ---- 92 号票桌宠接缝(配置自 settings pet 行,热生效)----
+   * greeting:新会话首屏文案;chips:开场快捷指令(「换一批」轮换,点击
+   * = 预填输入框不直接发送);defaultModel:新会话模型下拉初值(不在目录
+   * 回落首项,目录为空回空串)。 */
+  greeting?: string
+  chips?: string[]
+  defaultModel?: string
 }>()
 
 const emit = defineEmits<{
@@ -71,21 +79,41 @@ const threadEl = ref<HTMLDivElement | null>(null)
 
 const activeModel = computed(() => model.value || props.promptModels[0] || '')
 
+// ---- 92 号票桌宠接缝:首屏问候语 + 建议 chips(「换一批」轮换,点击
+// = 预填输入框不直接发送,照玩法预设「写进提示词框再人工改」范式)。----
+
+/** 当前批次的 chips(循环左移轮换;chips 不超过一批时恒回原批)。 */
+const chipPage = ref(0)
+const visibleChips = computed(() => petChipPage(props.chips ?? [], chipPage.value))
+const chipsShuffleable = computed(() => (props.chips?.length ?? 0) > PET_CHIP_PAGE_SIZE)
+
+/** 预填助手输入框(不直接发送):已有草稿时另起一行追加,保留在打内容。 */
+function prefillChip(chip: string): void {
+  input.value = input.value.trim() === '' ? chip : `${input.value.replace(/\s+$/, '')}\n${chip}`
+}
+
+/** 新会话模型初值:桌宠配置的缺省模型优先,不在目录回落首项(目录为空
+ * 回空串,模型下拉自身有「无可用模型」禁态)。 */
+function applyDefaultModel(): void {
+  model.value = petDefaultModel(props.defaultModel ?? '', props.promptModels)
+}
+
 function fail(e: unknown, fallback: string): void {
   error.value = e instanceof ApiError ? e.message : fallback
 }
 
 onMounted(() => {
-  model.value = props.promptModels[0] ?? ''
+  applyDefaultModel()
   void refreshSessions()
 })
 
-// 模型目录异步到达时首值兜底(编辑器加载顺序不保证目录先于面板)。
+// 模型目录异步到达时兜底(编辑器加载顺序不保证目录先于面板);仍按
+// 「缺省模型优先、回落首项」口径,不让目录时序吞掉桌宠配置的初值。
 watch(
   () => props.promptModels,
   (models) => {
     if (model.value === '' && models.length > 0) {
-      model.value = models[0]
+      applyDefaultModel()
     }
   },
 )
@@ -139,6 +167,8 @@ async function createSession(): Promise<void> {
   error.value = ''
   try {
     const body = await client.createAssistantSession(props.canvasId, {})
+    // 新会话的模型下拉回到缺省初值(桌宠配置;92 号票接缝)。
+    applyDefaultModel()
     await refreshSessions()
     await openSession(body.session.id)
   } catch (e) {
@@ -479,12 +509,42 @@ async function send(): Promise<void> {
       ref="threadEl"
       class="thread"
     >
-      <p
+      <!-- 92 号票接缝:新会话首屏 = 桌宠问候语 + 建议 chips(点击预填
+           输入框不发送;「换一批」轮换)。无配置回内置兜底文案。 -->
+      <div
         v-if="messages.length === 0 && !streaming && !loadingThread"
         class="panel-empty"
+        data-testid="assistant-empty-state"
       >
-        新的画布助手会话。让它读取画布结构、批量建节点、改剧本,或在完全授权档下直接提交生成任务。
-      </p>
+        <p class="greeting">
+          {{ props.greeting?.trim() || '新的画布助手会话。让它读取画布结构、批量建节点、改剧本,或在完全授权档下直接提交生成任务。' }}
+        </p>
+        <div
+          v-if="visibleChips.length > 0"
+          class="chip-row"
+        >
+          <button
+            v-for="chip in visibleChips"
+            :key="chip"
+            class="chip"
+            type="button"
+            :disabled="activeId === null || streaming"
+            :title="'填入输入框(不直接发送)'"
+            @click="prefillChip(chip)"
+          >
+            {{ chip }}
+          </button>
+          <button
+            v-if="chipsShuffleable"
+            class="chip shuffle"
+            type="button"
+            title="换一批建议指令"
+            @click="chipPage += 1"
+          >
+            换一批
+          </button>
+        </div>
+      </div>
       <div
         v-for="(m, i) in messages"
         :key="i"
@@ -745,6 +805,48 @@ select:focus {
   color: var(--text-muted);
   font-size: var(--fs-body);
   line-height: 1.6;
+}
+
+/* 92 号票接缝:问候语与建议 chips。chip 点击只预填输入框(票面定案),
+   视觉上与生成对话框的玩法预设 chip 同族(描边小按钮)。 */
+.panel-empty .greeting {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--sp-sm);
+}
+
+.chip {
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-md);
+  background: var(--wash-soft);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--line-action);
+  color: var(--text-primary);
+}
+
+.chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chip.shuffle {
+  border-style: dashed;
+  color: var(--text-muted);
 }
 
 .turn {

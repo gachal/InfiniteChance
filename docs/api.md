@@ -723,6 +723,38 @@ curl "$GATEWAY/admin/usage/summary?by=model"   -H "Authorization: Bearer $TOKEN"
 curl "$GATEWAY/admin/usage/summary?by=channel" -H "Authorization: Bearer $TOKEN"
 ```
 
+### 4.7 桌宠设置(92 号票)
+
+```bash
+# 读取(缺行回答缺省配置 —— 全空 + chips 空数组;无密钥字段,原值回显)
+curl $GATEWAY/admin/settings/pet -H "Authorization: Bearer $TOKEN"
+# → {"pet":{"name":"","greeting":"","chips":[],"model":"",
+#    "idle_image":"","interactive_image":"","updated_at":""}}
+
+# 保存(合并语义:未携带的字段沿用已存,显式空串/空数组 = 清空;
+# chips 逐条 trim,形象键必须是 uploads/ 前缀的规范键;即时生效)
+curl -X PUT $GATEWAY/admin/settings/pet -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "name":"绿毛球",
+    "greeting":"画布上有什么想改的?",
+    "chips":["帮我建一组分镜","读一下画布结构"],
+    "model":"chat-main"
+  }'
+
+# 上传形象(multipart 字段 file;GIF/WebP/PNG(APNG)魔数嗅探裁决,
+# JPEG 静态图拒收 file_type_mismatch;20 MiB 上限;落 objectstore
+# uploads/ 前缀,不进素材库;响应回对象键,配置存键不存 URL)
+curl -X POST $GATEWAY/admin/settings/pet/image -H "Authorization: Bearer $TOKEN" \
+  -F "file=@pet.gif;type=image/gif"
+# → {"image":{"key":"uploads/20261119/….gif","content_type":"image/gif",
+#    "size_bytes":123456}}
+
+# 键登记进配置(形象对画布可见要再走一次 PUT)
+curl -X PUT $GATEWAY/admin/settings/pet -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"idle_image":"uploads/20261119/….gif"}'
+```
+
 ## 五、画布面(CANVAS 服务,JWT)
 
 ### 5.1 画布 CRUD 与整图保存
@@ -928,6 +960,23 @@ curl -X POST $CANVAS/canvases/7/assistant/sessions/5/receipts -H "Authorization:
 
 # 对话计费走服务级 key 聊天 token 轨,来源标记 canvas={id} gen=assistant
 # (无 node 段);删画布级联删该画布全部会话行。
+```
+
+### 5.7 桌宠(92 号票)
+
+```bash
+# 桌宠配置(canvas-web 拉取,settings 只读 reader 按请求读表热生效;
+# chips 恒为数组)
+curl $CANVAS/pet/config -H "Authorization: Bearer $TOKEN"
+# → {"pet":{"name":"绿毛球","greeting":"…","chips":["…"],"model":"chat-main",
+#    "idle_image":"uploads/20261119/….gif","interactive_image":""}}
+
+# 形象对象读端点(照 /assets/{id}/content 先例故意不挂鉴权:<img> 带不了
+# Authorization 头);key 只认当前配置登记的 idle_image/interactive_image
+# (未登记键与穿越键一律 404 防遍历);内容类型按魔数回,浏览器可短缓存
+# (键不可变)
+curl -I "$CANVAS/pet/object?key=uploads%2F20261119%2F%E2%80%A6.gif"
+# → 200 Content-Type: image/gif, Cache-Control: private, max-age=3600
 ```
 
 ---

@@ -21,6 +21,9 @@ import {
   type PromptTemplate,
   type PromptTemplateInput,
   type PromptTemplateOption,
+  type PetConfigInfo,
+  type PetSettings,
+  type PetSettingsInput,
   type QuotaEntry,
   type SaveGraphResult,
   type SessionInfo,
@@ -1014,6 +1017,78 @@ describe('ApiClient storage settings', () => {
     expect(url).toBe('/api/admin/settings/storage')
     expect((init as RequestInit).method).toBe('PUT')
     expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+})
+
+// ---- 桌宠(92 号票)----
+
+describe('ApiClient pet settings (92 号票)', () => {
+  const pet: PetSettings = {
+    name: '绿毛球',
+    greeting: '画布上有什么想改的?',
+    chips: ['帮我建一组分镜', '读一下画布结构'],
+    model: 'chat-main',
+    idle_image: 'uploads/20261119/aaa.gif',
+    interactive_image: '',
+    updated_at: '2026-11-19T12:00:00Z',
+  }
+
+  it('getPetSettings unwraps the pet envelope from the gateway admin path', async () => {
+    const fetchImpl = stubFetch(200, { pet })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.getPetSettings()).resolves.toEqual(pet)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/pet')
+    expect((init as RequestInit).method).toBe('GET')
+  })
+
+  it('updatePetSettings PUTs the merge input to the gateway admin path', async () => {
+    const fetchImpl = stubFetch(200, { pet })
+    const client = clientWithBase(fetchImpl)
+
+    const input: PetSettingsInput = { greeting: '换个问候', chips: [] }
+    await expect(client.updatePetSettings(input)).resolves.toEqual(pet)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/pet')
+    expect((init as RequestInit).method).toBe('PUT')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('uploadPetImage posts multipart file to the gateway admin path and unwraps the image', async () => {
+    const image = { key: 'uploads/20261119/x.gif', content_type: 'image/gif', size_bytes: 6 }
+    const fetchImpl = stubFetch(201, { image })
+    const client = clientWithBase(fetchImpl)
+
+    const file = new File([new Uint8Array([0x47, 0x49, 0x46, 0x38])], 'pet.gif', { type: 'image/gif' })
+    await expect(client.uploadPetImage(file)).resolves.toEqual(image)
+
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/settings/pet/image')
+    expect((init as RequestInit).method).toBe('POST')
+    const body = (init as RequestInit).body as FormData
+    expect(body).toBeInstanceOf(FormData)
+    expect(body.get('file')).toBe(file)
+    // multipart 的 Content-Type 由 fetch 编码时生成,手工设置会丢 boundary。
+    expect(new Headers((init as RequestInit).headers).has('Content-Type')).toBe(false)
+  })
+
+  it('getPetConfig unwraps the canvas-side pet envelope', async () => {
+    const info: PetConfigInfo = {
+      name: '绿毛球',
+      greeting: '',
+      chips: [],
+      model: '',
+      idle_image: '',
+      interactive_image: '',
+    }
+    const fetchImpl = stubFetch(200, { pet: info })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.getPetConfig()).resolves.toEqual(info)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/pet/config')
+    expect((init as RequestInit).method).toBe('GET')
   })
 })
 

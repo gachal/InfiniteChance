@@ -17,6 +17,7 @@
   "canvas": {
     "title": "画布管理",
     "skills": "技能",
-    "assets": "素材管理"
+    "assets": "素材管理",
+    "pet": "桌宠设置"
   }
 }

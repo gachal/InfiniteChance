@@ -28,6 +28,11 @@ type Handlers struct {
 func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.GET("/settings/storage", h.GetStorage)
 	group.PUT("/settings/storage", h.PutStorage)
+	// 桌宠配置(92 号票):与 storage 同组同款合并语义;形象上传端点由
+	// pet 包挂同一 admin 组(它要吃 asset 嗅探与 objectstore,与 settings
+	// 分包防 import 环)。
+	group.GET("/settings/pet", h.GetPet)
+	group.PUT("/settings/pet", h.PutPet)
 }
 
 // ossJSON is the wire form of the OSS block. The credentials are never
