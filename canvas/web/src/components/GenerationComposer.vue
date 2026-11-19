@@ -240,8 +240,6 @@ const estimateInfo = computed(() =>
   }),
 )
 
-const estimate = computed(() => estimateInfo.value?.text ?? '')
-
 // ---- @ 引用浮层(59 号票)----
 
 // 触发与保活同一条判定:光标前一字符是 @ 且参考条有可 @ 条目(口径随
@@ -910,7 +908,7 @@ function ratioShapeStyle(value: string): Record<string, string> {
       <span
         v-if="estimateInfo"
         class="cost-pill"
-        :title="estimate"
+        :title="estimateInfo?.text ?? ''"
       >{{ estimateInfo.amount }}</span>
       <button
         class="send"
@@ -1146,13 +1144,13 @@ function ratioShapeStyle(value: string): Record<string, string> {
   gap: 4px;
 }
 
-.action-btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 8px;
+/* 动作钮 / 分段 chips / 比例 tile 共用同一按钮基形:无边框 + 次级文字 +
+   wash 交互(hover 提亮、选中实心 accent、禁用降透明),公共声明收编为
+   一条;差异项(底色深浅、圆角、内距、布局)各选择器自理。 */
+.action-btn,
+.segment button,
+.ratio-tile {
   border: none;
-  border-radius: var(--r-md);
-  background: transparent;
   color: var(--text-secondary);
   font-size: var(--fs-label);
   cursor: pointer;
@@ -1161,12 +1159,22 @@ function ratioShapeStyle(value: string): Record<string, string> {
     color var(--dur-fast) var(--ease);
 }
 
+.action-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  background: transparent;
+}
+
 .action-btn:hover:not(:disabled) {
   background: var(--wash-fill);
   color: var(--text-primary);
 }
 
-.action-btn:disabled {
+.action-btn:disabled,
+.segment button:disabled,
+.ratio-tile:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -1701,7 +1709,7 @@ textarea::placeholder {
   animation: composer-in var(--dur-fast) var(--ease);
 }
 
-/* 分段 chips 族:选中实心(工作灯蓝),无边框。 */
+/* 分段 chips 族:选中实心(工作灯蓝);hover 提亮与比例 tile 共条。 */
 .segment {
   display: flex;
   flex-wrap: wrap;
@@ -1709,33 +1717,24 @@ textarea::placeholder {
 }
 
 .segment button {
-  border: none;
   border-radius: var(--r-pill);
   padding: 5px 12px;
   background: var(--wash-soft);
-  color: var(--text-secondary);
-  font-size: var(--fs-label);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
 }
 
-.segment button:hover:not(:disabled) {
+.segment button:hover:not(:disabled),
+.ratio-tile:hover:not(:disabled) {
   background: var(--wash-active);
   color: var(--text-primary);
 }
 
 .segment button.on,
-.segment button.on:hover:not(:disabled) {
+.segment button.on:hover:not(:disabled),
+.ratio-tile.on,
+.ratio-tile.on:hover:not(:disabled) {
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
-}
-
-.segment button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 /* 比例两形态(90 号票):图片左列竖块、视频网格 tile,形状预览描边随
@@ -1755,21 +1754,9 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: none;
   border-radius: var(--r-md);
   background: var(--wash-soft);
-  color: var(--text-secondary);
   padding: 6px 10px;
-  font-size: var(--fs-label);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
-}
-
-.ratio-tile:hover:not(:disabled) {
-  background: var(--wash-active);
-  color: var(--text-primary);
 }
 
 .as-grid .ratio-tile {
@@ -1777,18 +1764,6 @@ textarea::placeholder {
   justify-content: center;
   gap: 6px;
   padding: 8px 4px;
-}
-
-.ratio-tile.on,
-.ratio-tile.on:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-
-.ratio-tile:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .ratio-shape {

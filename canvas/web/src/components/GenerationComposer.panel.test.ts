@@ -160,7 +160,7 @@ describe('参数面板(90 号票 Q5a/Q10a:摘要按钮 + 弹出面板两形态)'
 
   it('¥ 胶囊:amount 短句展示、text 原句进 title,无法预估整颗隐藏', () => {
     expect(composerSource.includes('v-if="estimateInfo"')).toBe(true)
-    expect(composerSource.includes(':title="estimate"')).toBe(true)
+    expect(composerSource.includes(':title="estimateInfo?.text ?? \'\'"')).toBe(true)
     expect(composerSource.includes('{{ estimateInfo.amount }}')).toBe(true)
   })
 
