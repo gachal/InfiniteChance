@@ -1,7 +1,7 @@
 # 90 生成对话框无边框重设计:填充代描边 + 三段结构重排 + 参数面板化(2026-11-19 定案)
 
 Type: feat
-Status: 定案(未实现)。grill-with-docs 四轮定案;参考截图为即梦式 composer 三张(主对话框 / 图片参数面板 / 视频参数面板)。
+Status: 已实现(2026-11-19,feat/90-borderless-composer 并 main)。实现注记:参数面板/meta 行纯逻辑抽新模块 `composerPanel.ts`(摘要拼装、`autoDurationDefault` 取消自动默认 5s 按模型区间夹紧、`estimateCost` 自 38 号票预估逻辑逐字迁出),`composer.ts` 零改动;`useComposerPlacement` 加 `expanded` 两态估高(图片 328 / 视频 364,展开 +124);`CanvasEditorView` 接线 `composerExpanded`/`composerPanelOpen` 编辑器级状态 + Esc 浮层退栈在 composerPicker 之前收口 + placement 传参——票面「仅 composer 及其定位 composable」的必要越界(评审接受);@ 引用按钮在参考条无可引用条目时禁用(防插入永远弹不出浮层的孤儿 `@`);「中间件在输入区与 meta 行之间」按三带(vref-hint/绑定行预览/角色提示)整体移到 textarea 之下落实、相互顺序不变;评审修复轮:DESIGN.md 浮层句对齐代码(参数面板无描边仅对话框影,@ 浮层才有 accent 细描边)、三处按钮样式收编共享选择器(视觉零变化)、`estimate` 中间人内联,`ParamSummaryDraft`/`EstimateDraft` 数据团豁免(两纯函数语义独立,合并反耦合);canvas/web 712→745 测,make test / lint / build 全绿;遗留浏览器点验(两模式全链、面板两形态含锁定态、滑杆×自动档、展开两档估值、@ 按钮、¥ pill 两态、草稿不串、动态占位)。定案出处:grill-with-docs 四轮;参考截图为即梦式 composer 三张(主对话框 / 图片参数面板 / 视频参数面板)。
 
 ## Question
 
