@@ -1122,6 +1122,43 @@ export interface HashBackfillProgress {
   deleted_objects: number
 }
 
+// ---- 网关管理:桌宠设置(挂 /admin/settings/pet,92 号票)----
+
+/** 桌宠配置(92 号票):settings KV `pet` 行的线形。image 字段是对象键
+ * (uploads/ 前缀),不是 URL —— 浏览器取用走画布侧 /pet/object 读端点
+ * (键只认配置登记值)。无密钥字段,原值回显。 */
+export interface PetSettings {
+  name: string
+  greeting: string
+  chips: string[]
+  model: string
+  idle_image: string
+  interactive_image: string
+  updated_at: string
+}
+
+/** PUT 的请求体:未携带的字段沿用已存,显式空串/空数组 = 清空(照
+ * StorageSettingsInput 的合并语义)。 */
+export interface PetSettingsInput {
+  name?: string
+  greeting?: string
+  chips?: string[]
+  model?: string
+  idle_image?: string
+  interactive_image?: string
+}
+
+/** 画布侧桌宠配置(canvas JWT 面 GET /pet/config,热生效):canvas-web
+ * 消费的形状,与 PetSettings 差 updated_at。 */
+export type PetConfigInfo = Omit<PetSettings, 'updated_at'>
+
+/** 形象上传响应(网关 admin 面):对象键 + 嗅探出的内容类型与字节数。 */
+export interface PetImageUpload {
+  key: string
+  content_type: string
+  size_bytes: number
+}
+
 // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
 
 /** 一条请求级用量行的状态:成功,或离开网关后的失败(上游错误摘要列区分
@@ -2216,6 +2253,43 @@ export class ApiClient {
       body: input,
     })
     return body.storage
+  }
+
+  // ---- 网关管理:桌宠设置(挂 /admin/settings/pet,需 JWT 会话,92 号票)----
+
+  /** 桌宠设置;缺行时后端回答缺省配置(全空,chips 为空数组)。 */
+  async getPetSettings(): Promise<PetSettings> {
+    const body = await this.request<{ pet: PetSettings }>('/admin/settings/pet')
+    return body.pet
+  }
+
+  /** 更新桌宠设置(合并语义:未携带字段沿用已存,显式空串/空数组清空);
+   * 保存即时生效,无需重启。 */
+  async updatePetSettings(input: PetSettingsInput): Promise<PetSettings> {
+    const body = await this.request<{ pet: PetSettings }>('/admin/settings/pet', {
+      method: 'PUT',
+      body: input,
+    })
+    return body.pet
+  }
+
+  /** 上传桌宠形象(网关 admin 面,multipart 字段 file):GIF/WebP/PNG(APNG)
+   * 由服务端魔数嗅探裁决,落 uploads/ 前缀返回对象键 —— 桌宠形象是系统
+   * 资产,不进创作素材库(别与创作面 uploadAsset 混用,那个落 assets 行)。 */
+  uploadPetImage(file: File): Promise<PetImageUpload> {
+    const form = new FormData()
+    form.set('file', file)
+    return this.request<{ image: PetImageUpload }>('/admin/settings/pet/image', {
+      method: 'POST',
+      body: form,
+    }).then((body) => body.image)
+  }
+
+  /** 画布侧桌宠配置(canvas JWT 面 GET /pet/config,按请求读表热生效):
+   * canvas-web 消费问候语/chips/缺省模型/形象键。 */
+  async getPetConfig(): Promise<PetConfigInfo> {
+    const body = await this.request<{ pet: PetConfigInfo }>('/pet/config')
+    return body.pet
   }
 
   // ---- 网关管理:素材哈希回填(挂 /admin/assets/hash-backfill,需 JWT 会话,48 号票)----
