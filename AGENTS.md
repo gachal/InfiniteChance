@@ -27,7 +27,7 @@ InfiniteChance:自用 LLM Token 网关(OpenAI 兼容中转)+ 无限画布创作�
 
 ### internal 包速览
 
-`relay`(OpenAI 兼容中转:调度、熔断、SSE 流、生图、视频任务、VOD adaptor)· `apikey`(key 存储与 `/v1` 鉴权中间件)· `channel`(渠道 CRUD 与连通测试)· `pricing`(双轨计价)· `usage`(用量日志与审计)· `videotask`(视频异步任务)· `canvas` / `canvastask`(画布持久化 / 任务 worker)· `asset`(素材库)· `objectstore`(见上)· `settings`(运行时 KV 配置,存储驱动行)· `auth`(单管理员 + JWT)· `prompttemplate` / `promptgen`(提示词模板 / 生成)· `tc3`(腾讯云 TC3 签名)· `apierr`(统一错误形状)· `config` / `app` / `server` / `health` / `wiring` / `sqlitedb`(装配层:env 配置、服务组装、HTTP 基面、健康检查、路由挂载、SQLite 方言)。
+`relay`(OpenAI 兼容中转:调度、熔断、SSE 流、生图、视频任务、VOD adaptor)· `apikey`(key 存储与 `/v1` 鉴权中间件)· `channel`(渠道 CRUD 与连通测试)· `pricing`(双轨计价)· `usage`(用量日志与审计)· `videotask`(视频异步任务)· `canvas` / `canvastask`(画布持久化 / 任务 worker)· `asset`(素材库)· `objectstore`(见上)· `settings`(运行时 KV 配置,存储驱动行、桌宠 pet 行)· `assistant`(画布助手:会话、SSE 回执循环、画布图工具面)· `pet`(桌宠形象:上传/读端点)· `auth`(单管理员 + JWT)· `prompttemplate` / `promptgen`(提示词模板 / 生成)· `tc3`(腾讯云 TC3 签名)· `apierr`(统一错误形状)· `config` / `app` / `server` / `health` / `wiring` / `sqlitedb`(装配层:env 配置、服务组装、HTTP 基面、健康检查、路由挂载、SQLite 方言)。
 
 ## 技术形态
 
