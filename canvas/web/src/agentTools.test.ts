@@ -25,8 +25,16 @@ describe('agentToolLabel', () => {
     expect(agentToolLabel('read_source')).toBe('读取原文')
     // 69 号票 +1:set_style。
     expect(agentToolLabel('set_style')).toBe('设定画面风格')
+    // 91 号票画布助手七件(时间线标签与 Agent 节点共用一张表)。
+    expect(agentToolLabel('read_canvas')).toBe('读取画布')
+    expect(agentToolLabel('create_nodes')).toBe('新建节点')
+    expect(agentToolLabel('update_nodes')).toBe('修改节点')
+    expect(agentToolLabel('delete_nodes')).toBe('删除节点')
+    expect(agentToolLabel('connect_nodes')).toBe('连线')
+    expect(agentToolLabel('disconnect_nodes')).toBe('断开连线')
+    expect(agentToolLabel('trigger_task')).toBe('触发生成')
     expect(agentToolLabel('no_such_tool')).toBe('no_such_tool')
-    expect(Object.keys(AGENT_TOOL_LABELS)).toHaveLength(9)
+    expect(Object.keys(AGENT_TOOL_LABELS)).toHaveLength(16)
   })
 })
 

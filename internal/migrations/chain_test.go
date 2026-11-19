@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/gachal/InfiniteChance/internal/apikey"
+	"github.com/gachal/InfiniteChance/internal/assistant"
 	"github.com/gachal/InfiniteChance/internal/asset"
 	"github.com/gachal/InfiniteChance/internal/auth"
 	"github.com/gachal/InfiniteChance/internal/canvas"
@@ -274,6 +275,9 @@ func ensureAllSchemas(t *testing.T, ctx context.Context, db *sql.DB, dialect str
 			prop.NewMySQLStore(db),
 			voice.NewMySQLStore(db),
 			canvastask.NewMySQLStore(db, assets),
+			// 画布助手会话(91 号票):单表空起步无同序依赖,随 canvastask
+			// 之后(对账顺序即 desktop/runtime.go 装配顺序,两侧须同步)。
+			assistant.NewMySQLStore(db),
 		}
 	case "sqlite":
 		assets := asset.NewSQLiteStore(db)
@@ -295,6 +299,8 @@ func ensureAllSchemas(t *testing.T, ctx context.Context, db *sql.DB, dialect str
 			prop.NewSQLiteStore(db),
 			voice.NewSQLiteStore(db),
 			canvastask.NewSQLiteStore(db, assets),
+			// 画布助手会话(91 号票),与 MySQL 分支同位。
+			assistant.NewSQLiteStore(db),
 		}
 	default:
 		t.Fatalf("未知方言 %q", dialect)

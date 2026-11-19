@@ -34,6 +34,7 @@ import {
   appendAgentTurn,
   type CharacterNodeData,
   initialData,
+  isCanvasNodeType,
   NODE_TYPE_LABEL,
   normalizeNodeType,
   type AudioNodeData,
@@ -90,7 +91,7 @@ import {
   styleFromPayload,
   upsertAgentToolStep,
 } from '../agentTools'
-import { legalEdgeLabels } from '../connection'
+import { canConnect, legalEdgeLabels } from '../connection'
 import { canAddLevelAsset, toggleLevelAsset } from '../level'
 import { RELYRIC_STRENGTH_DEFAULT } from '../music'
 import { PANO_SCENE_TYPE, panoramaSyncPatch, uploadPanoramaCapture } from '../panorama'
@@ -153,6 +154,12 @@ import { isHelpToggleKey } from '../canvasHelp'
 import { isTypingTargetEl } from '../keyboardGuard'
 import { assetContentURL } from '../thumbnail'
 import { useConnection } from '../composables/useConnection'
+import {
+  type AssistantEdgePair,
+  type AssistantHost,
+  type AssistantTriggerTaskDraft,
+  type AssistantUpdateNodesDraft,
+} from '../assistantPanel'
 import { canInsertRecord } from '../records'
 import { cascadeAnchor, newNodeAnchor } from '../placement'
 import { useComposerPlacement } from '../composables/useComposerPlacement'
@@ -163,6 +170,7 @@ import CanvasContextMenu from '../components/editor/CanvasContextMenu.vue'
 import EditorToast from '../components/editor/EditorToast.vue'
 import type { ContextMenuItem } from '../canvasContextMenu'
 import AssetPanel from '../components/AssetPanel.vue'
+import AssistantPanel from '../components/AssistantPanel.vue'
 import AgentHistoryPanel from '../components/AgentHistoryPanel.vue'
 import AssetPicker from '../components/AssetPicker.vue'
 import GenerationComposer from '../components/GenerationComposer.vue'
@@ -1084,6 +1092,7 @@ function toggleComposerPicker(): void {
     // 面板同列互斥组,漏清会双开叠层)。
     assetPanelOpen.value = false
     recordsPanelOpen.value = false
+    assistantPanelOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
     levelPickerNodeId.value = ''
@@ -1745,6 +1754,7 @@ function openVoicePicker(nodeId: string): void {
   voicePickerNodeId.value = nodeId
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   historyNodeId.value = ''
   pickerNodeId.value = ''
@@ -1846,6 +1856,7 @@ function openCoverPicker(nodeId: string): void {
   coverPickerNodeId.value = nodeId
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   historyNodeId.value = ''
   pickerNodeId.value = ''
@@ -1956,6 +1967,7 @@ function openRelyricPicker(nodeId: string): void {
   relyricPickerNodeId.value = nodeId
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   historyNodeId.value = ''
   pickerNodeId.value = ''
@@ -2042,6 +2054,7 @@ function openPanoramaPicker(nodeId: string): void {
   panoramaPickerNodeId.value = nodeId
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   historyNodeId.value = ''
   pickerNodeId.value = ''
@@ -2675,6 +2688,7 @@ function openAgentHistory(nodeId: string): void {
   pickerNodeId.value = ''
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   levelPickerNodeId.value = ''
   panoramaPickerNodeId.value = ''
@@ -2689,6 +2703,7 @@ function openAgentPicker(nodeId: string): void {
   historyNodeId.value = ''
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   levelPickerNodeId.value = ''
   panoramaPickerNodeId.value = ''
@@ -3407,6 +3422,7 @@ function openLevelPicker(nodeId: string): void {
   levelPickerNodeId.value = nodeId
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
+  assistantPanelOpen.value = false
   composerPickerOpen.value = false
   historyNodeId.value = ''
   pickerNodeId.value = ''
@@ -3652,6 +3668,10 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     }
     if (recordsPanelOpen.value) {
       recordsPanelOpen.value = false
+      return
+    }
+    if (assistantPanelOpen.value) {
+      assistantPanelOpen.value = false
       return
     }
     // 90 号票:参数面板是对话框内的浮层,Esc 栈顶先收(垫挡层点击同款);
@@ -4490,6 +4510,7 @@ function toggleAssetPanel(): void {
   assetPanelOpen.value = !assetPanelOpen.value
   if (assetPanelOpen.value) {
     recordsPanelOpen.value = false
+    assistantPanelOpen.value = false
     composerPickerOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
@@ -4502,12 +4523,196 @@ function toggleRecordsPanel(): void {
   recordsPanelOpen.value = !recordsPanelOpen.value
   if (recordsPanelOpen.value) {
     assetPanelOpen.value = false
+    assistantPanelOpen.value = false
     composerPickerOpen.value = false
     historyNodeId.value = ''
     pickerNodeId.value = ''
     levelPickerNodeId.value = ''
     panoramaPickerNodeId.value = ''
   }
+}
+
+// 画布助手面板(91 号票):同一右缘互斥组。开合入口 = 顶栏「助手」按钮
+// (桌宠 92 号票到位后其点击同开此面板)。
+const assistantPanelOpen = ref(false)
+
+function toggleAssistantPanel(): void {
+  assistantPanelOpen.value = !assistantPanelOpen.value
+  if (assistantPanelOpen.value) {
+    assetPanelOpen.value = false
+    recordsPanelOpen.value = false
+    assistantPanelOpen.value = false
+    composerPickerOpen.value = false
+    historyNodeId.value = ''
+    pickerNodeId.value = ''
+    levelPickerNodeId.value = ''
+    panoramaPickerNodeId.value = ''
+  }
+}
+
+// ---- 画布助手的应用器面(91 号票,ADR 0006 前端唯一写者)----
+// 面板持协议(草案解析/回执),视图持落图动作:全部经 addNodes/
+// updateNodeData/removeNodes/setEdges → markChanged 走 autosave 链,不绕过
+// 自动保存;trigger_task 走 composer 提交链(markChanged → flush →
+// createCanvasTask → taskSync.track,与生成对话框完全同链路,计费/来源
+// 标记零新改动)。
+const assistantHost: AssistantHost = {
+  applyCreateNodes(draft) {
+    const created: { index: number; id: string }[] = []
+    const errors: string[] = []
+    // from/to 联合引用解析:number = 本批下标(按已建清单),string = 既有 id。
+    const resolve = (ref: number | string): string | undefined =>
+      typeof ref === 'number' ? created.find((c) => c.index === ref)?.id : ref
+    draft.nodes.forEach((spec, index) => {
+      if (!isCanvasNodeType(spec.type)) {
+        errors.push(`节点 ${index + 1}:未知类型 ${spec.type}`)
+        return
+      }
+      nodeSeq += 1
+      const id = `${spec.type}-${Date.now()}-${nodeSeq}`
+      // 坐标缺省 = 前端视口落位(级联偏移照既有语义;给了 x/y 原样落)。
+      const anchor =
+        spec.x !== undefined && spec.y !== undefined
+          ? { x: spec.x, y: spec.y }
+          : cascadeAnchor(viewportCenterPosition(), toObject().nodes.length + index)
+      const data: Record<string, unknown> = { ...initialData(spec.type) }
+      if (spec.title !== undefined) data.title = spec.title
+      if (spec.prompt !== undefined) data.prompt = spec.prompt
+      if (spec.text !== undefined) data.text = spec.text
+      addNodes([{ id, type: spec.type, position: anchor, data: data as CanvasNodeData }])
+      created.push({ index, id })
+      adoptLandedNode(id)
+    })
+    draft.edges.forEach((edge, i) => {
+      const from = resolve(edge.from)
+      const to = resolve(edge.to)
+      if (from === undefined || to === undefined) {
+        errors.push(`连线 ${i + 1}:引用的下标或节点不存在`)
+        return
+      }
+      const sourceType = findNode(from)?.type
+      const targetType = findNode(to)?.type
+      if (!canConnect(sourceType, targetType)) {
+        errors.push(
+          `连线 ${i + 1}(${NODE_TYPE_LABEL[sourceType as CanvasNodeType] ?? sourceType ?? '?'} → ${NODE_TYPE_LABEL[targetType as CanvasNodeType] ?? targetType ?? '?'}):不是合法的连线组合;合法组合:${legalEdgeLabels()}`,
+        )
+        return
+      }
+      connectNodes(from, to)
+    })
+    if (created.length > 0 || draft.edges.length > 0) {
+      markChanged()
+    }
+    return { nodes: created, errors }
+  },
+  applyUpdateNodes(draft: AssistantUpdateNodesDraft) {
+    const errors: string[] = []
+    let updated = 0
+    for (const op of draft.nodes) {
+      if (!findNode(op.id)) {
+        errors.push(`节点「${op.id}」不存在,已跳过`)
+        continue
+      }
+      const patch: Record<string, unknown> = {}
+      if (op.title !== undefined) patch.title = op.title
+      if (op.prompt !== undefined) patch.prompt = op.prompt
+      if (op.text !== undefined) patch.text = op.text
+      updateNodeData(op.id, patch as Partial<MediaNodeData> & Partial<ScriptNodeData>)
+      updated += 1
+    }
+    if (updated > 0) {
+      markChanged()
+    }
+    return { updated, errors }
+  },
+  applyDeleteNodes(ids: string[]) {
+    const known = ids.filter((id) => findNode(id) !== undefined)
+    const missing = ids.length - known.length
+    if (known.length > 0) {
+      removeNodes(known)
+      // 草稿键对账(删节点既有纪律,4099 行同款)。
+      pruneNodeDrafts()
+      markChanged()
+    }
+    const errors = missing > 0 ? [`${missing} 个节点不存在,已跳过`] : []
+    return { deleted: known.length, errors }
+  },
+  applyConnect(pairs: AssistantEdgePair[]) {
+    const errors: string[] = []
+    let applied = 0
+    pairs.forEach((pair, i) => {
+      const sourceType = findNode(pair.source)?.type
+      const targetType = findNode(pair.target)?.type
+      if (!canConnect(sourceType, targetType)) {
+        errors.push(
+          `连线 ${i + 1}(${NODE_TYPE_LABEL[sourceType as CanvasNodeType] ?? sourceType ?? '?'} → ${NODE_TYPE_LABEL[targetType as CanvasNodeType] ?? targetType ?? '?'}):不是合法的连线组合;合法组合:${legalEdgeLabels()}`,
+        )
+        return
+      }
+      connectNodes(pair.source, pair.target)
+      applied += 1
+    })
+    if (applied > 0) {
+      markChanged()
+    }
+    return { applied, errors }
+  },
+  applyDisconnect(pairs: AssistantEdgePair[]) {
+    const errors: string[] = []
+    let applied = 0
+    const doomed: Edge[] = []
+    pairs.forEach((pair, i) => {
+      const matches = flowEdges.value.filter(
+        (e) => (e.id === `e-${pair.source}-${pair.target}`) || (e.source === pair.source && e.target === pair.target),
+      )
+      if (matches.length === 0) {
+        errors.push(`连线 ${i + 1}(${pair.source} → ${pair.target}):画布上没有这条连线`)
+        return
+      }
+      doomed.push(...matches)
+      applied += 1
+    })
+    if (doomed.length > 0) {
+      const doomedIds = new Set(doomed.map((e) => e.id))
+      setEdges(flowEdges.value.filter((e) => !doomedIds.has(e.id)))
+      markChanged()
+    }
+    return { applied, errors }
+  },
+  async submitTask(draft: AssistantTriggerTaskDraft): Promise<{ task_id: string }> {
+    if (!findNode(draft.node_id)) {
+      throw new Error(`节点「${draft.node_id}」不存在,任务未提交`)
+    }
+    // composer 提交链完全同构(74 号票纪律):先落库再提交,防抖窗口里的
+    // 改动必须先到图;flush 失败拒发。
+    markChanged()
+    const saved = await autosave.flush()
+    if (!saved) {
+      throw new Error('画布尚未保存成功,生成任务未提交;请先解决保存问题')
+    }
+    const task = await client.createCanvasTask(canvasId, {
+      node_id: draft.node_id,
+      kind: draft.kind,
+      prompt: draft.prompt,
+      model: draft.model,
+      ...(draft.size ? { size: draft.size } : {}),
+      ...(draft.ratio ? { ratio: draft.ratio } : {}),
+      ...(draft.background ? { background: draft.background } : {}),
+      ...(draft.seconds ? { seconds: draft.seconds } : {}),
+      ...(draft.scene_type ? { scene_type: draft.scene_type } : {}),
+      ...(draft.image_urls && draft.image_urls.length > 0 ? { image_urls: draft.image_urls } : {}),
+      ...(draft.video_refs && draft.video_refs.length > 0 ? { video_refs: draft.video_refs } : {}),
+    })
+    taskSync.track(task)
+    // 产物写回既有节点(taskSync 回填),无新建结果节点 → 无草稿随迁面。
+    return { task_id: task.id }
+  },
+}
+
+/** set_style 回执(复用工具,后端已直写 ips 表):按请求读表刷新本地
+ * 风格缓存 —— 读表自证画布当前所属 IP(69 号票语义),面板零特判。 */
+function onAssistantStyleChanged(): void {
+  void refreshIPStyle()
 }
 
 /** 素材引用落画布的公共落点(素材面板插入、生成记录插入共用,28 号票):
@@ -4812,6 +5017,7 @@ function backToList(): void {
       :task-active-count="taskSync.activeCount.value"
       @back="backToList"
       @rename="commitRename"
+      @assistant="toggleAssistantPanel"
     />
 
     <EditorAlerts
@@ -5197,6 +5403,17 @@ function backToList(): void {
         :tasks="taskRecords"
         @locate="locateRecordTask"
         @insert="insertRecordTask"
+      />
+      <!-- 91 号票:画布助手面板(右缘互斥组)。host = 视图的应用器面
+           (落图走 autosave、任务走 composer 提交链);set_style 回执上抛
+           刷新本地风格缓存。 -->
+      <AssistantPanel
+        v-if="assistantPanelOpen"
+        :canvas-id="canvasId"
+        :prompt-models="promptModels"
+        :host="assistantHost"
+        @style-changed="onAssistantStyleChanged"
+        @close="assistantPanelOpen = false"
       />
       <!-- 32 号票:Agent 会话历史面板与素材选择面板,绑定单个 Agent 节点
            (按节点 id 换 key 重挂),节点被删时随 computed 自动消失。 -->

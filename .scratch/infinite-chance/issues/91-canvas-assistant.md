@@ -1,7 +1,7 @@
 # 91 画布助手:画布级 Agent 会话 + 画布图工具 + 授权模式 + 右侧助手面板(2026-11-19 定案)
 
 Type: feat
-Status: approved(2026-11-19 grill-with-docs 定案,待实现)
+Status: implemented(2026-11-19,feat/91-canvas-assistant)
 
 ## Question
 
@@ -54,3 +54,16 @@ Status: approved(2026-11-19 grill-with-docs 定案,待实现)
 - 两授权档行为钉测:先询问我(未批准不应用)、完全授权(直接应用 + 任务直提);拒绝路径回执。
 - 七新工具 schema 与草案形状钉测;trigger_task 走既有任务端点(计费/来源标记 grep 回验)。
 - 浏览器点验:面板开合互斥、多 session 切换/新建、变更清单卡、完全授权全链(真渠道)、断线重试。
+
+## 实现注记(2026-11-19)
+
+- 分支 `feat/91-canvas-assistant`(基于 feat/canvas-assistant-pet 顶点,域内四提交 + docs):会话存储双方言与删画布级联 → 工具面与回执循环 → 端点与路由挂载 → 前端面板与应用器。
+- **回执协议定形**:循环不改 `runAgentLoop` 公共形状(assistant 侧循环变体承接挂起语义),草案工具 emit `tool_call` 后登记在途调用并阻塞等回执;回执中枢按 `(sessionID, callID)` 双键匹配,回执端点 `POST /canvases/:id/assistant/sessions/:sid/receipts`(body `{call_id, status: applied|failed|rejected, message?, result?}`),无挂起 409 `no_pending_call`、错号 409 `call_mismatch`;applied 的 result 带新建节点 id 映射(`{nodes:[{index,id}]}`)或任务 id(`{task_id}`)供 LLM 后续引用。
+- **超时纪律**:回执等待上限 5 分钟;超时该轮以 `receipt_timeout` error 帧收尾(无 [DONE]),整轮不持久化、可重试;断线(ctx 取消)同族不持久、静默不打日志。一会话一在途流(并发流 409 `session_busy`)。
+- **授权档键名** `ask`(先询问我,新会话默认)/ `full`(完全授权),存 `canvas_assistant_sessions.mode`,PATCH 即时切;授权闸门在前端执行面(ask 出确认卡、full 直接应用),服务端不抽工具定义——两档同工具面、系统提示词声明当前档。拒绝回执如实告知 LLM(「用户拒绝了这批变更」)。
+- **持久化纪律**:整轮成功才落库(user 全文 + assistant 最终回答全文 + 工具调用摘要行),循环中间帧不入库;发给 LLM 的窗口 40 条截最旧(照 agentHistoryMaxMessages 先例)。会话标题:LLM 生成(10 秒超时)失败回落首条消息截 24 字。
+- **服务端永不改库内图 JSON**(ADR 0006):read_canvas 只读解析(单节点摘要 120 rune、清单 200 节点截断护栏,均钉测);六个草案工具只校验形状(轻量预检:类型白名单/批量上限/trigger_task 的 kind 白名单与参考上限),语义校验(EDGE_MATRIX、任务契约)归前端应用器与既有画布任务端点。
+- **trigger_task 走既有任务端点**:前端应用 = composer 提交链同构(markChanged → flush → client.createCanvasTask → taskSync.track),grep 回验来源标记 `canvas={id} gen=assistant`(流)/`canvas={id} node=…`(任务行,既有)零新改动;未新建结果节点,无草稿随迁面。
+- **migrations 四处同步**:`261119_canvas_assistant_sessions.{sql,sqlite.sql}` + 双方言 EnsureSchema + chain_test.go 装配清单 + desktop/runtime.go;删画布级联经 canvas.Handlers.SessionCleanup(canvas 声明接口、assistant 实现、wiring 注入),清理失败保留画布行等重试。
+- **测试数**:internal/assistant 18 个用例(store 双方言 CRUD/级联、回执中枢、循环闭环/拒绝/失败/超时/坏参数、注册表与护栏、SSE 全链集成含标题生成与超时不持久)+ canvas 包级联 3 个;前端 assistantPanel 纯函数 6 个、api 包 6 个、AGENT_TOOL_LABELS 钉测 9→16。make test / lint / build 全绿(MySQL compose 在跑,真分支已过)。
+- **遗留(浏览器点验项)**:面板开合互斥、多 session 切换/新建、变更清单卡、完全授权全链(真渠道计费)、断线重试;建议 chips/问候语留 92 号票(面板新会话首屏空态即接缝);新会话模型初值暂用目录首项,92 号票 pet 缺省对话模型落地后接入。
