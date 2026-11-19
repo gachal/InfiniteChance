@@ -996,65 +996,9 @@ textarea:focus {
   gap: 4px;
 }
 
-/* 63 号票:工具调用过程时间线 —— running 点闪琥珀,done 青色收口,failed
- * 危险色;摘要换行铺开(超长单行会顶破卡面,用户反馈改换行),完整文案
- * 看 title。 */
-.tool-timeline {
-  display: grid;
-  gap: 2px;
-}
-
-.tool-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  font-size: var(--fs-micro);
-  color: var(--text-muted);
-}
-
-.tool-step-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  margin-top: 4px;
-  border-radius: 50%;
-  background: var(--amber);
-}
-
-.tool-step[data-state='running'] .tool-step-dot {
-  animation: agent-tool-pulse 1.2s ease-in-out infinite;
-}
-
-.tool-step[data-state='done'] .tool-step-dot {
-  background: var(--teal-light);
-}
-
-.tool-step[data-state='failed'] .tool-step-dot {
-  background: var(--danger);
-}
-
-@keyframes agent-tool-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.tool-step-name {
-  flex-shrink: 0;
-  font-weight: 600;
-  color: var(--indigo-soft);
-}
-
-.tool-step-hint {
-  /* flex 项缺 min-width:0 时最小尺寸=整行宽,nowrap 摘要会顶破卡面;
-   * 改自然换行,长 token(script-<时间戳>-N 之类)也按字符断开。 */
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
+/* 工具调用过程时间线(63 号票起)样式已收编 style.css 全局共享段
+   (91/92 号票评审:.tool-timeline 族与 AssistantPanel 逐字拷贝归一,
+   89 号票「One card style」同款收编),组件只引用共享类。 */
 
 .media-chip {
   display: inline-flex;

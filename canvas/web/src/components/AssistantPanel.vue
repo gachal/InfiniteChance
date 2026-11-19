@@ -2,8 +2,9 @@
 // 画布助手面板(91 号票):右侧固定面板照三面板范式(--w-panel 族宽、
 // --z-side-panel、右缘互斥纪律 —— 开本面板关素材/记录/挑选等)。会话切换
 // 下拉 + 新建/删除、「先询问我/完全授权」授权档切换(PATCH 即时生效)、
-// 模型下拉(GET /prompt-models 目录;新会话初值暂用目录首项,92 号票
-// 桌宠配「缺省对话模型」后接)、工具过程时间线(照 AgentNode tool-timeline)、
+// 模型下拉(GET /prompt-models 目录;新会话初值 = 桌宠配置的「缺省对话
+// 模型」,92 号票已接线,不在目录回落首项)、工具过程时间线(.tool-timeline
+// 族引用 style.css 共享段,与 AgentNode 同源)、
 // 「先询问我」的变更清单确认卡(整批批准/拒绝,不做逐项勾选)。
 //
 // 协议(91 号票 SSE + 回执):草案工具 tool_call 到达时,完全授权档直接
@@ -784,7 +785,9 @@ select:focus {
   margin: 0;
   padding: 8px 10px;
   border-radius: var(--r-md);
-  background: rgba(var(--danger-rgb, 220, 80, 80), 0.12);
+  /* --danger-rgb 实存于 style.css :root(失败绯 #ff8f8f);此前带的
+     220,80,80 是编造的死 fallback,与 token 色不符(评审修复去掉)。 */
+  background: rgba(var(--danger-rgb), 0.12);
   color: var(--danger);
   font-size: var(--fs-label);
   overflow-wrap: anywhere;
@@ -891,61 +894,9 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
-/* 工具过程时间线(照 AgentNode tool-timeline 范式逐字同构)。 */
-.tool-timeline {
-  display: grid;
-  gap: 2px;
-}
-
-.tool-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  font-size: var(--fs-micro);
-  color: var(--text-muted);
-}
-
-.tool-step-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  margin-top: 4px;
-  border-radius: 50%;
-  background: var(--amber);
-}
-
-.tool-step[data-state='running'] .tool-step-dot {
-  animation: assistant-tool-pulse 1.2s ease-in-out infinite;
-}
-
-.tool-step[data-state='done'] .tool-step-dot {
-  background: var(--teal-light);
-}
-
-.tool-step[data-state='failed'] .tool-step-dot {
-  background: var(--danger);
-}
-
-@keyframes assistant-tool-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.tool-step-name {
-  flex-shrink: 0;
-  font-weight: 600;
-  color: var(--indigo-soft);
-}
-
-.tool-step-hint {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
+/* 工具过程时间线(.tool-timeline 族)已收编 style.css 全局共享段
+   (91/92 号票评审:与 AgentNode 的逐字拷贝归一,89 号票收编先例),
+   本组件只引用共享类;running 脉冲的常动守卫随共享段。 */
 
 /* 「先询问我」变更清单确认卡:整批批准/拒绝,不做逐项勾选。 */
 .change-card {
@@ -961,7 +912,9 @@ select:focus {
 .card-headline {
   margin: 0;
   font-size: var(--fs-body);
-  font-weight: 700;
+  /* 确认卡标题是卡面小标题不是主按钮,600 档(DESIGN.md 字档
+     400/600/700;700 是主按钮/品牌展示的档位,评审修复归档)。 */
+  font-weight: 600;
   color: var(--text-primary);
 }
 

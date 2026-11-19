@@ -218,9 +218,11 @@ defineExpose({ cancelRenaming })
   font-weight: 600;
 }
 
-/* 92 号票:桌宠开关紧随助手入口,同族弱按钮。 */
+/* 92 号票:桌宠开关紧随助手入口,同族弱按钮 —— 字重与相邻的
+   assistant-toggle 同档 600(两者是顶栏上的一组开关,视觉成对;
+   500 不在 DESIGN.md 字档 400/600/700 内,评审修复归档)。 */
 .pet-toggle {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .save-state {

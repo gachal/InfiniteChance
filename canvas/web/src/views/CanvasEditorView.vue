@@ -4542,9 +4542,11 @@ function toggleRecordsPanel(): void {
 // 打不开 —— 92 号票接线时修正)。
 const assistantPanelOpen = ref(false)
 
-/** 开助手面板并同步右缘互斥散点(桌宠单击与顶栏开关共用)。 */
-function openAssistantPanel(): void {
-  assistantPanelOpen.value = true
+/** 右缘互斥清屏单点(91/92 号票评审收敛):关掉全部右缘面板与挑选态。
+ * 新代码路径一律走这里;toggleAssetPanel/toggleRecordsPanel 等既有入口
+ * 的同形散点是存量债,另票收编,不在本次回改范围。 */
+function closeAllSidePanels(): void {
+  assistantPanelOpen.value = false
   assetPanelOpen.value = false
   recordsPanelOpen.value = false
   composerPickerOpen.value = false
@@ -4552,6 +4554,12 @@ function openAssistantPanel(): void {
   pickerNodeId.value = ''
   levelPickerNodeId.value = ''
   panoramaPickerNodeId.value = ''
+}
+
+/** 开助手面板并同步右缘互斥(桌宠单击与顶栏开关共用):先清屏再开自己。 */
+function openAssistantPanel(): void {
+  closeAllSidePanels()
+  assistantPanelOpen.value = true
 }
 
 function toggleAssistantPanel(): void {
