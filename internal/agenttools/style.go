@@ -27,6 +27,9 @@ type setStyleTool struct {
 
 func newSetStyle(deps Deps) promptgen.AgentTool { return setStyleTool{deps: deps} }
 
+// NewSetStyle 是 set_style 的导出构造器(91 号票画布助手复用)。
+func NewSetStyle(deps Deps) promptgen.AgentTool { return newSetStyle(deps) }
+
 func (t setStyleTool) Name() string { return "set_style" }
 
 func (t setStyleTool) Definition() json.RawMessage {
