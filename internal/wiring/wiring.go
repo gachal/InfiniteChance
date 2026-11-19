@@ -242,6 +242,19 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Canvases:   s.Canvases,
 		IPs:        s.IPs,
 	})
+	// 画布助手工具面(91 号票):read_canvas 吃 Canvases,草案工具挂回执
+	// 中枢;SSE 流与回执端点共享同一 Hub 实例(在途调用按 session+call_id
+	// 匹配)。生产装配恒非 nil sessions;nil 时 handler 侧缺口以 500 暴露
+	// (与各 store 同哲学)。
+	assistantHub := assistant.NewHub()
+	assistantTools := assistant.NewRegistry(assistant.Deps{
+		Canvases:   s.Canvases,
+		Characters: s.Characters,
+		Scenes:     s.Scenes,
+		Props:      s.Props,
+		IPs:        s.IPs,
+		Hub:        assistantHub,
+	})
 	promptgen.RegisterRoutes(group, &promptgen.Handlers{
 		Templates:     s.Templates,
 		Canvases:      s.Canvases,
@@ -252,6 +265,17 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 		Gateway:       chatGateway,
 		AgentTools:    agentTools,
 		PublicBaseURL: publicBase,
+	})
+	// 画布助手(91 号票):会话 CRUD + SSE 流 + 回执端点,同一 JWT 面、
+	// 同一服务 key client(chatGateway 为 nil 时流以 gateway_unconfigured
+	// 拒绝);工具面吃与 Agent 节点同源的 store 切片,回执中枢随装配单例。
+	assistant.RegisterRoutes(group, &assistant.Handlers{
+		Sessions: s.AssistantSessions,
+		Canvases: s.Canvases,
+		Models:   s.Prices,
+		Gateway:  chatGateway,
+		Tools:    assistantTools,
+		Hub:      assistantHub,
 	})
 
 	// 目录面:图像/视频/音频模型与提示词模板、提示词聊天模型,全挂 JWT

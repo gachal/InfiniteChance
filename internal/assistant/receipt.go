@@ -194,3 +194,11 @@ func (h *Hub) Release(sessionID int64) {
 	delete(h.active, sessionID)
 	h.mu.Unlock()
 }
+
+// TimeoutForTest overrides the receipt wait bound (测试注入短值;生产装配
+// 恒用 receiptTimeout)。
+func (h *Hub) TimeoutForTest(d time.Duration) {
+	h.mu.Lock()
+	h.timeout = d
+	h.mu.Unlock()
+}
