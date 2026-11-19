@@ -14,8 +14,8 @@
 //     拖起/按下的微动效走 CSS(放大/阴影),不引入 Lottie;
 //   - 常动守卫(DESIGN.md 动效协议,照 AuthLayout 86 号票范式):缺省
 //     形象的循环动画只在 prefers-reduced-motion: no-preference 下开启
-//     (reduce 静止首帧),并常驻暂停盘(右下角,停/播字形)冻结
-//     animation-play-state。
+//     (reduce 静止首帧);暂停盘按 2026-11-19 用户裁决移除(DESIGN.md
+//     「常动件必配暂停」已加桌宠豁免注记)。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { PetConfigInfo } from '@infinitechance/api'
@@ -51,11 +51,6 @@ const gesture = ref<'idle' | 'pressed' | 'dragging'>('idle')
 const idleSrc = computed(() => (props.config?.idle_image ? petObjectURL(props.config.idle_image) : ''))
 const interactiveSrc = computed(() => (props.config?.interactive_image ? petObjectURL(props.config.interactive_image) : ''))
 const petName = computed(() => (props.config?.name ?? '').trim() || '桌宠')
-
-// ---- 常动守卫(DESIGN.md 动效协议「常动件必配暂停」):缺省形象的呼吸/
-// 眨眼是常驻循环动画,带常驻暂停盘(AuthLayout 拼贴轮换同款范式);动画
-// 本体只在 no-preference 下声明,reduce 直接静止首帧。 ----
-const motionPaused = ref(false)
 
 // ---- 互动动图:点击瞬间短播一帧窗口(到位图的 MVP 形态;待机图恒是
 // 底座,超时回待机)。 ----
@@ -149,8 +144,10 @@ function measure(): void {
 }
 
 onMounted(() => {
-  position.value = loadPetPosition(props.canvasId, bounds.value)
+  // 先量边界再回读:bounds 还是零值时,缺省位会兜回左上、已存位置会被
+  // 零边界夹成原点(旧版桌宠恒落左上、位置记忆从不生效的根因)。
   measure()
+  position.value = loadPetPosition(props.canvasId, bounds.value)
   const host = el.value?.parentElement
   if (host) {
     observer = new ResizeObserver(() => measure())
@@ -178,7 +175,7 @@ watch(
   <div
     ref="el"
     class="canvas-pet"
-    :class="{ 'is-pressed': gesture === 'pressed', 'is-dragging': gesture === 'dragging', 'is-paused': motionPaused }"
+    :class="{ 'is-pressed': gesture === 'pressed', 'is-dragging': gesture === 'dragging' }"
     :style="{ left: `${position.x}px`, top: `${position.y}px`, width: `${PET_SIZE}px`, height: `${PET_SIZE}px` }"
     :title="`${petName} · 点击唤出画布助手,按住拖动`"
     data-testid="canvas-pet"
@@ -214,22 +211,6 @@ watch(
       <span class="pet-cheek right" />
       <span class="pet-mouth" />
     </div>
-    <!-- 暂停盘(DESIGN.md「常动件必配暂停」,AuthLayout loop-toggle 同族
-         可达控件):只管缺省形象的循环动画,不触发唤出/拖动 ——
-         pointerdown/click 各自 .stop 挡住宿主手势。 -->
-    <button
-      class="pet-motion-toggle"
-      type="button"
-      :aria-label="motionPaused ? '播放桌宠动画' : '暂停桌宠动画'"
-      :title="motionPaused ? '播放桌宠动画' : '暂停桌宠动画'"
-      @pointerdown.stop
-      @click.stop="motionPaused = !motionPaused"
-    >
-      <span
-        class="pet-tg"
-        :class="motionPaused ? 'play' : 'pause'"
-      />
-    </button>
   </div>
 </template>
 
@@ -267,8 +248,7 @@ watch(
 
 /* ---- CSS 缺省形象(即梦式绿毛球):呼吸 + 眨眼,零素材依赖。
    常动守卫(DESIGN.md 动效协议,AuthLayout 86 号票范式):循环动画只在
-   prefers-reduced-motion: no-preference 下声明(reduce 静止显示首帧),
-   暂停盘经 .is-paused 冻结 animation-play-state。 ---- */
+   prefers-reduced-motion: no-preference 下声明(reduce 静止显示首帧)。 ---- */
 .pet-default {
   position: relative;
   width: 100%;
@@ -308,54 +288,6 @@ watch(
   .pet-eye {
     animation: pet-blink 4.4s step-end infinite;
   }
-
-  .canvas-pet.is-paused .pet-default,
-  .canvas-pet.is-paused .pet-eye {
-    animation-play-state: paused;
-  }
-}
-
-/* 暂停盘:右下角常驻小圆钮(AuthLayout loop-toggle 同族可达控件),
-   玻璃底 + 白系描边;字形随状态切换停(双竖条)/播(小三角)。 */
-.pet-motion-toggle {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 50%;
-  background: rgba(16, 21, 42, 0.55);
-  cursor: pointer;
-  opacity: 0.85;
-  transition: opacity var(--dur-fast) var(--ease);
-}
-
-.pet-motion-toggle:hover {
-  opacity: 1;
-}
-
-.pet-tg {
-  display: block;
-}
-
-/* 停:双竖条。 */
-.pet-tg.pause {
-  width: 7px;
-  height: 8px;
-  background: linear-gradient(to right, #fff 0 2.5px, transparent 2.5px 4.5px, #fff 4.5px);
-}
-
-/* 播:小三角。 */
-.pet-tg.play {
-  width: 0;
-  height: 0;
-  border-left: 7px solid #fff;
-  border-top: 4.5px solid transparent;
-  border-bottom: 4.5px solid transparent;
 }
 
 /* 腮红与嘴:形象的性格层,纯 CSS。 */

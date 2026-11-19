@@ -19,8 +19,10 @@ export const PET_EDGE_MARGIN = 24
 /** 助手面板首屏建议 chips 每批条数(「换一批」按此轮换)。 */
 export const PET_CHIP_PAGE_SIZE = 4
 
-/** localStorage 键前缀(键尾拼画布 id —— 位置与收起态按画布记忆)。 */
-export const PET_POSITION_KEY_PREFIX = 'infinitechance.canvas.pet.position.'
+/** localStorage 键前缀(键尾拼画布 id —— 位置与收起态按画布记忆)。位置键
+ * v2:旧键值因「零边界回读」挂载 bug 从未生效(回读时被夹成原点),换键
+ * 让既有浏览器落回新缺省位,不背旧包袱(收起态键不受影响)。 */
+export const PET_POSITION_KEY_PREFIX = 'infinitechance.canvas.pet.position.v2.'
 export const PET_COLLAPSED_KEY_PREFIX = 'infinitechance.canvas.pet.collapsed.'
 
 export interface PetPoint {

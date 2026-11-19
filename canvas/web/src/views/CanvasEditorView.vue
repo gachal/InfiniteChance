@@ -4586,7 +4586,8 @@ function togglePetCollapsed(): void {
 }
 
 /** 桌宠单击 = 唤出助手面板(只开不关:面板已开时保持开,与顶栏 toggle
- * 相区别);互斥组同步收在 openAssistantPanel 里。 */
+ * 相区别);互斥组同步收在 openAssistantPanel 里。面板开期间桌宠不渲染
+ * (模板 v-if 联动),关面板自动回来。 */
 function openAssistantFromPet(): void {
   if (!assistantPanelOpen.value) {
     openAssistantPanel()
@@ -5382,9 +5383,11 @@ function backToList(): void {
       </VueFlow>
       <!-- 92 号票:画布桌宠(化身壳,右下缺省驻位;收起 = 不渲染)。
            单击唤出助手面板,拖动改位置(按画布存 localStorage),与
-           vue-flow 无交互、不进节点层(--z-pet 独立档)。 -->
+           vue-flow 无交互、不进节点层(--z-pet 独立档)。
+           2026-11-19 增补:助手面板开着时桌宠不渲染、关面板自动回来
+           (顶栏入口开面板同样生效),不变量 = 面板开 ⟺ 桌宠不渲染。 -->
       <CanvasPet
-        v-if="!petCollapsed"
+        v-if="!petCollapsed && !assistantPanelOpen"
         :canvas-id="canvasId"
         :config="petConfig"
         @activate="openAssistantFromPet"
