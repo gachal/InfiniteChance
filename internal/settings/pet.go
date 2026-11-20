@@ -5,11 +5,7 @@
 package settings
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"unicode/utf8"
 )
@@ -123,27 +119,6 @@ func NormalizePetConfig(c *PetConfig) error {
 	return nil
 }
 
-// PetConfigReader answers the currently effective pet config; wiring 注入
-// settings.NewPetReader 的产物。调用量小,按请求读表不加缓存(热生效,
-// prompt_templates/storage 先例)。
-type PetConfigReader func(ctx context.Context) (PetConfig, error)
-
-// NewPetReader reads the `pet` row per call. 缺行/坏行按缺省回答:未配置
-// 即「前端 CSS 缺省形象」,坏 JSON 不至于让画布面瘫痪。
-func NewPetReader(s Store) PetConfigReader {
-	return func(ctx context.Context) (PetConfig, error) {
-		row, err := s.Get(ctx, NamePet)
-		if errors.Is(err, ErrNotFound) {
-			return DefaultPetConfig(), nil
-		}
-		if err != nil {
-			return DefaultPetConfig(), err
-		}
-		var cfg PetConfig
-		if err := json.Unmarshal(row.Value, &cfg); err != nil {
-			log.Printf("settings: pet row undecodable, falling back to default: %v", err)
-			return DefaultPetConfig(), nil
-		}
-		return cfg, nil
-	}
-}
+// NewPetReader 已随 94 号票退役删除:画布面读端点改吃 NewPetsDocReader
+// 的整份文档(pets 行 + 惰性迁移),active 投影由消费方(doc.ActiveEntry)
+// 取出。旧 `pet` 行不再被直接读 —— 唯一的读取点是 migrateLegacyPet。

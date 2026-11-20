@@ -1,19 +1,23 @@
-// Package pet 承载桌宠(92 号票)的服务端两面:
+// Package pet 承载桌宠的服务端两面:
 //
-//   - 网关 admin 面:形象上传端点(与 settings 的 /admin/settings/pet CRUD
-//     同组挂载)。形象是系统资产 —— 只落 objectstore `uploads/` 前缀,不落
-//     assets 行(创作素材库,票面明令禁止),配置存对象键。
-//   - 画布面:配置读端点(canvas-web 拉取 pet 配置,settings 只读 reader
-//     按请求读表热生效)与对象读端点 —— <img> 带不了 Authorization 头,
-//     照 `GET /assets/{id}/content` 先例**故意不挂鉴权**(AGENTS 硬性约束
-//     5 载明理由);防遍历纪律 = 路径只收桌宠配置登记过的对象键。
+//   - 网关 admin 面:形象上传端点 + 多桌宠文档 REST 五端点(94 号票)。
+//     形象是系统资产 —— 只落 objectstore `uploads/` 前缀,不落 assets 行
+//     (创作素材库,92 号票明令禁止),配置存对象键。CRUD 落本包而非
+//     settings 包是 import 方向使然:DELETE 要物理回收对象键(objectstore),
+//     而 settings 不可反向依赖 objectstore(objectstore.Dynamic 按 settings
+//     存储驱动路由,方向是 objectstore → settings)。
+//   - 画布面:配置读端点(canvas-web 拉取 active 桌宠投影,settings 只读
+//     reader 按请求读表热生效)与对象读端点 —— <img> 带不了 Authorization
+//     头,照 `GET /assets/{id}/content` 先例**故意不挂鉴权**(AGENTS 硬性
+//     约束 5 载明理由);防遍历纪律 = 路径只收全部桌宠登记键并集内的对象键
+//     (94 号票放宽:切 active 不 404 抖动)。
 //
-// 本包不 import settings 的 handler(配置 CRUD 在 settings 包),只吃其
-// PetConfigReader;asset 只取导出的嗅探/扩展名薄包装(单一事实源,不复制
-// 魔数表)。
+// 本包吃 settings.Store 与 PetsDocReader;asset 只取导出的嗅探/扩展名薄
+// 包装(单一事实源,不复制魔数表)。
 package pet
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -53,21 +57,32 @@ const sniffHeadBytes = 512
 const objectCacheMaxAge = 3600
 
 // Handlers serves the pet surface. Storage 缺装配(nil)= 上传/读端点以
-// storage_unconfigured / 500 拒绝,服务照常启动;Config 缺装配 = 配置读
+// storage_unconfigured / 500 拒绝,服务照常启动;Store 缺装配 = 配置读
 // 端点 500(与各 store 同哲学,生产装配恒非 nil)。
 type Handlers struct {
-	// Config answers the current pet config per request(热生效)。
-	Config settings.PetConfigReader
+	// Store is the settings KV store(pets 文档行所在);画布面读端点经
+	// settings.NewPetsDocReader 按请求读表热生效。
+	Store settings.Store
 	// Storage receives pet images and serves object reads。
 	Storage objectstore.Store
 }
 
-// RegisterAdminRoutes mounts on the gateway admin group(settings CRUD 同组):
+// RegisterAdminRoutes mounts on the gateway admin group:
 //
 //	POST /settings/pet/image — multipart 字段 file;GIF/WebP/PNG(APNG)
 //	                         魔数嗅探裁决,落 uploads/{yyyymmdd}/{uuid}.{ext}
+//	GET    /pets          — 整份多桌宠文档(含 updated_at,94 号票)
+//	POST   /pets          — 新建自定义桌宠(服务端生成 uuid id)
+//	PUT    /pets/active   — 切换当前桌宠(body {id};静态段先于 :id 注册)
+//	PUT    /pets/:id      — 更新单只(指针合并语义照 92 先例)
+//	DELETE /pets/:id      — 删自定义(default 拒 409;物理回收登记对象键)
 func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.POST("/settings/pet/image", h.UploadImage)
+	group.GET("/pets", h.ListPets)
+	group.POST("/pets", h.CreatePet)
+	group.PUT("/pets/active", h.SetActivePet)
+	group.PUT("/pets/:id", h.UpdatePet)
+	group.DELETE("/pets/:id", h.DeletePet)
 }
 
 // RegisterConfigRoutes mounts on the canvas JWT group(group 挂 /pet):
@@ -217,27 +232,41 @@ func isOversizeParseError(err error) bool {
 	return errors.As(err, &maxErr)
 }
 
-// GetConfig answers the current pet config for canvas-web(热生效:reader
-// 按请求读 settings 表)。缺行/坏行由 reader 回缺省,配置读不出来时前端
-// 走 CSS 缺省形象,不瘫痪。
+// loadDoc reads the pets document per request(热生效);迁移/容错在
+// settings.NewPetsDocReader。Store 缺装配或读失败由调用方裁决。
+func (h *Handlers) loadDoc(ctx context.Context) (settings.PetsDocument, error) {
+	if h.Store == nil {
+		return settings.PetsDocument{}, errStoreUnconfigured
+	}
+	return settings.NewPetsDocReader(h.Store)(ctx)
+}
+
+// errStoreUnconfigured marks a nil settings store(与 storage_unconfigured
+// 同族的服务缺装配拒绝)。
+var errStoreUnconfigured = errors.New("pet: settings store not wired")
+
+// GetConfig answers the active pet's projection for canvas-web(94 号票:
+// 路径与响应形状逐字段不变,切桌宠 = 换皮 + 换人设;热生效:reader 按请求
+// 读 settings 表)。缺行/坏行由 reader 回缺省,配置读不出来时前端走 CSS
+// 缺省形象,不瘫痪。
 func (h *Handlers) GetConfig(c *gin.Context) {
-	if h.Config == nil {
-		log.Printf("pet: config reader not wired")
-		apierr.Internal(c, "服务内部错误,请稍后再试")
-		return
-	}
-	cfg, err := h.Config(c.Request.Context())
+	doc, err := h.loadDoc(c.Request.Context())
 	if err != nil {
-		log.Printf("pet: read config: %v", err)
+		if errors.Is(err, errStoreUnconfigured) {
+			log.Printf("pet: settings store not wired")
+		} else {
+			log.Printf("pet: read config: %v", err)
+		}
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"pet": toPetInfoJSON(cfg)})
+	c.JSON(http.StatusOK, gin.H{"pet": toPetInfoJSON(doc.ActiveEntry().PetConfig)})
 }
 
 // Object serves a pet image's bytes for <img> previews. 故意不挂鉴权
-// (RegisterObjectRoutes 注释载明理由);防遍历 = 键必须与当前配置登记的
-// idle_image / interactive_image 之一精确相等 —— 不是任意 uploads/ 键都
+// (RegisterObjectRoutes 注释载明理由);防遍历集合 = 全部桌宠登记键的
+// 并集(94 号票:切 active 不 404 抖动、管理台预览未激活桌宠直接可用;
+// 键全为本人上传系统资产,并集不放大暴露面)—— 不是任意 uploads/ 键都
 // 放行,改配置即刻生效(旧键下一请求即 404)。
 func (h *Handlers) Object(c *gin.Context) {
 	key := strings.TrimSpace(c.Query("key"))
@@ -245,23 +274,28 @@ func (h *Handlers) Object(c *gin.Context) {
 		apierr.InvalidRequest(c, "缺少 key 参数")
 		return
 	}
-	if h.Config == nil {
-		log.Printf("pet: config reader not wired")
-		apierr.Internal(c, "服务内部错误,请稍后再试")
-		return
-	}
 	if h.Storage == nil {
 		apierr.Write(c, http.StatusServiceUnavailable, "storage_unconfigured",
 			"对象存储未配置,桌宠形象不可用")
 		return
 	}
-	cfg, err := h.Config(c.Request.Context())
+	doc, err := h.loadDoc(c.Request.Context())
 	if err != nil {
-		log.Printf("pet: read config for object: %v", err)
+		if errors.Is(err, errStoreUnconfigured) {
+			log.Printf("pet: settings store not wired")
+		} else {
+			log.Printf("pet: read config for object: %v", err)
+		}
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
-	registered := cfg.IdleImage == key || cfg.InteractiveImage == key
+	registered := false
+	for _, e := range doc.Pets {
+		if e.IdleImage == key || e.InteractiveImage == key {
+			registered = true
+			break
+		}
+	}
 	if !registered {
 		// 404 而非 403:不区分「未登记」与「不存在」,不给遍历探针回声。
 		apierr.NotFound(c, "桌宠形象不存在")

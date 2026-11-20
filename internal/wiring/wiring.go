@@ -75,11 +75,13 @@ func GatewayRoutes(r *gin.Engine, cfg config.Config, s GatewayStores) {
 	pricing.RegisterAdminRoutes(admin, &pricing.Handlers{Store: s.Prices})
 	// 提示词模板:管理端维护,画布侧经共享库即时读取(11 号票)。
 	prompttemplate.RegisterAdminRoutes(admin, &prompttemplate.Handlers{Store: s.PromptTemplates})
-	// 动态配置:存储驱动的管理面(19 号票),画布侧同库只读。桌宠配置
-	// CRUD(92 号票)同在 settings 包;形象上传在 pet 包(要吃 asset 嗅探
-	// 与 objectstore,分包防 import 环),与 settings 同组挂载。
+	// 动态配置:存储驱动的管理面(19 号票),画布侧同库只读。桌宠管理
+	// 面整在 pet 包(94 号票):REST 五端点 + 形象上传 —— CRUD 的 DELETE
+	// 要物理回收对象键(objectstore),settings 不可反向依赖 objectstore
+	// (objectstore.Dynamic 按存储驱动路由,方向 objectstore → settings),
+	// 92 号票的 GET/PUT /admin/settings/pet 已退役。
 	settings.RegisterAdminRoutes(admin, &settings.Handlers{Store: s.Settings})
-	pet.RegisterAdminRoutes(admin, &pet.Handlers{Storage: s.Storage})
+	pet.RegisterAdminRoutes(admin, &pet.Handlers{Store: s.Settings, Storage: s.Storage})
 	// 用量审计:请求级日志列表与按天/模型/渠道汇总(15 号票)。
 	usage.RegisterAdminRoutes(admin, &usage.Handlers{Store: s.UsageLogs})
 	// 素材哈希回填与去重(48 号票):素材行与对象存储都就位才挂;store
@@ -313,10 +315,11 @@ func CanvasRoutes(r *gin.Engine, cfg config.Config, s CanvasStores, gateway canv
 	asset.RegisterContentRoutes(r.Group("/assets"), assetHandlers)
 	asset.RegisterLibraryRoutes(r.Group("/assets", auth.RequireAuth(issuer)), assetHandlers)
 
-	// 桌宠(92 号票):配置读端点挂 JWT 组(canvas-web 拉 pet 配置,settings
-	// 只读 reader 热生效);对象读端点照 /assets/:id/content 先例**故意不挂
-	// 鉴权** —— <img> 带不了 Authorization 头,且路径只收配置登记过的键。
-	petHandlers := &pet.Handlers{Config: settings.NewPetReader(s.Settings), Storage: storage}
+	// 桌宠(92 号票,94 号票改多桌宠):配置读端点挂 JWT 组(canvas-web 拉
+	// active 桌宠投影,settings 只读 reader 热生效);对象读端点照
+	// /assets/:id/content 先例**故意不挂鉴权** —— <img> 带不了 Authorization
+	// 头,且路径只收全部桌宠登记键并集内的键。
+	petHandlers := &pet.Handlers{Store: s.Settings, Storage: storage}
 	pet.RegisterConfigRoutes(r.Group("/pet", auth.RequireAuth(issuer)), petHandlers)
 	pet.RegisterObjectRoutes(r.Group("/pet"), petHandlers)
 }
