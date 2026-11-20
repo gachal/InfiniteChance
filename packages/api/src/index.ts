@@ -1122,24 +1122,28 @@ export interface HashBackfillProgress {
   deleted_objects: number
 }
 
-// ---- 网关管理:桌宠设置(挂 /admin/settings/pet,92 号票)----
+// ---- 网关管理:桌宠(挂 /admin/pets,94 号票多桌宠;上传端点仍是
+// POST /admin/settings/pet/image,92 号票路径不动)----
 
-/** 桌宠配置(92 号票):settings KV `pet` 行的线形。image 字段是对象键
- * (uploads/ 前缀),不是 URL —— 浏览器取用走画布侧 /pet/object 读端点
- * (键只认配置登记值)。无密钥字段,原值回显。 */
-export interface PetSettings {
+/** 单只桌宠条目(94 号票):id 服务端生成;绿毛球固定 id "default"
+ * (内置默认,不可删除,形象锁定为前端 CSS 缺省形象 —— 其 image 字段
+ * 恒空串)。image 字段是对象键(uploads/ 前缀),不是 URL —— 浏览器取用
+ * 走画布侧 /pet/object 读端点(键只认全部桌宠登记键并集)。无密钥字段,
+ * 原值回显。 */
+export interface PetEntry {
+  id: string
   name: string
   greeting: string
   chips: string[]
   model: string
   idle_image: string
   interactive_image: string
-  updated_at: string
 }
 
-/** PUT 的请求体:未携带的字段沿用已存,显式空串/空数组 = 清空(照
- * StorageSettingsInput 的合并语义)。 */
-export interface PetSettingsInput {
+/** POST/PUT 的请求体:POST 以空起底、PUT 未携带的字段沿用已存,显式空串/
+ * 空数组 = 清空(照 StorageSettingsInput 的合并语义)。绿毛球(default)
+ * 的 PUT 不接受 idle_image/interactive_image。 */
+export interface PetEntryInput {
   name?: string
   greeting?: string
   chips?: string[]
@@ -1148,9 +1152,17 @@ export interface PetSettingsInput {
   interactive_image?: string
 }
 
+/** 整份多桌宠文档(settings KV `pets` 行线形):绿毛球实体存 pets 数组
+ * 首位,active_id 是当前桌宠指针。 */
+export interface PetsDocument {
+  active_id: string
+  pets: PetEntry[]
+  updated_at: string
+}
+
 /** 画布侧桌宠配置(canvas JWT 面 GET /pet/config,热生效):canvas-web
- * 消费的形状,与 PetSettings 差 updated_at。 */
-export type PetConfigInfo = Omit<PetSettings, 'updated_at'>
+ * 消费 active 桌宠的投影,与 PetEntry 差 id。 */
+export type PetConfigInfo = Omit<PetEntry, 'id'>
 
 /** 形象上传响应(网关 admin 面):对象键 + 嗅探出的内容类型与字节数。 */
 export interface PetImageUpload {
@@ -1158,6 +1170,13 @@ export interface PetImageUpload {
   content_type: string
   size_bytes: number
 }
+
+/** 桌宠数量上限(UI 用的镜像常量,S3 评审修复:管理台三处硬编码收编)。
+ * 值与后端 internal/settings 的 MaxCustomPets(20)/ MaxPetsTotal(21 =
+ * 绿毛球 + 自定义上限)对齐 —— 后端规约是权威,这里只驱动列表计数与文案,
+ * 漂移时有后端 400 兜底。 */
+export const MAX_CUSTOM_PETS = 20
+export const MAX_PETS_TOTAL = MAX_CUSTOM_PETS + 1
 
 // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
 
@@ -2192,22 +2211,47 @@ export class ApiClient {
     return body.storage
   }
 
-  // ---- 网关管理:桌宠设置(挂 /admin/settings/pet,需 JWT 会话,92 号票)----
+  // ---- 网关管理:桌宠(挂 /admin/pets,需 JWT 会话,94 号票多桌宠)----
 
-  /** 桌宠设置;缺行时后端回答缺省配置(全空,chips 为空数组)。 */
-  async getPetSettings(): Promise<PetSettings> {
-    const body = await this.request<{ pet: PetSettings }>('/admin/settings/pet')
+  /** 整份多桌宠文档;缺行时后端惰性迁移旧配置或落缺省文档(绿毛球单实体)。 */
+  async getPets(): Promise<PetsDocument> {
+    const body = await this.request<{ doc: PetsDocument }>('/admin/pets')
+    return body.doc
+  }
+
+  /** 新建自定义桌宠(服务端生成 uuid id,绿毛球恒居列表首位);上限
+   * 绿毛球 + 20 只自定义。 */
+  async createPet(input: PetEntryInput): Promise<PetEntry> {
+    const body = await this.request<{ pet: PetEntry }>('/admin/pets', {
+      method: 'POST',
+      body: input,
+    })
     return body.pet
   }
 
-  /** 更新桌宠设置(合并语义:未携带字段沿用已存,显式空串/空数组清空);
-   * 保存即时生效,无需重启。 */
-  async updatePetSettings(input: PetSettingsInput): Promise<PetSettings> {
-    const body = await this.request<{ pet: PetSettings }>('/admin/settings/pet', {
+  /** 更新单只桌宠(合并语义:未携带字段沿用已存,显式空串/空数组清空);
+   * id=default 只收文案字段(形象锁定),保存即时生效,无需重启。 */
+  async updatePet(id: string, input: PetEntryInput): Promise<PetEntry> {
+    const body = await this.request<{ pet: PetEntry }>(`/admin/pets/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: input,
     })
     return body.pet
+  }
+
+  /** 删除自定义桌宠(默认桌宠不可删,后端 409):服务端物理回收其登记的
+   * 形象对象;删的是当前桌宠时 active 回落绿毛球。 */
+  async deletePet(id: string): Promise<void> {
+    await this.request<void>(`/admin/pets/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
+  /** 切换当前桌宠(body {id});切桌宠 = 换皮 + 换人设,画布侧即时生效。 */
+  async setPetActive(id: string): Promise<PetsDocument> {
+    const body = await this.request<{ doc: PetsDocument }>('/admin/pets/active', {
+      method: 'PUT',
+      body: { id },
+    })
+    return body.doc
   }
 
   /** 上传桌宠形象(网关 admin 面,multipart 字段 file):GIF/WebP/PNG(APNG)
@@ -2223,7 +2267,7 @@ export class ApiClient {
   }
 
   /** 画布侧桌宠配置(canvas JWT 面 GET /pet/config,按请求读表热生效):
-   * canvas-web 消费问候语/chips/缺省模型/形象键。 */
+   * active 桌宠的投影,canvas-web 消费问候语/chips/缺省模型/形象键。 */
   async getPetConfig(): Promise<PetConfigInfo> {
     const body = await this.request<{ pet: PetConfigInfo }>('/pet/config')
     return body.pet

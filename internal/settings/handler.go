@@ -25,14 +25,14 @@ type Handlers struct {
 //	                             included; has_* + tail-4 hints only)
 //	PUT /admin/settings/storage — replace it; empty access_key/secret_key
 //	                             keep the stored values
+//
+// 桌宠端点不在本组:92 号票的 GET/PUT /admin/settings/pet 已随 94 号票
+// 退役删除,多桌宠 REST 五端点(含形象上传)整面在 pet 包挂 /admin/pets —
+// settings 不可依赖 objectstore(objectstore.Dynamic 按存储驱动路由,
+// 方向是 objectstore → settings),CRUD 带 DELETE 对象回收只能落 pet 包。
 func RegisterAdminRoutes(group *gin.RouterGroup, h *Handlers) {
 	group.GET("/settings/storage", h.GetStorage)
 	group.PUT("/settings/storage", h.PutStorage)
-	// 桌宠配置(92 号票):与 storage 同组同款合并语义;形象上传端点由
-	// pet 包挂同一 admin 组(它要吃 asset 嗅探与 objectstore,与 settings
-	// 分包防 import 环)。
-	group.GET("/settings/pet", h.GetPet)
-	group.PUT("/settings/pet", h.PutPet)
 }
 
 // ossJSON is the wire form of the OSS block. The credentials are never

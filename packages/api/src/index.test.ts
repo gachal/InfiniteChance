@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ApiClient,
   ApiError,
+  MAX_CUSTOM_PETS,
+  MAX_PETS_TOTAL,
   UnauthorizedError,
   parseAgentEvent,
   parseCharacterSection,
@@ -22,8 +24,9 @@ import {
   type PromptTemplateInput,
   type PromptTemplateOption,
   type PetConfigInfo,
-  type PetSettings,
-  type PetSettingsInput,
+  type PetEntry,
+  type PetEntryInput,
+  type PetsDocument,
   type QuotaEntry,
   type SaveGraphResult,
   type SessionInfo,
@@ -1020,39 +1023,89 @@ describe('ApiClient storage settings', () => {
   })
 })
 
-// ---- 桌宠(92 号票)----
+// ---- 桌宠(92 号票上传/画布面,94 号票多桌宠管理)----
 
-describe('ApiClient pet settings (92 号票)', () => {
-  const pet: PetSettings = {
-    name: '绿毛球',
-    greeting: '画布上有什么想改的?',
-    chips: ['帮我建一组分镜', '读一下画布结构'],
+// S3 评审修复:上限常量是给 UI 用的镜像,值钉死与后端 internal/settings
+// 的 MaxCustomPets / MaxPetsTotal 对齐(漂移即此测红)。
+describe('pets 上限镜像常量', () => {
+  it('mirror the backend caps (MaxCustomPets=20 / MaxPetsTotal=21)', () => {
+    expect(MAX_CUSTOM_PETS).toBe(20)
+    expect(MAX_PETS_TOTAL).toBe(21)
+  })
+})
+
+describe('ApiClient pets (94 号票多桌宠)', () => {
+  const entry: PetEntry = {
+    id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+    name: '皮皮',
+    greeting: '你好',
+    chips: ['帮我建一组分镜'],
     model: 'chat-main',
-    idle_image: 'uploads/20261119/aaa.gif',
+    idle_image: 'uploads/20261120/aaa.gif',
     interactive_image: '',
-    updated_at: '2026-11-19T12:00:00Z',
+  }
+  const doc: PetsDocument = {
+    active_id: 'default',
+    pets: [
+      { id: 'default', name: '绿毛球', greeting: '', chips: [], model: '', idle_image: '', interactive_image: '' },
+      entry,
+    ],
+    updated_at: '2026-11-20T12:00:00Z',
   }
 
-  it('getPetSettings unwraps the pet envelope from the gateway admin path', async () => {
-    const fetchImpl = stubFetch(200, { pet })
+  it('getPets unwraps the doc envelope from the gateway admin path', async () => {
+    const fetchImpl = stubFetch(200, { doc })
     const client = clientWithBase(fetchImpl)
 
-    await expect(client.getPetSettings()).resolves.toEqual(pet)
+    await expect(client.getPets()).resolves.toEqual(doc)
     const [url, init] = fetchImpl.mock.calls[0]
-    expect(url).toBe('/api/admin/settings/pet')
+    expect(url).toBe('/api/admin/pets')
     expect((init as RequestInit).method).toBe('GET')
   })
 
-  it('updatePetSettings PUTs the merge input to the gateway admin path', async () => {
-    const fetchImpl = stubFetch(200, { pet })
+  it('createPet POSTs the entry input and unwraps the created pet', async () => {
+    const fetchImpl = stubFetch(201, { pet: entry })
     const client = clientWithBase(fetchImpl)
 
-    const input: PetSettingsInput = { greeting: '换个问候', chips: [] }
-    await expect(client.updatePetSettings(input)).resolves.toEqual(pet)
+    const input: PetEntryInput = { name: '皮皮', chips: ['帮我建一组分镜'] }
+    await expect(client.createPet(input)).resolves.toEqual(entry)
     const [url, init] = fetchImpl.mock.calls[0]
-    expect(url).toBe('/api/admin/settings/pet')
+    expect(url).toBe('/api/admin/pets')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('updatePet PUTs the merge input to the entry path', async () => {
+    const fetchImpl = stubFetch(200, { pet: entry })
+    const client = clientWithBase(fetchImpl)
+
+    const input: PetEntryInput = { greeting: '换个问候', chips: [] }
+    await expect(client.updatePet(entry.id, input)).resolves.toEqual(entry)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe(`/api/admin/pets/${encodeURIComponent(entry.id)}`)
     expect((init as RequestInit).method).toBe('PUT')
     expect((init as RequestInit).body).toBe(JSON.stringify(input))
+  })
+
+  it('deletePet DELETEs the entry path and tolerates the empty 204 body', async () => {
+    const fetchImpl = stubFetch(204, undefined)
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.deletePet(entry.id)).resolves.toBeUndefined()
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe(`/api/admin/pets/${encodeURIComponent(entry.id)}`)
+    expect((init as RequestInit).method).toBe('DELETE')
+  })
+
+  it('setPetActive PUTs the pointer body to the active path and unwraps the doc', async () => {
+    const fetchImpl = stubFetch(200, { doc })
+    const client = clientWithBase(fetchImpl)
+
+    await expect(client.setPetActive(entry.id)).resolves.toEqual(doc)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/admin/pets/active')
+    expect((init as RequestInit).method).toBe('PUT')
+    expect((init as RequestInit).body).toBe(JSON.stringify({ id: entry.id }))
   })
 
   it('uploadPetImage posts multipart file to the gateway admin path and unwraps the image', async () => {

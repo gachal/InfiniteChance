@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,8 +24,9 @@ import (
 // ---- 假件:settings KV 与对象存储,测试不碰数据库与真卷 ----
 
 type fakeSettings struct {
-	mu   sync.Mutex
-	rows map[string]settings.Setting
+	mu    sync.Mutex
+	rows  map[string]settings.Setting
+	stamp time.Time
 }
 
 func newFakeSettings() *fakeSettings {
@@ -44,7 +46,8 @@ func (s *fakeSettings) Get(_ context.Context, name string) (settings.Setting, er
 func (s *fakeSettings) Put(_ context.Context, name string, value []byte) (settings.Setting, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row := settings.Setting{Name: name, Value: json.RawMessage(value)}
+	s.stamp = s.stamp.Add(time.Second)
+	row := settings.Setting{Name: name, Value: json.RawMessage(value), UpdatedAt: s.stamp}
 	s.rows[name] = row
 	return row, nil
 }
@@ -104,12 +107,43 @@ func newPetEnv() petEnv {
 	gin.SetMode(gin.TestMode)
 	store := newFakeSettings()
 	storage := newFakeStorage()
-	h := &pet.Handlers{Config: settings.NewPetReader(store), Storage: storage}
+	h := &pet.Handlers{Store: store, Storage: storage}
 	engine := gin.New()
 	pet.RegisterAdminRoutes(engine.Group("/admin"), h)
 	pet.RegisterConfigRoutes(engine.Group("/pet"), h)
 	pet.RegisterObjectRoutes(engine.Group("/pet"), h)
 	return petEnv{engine: engine, store: store, storage: storage}
+}
+
+// seedPetsDoc 把整份文档写进 settings 假件(绕过 REST 直铺库内状态)。
+func seedPetsDoc(t *testing.T, env petEnv, doc settings.PetsDocument) {
+	t.Helper()
+	if err := settings.NormalizePetsDoc(&doc); err != nil {
+		t.Fatalf("seed doc normalize: %v", err)
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal doc: %v", err)
+	}
+	if _, err := env.store.Put(t.Context(), settings.NamePets, raw); err != nil {
+		t.Fatalf("seed pets row: %v", err)
+	}
+}
+
+// getDoc 走 GET /admin/pets 解出整份文档。
+func getDoc(t *testing.T, env petEnv) map[string]any {
+	t.Helper()
+	w := env.do(t, http.MethodGet, "/admin/pets")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /admin/pets: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	var parsed struct {
+		Doc map[string]any `json:"doc"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("decode doc: %v (body: %s)", err, w.Body.String())
+	}
+	return parsed.Doc
 }
 
 // postImage 构造一次 multipart 形象上传(filename 只做载体,服务端不信任它)。
@@ -133,6 +167,22 @@ func postImage(t *testing.T, env petEnv, filename string, content []byte) *httpt
 	env.engine.ServeHTTP(w, req)
 	return w
 }
+
+// doJSON 发一次带 JSON 体的请求。
+func doJSON(t *testing.T, env petEnv, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.engine.ServeHTTP(w, req)
+	return w
+}
+
+// ---- 形象上传(92 号票语义不变:路径 /admin/settings/pet/image 不动)----
 
 // 最小魔数样本:GIF89a / RIFF-WEBP / PNG(带 acTL chunk 的 APNG 形状 ——
 // 嗅探按 PNG 过,票面「APNG 随 PNG 嗅探天然可用」)。JPEG 是静态图,桌宠
@@ -165,7 +215,27 @@ func decodePetImage(t *testing.T, w *httptest.ResponseRecorder) petImageJSON {
 	return resp.Image
 }
 
-// 魔数嗅探钉测(票面验证点):GIF/WebP/APNG-PNG 三族过嗅探,扩展名随
+func uploadGif(t *testing.T, env petEnv) string {
+	t.Helper()
+	w := postImage(t, env, "idle.gif", gifBytes)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("upload: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	return decodePetImage(t, w).Key
+}
+
+func errCode(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var resp struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("error body not JSON: %v", err)
+	}
+	return resp.Error.Code
+}
+
+// 魔数嗅探钉测(92 号票):GIF/WebP/APNG-PNG 三族过嗅探,扩展名随
 // 嗅探内容落,键带 uploads/ 前缀;字节真落进对象存储。
 func TestUploadPetImageSniffsMagicAndLandsUploadsPrefix(t *testing.T) {
 	env := newPetEnv()
@@ -210,7 +280,7 @@ func TestUploadPetImageSniffsMagicAndLandsUploadsPrefix(t *testing.T) {
 	}
 }
 
-// 白名单外拒绝:JPEG 静态图、不认识的文本、视频都不收,错误码
+// 白名单外拒绝:JPEG 静态图、不认识的文本都不收,错误码
 // file_type_mismatch(与素材上传同码)。
 func TestUploadPetImageRejectsOutOfWhitelist(t *testing.T) {
 	env := newPetEnv()
@@ -227,42 +297,34 @@ func TestUploadPetImageRejectsOutOfWhitelist(t *testing.T) {
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("HTTP %d: %s, want 400", w.Code, w.Body.String())
 			}
-			var resp struct {
-				Error struct{ Code string } `json:"error"`
-			}
-			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("error body not JSON: %v", err)
-			}
-			if resp.Error.Code != "file_type_mismatch" {
-				t.Fatalf("error code = %q, want file_type_mismatch", resp.Error.Code)
+			if code := errCode(t, w); code != "file_type_mismatch" {
+				t.Fatalf("error code = %q, want file_type_mismatch", code)
 			}
 		})
 	}
 }
 
-// 桌宠对象读端点只认配置登记过的键:已登记键回字节与嗅探出的 Content-Type;
-// 未登记键(哪怕是合法 uploads/ 键)与穿越键一律 404 —— 防遍历(票面裁量,
-// 读端点故意不挂 JWT,<img> 带不了 Authorization,AGENTS 硬性约束 5 同款理由)。
-func TestPetObjectServesOnlyRegisteredKeys(t *testing.T) {
+// ---- 对象读端点(94 号票并集口径)----
+
+// 桌宠对象读端点防遍历集合 = 全部桌宠登记键的并集(94 号票裁决:切 active
+// 不 404 抖动、管理台预览未激活桌宠直接可用)。已登记键回字节与嗅探出的
+// Content-Type;未登记键(哪怕在存储里真实存在)与穿越键一律 404。
+func TestPetObjectServesUnionOfRegisteredKeys(t *testing.T) {
 	env := newPetEnv()
 
-	// 上传一张,拿到键,再把键登记进 pet 配置。
-	w := postImage(t, env, "idle.gif", gifBytes)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("upload: HTTP %d: %s", w.Code, w.Body.String())
-	}
-	img := decodePetImage(t, w)
-	cfg := map[string]any{"idle_image": img.Key, "chips": []string{}}
-	raw, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal cfg: %v", err)
-	}
-	if _, err := env.store.Put(t.Context(), settings.NamePet, raw); err != nil {
-		t.Fatalf("seed pet row: %v", err)
-	}
+	// 上传两张:一张登记在非 active 的自定义桌宠名下,另一张不登记。
+	key := uploadGif(t, env)
+	ghost := uploadGif(t, env)
+	seedPetsDoc(t, env, settings.PetsDocument{
+		ActiveID: settings.DefaultPetID,
+		Pets: []settings.PetEntry{
+			{ID: settings.DefaultPetID},
+			{ID: "c1", PetConfig: settings.PetConfig{IdleImage: key}},
+		},
+	})
 
-	// 已登记键:200,内容类型嗅探为 image/gif,字节一致。
-	w2 := env.do(t, http.MethodGet, "/pet/object?key="+img.Key)
+	// 非 active 桌宠登记的键:并集放行,200 + 嗅探 Content-Type + 字节一致。
+	w2 := env.do(t, http.MethodGet, "/pet/object?key="+key)
 	if w2.Code != http.StatusOK {
 		t.Fatalf("GET object: HTTP %d: %s", w2.Code, w2.Body.String())
 	}
@@ -272,9 +334,12 @@ func TestPetObjectServesOnlyRegisteredKeys(t *testing.T) {
 	if !bytes.Equal(w2.Body.Bytes(), gifBytes) {
 		t.Fatalf("served bytes diverge from stored object")
 	}
+	if cc := w2.Header().Get("Cache-Control"); cc != "private, max-age=3600" {
+		t.Fatalf("Cache-Control = %q", cc)
+	}
 
-	// 未登记键 404(即使它在存储里真实存在)。
-	w3 := env.do(t, http.MethodGet, "/pet/object?key=uploads/20261119/ghost.gif")
+	// 存储里存在但任何桌宠都没登记的键:404(不给遍历探针回声)。
+	w3 := env.do(t, http.MethodGet, "/pet/object?key="+ghost)
 	if w3.Code != http.StatusNotFound {
 		t.Fatalf("unregistered key: HTTP %d, want 404", w3.Code)
 	}
@@ -290,11 +355,12 @@ func TestPetObjectServesOnlyRegisteredKeys(t *testing.T) {
 	}
 }
 
-// 画布侧配置端点:chips 恒为数组(空配置回 [] 不回 null),文案字段原样。
-func TestGetPetConfigAnswersNormalizedShape(t *testing.T) {
+// ---- 配置读端点(active 投影,契约钉测:形状与 92 号票逐字段一致)----
+
+func TestGetPetConfigAnswersActiveProjection(t *testing.T) {
 	env := newPetEnv()
 
-	// 未配置:全空缺省。
+	// 缺文档:绿毛球 active,全空缺省,chips 恒数组。
 	w := env.do(t, http.MethodGet, "/pet/config")
 	if w.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", w.Code, w.Body.String())
@@ -308,14 +374,19 @@ func TestGetPetConfigAnswersNormalizedShape(t *testing.T) {
 	if chips, ok := resp.Pet["chips"].([]any); !ok || len(chips) != 0 {
 		t.Fatalf("default chips = %v, want empty array", resp.Pet["chips"])
 	}
-
-	// 配置后:原值回显。
-	raw, _ := json.Marshal(map[string]any{
-		"name": "绿毛球", "greeting": "嗨", "chips": []string{"a", "b"}, "model": "chat-main",
-	})
-	if _, err := env.store.Put(t.Context(), settings.NamePet, raw); err != nil {
-		t.Fatalf("seed: %v", err)
+	if resp.Pet["idle_image"] != "" || resp.Pet["interactive_image"] != "" {
+		t.Fatalf("default projection must be image-free: %v", resp.Pet)
 	}
+
+	// active 指向自定义桌宠:投影它的文案与形象。
+	key := uploadGif(t, env)
+	seedPetsDoc(t, env, settings.PetsDocument{
+		ActiveID: "c1",
+		Pets: []settings.PetEntry{
+			{ID: settings.DefaultPetID, PetConfig: settings.PetConfig{Name: "绿毛球", Greeting: "默认问候"}},
+			{ID: "c1", PetConfig: settings.PetConfig{Name: "皮皮", Greeting: "自定义问候", Chips: []string{"a"}, Model: "chat-x", IdleImage: key}},
+		},
+	})
 	w = env.do(t, http.MethodGet, "/pet/config")
 	if w.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", w.Code, w.Body.String())
@@ -323,8 +394,404 @@ func TestGetPetConfigAnswersNormalizedShape(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Pet["name"] != "绿毛球" || resp.Pet["model"] != "chat-main" {
-		t.Fatalf("pet = %v", resp.Pet)
+	if resp.Pet["name"] != "皮皮" || resp.Pet["greeting"] != "自定义问候" || resp.Pet["model"] != "chat-x" || resp.Pet["idle_image"] != key {
+		t.Fatalf("active projection = %v, want c1 fields", resp.Pet)
+	}
+	if chips, ok := resp.Pet["chips"].([]any); !ok || len(chips) != 1 {
+		t.Fatalf("chips = %v, want one entry array", resp.Pet["chips"])
+	}
+}
+
+// ---- admin REST 五端点(94 号票)----
+
+// GET 缺行回答缺省文档(绿毛球单实体,列表恒首位);惰性迁移已落库,
+// updated_at 随迁移写入带上时戳。
+func TestListPetsAnswersDefaultDocOnFreshStore(t *testing.T) {
+	env := newPetEnv()
+	doc := getDoc(t, env)
+	if doc["active_id"] != settings.DefaultPetID {
+		t.Fatalf("active = %v, want default", doc["active_id"])
+	}
+	pets, _ := doc["pets"].([]any)
+	if len(pets) != 1 {
+		t.Fatalf("pets = %v, want single default entry", doc["pets"])
+	}
+	first, _ := pets[0].(map[string]any)
+	if first["id"] != settings.DefaultPetID {
+		t.Fatalf("first entry = %v, want default", first)
+	}
+	if doc["updated_at"] == "" {
+		t.Fatalf("updated_at should carry the migration write stamp")
+	}
+}
+
+// POST 新建自定义桌宠:服务端生成 uuid id,绿毛球恒居首位,缺省不偏移 active。
+func TestCreatePetAddsCustomEntry(t *testing.T) {
+	env := newPetEnv()
+	key := uploadGif(t, env)
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{
+		"name":       " 皮皮 ",
+		"greeting":   "你好",
+		"chips":      []string{" 画个球 "},
+		"model":      "chat-x",
+		"idle_image": key,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Pet map[string]any `json:"pet"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	id, _ := resp.Pet["id"].(string)
+	if id == "" || id == settings.DefaultPetID {
+		t.Fatalf("server must generate a uuid id, got %q", id)
+	}
+	if resp.Pet["name"] != "皮皮" || resp.Pet["idle_image"] != key {
+		t.Fatalf("created entry = %v", resp.Pet)
+	}
+
+	// 回读:两 entry,default 恒首,active 仍为 default。
+	doc := getDoc(t, env)
+	if doc["active_id"] != settings.DefaultPetID {
+		t.Fatalf("active moved on create: %v", doc["active_id"])
+	}
+	pets, _ := doc["pets"].([]any)
+	if len(pets) != 2 {
+		t.Fatalf("pets = %v, want two entries", pets)
+	}
+	first, _ := pets[0].(map[string]any)
+	second, _ := pets[1].(map[string]any)
+	if first["id"] != settings.DefaultPetID || second["id"] != id {
+		t.Fatalf("order drifted: %v %v", first, second)
+	}
+	if doc["updated_at"] == "" {
+		t.Fatalf("updated_at should be stamped after write")
+	}
+}
+
+// POST 校验沿用:非法形象键拒;上限 21 只(default + 20 自定义)后 400。
+func TestCreatePetRejectsInvalidAndOverLimit(t *testing.T) {
+	env := newPetEnv()
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{
+		"name":       "坏键",
+		"idle_image": "canvases/1/2/x.png",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid key: HTTP %d: %s, want 400", w.Code, w.Body.String())
+	}
+
+	doc := settings.DefaultPetsDocument()
+	for i := 0; i < settings.MaxCustomPets; i++ {
+		doc.Pets = append(doc.Pets, settings.PetEntry{ID: fmt.Sprintf("c%02d", i)})
+	}
+	seedPetsDoc(t, env, doc)
+	w = doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "第 21 只"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("over limit: HTTP %d: %s, want 400", w.Code, w.Body.String())
+	}
+}
+
+// PUT 单只合并语义(照 92 先例:未携带沿用已存,显式空串/空数组清空);
+// 未知 id 404。
+func TestUpdatePetMergesPointerFields(t *testing.T) {
+	env := newPetEnv()
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{
+		"name": "皮皮", "greeting": "旧问候", "chips": []string{"a"}, "model": "chat-x", "idle_image": uploadGif(t, env),
+	})
+	var resp struct {
+		Pet map[string]any `json:"pet"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	id, _ := resp.Pet["id"].(string)
+
+	// 只带 greeting 与 chips:其余沿用。
+	w = doJSON(t, env, http.MethodPut, "/admin/pets/"+id, map[string]any{
+		"greeting": "新问候",
+		"chips":    []string{"b"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Pet["name"] != "皮皮" || resp.Pet["model"] != "chat-x" || resp.Pet["idle_image"] == "" {
+		t.Fatalf("absent fields must keep stored values: %v", resp.Pet)
+	}
+	if resp.Pet["greeting"] != "新问候" {
+		t.Fatalf("greeting = %v, want replaced", resp.Pet["greeting"])
+	}
+
+	// 显式空串/空数组 = 清空。
+	w = doJSON(t, env, http.MethodPut, "/admin/pets/"+id, map[string]any{
+		"idle_image": "",
+		"chips":      []string{},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Pet["idle_image"] != "" {
+		t.Fatalf("idle_image = %v, want cleared", resp.Pet["idle_image"])
+	}
+	if chips, ok := resp.Pet["chips"].([]any); !ok || len(chips) != 0 {
+		t.Fatalf("chips = %v, want cleared", resp.Pet["chips"])
+	}
+
+	// 未知 id 404。
+	if w := doJSON(t, env, http.MethodPut, "/admin/pets/ghost", map[string]any{"name": "x"}); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown id: HTTP %d, want 404", w.Code)
+	}
+}
+
+// default 表单:文案字段照常可编辑;形象键拒绝(服务端拒为其设形象)。
+func TestUpdateDefaultPetTextOnly(t *testing.T) {
+	env := newPetEnv()
+
+	w := doJSON(t, env, http.MethodPut, "/admin/pets/"+settings.DefaultPetID, map[string]any{
+		"name":       "球球",
+		"idle_image": uploadGif(t, env),
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("default with image key: HTTP %d: %s, want 400", w.Code, w.Body.String())
+	}
+
+	w = doJSON(t, env, http.MethodPut, "/admin/pets/"+settings.DefaultPetID, map[string]any{
+		"name":     "球球",
+		"greeting": "默认问候",
+		"chips":    []string{"画一个角色"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("default text PUT: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	doc := getDoc(t, env)
+	pets, _ := doc["pets"].([]any)
+	first, _ := pets[0].(map[string]any)
+	if first["name"] != "球球" || first["idle_image"] != "" {
+		t.Fatalf("default entry = %v, want text updated and images empty", first)
+	}
+}
+
+// DELETE:default 拒 409;删自定义物理回收其登记对象;删 active 回落 default;
+// 未知 id 404。
+func TestDeletePetRecyclesObjectsAndFallsBackActive(t *testing.T) {
+	env := newPetEnv()
+	keyA, keyB := uploadGif(t, env), uploadGif(t, env)
+
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "甲", "idle_image": keyA})
+	var created struct {
+		Pet map[string]any `json:"pet"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	idA, _ := created.Pet["id"].(string)
+	w = doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "乙", "idle_image": keyB})
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	idB, _ := created.Pet["id"].(string)
+
+	// default 不可删:409。
+	if w := env.do(t, http.MethodDelete, "/admin/pets/"+settings.DefaultPetID); w.Code != http.StatusConflict {
+		t.Fatalf("delete default: HTTP %d: %s, want 409", w.Code, w.Body.String())
+	}
+	// 未知 id:404。
+	if w := env.do(t, http.MethodDelete, "/admin/pets/ghost"); w.Code != http.StatusNotFound {
+		t.Fatalf("delete unknown: HTTP %d, want 404", w.Code)
+	}
+
+	// 删 active 桌宠(乙):204,对象物理回收,active 回落 default。
+	if w := doJSON(t, env, http.MethodPut, "/admin/pets/active", map[string]any{"id": idB}); w.Code != http.StatusOK {
+		t.Fatalf("set active: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	if w := env.do(t, http.MethodDelete, "/admin/pets/"+idB); w.Code != http.StatusNoContent {
+		t.Fatalf("delete custom: HTTP %d: %s, want 204", w.Code, w.Body.String())
+	}
+	if _, ok := env.storage.objects[keyB]; ok {
+		t.Fatalf("object %q must be physically recycled", keyB)
+	}
+	doc := getDoc(t, env)
+	if doc["active_id"] != settings.DefaultPetID {
+		t.Fatalf("active = %v, want fallback to default", doc["active_id"])
+	}
+	pets, _ := doc["pets"].([]any)
+	if len(pets) != 2 {
+		t.Fatalf("pets = %v, want default + 甲", pets)
+	}
+	// 甲的对象仍在(未删它)。
+	if _, ok := env.storage.objects[keyA]; !ok {
+		t.Fatalf("object %q must survive", keyA)
+	}
+
+	// 删甲:对象回收。
+	if w := env.do(t, http.MethodDelete, "/admin/pets/"+idA); w.Code != http.StatusNoContent {
+		t.Fatalf("delete custom: HTTP %d, want 204", w.Code)
+	}
+	if _, ok := env.storage.objects[keyA]; ok {
+		t.Fatalf("object %q must be physically recycled", keyA)
+	}
+}
+
+// 无共享不回收:同一对象键被另一只桌宠登记时,DELETE 只删行不删对象
+// (键去重纪律:按文档内引用计数)。
+func TestDeletePetKeepsObjectReferencedBySibling(t *testing.T) {
+	env := newPetEnv()
+	key := uploadGif(t, env)
+
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "甲", "idle_image": key})
+	var created struct {
+		Pet map[string]any `json:"pet"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	idA, _ := created.Pet["id"].(string)
+	// 乙复用甲的键(登记键是本人上传系统资产,规范键即放行)。
+	doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "乙", "interactive_image": key})
+
+	if w := env.do(t, http.MethodDelete, "/admin/pets/"+idA); w.Code != http.StatusNoContent {
+		t.Fatalf("delete: HTTP %d, want 204", w.Code)
+	}
+	if _, ok := env.storage.objects[key]; !ok {
+		t.Fatalf("object %q still referenced by sibling, must survive", key)
+	}
+}
+
+// PUT /admin/pets/active 切换当前桌宠;空 id 400、失靶 404。
+func TestSetActivePetSwitchesPointer(t *testing.T) {
+	env := newPetEnv()
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "皮皮"})
+	var created struct {
+		Pet map[string]any `json:"pet"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	id, _ := created.Pet["id"].(string)
+
+	w = doJSON(t, env, http.MethodPut, "/admin/pets/active", map[string]any{"id": id})
+	if w.Code != http.StatusOK {
+		t.Fatalf("set active: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	doc := getDoc(t, env)
+	if doc["active_id"] != id {
+		t.Fatalf("active = %v, want %q", doc["active_id"], id)
+	}
+
+	if w := doJSON(t, env, http.MethodPut, "/admin/pets/active", map[string]any{"id": ""}); w.Code != http.StatusBadRequest {
+		t.Fatalf("empty id: HTTP %d, want 400", w.Code)
+	}
+	if w := doJSON(t, env, http.MethodPut, "/admin/pets/active", map[string]any{"id": "ghost"}); w.Code != http.StatusNotFound {
+		t.Fatalf("dangling id: HTTP %d, want 404", w.Code)
+	}
+}
+
+// ---- C1 评审修复钉测:库存行损坏时读容错不写库、管理写拒绝静默覆盖 ----
+
+// 手改库存行为非法形状(22 只,超 MaxPetsTotal)后:读路径(GET /admin/pets、
+// 画布面 /pet/config)仍 200 答缺省回落且库存行字节不变(容错但绝不写库);
+// 四个管理写端点一律 500 pets_doc_corrupt 且库存行不变 —— 绝不拿缺省文档
+// 继续 mutate→put(否则一次普通管理写就把损坏库存覆盖成缺省文档)。坏 JSON
+// 行是同一静默覆盖隐患,写路径同款拒绝、读路径同款容错。
+func TestCorruptPetsRowReadTolerantWritesRejected(t *testing.T) {
+	env := newPetEnv()
+
+	corrupt := settings.DefaultPetsDocument()
+	for i := 0; i < settings.MaxCustomPets+1; i++ {
+		corrupt.Pets = append(corrupt.Pets, settings.PetEntry{ID: fmt.Sprintf("c%02d", i)})
+	}
+	raw, err := json.Marshal(corrupt)
+	if err != nil {
+		t.Fatalf("marshal corrupt doc: %v", err)
+	}
+	if _, err := env.store.Put(t.Context(), settings.NamePets, raw); err != nil {
+		t.Fatalf("seed corrupt row: %v", err)
+	}
+	rowBytes := func() string {
+		row, gerr := env.store.Get(t.Context(), settings.NamePets)
+		if gerr != nil {
+			t.Fatalf("read row: %v", gerr)
+		}
+		return string(row.Value)
+	}
+	before := rowBytes()
+
+	// GET /admin/pets:200 + 缺省回落,库存行字节不变。
+	doc := getDoc(t, env)
+	if doc["active_id"] != settings.DefaultPetID {
+		t.Fatalf("corrupt row GET admin should fall back to default, got %v", doc["active_id"])
+	}
+	pets, _ := doc["pets"].([]any)
+	if len(pets) != 1 {
+		t.Fatalf("fallback doc = %v, want single default entry", doc["pets"])
+	}
+	if rowBytes() != before {
+		t.Fatalf("GET /admin/pets must not rewrite the corrupt row")
+	}
+
+	// 画布面 /pet/config:200 缺省投影,库存行字节不变。
+	if w := env.do(t, http.MethodGet, "/pet/config"); w.Code != http.StatusOK {
+		t.Fatalf("GET /pet/config: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	if rowBytes() != before {
+		t.Fatalf("GET /pet/config must not rewrite the corrupt row")
+	}
+
+	// 四个管理写端点一律 500 pets_doc_corrupt,库存行字节不变。
+	writes := []struct {
+		name string
+		do   func() *httptest.ResponseRecorder
+	}{
+		{"POST /admin/pets", func() *httptest.ResponseRecorder {
+			return doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "新桌宠"})
+		}},
+		{"PUT /admin/pets/:id", func() *httptest.ResponseRecorder {
+			return doJSON(t, env, http.MethodPut, "/admin/pets/"+settings.DefaultPetID, map[string]any{"name": "改名"})
+		}},
+		{"PUT /admin/pets/active", func() *httptest.ResponseRecorder {
+			return doJSON(t, env, http.MethodPut, "/admin/pets/active", map[string]any{"id": settings.DefaultPetID})
+		}},
+		{"DELETE /admin/pets/:id", func() *httptest.ResponseRecorder {
+			return env.do(t, http.MethodDelete, "/admin/pets/whatever")
+		}},
+	}
+	for _, tc := range writes {
+		t.Run(tc.name, func(t *testing.T) {
+			w := tc.do()
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("%s: HTTP %d: %s, want 500 pets_doc_corrupt", tc.name, w.Code, w.Body.String())
+			}
+			if code := errCode(t, w); code != "pets_doc_corrupt" {
+				t.Fatalf("error code = %q, want pets_doc_corrupt", code)
+			}
+			if rowBytes() != before {
+				t.Fatalf("%s rewrote the corrupt row (default-doc overwrite)", tc.name)
+			}
+		})
+	}
+
+	// 坏 JSON 库存行同款:写路径拒绝、读路径容错,行字节不动。
+	if _, err := env.store.Put(t.Context(), settings.NamePets, []byte("{not json")); err != nil {
+		t.Fatalf("seed bad json row: %v", err)
+	}
+	before = rowBytes()
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "新桌宠"})
+	if w.Code != http.StatusInternalServerError || errCode(t, w) != "pets_doc_corrupt" {
+		t.Fatalf("bad json write: HTTP %d: %s, want 500 pets_doc_corrupt", w.Code, w.Body.String())
+	}
+	if rowBytes() != before {
+		t.Fatalf("write must not rewrite a bad-JSON row")
+	}
+	if w := env.do(t, http.MethodGet, "/pet/config"); w.Code != http.StatusOK {
+		t.Fatalf("bad json read: HTTP %d, want 200 tolerant", w.Code)
 	}
 }
 

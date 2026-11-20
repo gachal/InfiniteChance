@@ -1,7 +1,7 @@
 # 94 多桌宠管理:绿毛球固定默认 + 多自定义桌宠 + 随时切换(2026-11-20 定案)
 
 Type: feat
-Status: approved(2026-11-20 grill-with-docs 定案,待实现)
+Status: implemented(2026-11-20,feat/94-multi-pet-management)
 
 ## Question
 
@@ -54,3 +54,16 @@ Status: approved(2026-11-20 grill-with-docs 定案,待实现)
 - `GET /pet/config` active 投影形状与 92 号票逐字段一致(契约钉测)。
 - packages/api 新函数 envelope 断言;admin-web 构建通过 + 浏览器点验(列表/编辑/切换/删除/迁移后的既有数据)。
 - make test / lint / build 全绿;双方言无 DDL(KV 行)确认。
+
+## 实现注记(2026-11-20,feat/94-multi-pet-management)
+
+- **端点落包**:REST 五端点 + 上传端点全在 `internal/pet`(新文件 `pets_admin.go`);settings 包不 import objectstore 的方向纪律保住(DELETE 的对象回收需要 objectstore,settings→objectstore 会成环)。`GET /admin/pets` 回 `{"doc": …}`、POST/PUT 回 `{"pet": …}`(都附 `doc` 整份)、DELETE 回 204。
+- **类型命名**:settings 侧 `PetsDocument`/`PetEntry`(嵌入 92 号票 `PetConfig`,条目线形即 `{id, name, …}`)/`NormalizePetsDoc`/`DefaultPetsDocument`/`ActiveEntry()`/`NewPetsDocReader`/`NamePets`/`DefaultPetID`/`MaxCustomPets=20`/`MaxPetsTotal=21`;旧 `PetConfigReader`/`NewPetReader` 退役删除。前端 packages/api 侧 `PetEntry`/`PetEntryInput`/`PetsDocument`(`PetConfigInfo` 改为 `Omit<PetEntry, 'id'>`,canvas/web 零改动)。
+- **迁移实测分支**:fake settings store 上钉测四分支全过 —— 有形象(idle_image 非空)→ 转自定义桌宠(uuid id)设 active;纯文案 → 并入绿毛球文案、active 保持 default;旧行坏 JSON → 缺省文档;pets 行坏 JSON → 宽容回缺省。迁移幂等(二次读以 pets 行为准)与旧行保留均有钉测。迁移即写库(缺行首次读落 pets 行),写失败回内存文档不瘫痪画布面。
+- **NormalizePetsDoc 增补规约**:default 恒居数组首位(stable move)、`PUT /admin/pets/default` 携带形象键直接 400(服务端拒绝为其设形象键;文档级规约恒空是第二道防线)。
+- **DELETE 对象回收**:按文档内引用计数去重(兄弟条目仍登记的键不删),先删 KV 行后删对象,对象删除失败仅记日志(孤儿可接受,92 号票同款裁量)。
+- **gin 路由静态段与参数段共存**:`PUT /admin/pets/active` 与 `PUT /admin/pets/:id` 同树注册,gin v1.12 静态优先,钉测坐实。
+- **旧端点退役**:`settings/pet_handler.go` 删除,`GET/PUT /admin/settings/pet` 挂载摘除;`POST /admin/settings/pet/image` 路径与实现不动;grep 回验 CRUD 旧路径零残留(仅注释提及退役史与上传端点既有路径)。
+- **canvas 面**:`GET /pet/config` 形状逐字段不变(active 投影)、`GET /pet/object` 并集口径(`Cache-Control: private, max-age=3600` 与读侧再嗅探钉测保留);canvas/web 零改动,localStorage 不分键。
+- **回验**:make test / make lint / make build 三绿(Go 两包 42 测试、packages/api 73 测试、canvas/web 772 测试);集成分支顶点 32178ba 已 fast-forward 并入(93 号票 canvas/web 改版,无冲突)。
+- **评审修复轮(2026-11-20,feat/93-94-pet-review-fixes)**:双轴评审 6 项修复全落 —— C1 读侧规约静默覆盖收口(settings 拆 `loadPetsDocCore(strict)`:读路径容错回落缺省文档绝不写库;写路径走 `LoadPetsDocForWrite`,库存行 decode/规约失败 500 `pets_doc_corrupt` 拒写,坏 JSON 同口径;钉测坐实 22 只非法形状下 GET 容错行字节不变、四写端点全拒);S1 `findEntry`/`docReferencesKey` 收敛重复;S2 `docWithStamp` 单 Get 同取文档与时戳,时戳读错不再静默吞;S3 packages/api 导出 `MAX_PETS_TOTAL`/`MAX_CUSTOM_PETS` 镜像常量,admin-web 三处硬编码改引用;S4 整文档读改写末写胜出与双服务并发惰性迁移两条裁量载明 settings/pets.go 顶部注释;S5 Create/Update 删「落库后全表找回」不可达兜底,写前捕获条目直接回显。新增钉测:Go 2 个(pet 端点级 + settings 包级)、packages/api 1 个(常量镜像),三绿回验(packages/api 74 测试)。
