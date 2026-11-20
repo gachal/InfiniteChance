@@ -9,7 +9,7 @@
 //     收起由视图 v-if 控制 —— 收起 = 不渲染,非仅隐藏);
 //   - 右键无菜单;与 vue-flow 无交互(不进节点层,z 档 --z-pet);
 //   - 形象:配置了待机动图走 <img> 循环播放(GIF/WebP/APNG 自带动帧),
-//     未配置走内置 CSS 缺省形象(呼吸/眨眼,零素材依赖);配置了互动
+//     未配置走内置 CSS 缺省形象(呼吸/眨眼/左看右看,零素材依赖);配置了互动
 //     动图时点击瞬间短暂播放(播放时机 = 票面实现期裁量,接缝即此);
 //     拖起/按下的微动效走 CSS(放大/阴影),不引入 Lottie;
 //   - 常动守卫(DESIGN.md 动效协议,照 AuthLayout 86 号票范式):缺省
@@ -207,9 +207,6 @@ watch(
     >
       <span class="pet-eye left" />
       <span class="pet-eye right" />
-      <span class="pet-cheek left" />
-      <span class="pet-cheek right" />
-      <span class="pet-mouth" />
     </div>
   </div>
 </template>
@@ -246,7 +243,7 @@ watch(
   pointer-events: none;
 }
 
-/* ---- CSS 缺省形象(即梦式绿毛球):呼吸 + 眨眼,零素材依赖。
+/* ---- CSS 缺省形象(即梦式绿毛球):呼吸 + 眨眼 + 左看右看,零素材依赖。
    常动守卫(DESIGN.md 动效协议,AuthLayout 86 号票范式):循环动画只在
    prefers-reduced-motion: no-preference 下声明(reduce 静止显示首帧)。 ---- */
 .pet-default {
@@ -281,42 +278,21 @@ watch(
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  /* 同元素多动画逗号叠加:breathe/blink 动 transform,tilt/look 动
+     rotate/translate 独立属性 —— 同属性多动画后者整体覆盖前者,错开
+     属性才真能叠加(93 号票);不用 animation-delay(简写会重置
+     delay,86 号票实证),look/tilt 同周期天然同相。 */
   .pet-default {
-    animation: pet-breathe 2.8s var(--ease) infinite;
+    animation:
+      pet-breathe 2.8s var(--ease) infinite,
+      pet-tilt 6s ease-in-out infinite;
   }
 
   .pet-eye {
-    animation: pet-blink 4.4s step-end infinite;
+    animation:
+      pet-blink 4.4s step-end infinite,
+      pet-look 6s ease-in-out infinite;
   }
-}
-
-/* 腮红与嘴:形象的性格层,纯 CSS。 */
-.pet-cheek {
-  position: absolute;
-  top: 55%;
-  width: 12%;
-  height: 8%;
-  border-radius: 50%;
-  background: rgba(255, 140, 140, 0.55);
-  filter: blur(1px);
-}
-
-.pet-cheek.left {
-  left: 18%;
-}
-
-.pet-cheek.right {
-  right: 18%;
-}
-
-.pet-mouth {
-  position: absolute;
-  top: 58%;
-  left: 44%;
-  width: 12%;
-  height: 6%;
-  border-bottom: 2px solid #1d3324;
-  border-radius: 0 0 50% 50%;
 }
 
 @keyframes pet-breathe {
@@ -340,6 +316,43 @@ watch(
   92%,
   94% {
     transform: scaleY(0.08);
+  }
+}
+
+/* 左看右看(93 号票):节奏「中 → 左停 → 回中 → 右停 → 回中」。
+   look 平移量 80% 取眼自身宽(眼宽 = 脸宽 10%)→ 实际平移脸宽 8%
+   (72px 形象上约 5.8px,票面裁量区间 6–12% 取中);tilt 与 look
+   同周期 6s 同相,身体 ±2° 倾斜给张望感。段间各走 ease-in-out,
+   平台段(14–42% / 64–92%)两侧关键帧同值 = 停留。 */
+@keyframes pet-look {
+  0%,
+  50%,
+  100% {
+    translate: 0 0;
+  }
+  14%,
+  42% {
+    translate: -80% 0;
+  }
+  64%,
+  92% {
+    translate: 80% 0;
+  }
+}
+
+@keyframes pet-tilt {
+  0%,
+  50%,
+  100% {
+    rotate: 0deg;
+  }
+  14%,
+  42% {
+    rotate: -2deg;
+  }
+  64%,
+  92% {
+    rotate: 2deg;
   }
 }
 </style>
