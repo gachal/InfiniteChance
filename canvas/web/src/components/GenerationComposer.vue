@@ -1111,7 +1111,9 @@ function ratioShapeStyle(value: string): Record<string, string> {
 /* 90 号票无边框协议:填充代描边 —— 更实的面板填充靠色差与画布断开,外
    描边退役(89 号票底部 hairline 分组一并收编),投影弱化为单层极淡
    (悬浮层在密集线稿上仍需一点断开,不全去);内部控件同语言:wash 填充
-   代描边,无内部分割线。 */
+   代描边,无内部分割线。meta 行下拉/参数摘要与 textarea 更进一步收编容器
+   底色(transparent 静默融合),hover 才显常色 wash-soft;chips 族与浮层
+   (参数面板、分段、比例 tile、设定图 chips)仍走 wash 静默底。 */
 .composer {
   position: absolute;
   z-index: var(--z-canvas-float);
@@ -1303,12 +1305,17 @@ button.vref-icon:hover {
 
 .vref-role {
   width: 100%;
-  background: var(--wash-soft);
+  /* 底色收编容器,hover 才显常色(与 meta 行下拉同语言)。 */
+  background: transparent;
   border: none;
   border-radius: var(--r-sm);
   color: inherit;
   font-size: var(--fs-micro);
   padding: 1px 2px;
+}
+
+.vref-role:hover:not(:disabled) {
+  background: var(--wash-soft);
 }
 
 .vref-role.fixed {
@@ -1403,7 +1410,8 @@ button.vref-icon:hover {
 textarea {
   width: 100%;
   min-height: 120px;
-  background: var(--wash-subtle);
+  /* 底色收编容器:输入区直接坐在面板上,不再垫 wash(静默融合,hover 无提亮)。 */
+  background: transparent;
   border: none;
   border-radius: var(--r-lg);
   padding: 8px 10px;
@@ -1511,7 +1519,8 @@ textarea::placeholder {
 .prompt-meta .preset {
   margin-left: auto;
   flex-shrink: 0;
-  background: var(--wash-soft);
+  /* 底色收编容器,hover 才显常色(与 meta 行下拉同语言)。 */
+  background: transparent;
   border: none;
   border-radius: var(--r-md);
   padding: 4px 8px;
@@ -1522,7 +1531,7 @@ textarea::placeholder {
 }
 
 .prompt-meta .preset:hover:not(:disabled) {
-  background: var(--wash-active);
+  background: var(--wash-soft);
 }
 
 .prompt-meta .preset:disabled {
@@ -1581,7 +1590,8 @@ textarea::placeholder {
 .composer-meta .model {
   flex-shrink: 0;
   max-width: 172px;
-  background: var(--wash-soft);
+  /* 底色收编容器,hover 才显常色(与玩法下拉同语言)。 */
+  background: transparent;
   border: none;
   border-radius: var(--r-md);
   padding: 6px 8px;
@@ -1592,7 +1602,7 @@ textarea::placeholder {
 }
 
 .composer-meta .model:hover:not(:disabled) {
-  background: var(--wash-active);
+  background: var(--wash-soft);
 }
 
 .composer-meta .model:disabled {
@@ -1600,26 +1610,42 @@ textarea::placeholder {
   cursor: not-allowed;
 }
 
-/* 参数摘要按钮:占 meta 行剩余宽度,文案按当前值实时拼。 */
+/* 参数摘要按钮:占 meta 行剩余宽度,文案按当前值实时拼。底色收编容器,
+   hover 才显常色;右缘补下拉箭头(模型 select 的 UA 箭头同形),绝对定位
+   钉在最右,长文案 ellipsis 在箭头前截断(padding-right 留位)。 */
 .param-summary {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  background: var(--wash-soft);
+  background: transparent;
   border: none;
   border-radius: var(--r-md);
-  padding: 6px 10px;
+  padding: 6px 24px 6px 10px;
   color: var(--text-secondary);
   font-size: var(--fs-label);
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease);
 }
 
+/* 实心小三角用 clip-path 画(不走 border 族,不与 hairline 退役钉相撞)。 */
+.param-summary::after {
+  content: '';
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  width: 8px;
+  height: 5px;
+  background: var(--text-muted);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  transform: translateY(-50%);
+}
+
 .param-summary:hover:not(:disabled) {
-  background: var(--wash-active);
+  background: var(--wash-soft);
   color: var(--text-primary);
 }
 

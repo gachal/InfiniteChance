@@ -172,7 +172,8 @@ async function copyText(): Promise<void> {
   border-color: rgba(var(--accent-rgb), 0.85);
 }
 
-/* 报告只读展示:pre-wrap 保留模型输出的 markdown 换行与缩进。 */
+/* 报告只读展示:pre-wrap 保留模型输出的 markdown 换行与缩进;
+ * 填充代描边(composer textarea 同款),零描边。 */
 .report {
   max-height: 220px;
   overflow-y: auto;
@@ -180,8 +181,8 @@ async function copyText(): Promise<void> {
   word-break: break-word;
   line-height: 1.55;
   background: var(--wash-subtle);
-  border: 1px solid var(--line-control);
-  border-radius: var(--r-md);
+  border: none;
+  border-radius: var(--r-lg);
   padding: 8px;
 }
 
@@ -201,20 +202,24 @@ async function copyText(): Promise<void> {
   white-space: nowrap;
 }
 
+/* 无边框协议(composer expand-toggle 同款):填充代描边,wash 交互。 */
 .copy {
   flex-shrink: 0;
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: var(--fs-label);
   cursor: pointer;
-  background: transparent;
+  background: var(--wash-soft);
   color: var(--text-secondary);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .copy:hover {
-  border-color: var(--line-action);
-  color: inherit;
+  background: var(--wash-active);
+  color: var(--text-primary);
 }
 
 .placeholder {
@@ -251,17 +256,23 @@ async function copyText(): Promise<void> {
   flex: 1;
   min-width: 0;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
-  padding: 6px;
+  padding: 6px 8px;
   color: inherit;
   font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.redo-row select:hover {
+  background: var(--wash-active);
 }
 
 .redo {
   flex-shrink: 0;
-  background: transparent;
-  border: 1px solid var(--line-control);
+  background: var(--wash-soft);
+  border: none;
   border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: var(--fs-label);
@@ -269,12 +280,12 @@ async function copyText(): Promise<void> {
   cursor: pointer;
   color: var(--text-secondary);
   transition:
-    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease);
 }
 
 .redo:hover:not(:disabled) {
-  border-color: var(--line-action);
+  background: var(--wash-active);
   color: var(--text-primary);
 }
 

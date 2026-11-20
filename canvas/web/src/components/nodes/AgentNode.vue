@@ -897,7 +897,7 @@ textarea {
   width: 100%;
   resize: vertical;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 8px;
   color: inherit;
@@ -908,7 +908,6 @@ textarea {
 textarea:focus {
   outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
-  border-color: transparent;
 }
 
 .chat {
@@ -1107,7 +1106,7 @@ textarea:focus {
   resize: vertical;
   overflow-y: auto;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 6px 8px;
   color: inherit;
@@ -1118,7 +1117,6 @@ textarea:focus {
 .input-row textarea:focus {
   outline: 2px solid rgba(var(--accent-rgb), 0.6);
   outline-offset: 1px;
-  border-color: transparent;
 }
 
 .action-row {
@@ -1126,15 +1124,22 @@ textarea:focus {
   gap: 6px;
 }
 
+/* 无边框协议(composer meta 行同款):填充代描边,wash 交互。 */
 .action-row select {
   flex: 1;
   min-width: 0;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
-  padding: 6px;
+  padding: 6px 8px;
   color: inherit;
   font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.action-row select:hover {
+  background: var(--wash-active);
 }
 
 .action-row button {
@@ -1157,10 +1162,9 @@ textarea:focus {
   color: var(--accent-ink);
 }
 
-/* 投递是次级动作:描边样式区分,主蓝留给生成。 */
+/* 投递是次级动作:wash 填充 + accent 文字区分,主蓝实心留给生成。 */
 .deliver {
-  background: transparent;
-  border: 1px solid rgba(var(--accent-rgb), 0.55) !important;
+  background: var(--wash-soft);
   color: var(--accent);
 }
 

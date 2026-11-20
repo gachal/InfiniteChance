@@ -257,7 +257,8 @@ function submitAnalyze(): void {
   opacity: 1;
 }
 
-/* 分析动作(17 号票):模型选择 + 触发按钮;89 号票单色化为中性 ghost。 */
+/* 分析动作(17 号票):模型选择 + 触发按钮;89 号票单色化,90 号票起
+ * 同走无边框协议(填充代描边,wash 交互,composer meta 行同款)。 */
 .analyze {
   margin-top: 8px;
 }
@@ -271,17 +272,23 @@ function submitAnalyze(): void {
   flex: 1;
   min-width: 0;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
-  padding: 6px;
+  padding: 6px 8px;
   color: inherit;
   font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.analyze-row select:hover {
+  background: var(--wash-active);
 }
 
 .analyze-btn {
   flex-shrink: 0;
-  background: transparent;
-  border: 1px solid var(--line-control);
+  background: var(--wash-soft);
+  border: none;
   border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: var(--fs-label);
@@ -289,12 +296,12 @@ function submitAnalyze(): void {
   cursor: pointer;
   color: var(--text-secondary);
   transition:
-    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease);
 }
 
 .analyze-btn:hover:not(:disabled) {
-  border-color: var(--line-action);
+  background: var(--wash-active);
   color: var(--text-primary);
 }
 

@@ -511,7 +511,7 @@ function onCardClick(): void {
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   background: var(--wash-soft);
   font-size: var(--fs-micro);
@@ -549,15 +549,20 @@ function onCardClick(): void {
   color: var(--text-muted);
 }
 
+/* 无边框协议:填充代描边,wash 交互;付费生成键升工作灯蓝实心——
+   花钱的动作亮灯,89 号票词汇表。 */
 .action {
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: var(--fs-label);
   font-weight: 600;
   cursor: pointer;
-  background: transparent;
-  color: inherit;
+  background: var(--wash-soft);
+  color: var(--text-secondary);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .action:disabled {
@@ -566,20 +571,28 @@ function onCardClick(): void {
 }
 
 .action:hover:not(:disabled) {
-  border-color: var(--line-action);
+  background: var(--wash-active);
+  color: var(--text-primary);
 }
 
-/* 直接环视:中性 ghost,与生成按钮区分(一个不花钱、一个花钱);
-   付费生成键升工作灯蓝实心——花钱的动作亮灯,89 号票词汇表。 */
+/* 直接环视:中性实底,与生成按钮区分(一个不花钱、一个花钱)。 */
 .action.direct-view {
   background: var(--wash-fill);
-  border-color: var(--line-control);
+  color: var(--text-bright);
+}
+
+.action.direct-view:hover:not(:disabled) {
+  background: var(--wash-active);
   color: var(--text-bright);
 }
 
 .action.primary {
   background: var(--accent);
-  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+.action.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
   color: var(--accent-ink);
 }
 
@@ -587,10 +600,11 @@ function onCardClick(): void {
   background: var(--accent-soft);
 }
 
+/* 无边框协议:填充代描边,焦点走全局 focus-visible accent 轮廓。 */
 .field {
   width: 100%;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 6px;
   color: inherit;

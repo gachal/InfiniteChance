@@ -581,39 +581,36 @@ audio {
 
 .mode-row button {
   flex: 1;
-  border: 1px solid var(--line-control);
+  border: none;
   background: transparent;
   color: var(--text-muted);
   border-radius: var(--r-md);
   padding: 5px 0;
   cursor: pointer;
   font-size: var(--fs-label);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 /* 选中 mode 归工作灯蓝:选中 = 可交互态。 */
 .mode-row button.on {
-  border-color: rgba(var(--accent-rgb), 0.6);
   background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
 }
 
+/* 无边框协议:填充代描边,焦点走全局 focus-visible accent 轮廓。 */
 .field {
   width: 100%;
   box-sizing: border-box;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
   font-size: var(--fs-body);
   font-family: inherit;
   resize: vertical;
-}
-
-/* 焦点即灯亮:与全站输入一致。 */
-.field:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .field::placeholder {
@@ -727,24 +724,19 @@ select.field option {
   gap: 6px;
 }
 
+/* 无边框协议:填充代描边,焦点走全局 focus-visible accent 轮廓。 */
 .speech-form textarea,
 .speech-form input {
   width: 100%;
   box-sizing: border-box;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
   font-size: var(--fs-label);
   font-family: inherit;
   resize: vertical;
-}
-
-.speech-form textarea:focus,
-.speech-form input:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .card-foot {

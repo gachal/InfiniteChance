@@ -278,20 +278,20 @@ video {
 
 .cancel {
   margin-top: 6px;
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 5px 12px;
   font-size: var(--fs-label);
   cursor: pointer;
-  background: transparent;
+  background: var(--wash-soft);
   color: var(--text-secondary);
   transition:
-    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease);
 }
 
 .cancel:hover:not(:disabled) {
-  border-color: var(--line-action);
+  background: var(--wash-active);
   color: var(--text-primary);
 }
 
@@ -319,7 +319,8 @@ video {
 }
 
 /* 反推提示词入口(13 号票)与分析动作(17 号票):同为内联动作,
-   89 号票统一中性 ghost(hover 描边升档),不再用 accent/类型色。 */
+   89 号票统一中性,90 号票起同走无边框协议(填充代描边,wash 交互,
+   composer meta 行同款)。 */
 .reverse {
   margin-top: 8px;
 }
@@ -333,17 +334,23 @@ video {
   flex: 1;
   min-width: 0;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
-  padding: 6px;
+  padding: 6px 8px;
   color: inherit;
   font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.reverse-row select:hover {
+  background: var(--wash-active);
 }
 
 .reverse-btn,
 .analyze-btn {
-  background: transparent;
-  border: 1px solid var(--line-control);
+  background: var(--wash-soft);
+  border: none;
   border-radius: var(--r-md);
   padding: 6px 12px;
   font-size: var(--fs-label);
@@ -351,7 +358,7 @@ video {
   cursor: pointer;
   color: var(--text-secondary);
   transition:
-    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease);
 }
 
@@ -365,7 +372,7 @@ video {
 
 .reverse-btn:hover:not(:disabled),
 .analyze-btn:hover:not(:disabled) {
-  border-color: var(--line-action);
+  background: var(--wash-active);
   color: var(--text-primary);
 }
 

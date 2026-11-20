@@ -867,23 +867,18 @@ audio {
   display: block;
 }
 
+/* 无边框协议:填充代描边,焦点走全局 focus-visible accent 轮廓。 */
 .field {
   width: 100%;
   box-sizing: border-box;
   background: var(--wash-soft);
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 7px 9px;
   color: inherit;
   font-size: var(--fs-body);
   font-family: inherit;
   resize: vertical;
-}
-
-/* 焦点即灯亮:与 composer textarea 同款 accent 焦点。 */
-.field:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .field::placeholder {

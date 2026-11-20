@@ -94,23 +94,28 @@ async function copyText(): Promise<void> {
   white-space: nowrap;
 }
 
+/* 无边框协议(composer expand-toggle 同款):填充代描边,wash 交互。 */
 .copy {
   flex-shrink: 0;
-  border: 1px solid var(--line-control);
+  border: none;
   border-radius: var(--r-md);
   padding: 3px 10px;
   font-size: var(--fs-label);
   cursor: pointer;
-  background: transparent;
+  background: var(--wash-soft);
   color: var(--text-secondary);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .copy:hover {
-  border-color: var(--line-action);
-  color: inherit;
+  background: var(--wash-active);
+  color: var(--text-primary);
 }
 
-/* 收起态截断约 3 行;展开态放开行数、限高滚动(超长提示词不撑爆卡片)。 */
+/* 收起态截断约 3 行;展开态放开行数、限高滚动(超长提示词不撑爆卡片)。
+ * 填充代描边(composer textarea 同款):wash-subtle 弱底,零描边。 */
 .text {
   margin: 4px 0 0;
   white-space: pre-wrap;
@@ -118,8 +123,8 @@ async function copyText(): Promise<void> {
   line-height: 1.5;
   font-size: var(--fs-label);
   background: var(--wash-subtle);
-  border: 1px solid var(--line-control);
-  border-radius: var(--r-md);
+  border: none;
+  border-radius: var(--r-lg);
   padding: 6px 8px;
   cursor: pointer;
   display: -webkit-box;

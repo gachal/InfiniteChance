@@ -25,6 +25,14 @@ function declSource(src: string, name: string): string {
   return src.slice(start, end)
 }
 
+/** 摘 CSS 规则段(选择器到第一个 `}`),用于 scoped 样式钉。 */
+function cssRule(src: string, selector: string): string {
+  const start = src.indexOf(selector)
+  expect(start).toBeGreaterThan(-1)
+  const end = src.indexOf('}', start)
+  return src.slice(start, end)
+}
+
 describe('三段结构重排(90 号票:动作行 → 输入区 → meta 行)', () => {
   it('顶部动作行:@ 引用 / + 上传 / 库 聚左,展开 toggle 居右', () => {
     expect(composerSource.includes('class="composer-actions"')).toBe(true)
@@ -170,5 +178,39 @@ describe('参数面板(90 号票 Q5a/Q10a:摘要按钮 + 弹出面板两形态)'
     expect(viewSource.includes('if (composerPanelOpen.value) {')).toBe(true)
     // 面板是 composer 内的浮层:垫挡层点击即收(比 Esc 快一拍的鼠标路径)。
     expect(composerSource.includes('class="panel-backdrop"')).toBe(true)
+  })
+})
+
+describe('控件底色收编容器(transparent 静默融合,hover 才显常色 wash-soft)', () => {
+  it('textarea 不再垫 wash-subtle,直接收编容器底色', () => {
+    expect(composerSource.includes('--wash-subtle')).toBe(false)
+    expect(cssRule(composerSource, '\ntextarea {').includes('background: transparent')).toBe(true)
+  })
+
+  it('玩法 / 模型 / vref 角色下拉:基础态透明,hover 才提亮 wash-soft(非 wash-active)', () => {
+    const quiet = ['.prompt-meta .preset {', '.composer-meta .model {', '.vref-role {']
+    const hover = [
+      '.prompt-meta .preset:hover:not(:disabled) {',
+      '.composer-meta .model:hover:not(:disabled) {',
+      '.vref-role:hover:not(:disabled) {',
+    ]
+    for (const selector of quiet) {
+      const rule = cssRule(composerSource, selector)
+      expect(rule.includes('background: transparent')).toBe(true)
+      expect(rule.includes('wash-soft')).toBe(false)
+      expect(rule.includes('wash-active')).toBe(false)
+    }
+    for (const selector of hover) {
+      expect(cssRule(composerSource, selector).includes('background: var(--wash-soft)')).toBe(true)
+    }
+  })
+
+  it('参数摘要按钮:同语言收编容器,右缘钉模型 select 同款下拉箭头(长文案在箭头前截断)', () => {
+    const rule = cssRule(composerSource, '.param-summary {')
+    expect(rule.includes('background: transparent')).toBe(true)
+    expect(rule.includes('position: relative')).toBe(true)
+    // padding-right 留出箭头位,ellipsis 截断不压箭头。
+    expect(rule.includes('padding: 6px 24px 6px 10px')).toBe(true)
+    expect(cssRule(composerSource, '.param-summary::after {').includes('clip-path: polygon(0 0, 100% 0, 50% 100%)')).toBe(true)
   })
 })
