@@ -2,6 +2,7 @@ package settings_test
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -264,5 +265,68 @@ func TestPetsLimitsConstants(t *testing.T) {
 	}
 	if !strings.HasPrefix(settings.NamePets, "pets") {
 		t.Fatalf("row name drifted: %q", settings.NamePets)
+	}
+}
+
+// C1/S2 评审修复:LoadPetsDocForWrite 是管理写路径的合并基座 —— 库存行
+// decode/规约失败回 ErrPetsDocCorrupt(绝不回落缺省文档,防静默覆盖库存);
+// LoadPetsDocStamped 是管理 GET 的宽容读,一次 Get 同取文档与行时戳(坏行
+// 回落缺省文档但绝不写库,时戳照带)。缺行时 strict 同走惰性迁移 —— 迁移
+// 产物是真基座,不是覆盖。
+func TestLoadPetsDocForWriteRejectsCorruptRow(t *testing.T) {
+	store := newFakeStore()
+	over := settings.DefaultPetsDocument()
+	for i := 0; i < settings.MaxCustomPets+1; i++ {
+		over.Pets = append(over.Pets, settings.PetEntry{ID: "c" + string(rune('a'+i))})
+	}
+	raw, err := json.Marshal(over)
+	if err != nil {
+		t.Fatalf("marshal corrupt doc: %v", err)
+	}
+	if _, err := store.Put(t.Context(), settings.NamePets, raw); err != nil {
+		t.Fatalf("seed corrupt row: %v", err)
+	}
+
+	// strict(写基座):规约失败即拒。
+	if _, _, err := settings.LoadPetsDocForWrite(t.Context(), store); !errors.Is(err, settings.ErrPetsDocCorrupt) {
+		t.Fatalf("strict load on 22-pet row: err = %v, want ErrPetsDocCorrupt", err)
+	}
+
+	// tolerant(管理 GET):缺省回落 + 行时戳照带,不报错。
+	doc, stamp, err := settings.LoadPetsDocStamped(t.Context(), store)
+	if err != nil {
+		t.Fatalf("tolerant load: %v", err)
+	}
+	if doc.ActiveID != settings.DefaultPetID || len(doc.Pets) != 1 || doc.Pets[0].ID != settings.DefaultPetID {
+		t.Fatalf("tolerant load should answer default doc: %+v", doc)
+	}
+	if stamp == "" {
+		t.Fatalf("tolerant load should carry the row stamp even on fallback")
+	}
+
+	// 坏 JSON 行:strict 同款拒绝(同一静默覆盖隐患)。
+	if _, err := store.Put(t.Context(), settings.NamePets, []byte("]broken")); err != nil {
+		t.Fatalf("seed bad json row: %v", err)
+	}
+	if _, _, err := settings.LoadPetsDocForWrite(t.Context(), store); !errors.Is(err, settings.ErrPetsDocCorrupt) {
+		t.Fatalf("strict load on bad json: err = %v, want ErrPetsDocCorrupt", err)
+	}
+
+	// 缺行:strict 走惰性迁移并带回迁移时戳。
+	fresh := newFakeStore()
+	legacy := map[string]any{"name": "老球", "idle_image": "uploads/20261119/old.gif"}
+	lraw, _ := json.Marshal(legacy)
+	if _, err := fresh.Put(t.Context(), settings.NamePet, lraw); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	doc, stamp, err = settings.LoadPetsDocForWrite(t.Context(), fresh)
+	if err != nil {
+		t.Fatalf("strict load on missing pets row: %v", err)
+	}
+	if len(doc.Pets) != 2 || doc.Pets[0].ID != settings.DefaultPetID || doc.Pets[1].Name != "老球" {
+		t.Fatalf("strict load should migrate legacy row: %+v", doc)
+	}
+	if stamp == "" {
+		t.Fatalf("migration persist should stamp the row")
 	}
 }

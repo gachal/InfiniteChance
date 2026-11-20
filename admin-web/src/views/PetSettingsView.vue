@@ -30,6 +30,8 @@ import {
 
 import {
   ApiError,
+  MAX_CUSTOM_PETS,
+  MAX_PETS_TOTAL,
   type PetEntry,
   type PetsDocument,
 } from '@infinitechance/api';
@@ -62,7 +64,7 @@ const isDefaultSelected = computed(() => selected.value?.id === 'default');
 const isActiveSelected = computed(
   () => doc.value?.active_id === selectedId.value && selectedId.value !== '',
 );
-const maxReached = computed(() => (doc.value?.pets.length ?? 0) >= 21);
+const maxReached = computed(() => (doc.value?.pets.length ?? 0) >= MAX_PETS_TOTAL);
 
 /** 本次会话内上传的对象键 → 本地 objectURL(保存前读端点不认新键)。 */
 const localPreviews = ref(new Map<string, string>());
@@ -313,7 +315,7 @@ function formatUpdatedAt(): string {
           <h3 class="m-0 text-base font-medium">
             桌宠列表
           </h3>
-          <span class="text-xs text-neutral-500">{{ doc?.pets.length ?? 0 }}/21</span>
+          <span class="text-xs text-neutral-500">{{ doc?.pets.length ?? 0 }}/{{ MAX_PETS_TOTAL }}</span>
         </div>
         <div class="flex flex-col gap-2">
           <div
@@ -360,7 +362,7 @@ function formatUpdatedAt(): string {
           + 添加桌宠
         </Button>
         <p class="mt-1 text-xs text-neutral-500">
-          上限绿毛球 + 20 只自定义;删除自定义桌宠会一并回收其形象对象
+          上限绿毛球 + {{ MAX_CUSTOM_PETS }} 只自定义;删除自定义桌宠会一并回收其形象对象
         </p>
       </div>
 

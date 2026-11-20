@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ApiClient,
   ApiError,
+  MAX_CUSTOM_PETS,
+  MAX_PETS_TOTAL,
   UnauthorizedError,
   parseAgentEvent,
   parseCharacterSection,
@@ -1022,6 +1024,15 @@ describe('ApiClient storage settings', () => {
 })
 
 // ---- 桌宠(92 号票上传/画布面,94 号票多桌宠管理)----
+
+// S3 评审修复:上限常量是给 UI 用的镜像,值钉死与后端 internal/settings
+// 的 MaxCustomPets / MaxPetsTotal 对齐(漂移即此测红)。
+describe('pets 上限镜像常量', () => {
+  it('mirror the backend caps (MaxCustomPets=20 / MaxPetsTotal=21)', () => {
+    expect(MAX_CUSTOM_PETS).toBe(20)
+    expect(MAX_PETS_TOTAL).toBe(21)
+  })
+})
 
 describe('ApiClient pets (94 号票多桌宠)', () => {
   const entry: PetEntry = {

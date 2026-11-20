@@ -694,6 +694,107 @@ func TestSetActivePetSwitchesPointer(t *testing.T) {
 	}
 }
 
+// ---- C1 评审修复钉测:库存行损坏时读容错不写库、管理写拒绝静默覆盖 ----
+
+// 手改库存行为非法形状(22 只,超 MaxPetsTotal)后:读路径(GET /admin/pets、
+// 画布面 /pet/config)仍 200 答缺省回落且库存行字节不变(容错但绝不写库);
+// 四个管理写端点一律 500 pets_doc_corrupt 且库存行不变 —— 绝不拿缺省文档
+// 继续 mutate→put(否则一次普通管理写就把损坏库存覆盖成缺省文档)。坏 JSON
+// 行是同一静默覆盖隐患,写路径同款拒绝、读路径同款容错。
+func TestCorruptPetsRowReadTolerantWritesRejected(t *testing.T) {
+	env := newPetEnv()
+
+	corrupt := settings.DefaultPetsDocument()
+	for i := 0; i < settings.MaxCustomPets+1; i++ {
+		corrupt.Pets = append(corrupt.Pets, settings.PetEntry{ID: fmt.Sprintf("c%02d", i)})
+	}
+	raw, err := json.Marshal(corrupt)
+	if err != nil {
+		t.Fatalf("marshal corrupt doc: %v", err)
+	}
+	if _, err := env.store.Put(t.Context(), settings.NamePets, raw); err != nil {
+		t.Fatalf("seed corrupt row: %v", err)
+	}
+	rowBytes := func() string {
+		row, gerr := env.store.Get(t.Context(), settings.NamePets)
+		if gerr != nil {
+			t.Fatalf("read row: %v", gerr)
+		}
+		return string(row.Value)
+	}
+	before := rowBytes()
+
+	// GET /admin/pets:200 + 缺省回落,库存行字节不变。
+	doc := getDoc(t, env)
+	if doc["active_id"] != settings.DefaultPetID {
+		t.Fatalf("corrupt row GET admin should fall back to default, got %v", doc["active_id"])
+	}
+	pets, _ := doc["pets"].([]any)
+	if len(pets) != 1 {
+		t.Fatalf("fallback doc = %v, want single default entry", doc["pets"])
+	}
+	if rowBytes() != before {
+		t.Fatalf("GET /admin/pets must not rewrite the corrupt row")
+	}
+
+	// 画布面 /pet/config:200 缺省投影,库存行字节不变。
+	if w := env.do(t, http.MethodGet, "/pet/config"); w.Code != http.StatusOK {
+		t.Fatalf("GET /pet/config: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	if rowBytes() != before {
+		t.Fatalf("GET /pet/config must not rewrite the corrupt row")
+	}
+
+	// 四个管理写端点一律 500 pets_doc_corrupt,库存行字节不变。
+	writes := []struct {
+		name string
+		do   func() *httptest.ResponseRecorder
+	}{
+		{"POST /admin/pets", func() *httptest.ResponseRecorder {
+			return doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "新桌宠"})
+		}},
+		{"PUT /admin/pets/:id", func() *httptest.ResponseRecorder {
+			return doJSON(t, env, http.MethodPut, "/admin/pets/"+settings.DefaultPetID, map[string]any{"name": "改名"})
+		}},
+		{"PUT /admin/pets/active", func() *httptest.ResponseRecorder {
+			return doJSON(t, env, http.MethodPut, "/admin/pets/active", map[string]any{"id": settings.DefaultPetID})
+		}},
+		{"DELETE /admin/pets/:id", func() *httptest.ResponseRecorder {
+			return env.do(t, http.MethodDelete, "/admin/pets/whatever")
+		}},
+	}
+	for _, tc := range writes {
+		t.Run(tc.name, func(t *testing.T) {
+			w := tc.do()
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("%s: HTTP %d: %s, want 500 pets_doc_corrupt", tc.name, w.Code, w.Body.String())
+			}
+			if code := errCode(t, w); code != "pets_doc_corrupt" {
+				t.Fatalf("error code = %q, want pets_doc_corrupt", code)
+			}
+			if rowBytes() != before {
+				t.Fatalf("%s rewrote the corrupt row (default-doc overwrite)", tc.name)
+			}
+		})
+	}
+
+	// 坏 JSON 库存行同款:写路径拒绝、读路径容错,行字节不动。
+	if _, err := env.store.Put(t.Context(), settings.NamePets, []byte("{not json")); err != nil {
+		t.Fatalf("seed bad json row: %v", err)
+	}
+	before = rowBytes()
+	w := doJSON(t, env, http.MethodPost, "/admin/pets", map[string]any{"name": "新桌宠"})
+	if w.Code != http.StatusInternalServerError || errCode(t, w) != "pets_doc_corrupt" {
+		t.Fatalf("bad json write: HTTP %d: %s, want 500 pets_doc_corrupt", w.Code, w.Body.String())
+	}
+	if rowBytes() != before {
+		t.Fatalf("write must not rewrite a bad-JSON row")
+	}
+	if w := env.do(t, http.MethodGet, "/pet/config"); w.Code != http.StatusOK {
+		t.Fatalf("bad json read: HTTP %d, want 200 tolerant", w.Code)
+	}
+}
+
 func (env petEnv) do(t *testing.T, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)

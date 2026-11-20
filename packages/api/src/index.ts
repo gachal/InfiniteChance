@@ -1171,6 +1171,13 @@ export interface PetImageUpload {
   size_bytes: number
 }
 
+/** 桌宠数量上限(UI 用的镜像常量,S3 评审修复:管理台三处硬编码收编)。
+ * 值与后端 internal/settings 的 MaxCustomPets(20)/ MaxPetsTotal(21 =
+ * 绿毛球 + 自定义上限)对齐 —— 后端规约是权威,这里只驱动列表计数与文案,
+ * 漂移时有后端 400 兜底。 */
+export const MAX_CUSTOM_PETS = 20
+export const MAX_PETS_TOTAL = MAX_CUSTOM_PETS + 1
+
 // ---- 网关管理:用量审计(挂 /admin/usage,需 JWT 会话,15 号票)----
 
 /** 一条请求级用量行的状态:成功,或离开网关后的失败(上游错误摘要列区分

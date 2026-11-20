@@ -5,6 +5,12 @@
 // 照 92 号票先例:PUT 指针字段合并(未携带沿用已存,显式空串/空数组清空),
 // 无密钥字段全部原值回显;桌宠配置无 assets 行,「先删行后删对象」的行侧
 // 即 KV 行,对象回收按文档内引用计数去重(兄弟条目仍登记的键不删)。
+//
+// 读写分工(94 号票评审修复轮 C1):GET /admin/pets 与画布面读同口径容错
+// —— 库存行损坏回落缺省文档应答、绝不写库;四个写端点的 load 走
+// loadDocForWrite(settings.LoadPetsDocForWrite)—— 库存行 decode/规约
+// 失败即 500 pets_doc_corrupt 拒写,绝不拿缺省文档继续 mutate→put(否则
+// 一次普通管理写就把损坏库存静默覆盖成缺省文档)。
 package pet
 
 import (
@@ -82,21 +88,39 @@ func toDocJSON(doc settings.PetsDocument, updatedAt string) petsDocJSON {
 	return out
 }
 
-// docWithStamp reads the document plus the row's updated_at(空串 = 行从未
-// 写过;迁移/缺省构造的首次落库不算用户写入,但行会存在,读到的是迁移时戳
-// —— 可接受,管理页只拿它显示「上次保存时间」)。
+// docWithStamp reads the document plus the row's updated_at in one Get
+// (S2 评审修复:旧实现 loadDoc 与取时戳各 Get 一次,双读且时戳读错被
+// 静默吞掉 —— 现在两者同源,Get 失败随错误传播)。容错口径与画布面读
+// 一致:坏行回落缺省文档应答、绝不写库;只服务 GET /admin/pets,写路径
+// 走 loadDocForWrite。空时戳 = 行从未落库(迁移写失败的空窗,可接受 ——
+// 管理页只拿它显示「上次保存时间」)。
 func (h *Handlers) docWithStamp(ctx context.Context) (settings.PetsDocument, string, error) {
-	doc, err := h.loadDoc(ctx)
-	if err != nil {
-		return settings.PetsDocument{}, "", err
+	if h.Store == nil {
+		return settings.PetsDocument{}, "", errStoreUnconfigured
 	}
-	stamp := ""
-	if h.Store != nil {
-		if row, gerr := h.Store.Get(ctx, settings.NamePets); gerr == nil {
-			stamp = row.UpdatedAt.Format(time.RFC3339Nano)
+	return settings.LoadPetsDocStamped(ctx, h.Store)
+}
+
+// loadDocForWrite reads the merge base for the four admin write endpoints
+// (C1 评审修复):库存行 decode/规约失败回 settings.ErrPetsDocCorrupt,
+// 由 fail 映射成 500 pets_doc_corrupt —— 绝不拿缺省文档继续 mutate→put。
+// 同一次 Get 连行时戳一起取(S2)。
+func (h *Handlers) loadDocForWrite(ctx context.Context) (settings.PetsDocument, string, error) {
+	if h.Store == nil {
+		return settings.PetsDocument{}, "", errStoreUnconfigured
+	}
+	return settings.LoadPetsDocForWrite(ctx, h.Store)
+}
+
+// findEntry answers the index of id in the doc(-1 = 无此条目);Update /
+// Delete / SetActive 三处按 id 定位共用(S1 评审修复)。
+func findEntry(doc settings.PetsDocument, id string) int {
+	for i := range doc.Pets {
+		if doc.Pets[i].ID == id {
+			return i
 		}
 	}
-	return doc, stamp, nil
+	return -1
 }
 
 // putDoc normalizes the document in place, then persists it, answering the
@@ -144,7 +168,7 @@ func (h *Handlers) CreatePet(c *gin.Context) {
 		return
 	}
 
-	doc, stamp, err := h.docWithStamp(c.Request.Context())
+	doc, stamp, err := h.loadDocForWrite(c.Request.Context())
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -157,20 +181,17 @@ func (h *Handlers) CreatePet(c *gin.Context) {
 	entry := settings.PetEntry{ID: uuid.NewString()}
 	h.applyInput(&entry.PetConfig, &raw)
 	doc.Pets = append(doc.Pets, entry)
+	// 回显条目用写前捕获的切片元素指针:NormalizePetsDoc 只就地改写、不增删
+	// 条目,规约后的值经同指针读出(S5 评审修复:删掉「落库后全表找回」的
+	// 不可达兜底分支)。
+	created := &doc.Pets[len(doc.Pets)-1]
 
 	stamp, err = h.putDoc(c.Request.Context(), &doc)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	for _, e := range doc.Pets {
-		if e.ID == entry.ID {
-			c.JSON(http.StatusCreated, gin.H{"pet": toEntryJSON(e), "doc": toDocJSON(doc, stamp)})
-			return
-		}
-	}
-	// 理论不可达(条目刚插入且规约不删条目);防御性回答整份文档。
-	c.JSON(http.StatusCreated, gin.H{"doc": toDocJSON(doc, stamp)})
+	c.JSON(http.StatusCreated, gin.H{"pet": toEntryJSON(*created), "doc": toDocJSON(doc, stamp)})
 }
 
 // UpdatePet replaces one entry's editable fields with 92 号票 merge semantics。
@@ -190,36 +211,25 @@ func (h *Handlers) UpdatePet(c *gin.Context) {
 		return
 	}
 
-	doc, stamp, err := h.docWithStamp(c.Request.Context())
+	doc, stamp, err := h.loadDocForWrite(c.Request.Context())
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	idx := -1
-	for i := range doc.Pets {
-		if doc.Pets[i].ID == id {
-			idx = i
-			break
-		}
-	}
+	idx := findEntry(doc, id)
 	if idx < 0 {
 		apierr.NotFound(c, "桌宠不存在")
 		return
 	}
-	h.applyInput(&doc.Pets[idx].PetConfig, &raw)
+	updated := &doc.Pets[idx]
+	h.applyInput(&updated.PetConfig, &raw)
 
 	stamp, err = h.putDoc(c.Request.Context(), &doc)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	for _, e := range doc.Pets {
-		if e.ID == id {
-			c.JSON(http.StatusOK, gin.H{"pet": toEntryJSON(e), "doc": toDocJSON(doc, stamp)})
-			return
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"doc": toDocJSON(doc, stamp)})
+	c.JSON(http.StatusOK, gin.H{"pet": toEntryJSON(*updated), "doc": toDocJSON(doc, stamp)})
 }
 
 // applyInput merges pointer fields onto a config(未携带沿用已存,显式
@@ -254,18 +264,12 @@ func (h *Handlers) DeletePet(c *gin.Context) {
 		return
 	}
 
-	doc, _, err := h.docWithStamp(c.Request.Context())
+	doc, _, err := h.loadDocForWrite(c.Request.Context())
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	idx := -1
-	for i := range doc.Pets {
-		if doc.Pets[i].ID == id {
-			idx = i
-			break
-		}
-	}
+	idx := findEntry(doc, id)
 	if idx < 0 {
 		apierr.NotFound(c, "桌宠不存在")
 		return
@@ -284,7 +288,7 @@ func (h *Handlers) DeletePet(c *gin.Context) {
 	// 行已落,回收失去文档内引用的对象键(先删行后删对象;无共享键才删)。
 	if h.Storage != nil {
 		for _, key := range []string{removed.IdleImage, removed.InteractiveImage} {
-			if key == "" || keyReferenced(doc, key) {
+			if key == "" || docReferencesKey(doc, key) {
 				continue
 			}
 			if err := h.Storage.Delete(c.Request.Context(), key); err != nil {
@@ -293,17 +297,6 @@ func (h *Handlers) DeletePet(c *gin.Context) {
 		}
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// keyReferenced answers whether any entry still registers the key(回收前
-// 的引用计数,兄弟条目共享的键不删)。
-func keyReferenced(doc settings.PetsDocument, key string) bool {
-	for _, e := range doc.Pets {
-		if e.IdleImage == key || e.InteractiveImage == key {
-			return true
-		}
-	}
-	return false
 }
 
 // SetActivePet switches the active pointer(body {id});失靶 404、空 400。
@@ -322,19 +315,12 @@ func (h *Handlers) SetActivePet(c *gin.Context) {
 		return
 	}
 
-	doc, stamp, err := h.docWithStamp(c.Request.Context())
+	doc, stamp, err := h.loadDocForWrite(c.Request.Context())
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	found := false
-	for _, e := range doc.Pets {
-		if e.ID == id {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if findEntry(doc, id) < 0 {
 		apierr.NotFound(c, "桌宠不存在")
 		return
 	}
@@ -357,11 +343,18 @@ func (h *Handlers) requireStore(c *gin.Context) error {
 	return nil
 }
 
-// fail maps handler errors onto the统一 error shape:规约消息 400,其余 500。
+// fail maps handler errors onto the统一 error shape:规约消息 400,库存行
+// 损坏 500 pets_doc_corrupt(写保护,修复库存前拒绝一切管理写),其余 500。
 func (h *Handlers) fail(c *gin.Context, err error) {
 	var inv errInvalidInput
 	if errors.As(err, &inv) {
 		apierr.InvalidRequest(c, inv.msg)
+		return
+	}
+	if errors.Is(err, settings.ErrPetsDocCorrupt) {
+		log.Printf("pet: %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+		apierr.Write(c, http.StatusInternalServerError, "pets_doc_corrupt",
+			"桌宠配置行损坏,已拒绝本次写入以保护现有配置;请先手工修复 settings 表 pets 行")
 		return
 	}
 	if errors.Is(err, errStoreUnconfigured) {

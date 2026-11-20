@@ -241,6 +241,18 @@ func (h *Handlers) loadDoc(ctx context.Context) (settings.PetsDocument, error) {
 	return settings.NewPetsDocReader(h.Store)(ctx)
 }
 
+// docReferencesKey answers whether any entry registers the object key(登记
+// 键并集的成员判定):Object 读端点的防遍历与 DELETE 后的对象回收共用同一
+// 口径(S1 评审修复:两处同形循环收敛成一个助手)。
+func docReferencesKey(doc settings.PetsDocument, key string) bool {
+	for _, e := range doc.Pets {
+		if e.IdleImage == key || e.InteractiveImage == key {
+			return true
+		}
+	}
+	return false
+}
+
 // errStoreUnconfigured marks a nil settings store(与 storage_unconfigured
 // 同族的服务缺装配拒绝)。
 var errStoreUnconfigured = errors.New("pet: settings store not wired")
@@ -289,14 +301,7 @@ func (h *Handlers) Object(c *gin.Context) {
 		apierr.Internal(c, "服务内部错误,请稍后再试")
 		return
 	}
-	registered := false
-	for _, e := range doc.Pets {
-		if e.IdleImage == key || e.InteractiveImage == key {
-			registered = true
-			break
-		}
-	}
-	if !registered {
+	if !docReferencesKey(doc, key) {
 		// 404 而非 403:不区分「未登记」与「不存在」,不给遍历探针回声。
 		apierr.NotFound(c, "桌宠形象不存在")
 		return
